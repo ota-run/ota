@@ -61,8 +61,9 @@ The docs must consistently explain:
 - `ota check` runs explicit checks only
 - `ota init` creates the first starter contract
 - `ota detect --write` is conservative and high-confidence only
-- `ota detect --merge` updates an existing contract additively
-- `ota detect --rewrite` regenerates an existing contract from scratch with confirmation
+- `ota detect --candidate-out` publishes reviewable proposed contract changes
+- `ota contract apply-candidate --write` owns create-new mutation
+- `ota contract apply-candidate --write --carrier git` owns reviewed tracked-contract updates
 
 ## Version syntax clarity
 

@@ -64,13 +64,15 @@ use crate::ci_projection::{
     build_ci_projection, refresh_ci_projection_identity,
 };
 use crate::contract_candidate::{
-    CandidateDisposition, CandidateError, CandidateKind, ContractCandidate,
-    verify_candidate_application_projection, write_candidate_create_new,
+    CONSERVATIVE_FIRST_CONTRACT_CANDIDATE_SCHEMA_VERSION, CandidateChange, CandidateConfidence,
+    CandidateDisposition, CandidateError, CandidateKind, CandidateOperation, CandidateProfile,
+    CandidateSubject, ContractCandidate, derive_candidate_application_document,
+    derive_candidate_application_projection, verify_candidate_application_projection,
+    write_candidate_create_new,
 };
 use crate::contract_drift::{
     DETECT_OWNER_KIND_MERGED, append_contract_drift_findings, collect_detect_changes,
-    collect_detect_drift_removals, collect_detect_removals,
-    doctor_required_verification_governance,
+    collect_detect_drift_removals, doctor_required_verification_governance,
 };
 use crate::contract_upgrade::{ContractUpgradeError, build_contract_upgrade_candidate};
 use crate::detector::{
@@ -317,10 +319,6 @@ thread_local! {
     static PLAIN_MODE: Cell<bool> = const { Cell::new(false) };
     static CONCISE_MODE: Cell<bool> = const { Cell::new(false) };
     static FAILURE_LOCUS: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
-}
-
-pub fn set_failure_locus(label: Option<String>) {
-    FAILURE_LOCUS.with(|value| *value.borrow_mut() = label);
 }
 
 pub fn take_failure_locus() -> Option<String> {
@@ -1105,10 +1103,6 @@ pub fn stylize_inline_text(value: &str) -> String {
 }
 
 fn infer_failure_where(default: &str, message: &str) -> String {
-    if default == "ota detect --merge --apply" {
-        return default.to_string();
-    }
-
     if let Some(from_idx) = message.find("from `") {
         let after_from = &message[from_idx + 6..];
         if let Some(end_idx) = after_from.find('`') {
@@ -32322,7 +32316,10 @@ pub fn init(
     ];
 
     if contract_path.exists() {
-        let next = command_for_repo("ota detect --merge", &root);
+        let next = command_for_repo(
+            "ota detect --candidate-out .ota/candidates/detect.json",
+            &root,
+        );
         let json_error = format!(
             "`{}` already exists; refusing to overwrite the existing contract",
             compact_path_display
@@ -32330,7 +32327,8 @@ pub fn init(
         let highlighted_path = paint_code(&compact_path_display);
         let highlighted_validate = paint_code("ota validate");
         let highlighted_doctor = paint_code("ota doctor");
-        let highlighted_detect_merge = paint_code("ota detect --merge");
+        let highlighted_detect_merge =
+            paint_code("ota detect --candidate-out .ota/candidates/detect.json");
         let text_error = format!(
             "`{}` already exists; refusing to overwrite the existing contract{}",
             highlighted_path,
@@ -32338,7 +32336,7 @@ pub fn init(
                 format!(
                     "review the existing contract with `{highlighted_validate}` or `{highlighted_doctor}`"
                 ),
-                format!("update the existing contract with `{highlighted_detect_merge}`"),
+                format!("publish reviewed changes with `{highlighted_detect_merge}`"),
             ]),
         );
         return finalize_debug(
@@ -35522,6 +35520,52 @@ pub fn detect(
     format: OutputFormat,
     debug: bool,
 ) -> CommandOutput {
+    if merge || !apply.is_empty() || apply_all || rewrite || yes {
+        let removed_flags = [
+            merge.then_some("--merge"),
+            (!apply.is_empty()).then_some("--apply"),
+            apply_all.then_some("--apply-all"),
+            rewrite.then_some("--rewrite"),
+            yes.then_some("--yes"),
+        ]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
+        let replacement = "ota detect --candidate-out .ota/candidates/detect.json";
+        let error = format!(
+            "repo-level detect mutation flags {} were removed; detection is read-only and contract mutation requires a reviewed candidate",
+            removed_flags.join(", ")
+        );
+        return match format {
+            OutputFormat::Text => CommandOutput::failure_with_code(
+                command_message_failure_text(
+                    "DETECT",
+                    "legacy mutation flags",
+                    "Legacy detect mutation was removed",
+                    &format!("detect_legacy_mutation_removed: {error}"),
+                    &[
+                        format!("create a review artifact with `{replacement}`"),
+                        String::from(
+                            "apply additions with `ota contract apply-candidate <candidate> --write`; rewrite and removal have no replacement carrier",
+                        ),
+                    ],
+                ),
+                2,
+            ),
+            OutputFormat::Json => CommandOutput::failure_with_code(
+                to_json_value(json!({
+                    "ok": false,
+                    "path": path.map(|path| path.display().to_string()).unwrap_or_else(|| String::from(".")),
+                    "written": false,
+                    "code": "detect_legacy_mutation_removed",
+                    "removed_flags": removed_flags,
+                    "replacement": replacement,
+                    "error": error
+                })),
+                2,
+            ),
+        };
+    }
     let root = resolve_repo_path(path);
     let contract_path = root.join(DEFAULT_CONTRACT_FILE);
     let path_display = contract_path.display().to_string();
@@ -35547,126 +35591,9 @@ pub fn detect(
         false
     } else if contract {
         true
-    } else if merge || rewrite {
-        dry_run
     } else {
         dry_run || !write
     };
-    if merge && !contract_path.exists() {
-        let error = if dry_run {
-            format!(
-                "`ota detect --merge --dry-run` requires an existing `ota.yaml`{}",
-                format_next_timeline(&[String::from(
-                    "use `ota detect --dry-run` to review a first contract",
-                )]),
-            )
-        } else {
-            format!(
-                "`ota detect --merge` requires an existing `ota.yaml`{}",
-                format_next_timeline(&[
-                    String::from("use `ota detect --write` to write a first contract"),
-                    String::from("use `ota detect --dry-run` to review one"),
-                ]),
-            )
-        };
-        let next = if dry_run {
-            format!("ota detect --dry-run {}", compact_repo_path(&root))
-        } else {
-            format!("ota detect --write {}", compact_repo_path(&root))
-        };
-        return finalize_debug(
-            match format {
-                OutputFormat::Text => CommandOutput::failure(command_message_failure_text(
-                    "DETECT",
-                    "ota detect --merge",
-                    "Existing contract is required",
-                    &error,
-                    &[],
-                )),
-                OutputFormat::Json => CommandOutput::failure(to_json(&DetectFailure {
-                    ok: false,
-                    path: &path_display,
-                    written: false,
-                    error: &error,
-                    next: Some(&next),
-                })),
-            },
-            debug,
-            debug_lines,
-        );
-    }
-    if rewrite && !contract_path.exists() {
-        let error = if dry_run {
-            format!(
-                "`ota detect --rewrite --dry-run` requires an existing `ota.yaml`{}",
-                format_next_timeline(&[String::from(
-                    "use `ota detect --dry-run` to review a first contract",
-                )]),
-            )
-        } else {
-            format!(
-                "`ota detect --rewrite` requires an existing `ota.yaml`{}",
-                format_next_timeline(&[
-                    String::from("use `ota detect --write` to write a first contract"),
-                    String::from("use `ota detect --dry-run` to review one"),
-                ]),
-            )
-        };
-        let next = if dry_run {
-            format!("ota detect --dry-run {}", compact_repo_path(&root))
-        } else {
-            format!("ota detect --write {}", compact_repo_path(&root))
-        };
-        return finalize_debug(
-            match format {
-                OutputFormat::Text => CommandOutput::failure(command_message_failure_text(
-                    "DETECT",
-                    "ota detect --rewrite",
-                    "Existing contract is required",
-                    &error,
-                    &[],
-                )),
-                OutputFormat::Json => CommandOutput::failure(to_json(&DetectFailure {
-                    ok: false,
-                    path: &path_display,
-                    written: false,
-                    error: &error,
-                    next: Some(&next),
-                })),
-            },
-            debug,
-            debug_lines,
-        );
-    }
-    if rewrite && !dry_run && !yes {
-        let error = format!(
-            "`ota detect --rewrite` is destructive and requires `--yes`{}",
-            format_next_timeline(&[
-                String::from("run `ota detect --rewrite --dry-run` to preview replacement"),
-                String::from("run `ota detect --rewrite --yes` to apply replacement"),
-            ]),
-        );
-        return finalize_debug(
-            match format {
-                OutputFormat::Text => CommandOutput::failure(command_message_failure_text(
-                    "DETECT",
-                    "ota detect --rewrite",
-                    "Rewrite confirmation is required",
-                    &error,
-                    &[],
-                )),
-                OutputFormat::Json => CommandOutput::failure(to_json(&DetectFailure {
-                    ok: false,
-                    path: &path_display,
-                    written: false,
-                    error: &error,
-                    next: Some("ota detect --rewrite --dry-run"),
-                })),
-            },
-            debug,
-            debug_lines,
-        );
-    }
     finalize_debug(
         match detect_repo(&root) {
             Ok(report) if let Some(candidate_out) = candidate_out => {
@@ -35684,15 +35611,8 @@ pub fn detect(
                         )),
                     };
                 }
-                let comparison = compare_detected_contract(
-                    &contract_path,
-                    &report,
-                    if rewrite {
-                        DetectRemovalScope::RewriteImpact
-                    } else {
-                        DetectRemovalScope::Drift
-                    },
-                );
+                let comparison =
+                    compare_detected_contract(&contract_path, &report, DetectRemovalScope::Drift);
                 let selected_fields = apply.iter().cloned().collect::<BTreeSet<_>>();
                 let comparison =
                     selected_detect_comparison(comparison.as_ref(), &report, &selected_fields);
@@ -35704,15 +35624,10 @@ pub fn detect(
                     .expect("serializing detected contract should not fail");
                 match format {
                     OutputFormat::Text => {
-                        let mut stdout = if merge {
-                            format_command_header("DETECT MERGE PREVIEW", &compact_root_display)
-                        } else if rewrite {
-                            format_command_header("DETECT REWRITE PREVIEW", &compact_root_display)
-                        } else {
-                            format_command_header("DETECT PREVIEW", &compact_root_display)
-                        };
+                        let mut stdout =
+                            format_command_header("DETECT PREVIEW", &compact_root_display);
                         stdout.push_str(&format!("\n\n{}", format_mode_line("dry-run (no write)")));
-                        let comparison_mode = detect_preview_mode(merge, rewrite);
+                        let comparison_mode = DetectComparisonMode::Preview;
                         let comparison_first = comparison
                             .as_ref()
                             .is_some_and(|comparison| comparison.existing_contract);
@@ -35771,8 +35686,6 @@ pub fn detect(
                     })),
                 }
             }
-            Ok(report) if merge => write_detected_merge(report, apply, apply_all, format),
-            Ok(report) if rewrite => write_detected_rewrite(report, format),
             Ok(report) => write_detected_contract(report, format),
             Err(error) => {
                 let error = error.to_string();
@@ -36381,7 +36294,15 @@ pub fn apply_contract_candidate(
         .as_ref()
         .expect("candidate projection was checked above");
 
-    let current = match detect_repo(&root).and_then(|report| report.source_bound_candidate()) {
+    let current = match detect_repo(&root).and_then(|report| {
+        if candidate.profile == Some(CandidateProfile::DetectConservativeFirstContractV1) {
+            build_conservative_first_contract_candidate(&report)
+                .map(|(capture, _)| capture)
+                .map_err(crate::detector::DetectError::Candidate)
+        } else {
+            report.source_bound_candidate()
+        }
+    }) {
         Ok(current) => current,
         Err(error) => {
             return failure(
@@ -36401,8 +36322,6 @@ pub fn apply_contract_candidate(
         );
     }
     let semantic_no_op = write
-        && candidate.existing_contract_snapshot_identity
-            != current.candidate.existing_contract_snapshot_identity
         && current_contract_semantic_identity(&root)
             .ok()
             .flatten()
@@ -36517,14 +36436,21 @@ pub fn apply_contract_candidate(
                 &candidate.identity,
             )
             .map(Some),
-            None => write_candidate_contract_create_new(
-                _write_lock
+            None => {
+                let guard = _write_lock
                     .as_ref()
-                    .expect("write mode retains a protected repository directory"),
-                contract,
-                candidate.existing_contract_snapshot_identity.as_deref(),
-            )
-            .map(|_| None),
+                    .expect("write mode retains a protected repository directory");
+                if candidate.profile == Some(CandidateProfile::DetectConservativeFirstContractV1) {
+                    write_profile_candidate_contract_create_new(guard, &candidate, contract)
+                } else {
+                    write_candidate_contract_create_new(
+                        guard,
+                        contract,
+                        candidate.existing_contract_snapshot_identity.as_deref(),
+                    )
+                }
+                .map(|_| None)
+            }
         };
         if let Err(error) = publication {
             let (error, code) = match error {
@@ -37360,12 +37286,6 @@ fn write_candidate_contract_create_new(
     contract: &Contract,
     expected_base_identity: Option<&str>,
 ) -> Result<(), CandidatePublicationError> {
-    if expected_base_identity.is_some() {
-        return Err(CandidatePublicationError::PrePublication(String::from(
-            "candidate publication refuses to replace an existing ota.yaml; review the candidate and apply the contract through an owned update flow",
-        )));
-    }
-
     let bytes = serde_yaml::to_string(contract)
         .map_err(|error| {
             CandidatePublicationError::PrePublication(format!(
@@ -37373,6 +37293,72 @@ fn write_candidate_contract_create_new(
             ))
         })?
         .into_bytes();
+    write_candidate_contract_bytes_create_new(guard, &bytes, expected_base_identity)
+}
+
+fn write_profile_candidate_contract_create_new(
+    guard: &CandidateApplicationWriteGuard,
+    candidate: &ContractCandidate,
+    contract: &Contract,
+) -> Result<(), CandidatePublicationError> {
+    let document = derive_candidate_application_document(candidate, None).map_err(|error| {
+        CandidatePublicationError::PrePublication(format!(
+            "failed to derive profile candidate document: {error}"
+        ))
+    })?;
+    let bytes = serde_yaml::to_string(&document)
+        .map_err(|error| {
+            CandidatePublicationError::PrePublication(format!(
+                "failed to serialize profile candidate document: {error}"
+            ))
+        })?
+        .into_bytes();
+    let parsed = std::str::from_utf8(&bytes)
+        .map_err(|error| CandidatePublicationError::PrePublication(error.to_string()))
+        .and_then(|yaml| {
+            parse_contract_str(Path::new(DEFAULT_CONTRACT_FILE), yaml).map_err(|error| {
+                CandidatePublicationError::PrePublication(format!(
+                    "profile candidate document is invalid: {error}"
+                ))
+            })
+        })?;
+    let parsed_identity = semantic_contract_identity(&parsed).map_err(|error| {
+        CandidatePublicationError::PrePublication(format!(
+            "failed to identify profile candidate document: {error}"
+        ))
+    })?;
+    let expected_identity = semantic_contract_identity(contract).map_err(|error| {
+        CandidatePublicationError::PrePublication(format!(
+            "failed to identify projected contract: {error}"
+        ))
+    })?;
+    if parsed_identity != expected_identity {
+        return Err(CandidatePublicationError::PrePublication(String::from(
+            "profile candidate document does not match the verified projected contract",
+        )));
+    }
+    #[cfg(unix)]
+    {
+        write_candidate_contract_bytes_create_new(guard, &bytes, None)
+    }
+    #[cfg(not(unix))]
+    {
+        write_candidate_contract_create_new(guard, contract, None)
+    }
+}
+
+#[cfg(unix)]
+fn write_candidate_contract_bytes_create_new(
+    guard: &CandidateApplicationWriteGuard,
+    bytes: &[u8],
+    expected_base_identity: Option<&str>,
+) -> Result<(), CandidatePublicationError> {
+    if expected_base_identity.is_some() {
+        return Err(CandidatePublicationError::PrePublication(String::from(
+            "candidate publication refuses to replace an existing ota.yaml; review the candidate and apply the contract through an owned update flow",
+        )));
+    }
+
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_nanos())
@@ -37396,7 +37382,7 @@ fn write_candidate_contract_create_new(
         )));
     }
     let mut file = unsafe { File::from_raw_fd(fd) };
-    if let Err(error) = file.write_all(&bytes).and_then(|_| file.sync_all()) {
+    if let Err(error) = file.write_all(bytes).and_then(|_| file.sync_all()) {
         let cleanup = remove_candidate_publication_temporary(&guard.root_directory, &temporary)
             .err()
             .map(|cleanup| format!("; temporary cleanup failed: {cleanup}"))
@@ -38037,14 +38023,9 @@ fn contextualize_repo_command(token: &str, contract_path: &Path) -> Option<Strin
         "ota check" => Some("ota check"),
         "ota tasks --use" => Some("ota tasks --use"),
         "ota detect --dry-run" | "ota detect --dry-run ." => Some("ota detect --dry-run"),
-        "ota detect --merge --dry-run" | "ota detect --merge --dry-run ." => {
-            Some("ota detect --merge --dry-run")
+        "ota detect --candidate-out .ota/candidates/detect.json" => {
+            Some("ota detect --candidate-out .ota/candidates/detect.json")
         }
-        "ota detect --merge" | "ota detect --merge ." => Some("ota detect --merge"),
-        "ota detect --rewrite --dry-run" | "ota detect --rewrite --dry-run ." => {
-            Some("ota detect --rewrite --dry-run")
-        }
-        "ota detect --rewrite" | "ota detect --rewrite ." => Some("ota detect --rewrite"),
         "ota agents --write" => Some("ota agents --write"),
         _ if token.starts_with("ota run ") => Some(token),
         _ if token.starts_with("ota doctor --member ") => Some(token),
@@ -38054,11 +38035,7 @@ fn contextualize_repo_command(token: &str, contract_path: &Path) -> Option<Strin
 
     if matches!(
         normalized,
-        "ota detect --dry-run"
-            | "ota detect --merge --dry-run"
-            | "ota detect --merge"
-            | "ota detect --rewrite --dry-run"
-            | "ota detect --rewrite"
+        "ota detect --dry-run" | "ota detect --candidate-out .ota/candidates/detect.json"
     ) {
         return Some(command_for_repo_from_contract_path(
             normalized,
@@ -41001,18 +40978,19 @@ fn write_detected_contract(report: DetectReport, format: OutputFormat) -> Comman
     let path_display = contract_path.display().to_string();
     let compact_path_display = compact_contract_path(&contract_path);
     let compact_root_display = compact_repo_path(&report.root);
-    let toolchain_opportunities = detect_toolchain_opportunities(&report);
     if contract_path.exists() {
-        let next = format!("ota detect --merge --dry-run {}", compact_root_display);
-        let highlighted_path = paint_code(&compact_path_display);
-        let highlighted_next = paint_code(&format!(
-            "ota detect --merge --dry-run {}",
+        let next = format!(
+            "ota detect --candidate-out .ota/candidates/detect.json {}",
             compact_root_display
-        ));
+        );
+        let highlighted_path = paint_code(&compact_path_display);
+        let highlighted_next = paint_code(&next);
         let error = format!(
-            "`{}` already exists; refusing to overwrite an existing contract{}",
+            "`{}` already exists; detect --write is create-new-only{}",
             highlighted_path,
-            format_next_timeline(&[format!("review detected changes with `{highlighted_next}`",)]),
+            format_next_timeline(&[format!(
+                "create a review candidate with `{highlighted_next}`",
+            )]),
         );
         return match format {
             OutputFormat::Text => CommandOutput::failure(error),
@@ -41026,87 +41004,64 @@ fn write_detected_contract(report: DetectReport, format: OutputFormat) -> Comman
         };
     }
 
-    let Some(detected_candidate) = build_detect_write_candidate(&report) else {
-        let stderr = render_detect_write_blocked_error(&report);
-        let next = command_for_repo("ota detect --dry-run", &report.root);
-        return match format {
-            OutputFormat::Text => CommandOutput::failure(stderr),
-            OutputFormat::Json => CommandOutput::failure(to_json(&DetectFailure {
-                ok: false,
-                path: &path_display,
-                written: false,
-                error: &stderr,
-                next: Some(&next),
-            })),
-        };
-    };
-    let mut candidate = detected_candidate.clone();
-    apply_detected_starter_contract_defaults(&mut candidate, &report);
-    apply_detected_agent_boundary(&mut candidate, &report);
-    let detect_field_paths = detect_field_paths(&detected_candidate);
-    let detect_field_admission = detect_field_admission_for_write(&report, &detected_candidate);
-    let detect_field_source_class =
-        detect_field_source_class_for_write(&report, &detected_candidate);
-    let mut document = serde_yaml::to_value(&candidate)
-        .expect("serializing detected write candidate should not fail");
-    if let Err(error) = record_detect_owned_fields(
-        &mut document,
-        &detect_field_paths,
-        Some(&detect_field_admission),
-        Some(&detect_field_source_class),
-    ) {
-        return match format {
-            OutputFormat::Text => CommandOutput::failure(error),
-            OutputFormat::Json => CommandOutput::failure(to_json(&DetectFailure {
-                ok: false,
-                path: &path_display,
-                written: false,
-                error: &error,
-                next: None,
-            })),
-        };
-    }
-    let config = detect_json_config_value(&document);
-    let yaml = serde_yaml::to_string(&document)
-        .expect("serializing detected write candidate should not fail");
-
-    match parse_contract_str(&contract_path, &yaml)
-        .map_err(|error| error.to_string())
-        .and_then(|contract| {
-            validate_contract_with_path(&contract, Some(&contract_path))
-                .map_err(|error| error.to_string())
-        }) {
-        Ok(()) => {}
-        Err(_) => {
-            let stderr = render_detect_write_blocked_error(&report);
-            let next = command_for_repo("ota detect --dry-run", &report.root);
+    let write_lock = match acquire_candidate_application_lock(&report.root) {
+        Ok(lock) => lock,
+        Err(error) => {
             return match format {
-                OutputFormat::Text => CommandOutput::failure(stderr),
+                OutputFormat::Text => CommandOutput::failure(error),
                 OutputFormat::Json => CommandOutput::failure(to_json(&DetectFailure {
                     ok: false,
                     path: &path_display,
                     written: false,
-                    error: &stderr,
-                    next: Some(&next),
+                    error: &error,
+                    next: None,
                 })),
             };
         }
-    }
-
-    if let Err(error) = ensure_ota_state_gitignored(&report.root) {
-        return match format {
-            OutputFormat::Text => CommandOutput::failure(error),
-            OutputFormat::Json => CommandOutput::failure(to_json(&DetectFailure {
-                ok: false,
-                path: &path_display,
-                written: false,
-                error: &error,
-                next: None,
-            })),
+    };
+    let current_report = match detect_repo(&report.root) {
+        Ok(report) => report,
+        Err(error) => {
+            let error =
+                format!("failed to re-derive repository truth under the write lock: {error}");
+            return match format {
+                OutputFormat::Text => CommandOutput::failure(error),
+                OutputFormat::Json => CommandOutput::failure(to_json(&DetectFailure {
+                    ok: false,
+                    path: &path_display,
+                    written: false,
+                    error: &error,
+                    next: None,
+                })),
+            };
+        }
+    };
+    let (candidate_capture, projected_contract) =
+        match build_conservative_first_contract_candidate(&current_report) {
+            Ok(candidate) => candidate,
+            Err(error) => {
+                let next = command_for_repo("ota detect --dry-run", &report.root);
+                return match format {
+                    OutputFormat::Text => CommandOutput::failure(error),
+                    OutputFormat::Json => CommandOutput::failure(to_json(&DetectFailure {
+                        ok: false,
+                        path: &path_display,
+                        written: false,
+                        error: &error,
+                        next: Some(&next),
+                    })),
+                };
+            }
         };
-    }
-
-    match fs::write(&contract_path, yaml) {
+    let candidate = candidate_capture.candidate;
+    let candidate_report = DetectReport {
+        root: current_report.root.clone(),
+        contract: candidate_capture.contract,
+        inferences: candidate_capture.inferences,
+    };
+    let toolchain_opportunities = detect_toolchain_opportunities(&candidate_report);
+    match write_profile_candidate_contract_create_new(&write_lock, &candidate, &projected_contract)
+    {
         Ok(()) => match format {
             OutputFormat::Text => {
                 let highlighted_written = paint_code(&compact_path_display);
@@ -41128,8 +41083,8 @@ fn write_detected_contract(report: DetectReport, format: OutputFormat) -> Comman
                 ok: true,
                 path: &path_display,
                 written: true,
-                config,
-                inferred: &report.inferences,
+                config: detect_json_config_value(&projected_contract),
+                inferred: &candidate_report.inferences,
                 toolchain_opportunities: toolchain_opportunities
                     .iter()
                     .map(|opportunity| opportunity.advisory.clone())
@@ -41141,19 +41096,37 @@ fn write_detected_contract(report: DetectReport, format: OutputFormat) -> Comman
                 candidate: None,
             })),
         },
-        Err(error) => {
-            let error = format!("failed to write `{}`: {}", compact_path_display, error);
-            match format {
-                OutputFormat::Text => CommandOutput::failure(error),
-                OutputFormat::Json => CommandOutput::failure(to_json(&DetectFailure {
-                    ok: false,
-                    path: &path_display,
-                    written: false,
-                    error: &error,
-                    next: None,
-                })),
+        Err(error) => match error {
+            CandidatePublicationError::PrePublication(error) => {
+                let error = format!("failed to write `{compact_path_display}`: {error}");
+                match format {
+                    OutputFormat::Text => CommandOutput::failure(error),
+                    OutputFormat::Json => CommandOutput::failure(to_json(&DetectFailure {
+                        ok: false,
+                        path: &path_display,
+                        written: false,
+                        error: &error,
+                        next: None,
+                    })),
+                }
             }
-        }
+            CandidatePublicationError::DurabilityUncertain(error) => match format {
+                OutputFormat::Text => CommandOutput::failure(format!(
+                    "candidate_write_durability_uncertain: ota.yaml was published, but durability could not be confirmed: {error}"
+                )),
+                OutputFormat::Json => CommandOutput::failure(to_json_value(json!({
+                    "ok": false,
+                    "path": path_display,
+                    "written": true,
+                    "code": "candidate_write_durability_uncertain",
+                    "error": error,
+                    "next": "inspect ota.yaml before retrying"
+                }))),
+            },
+            CandidatePublicationError::CommittedButWorktreeUnsynced { .. } => {
+                unreachable!("the create-new carrier cannot commit a Git update")
+            }
+        },
     }
 }
 
@@ -41164,6 +41137,100 @@ fn build_detect_write_candidate(report: &DetectReport) -> Option<DetectContract>
     }
     widen_detect_write_candidate(report, &mut detected_candidate);
     Some(detected_candidate)
+}
+
+fn build_conservative_first_contract_candidate(
+    report: &DetectReport,
+) -> Result<(crate::detector::SourceBoundCandidateCapture, Contract), String> {
+    let mut capture = report
+        .conservative_first_contract_source_capture()
+        .map_err(|error| format!("failed to capture candidate source truth: {error}"))?;
+    let candidate_report = DetectReport {
+        root: report.root.clone(),
+        contract: capture.contract.clone(),
+        inferences: capture.inferences.clone(),
+    };
+    let Some(detected_candidate) = build_detect_write_candidate(&candidate_report) else {
+        return Err(render_detect_write_blocked_error(&candidate_report));
+    };
+    let mut configured = detected_candidate.clone();
+    apply_detected_starter_contract_defaults(&mut configured, &candidate_report);
+    apply_detected_agent_boundary(&mut configured, &candidate_report);
+    let detect_field_paths = detect_field_paths(&detected_candidate);
+    let detect_field_admission =
+        detect_field_admission_for_write(&candidate_report, &detected_candidate);
+    let detect_field_source_class =
+        detect_field_source_class_for_write(&candidate_report, &detected_candidate);
+    let mut document = serde_yaml::to_value(&configured)
+        .map_err(|error| format!("failed to serialize conservative candidate: {error}"))?;
+    record_detect_owned_fields(
+        &mut document,
+        &detect_field_paths,
+        Some(&detect_field_admission),
+        Some(&detect_field_source_class),
+    )?;
+    let yaml = serde_yaml::to_string(&document)
+        .map_err(|error| format!("failed to serialize conservative candidate: {error}"))?;
+    let contract_path = candidate_report.root.join(DEFAULT_CONTRACT_FILE);
+    let contract = parse_contract_str(&contract_path, &yaml).map_err(|error| error.to_string())?;
+    validate_contract_with_path(&contract, Some(&contract_path))
+        .map_err(|error| error.to_string())?;
+
+    let mut contract_value = serde_json::to_value(&document)
+        .map_err(|error| format!("failed to normalize conservative candidate: {error}"))?;
+    let object = contract_value.as_object_mut().ok_or_else(|| {
+        String::from("conservative candidate contract did not normalize to an object")
+    })?;
+    if object.remove("version") != Some(json!(1)) {
+        return Err(String::from(
+            "conservative candidate must produce contract version 1",
+        ));
+    }
+    let changes = std::mem::take(object)
+        .into_iter()
+        .map(|(field, value)| CandidateChange {
+            subject: CandidateSubject::new([field]),
+            field_family: String::from("conservative_first_contract_profile"),
+            operation: CandidateOperation::Add,
+            proposed_value: Some(value),
+            evidence: Vec::new(),
+            execution_closure: None,
+            confidence: CandidateConfidence::High,
+            disposition: CandidateDisposition::Applicable,
+        })
+        .collect::<Vec<_>>();
+
+    let mut candidate = capture.candidate.clone();
+    candidate.schema_version = CONSERVATIVE_FIRST_CONTRACT_CANDIDATE_SCHEMA_VERSION;
+    candidate.profile = Some(CandidateProfile::DetectConservativeFirstContractV1);
+    candidate.existing_contract_snapshot_identity = None;
+    candidate.implementation_identity = semantic_contract_identity(&(
+        "ota.detect",
+        "detect-conservative-first-contract-v1",
+        env!("CARGO_PKG_VERSION"),
+    ))
+    .map_err(|error| format!("failed to identify conservative candidate profile: {error}"))?;
+    candidate.changes = changes;
+    candidate.application_projection = derive_candidate_application_projection(&candidate, None)
+        .map_err(|error| error.to_string())?
+        .map(|(projection, _)| projection);
+    candidate
+        .finalize_identities()
+        .map_err(|error| error.to_string())?;
+    candidate
+        .verify_identities()
+        .map_err(|error| error.to_string())?;
+    let projected = verify_candidate_application_projection(&candidate, None)
+        .map_err(|error| error.to_string())?;
+    if semantic_contract_identity(&projected).map_err(|error| error.to_string())?
+        != semantic_contract_identity(&contract).map_err(|error| error.to_string())?
+    {
+        return Err(String::from(
+            "conservative candidate projection did not reproduce the built contract",
+        ));
+    }
+    capture.candidate = candidate;
+    Ok((capture, projected))
 }
 
 fn widen_detect_write_candidate(report: &DetectReport, candidate: &mut DetectContract) {
@@ -41213,657 +41280,11 @@ fn is_promotable_java_detect_write_task(name: &str, task: &DetectTask) -> bool {
     }
 }
 
-fn protected_path_for_write(contract: &Contract, root: &Path, target: &Path) -> Option<String> {
-    let agent = contract.agent.as_ref()?;
-    let relative = target.strip_prefix(root).unwrap_or(target);
-    let relative = relative.to_string_lossy().replace('\\', "/");
-
-    agent.protected_paths.iter().find_map(|protected| {
-        let protected = protected.trim().replace('\\', "/");
-        let protected = protected.trim_start_matches("./").trim_end_matches('/');
-        if protected.is_empty() {
-            return None;
-        }
-
-        if relative == protected || relative.starts_with(&format!("{protected}/")) {
-            Some(protected.to_string())
-        } else {
-            None
-        }
-    })
-}
-
 fn ensure_ota_state_gitignored(root: &Path) -> Result<(), String> {
     if let Some(action) = plan_ota_state_gitignore_fix(root)? {
         apply_ota_state_gitignore_fix(&action)?;
     }
     Ok(())
-}
-
-fn write_detected_merge(
-    report: DetectReport,
-    apply: &[String],
-    apply_all: bool,
-    format: OutputFormat,
-) -> CommandOutput {
-    let contract_path = report.root.join(DEFAULT_CONTRACT_FILE);
-    let path_display = contract_path.display().to_string();
-    let compact_path_display = compact_contract_path(&contract_path);
-    let toolchain_opportunities = detect_toolchain_opportunities(&report);
-    let existing_contract = match load_contract(&contract_path) {
-        Ok(contract) => contract,
-        Err(error) => {
-            let error = format!(
-                "{}{}",
-                error,
-                format_next_timeline(&[
-                    format!(
-                        "run `ota validate {compact_path_display}` to repair the existing contract"
-                    ),
-                    format!(
-                        "then rerun `ota detect --merge --apply <field name> {}` to apply selected fields",
-                        compact_path_display
-                    ),
-                ])
-            );
-            return match format {
-                OutputFormat::Text => {
-                    set_failure_locus(Some(String::from("ota detect --merge --apply")));
-                    CommandOutput::failure(error)
-                }
-                OutputFormat::Json => CommandOutput::failure(to_json(&DetectFailure {
-                    ok: false,
-                    path: &path_display,
-                    written: false,
-                    error: &error,
-                    next: None,
-                })),
-            };
-        }
-    };
-
-    let comparison =
-        build_detect_comparison(&existing_contract, &report, DetectRemovalScope::Drift);
-    // Merge/apply must stay inference-backed. Projected defaults in the detected
-    // contract are not merge-eligible unless detector emitted an explicit
-    // high-confidence inference for that exact field.
-    let high_confidence_fields = detect_high_confidence_inference_fields(&report.inferences)
-        .into_iter()
-        .collect::<BTreeSet<_>>();
-
-    let apply_all = apply_all || apply.iter().any(|field| field == ".");
-    let selected_fields = apply
-        .iter()
-        .filter(|field| field.as_str() != ".")
-        .cloned()
-        .collect::<BTreeSet<_>>();
-    let comparison_fields = comparison
-        .changes
-        .iter()
-        .map(|change| change.field.clone())
-        .collect::<BTreeSet<_>>();
-    if !apply_all && !selected_fields.is_empty() && selected_fields.is_disjoint(&comparison_fields)
-    {
-        let requested = selected_fields
-            .iter()
-            .cloned()
-            .collect::<Vec<_>>()
-            .join(", ");
-        let available = comparison_fields
-            .iter()
-            .cloned()
-            .collect::<Vec<_>>()
-            .join(", ");
-        let error = format!(
-            "selected field(s) not present in current detect comparison: {requested}{}",
-            format_next_timeline(&[
-                String::from("run `ota detect --dry-run .` to review available detected changes"),
-                if available.is_empty() {
-                    String::from("run `ota detect --merge .` to apply eligible mergeable fields")
-                } else {
-                    format!(
-                        "run `ota detect --merge --apply <field name> .` for one of: {available}"
-                    )
-                },
-            ])
-        );
-        return match format {
-            OutputFormat::Text => {
-                set_failure_locus(Some(String::from("ota detect --merge --apply")));
-                CommandOutput::failure(error)
-            }
-            OutputFormat::Json => CommandOutput::failure(to_json(&DetectFailure {
-                ok: false,
-                path: &path_display,
-                written: false,
-                error: &error,
-                next: Some("ota detect --dry-run ."),
-            })),
-        };
-    }
-
-    let selected_changes = comparison
-        .changes
-        .iter()
-        .filter(|change| {
-            if !apply_all && selected_fields.is_empty() && change.status != "add" {
-                return false;
-            }
-            if !apply_all && !selected_fields.is_empty() && !selected_fields.contains(&change.field)
-            {
-                return false;
-            }
-            detect_change_is_high_confidence(change, &high_confidence_fields)
-        })
-        .collect::<Vec<_>>();
-
-    if selected_changes.is_empty() {
-        return match format {
-            OutputFormat::Text => {
-                let mut stdout = format_command_header("DETECT MERGE", &compact_path_display);
-                stdout.push_str(&format!("\n\n{}\n", render_status_line("NO CHANGES")));
-                stdout.push_str(&format!("\n{}\n", paint_section_title("Result")));
-                stdout.push_str(&format!(
-                    "\n {}  No high-confidence mergeable changes were found",
-                    summary_bullet()
-                ));
-                render_detect_comparison_section(
-                    &mut stdout,
-                    Some(&comparison),
-                    DetectComparisonMode::MergePreview,
-                );
-                render_toolchain_opportunity_section(&mut stdout, &toolchain_opportunities);
-                CommandOutput::success(stdout)
-            }
-            OutputFormat::Json => CommandOutput::success(to_json(&DetectSuccess {
-                ok: true,
-                path: &path_display,
-                written: false,
-                config: detect_json_config_value(&report.contract),
-                inferred: &report.inferences,
-                toolchain_opportunities: toolchain_opportunities
-                    .iter()
-                    .map(|opportunity| opportunity.advisory.clone())
-                    .collect(),
-                comparison: Some(&comparison),
-                candidate_path: None,
-                candidate_published: None,
-                candidate_publication: None,
-                candidate: None,
-            })),
-        };
-    }
-
-    let contents = match fs::read_to_string(&contract_path) {
-        Ok(contents) => contents,
-        Err(error) => {
-            let error = format!("failed to read `{}`: {}", compact_path_display, error);
-            return match format {
-                OutputFormat::Text => {
-                    set_failure_locus(Some(String::from("ota detect --merge --apply")));
-                    CommandOutput::failure(error)
-                }
-                OutputFormat::Json => CommandOutput::failure(to_json(&DetectFailure {
-                    ok: false,
-                    path: &path_display,
-                    written: false,
-                    error: &error,
-                    next: None,
-                })),
-            };
-        }
-    };
-
-    let mut document: YamlValue = match serde_yaml::from_str(&contents) {
-        Ok(document) => document,
-        Err(error) => {
-            let error = format!(
-                "failed to parse existing contract `{}` for merge: {}{}",
-                compact_path_display,
-                error,
-                format_next_timeline(&[
-                    format!(
-                        "run `ota validate {compact_path_display}` to repair the existing contract"
-                    ),
-                    format!(
-                        "then rerun `ota detect --merge --apply <field name> {}` to apply selected fields",
-                        compact_path_display
-                    ),
-                ]),
-            );
-            return match format {
-                OutputFormat::Text => CommandOutput::failure(error),
-                OutputFormat::Json => CommandOutput::failure(to_json(&DetectFailure {
-                    ok: false,
-                    path: &path_display,
-                    written: false,
-                    error: &error,
-                    next: None,
-                })),
-            };
-        }
-    };
-
-    let mut applied = Vec::new();
-    for change in selected_changes {
-        if apply_detect_change(&mut document, change) {
-            let owned_fields = vec![change.field.clone()];
-            let field_admission = direct_detect_field_admission(&owned_fields);
-            let field_source_class = change
-                .source_class
-                .clone()
-                .map(|source_class| BTreeMap::from([(change.field.clone(), source_class)]));
-            if let Err(error) = record_detect_owned_fields(
-                &mut document,
-                &owned_fields,
-                Some(&field_admission),
-                field_source_class.as_ref(),
-            ) {
-                let error = format!(
-                    "{}{}",
-                    error,
-                    format_next_timeline(&[format!(
-                        "repair the conflicting metadata path and rerun `ota detect --merge {}`",
-                        compact_repo_path(&report.root)
-                    )]),
-                );
-                return match format {
-                    OutputFormat::Text => CommandOutput::failure(error),
-                    OutputFormat::Json => CommandOutput::failure(to_json(&DetectFailure {
-                        ok: false,
-                        path: &path_display,
-                        written: false,
-                        error: &error,
-                        next: None,
-                    })),
-                };
-            }
-            applied.push(DetectComparisonChange {
-                field: change.field.clone(),
-                status: change.status,
-                existing: change.existing.clone(),
-                detected: change.detected.clone(),
-                owner_kind: change.owner_kind.clone(),
-                ownership: change.ownership.clone(),
-                provenance: change.provenance.clone(),
-                provenance_key: change.provenance_key.clone(),
-                source: change.source.clone(),
-                source_class: change.source_class.clone(),
-                confidence: change.confidence,
-            });
-        }
-    }
-
-    let config = detect_json_config_value(&document);
-    let yaml = match serde_yaml::to_string(&document) {
-        Ok(yaml) => yaml,
-        Err(error) => {
-            let error = format!(
-                "failed to serialize merged contract `{}`: {}",
-                compact_path_display, error
-            );
-            return match format {
-                OutputFormat::Text => CommandOutput::failure(error),
-                OutputFormat::Json => CommandOutput::failure(to_json(&DetectFailure {
-                    ok: false,
-                    path: &path_display,
-                    written: false,
-                    error: &error,
-                    next: None,
-                })),
-            };
-        }
-    };
-
-    if let Err(error) = parse_contract_str(&contract_path, &yaml)
-        .map_err(|error| error.to_string())
-        .and_then(|contract| {
-            validate_contract_with_path(&contract, Some(&contract_path))
-                .map_err(|error| error.to_string())
-        })
-    {
-        return match format {
-            OutputFormat::Text => CommandOutput::failure(error),
-            OutputFormat::Json => CommandOutput::failure(to_json(&DetectFailure {
-                ok: false,
-                path: &path_display,
-                written: false,
-                error: &error,
-                next: None,
-            })),
-        };
-    }
-
-    if let Some(protected_path) =
-        protected_path_for_write(&existing_contract, &report.root, &contract_path)
-    {
-        let error =
-            format!("refusing to write protected path `{protected_path}` from existing contract");
-        return match format {
-            OutputFormat::Text => CommandOutput::failure(error),
-            OutputFormat::Json => CommandOutput::failure(to_json(&DetectFailure {
-                ok: false,
-                path: &path_display,
-                written: false,
-                error: &error,
-                next: None,
-            })),
-        };
-    }
-
-    if let Err(error) = ensure_ota_state_gitignored(&report.root) {
-        return match format {
-            OutputFormat::Text => CommandOutput::failure(error),
-            OutputFormat::Json => CommandOutput::failure(to_json(&DetectFailure {
-                ok: false,
-                path: &path_display,
-                written: false,
-                error: &error,
-                next: None,
-            })),
-        };
-    }
-
-    match fs::write(&contract_path, yaml) {
-        Ok(()) => match format {
-            OutputFormat::Text => {
-                let post_write_comparison =
-                    compare_detected_contract(&contract_path, &report, DetectRemovalScope::Drift);
-                let mut next_steps = vec![format!(
-                    "run `{}` to confirm the updated contract is structurally sound",
-                    command_for_repo_contract_target("ota validate", &contract_path)
-                )];
-                if let Some(comparison) = post_write_comparison.as_ref() {
-                    if !comparison.changes.is_empty() {
-                        next_steps.push(format!(
-                            "run `{}` to review remaining add-only detected changes without dropping existing fields",
-                            command_for_repo_contract_target(
-                                "ota detect --merge --dry-run",
-                                &contract_path,
-                            )
-                        ));
-                    }
-                    if !comparison.removals.is_empty() {
-                        next_steps.push(format!(
-                            "run `{}` to review rewrite-only drift when the current contract is stale",
-                            command_for_repo_contract_target(
-                                "ota detect --rewrite --dry-run",
-                                &contract_path,
-                            )
-                        ));
-                    }
-                }
-                if next_steps.len() == 1 {
-                    next_steps.extend(
-                        repo_contract_write_next_steps(&contract_path)
-                            .into_iter()
-                            .skip(1),
-                    );
-                }
-                let mut stdout = format_command_header("DETECT MERGE", &compact_path_display);
-                stdout.push_str(&format!("\n\n{}\n", render_status_line("MERGED")));
-                stdout.push_str(&format!("\n{}\n", paint_section_title("Result")));
-                let applied_title = if selected_fields.is_empty() {
-                    "Applied high-confidence additions"
-                } else {
-                    "Applied selected high-confidence changes"
-                };
-                stdout.push_str(&format!("\n {}  {applied_title}", summary_bullet()));
-                render_detect_change_section(&mut stdout, applied_title, &applied);
-                render_detect_comparison_section(
-                    &mut stdout,
-                    post_write_comparison.as_ref(),
-                    DetectComparisonMode::MergeResult,
-                );
-                render_toolchain_opportunity_section(&mut stdout, &toolchain_opportunities);
-                stdout.push_str(&format_next_timeline(&next_steps));
-                CommandOutput::success(stdout)
-            }
-            OutputFormat::Json => {
-                let post_write_comparison =
-                    compare_detected_contract(&contract_path, &report, DetectRemovalScope::Drift);
-                CommandOutput::success(to_json(&DetectSuccess {
-                    ok: true,
-                    path: &path_display,
-                    written: true,
-                    config,
-                    inferred: &report.inferences,
-                    toolchain_opportunities: toolchain_opportunities
-                        .iter()
-                        .map(|opportunity| opportunity.advisory.clone())
-                        .collect(),
-                    comparison: post_write_comparison.as_ref(),
-                    candidate_path: None,
-                    candidate_published: None,
-                    candidate_publication: None,
-                    candidate: None,
-                }))
-            }
-        },
-        Err(error) => {
-            let error = format!("failed to write `{}`: {}", compact_path_display, error);
-            match format {
-                OutputFormat::Text => CommandOutput::failure(error),
-                OutputFormat::Json => CommandOutput::failure(to_json(&DetectFailure {
-                    ok: false,
-                    path: &path_display,
-                    written: false,
-                    error: &error,
-                    next: None,
-                })),
-            }
-        }
-    }
-}
-
-fn write_detected_rewrite(report: DetectReport, format: OutputFormat) -> CommandOutput {
-    let contract_path = report.root.join(DEFAULT_CONTRACT_FILE);
-    let path_display = contract_path.display().to_string();
-    let compact_path_display = compact_contract_path(&contract_path);
-    let toolchain_opportunities = detect_toolchain_opportunities(&report);
-    let existing_contract = match load_contract(&contract_path) {
-        Ok(contract) => contract,
-        Err(error) => {
-            let error = error.to_string();
-            return match format {
-                OutputFormat::Text => CommandOutput::failure(error),
-                OutputFormat::Json => CommandOutput::failure(to_json(&DetectFailure {
-                    ok: false,
-                    path: &path_display,
-                    written: false,
-                    error: &error,
-                    next: None,
-                })),
-            };
-        }
-    };
-    let comparison =
-        compare_detected_contract(&contract_path, &report, DetectRemovalScope::RewriteImpact);
-
-    let mut document = match serde_yaml::to_value(&report.contract) {
-        Ok(document) => document,
-        Err(error) => {
-            let error = format!(
-                "failed to serialize rewritten contract `{}`: {}",
-                compact_path_display, error
-            );
-            return match format {
-                OutputFormat::Text => CommandOutput::failure(error),
-                OutputFormat::Json => CommandOutput::failure(to_json(&DetectFailure {
-                    ok: false,
-                    path: &path_display,
-                    written: false,
-                    error: &error,
-                    next: None,
-                })),
-            };
-        }
-    };
-    let owned_fields = detect_field_paths(&report.contract);
-    let field_admission = direct_detect_field_admission(&owned_fields);
-    let field_source_class = detect_field_source_class_for_write(&report, &report.contract);
-    if let Err(error) = record_detect_owned_fields(
-        &mut document,
-        &owned_fields,
-        Some(&field_admission),
-        Some(&field_source_class),
-    ) {
-        return match format {
-            OutputFormat::Text => CommandOutput::failure(error),
-            OutputFormat::Json => CommandOutput::failure(to_json(&DetectFailure {
-                ok: false,
-                path: &path_display,
-                written: false,
-                error: &error,
-                next: None,
-            })),
-        };
-    }
-    let config = detect_json_config_value(&document);
-    let yaml = match serde_yaml::to_string(&document) {
-        Ok(yaml) => yaml,
-        Err(error) => {
-            let error = format!(
-                "failed to serialize rewritten contract `{}`: {}",
-                compact_path_display, error
-            );
-            return match format {
-                OutputFormat::Text => CommandOutput::failure(error),
-                OutputFormat::Json => CommandOutput::failure(to_json(&DetectFailure {
-                    ok: false,
-                    path: &path_display,
-                    written: false,
-                    error: &error,
-                    next: None,
-                })),
-            };
-        }
-    };
-
-    if let Err(error) = parse_contract_str(&contract_path, &yaml)
-        .map_err(|error| error.to_string())
-        .and_then(|contract| {
-            validate_contract_with_path(&contract, Some(&contract_path))
-                .map_err(|error| error.to_string())
-        })
-    {
-        return match format {
-            OutputFormat::Text => CommandOutput::failure(error),
-            OutputFormat::Json => CommandOutput::failure(to_json(&DetectFailure {
-                ok: false,
-                path: &path_display,
-                written: false,
-                error: &error,
-                next: None,
-            })),
-        };
-    }
-
-    if let Some(protected_path) =
-        protected_path_for_write(&existing_contract, &report.root, &contract_path)
-    {
-        let error =
-            format!("refusing to write protected path `{protected_path}` from existing contract");
-        return match format {
-            OutputFormat::Text => CommandOutput::failure(error),
-            OutputFormat::Json => CommandOutput::failure(to_json(&DetectFailure {
-                ok: false,
-                path: &path_display,
-                written: false,
-                error: &error,
-                next: None,
-            })),
-        };
-    }
-
-    let backup_path = match create_timestamped_backup(&contract_path) {
-        Ok(path) => path,
-        Err(error) => {
-            return match format {
-                OutputFormat::Text => CommandOutput::failure(error),
-                OutputFormat::Json => CommandOutput::failure(to_json(&DetectFailure {
-                    ok: false,
-                    path: &path_display,
-                    written: false,
-                    error: &error,
-                    next: None,
-                })),
-            };
-        }
-    };
-
-    if let Err(error) = ensure_ota_state_gitignored(&report.root) {
-        return match format {
-            OutputFormat::Text => CommandOutput::failure(error),
-            OutputFormat::Json => CommandOutput::failure(to_json(&DetectFailure {
-                ok: false,
-                path: &path_display,
-                written: false,
-                error: &error,
-                next: None,
-            })),
-        };
-    }
-
-    match fs::write(&contract_path, yaml) {
-        Ok(()) => match format {
-            OutputFormat::Text => {
-                let mut stdout = format_command_header("DETECT REWRITE", &compact_path_display);
-                stdout.push_str(&format!("\n\n{}\n", render_status_line("REWRITTEN")));
-                stdout.push_str(&format!("\n{}\n", paint_section_title("Result")));
-                stdout.push_str(&format!(
-                    "\n {}  Wrote {}",
-                    summary_bullet(),
-                    paint_code(&compact_contract_path(&contract_path))
-                ));
-                stdout.push_str(&format!(
-                    "\n {}  {} {}",
-                    summary_bullet(),
-                    paint_key("Backup:"),
-                    paint_code(&compact_contract_path(&backup_path))
-                ));
-                render_detect_comparison_section(
-                    &mut stdout,
-                    comparison.as_ref(),
-                    DetectComparisonMode::RewriteResult,
-                );
-                render_toolchain_opportunity_section(&mut stdout, &toolchain_opportunities);
-                stdout.push_str(&format_next_timeline(&repo_contract_write_next_steps(
-                    &contract_path,
-                )));
-                CommandOutput::success(stdout)
-            }
-            OutputFormat::Json => CommandOutput::success(to_json(&DetectSuccess {
-                ok: true,
-                path: &path_display,
-                written: true,
-                config,
-                inferred: &report.inferences,
-                toolchain_opportunities: toolchain_opportunities
-                    .iter()
-                    .map(|opportunity| opportunity.advisory.clone())
-                    .collect(),
-                comparison: comparison.as_ref(),
-                candidate_path: None,
-                candidate_published: None,
-                candidate_publication: None,
-                candidate: None,
-            })),
-        },
-        Err(error) => {
-            let error = format!("failed to write `{}`: {}", compact_path_display, error);
-            match format {
-                OutputFormat::Text => CommandOutput::failure(error),
-                OutputFormat::Json => CommandOutput::failure(to_json(&DetectFailure {
-                    ok: false,
-                    path: &path_display,
-                    written: false,
-                    error: &error,
-                    next: None,
-                })),
-            }
-        }
-    }
 }
 
 fn create_timestamped_backup(path: &Path) -> Result<PathBuf, String> {
@@ -49648,18 +49069,14 @@ fn compare_detected_contract(
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 enum DetectComparisonMode {
     Preview,
-    MergePreview,
-    RewritePreview,
-    MergeResult,
-    RewriteResult,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DetectRemovalScope {
     Drift,
-    RewriteImpact,
 }
 
 fn build_detect_comparison(
@@ -49672,21 +49089,8 @@ fn build_detect_comparison(
         changes: collect_detect_changes(existing, &report.contract, &report.inferences),
         removals: match removal_scope {
             DetectRemovalScope::Drift => collect_detect_drift_removals(existing, &report.contract),
-            DetectRemovalScope::RewriteImpact => {
-                collect_detect_removals(existing, &report.contract)
-            }
         },
         error: None,
-    }
-}
-
-fn detect_preview_mode(merge: bool, rewrite: bool) -> DetectComparisonMode {
-    if merge {
-        DetectComparisonMode::MergePreview
-    } else if rewrite {
-        DetectComparisonMode::RewritePreview
-    } else {
-        DetectComparisonMode::Preview
     }
 }
 
@@ -49713,17 +49117,12 @@ fn detect_preview_next_steps(
                     ),
                 ]
             } else if has_removals {
-                vec![
-                    format!(
-                        "run `ota detect --merge --dry-run {root_display}` to review add-only changes without dropping existing fields"
-                    ),
-                    format!(
-                        "run `ota detect --rewrite --dry-run {root_display}` to review a full replacement contract when the current one is stale"
-                    ),
-                ]
+                vec![format!(
+                    "run `ota detect --candidate-out .ota/candidates/detect.json {root_display}` to review additions; stale removals remain explicit and unapplied"
+                )]
             } else if has_changes {
                 vec![format!(
-                    "run `ota detect --merge --dry-run {root_display}` to review add-only changes without dropping existing fields"
+                    "run `ota detect --candidate-out .ota/candidates/detect.json {root_display}` to review detected additions"
                 )]
             } else {
                 vec![format!(
@@ -49731,21 +49130,6 @@ fn detect_preview_next_steps(
                 )]
             }
         }
-        DetectComparisonMode::MergePreview => {
-            let mut lines = vec![format!(
-                "run `ota detect --merge {root_display}` to apply add-only high-confidence fields after review"
-            )];
-            if has_removals {
-                lines.push(format!(
-                    "run `ota detect --rewrite --dry-run {root_display}` to review a full replacement that would drop stale fields"
-                ));
-            }
-            lines
-        }
-        DetectComparisonMode::RewritePreview => vec![format!(
-            "run `ota detect --rewrite --yes {root_display}` to replace the existing contract after review"
-        )],
-        DetectComparisonMode::MergeResult | DetectComparisonMode::RewriteResult => Vec::new(),
     }
 }
 
@@ -50685,19 +50069,7 @@ fn detect_named_drift_count(entries: &[DetectNamedDriftSummary]) -> usize {
 fn detect_drift_why(mode: DetectComparisonMode, object: &str) -> String {
     match mode {
         DetectComparisonMode::Preview => format!(
-            "Current repo signals no longer support {object} in the existing contract. Only ota-merged fields are treated as drift here; `ota detect --merge` will not remove them automatically, and rewrite is the full replacement path."
-        ),
-        DetectComparisonMode::MergePreview => format!(
-            "Current repo signals no longer support {object}. Only ota-merged fields are listed here; `ota detect --merge` is additive-only and will not remove these stale entries from `ota.yaml`."
-        ),
-        DetectComparisonMode::MergeResult => format!(
-            "Current repo signals no longer support {object}. Only ota-merged fields are listed here; `ota detect --merge` left these stale entries unchanged because merge is additive-only."
-        ),
-        DetectComparisonMode::RewritePreview => format!(
-            "Running `ota detect --rewrite --yes` would remove {object} from `ota.yaml`. `merged` means ota previously wrote the field; `manual` means the field is hand-authored or explicitly pinned."
-        ),
-        DetectComparisonMode::RewriteResult => format!(
-            "The rewritten contract should no longer contain {object}. `manual` labels identify hand-authored fields that the full replacement dropped."
+            "Current repo signals no longer support {object} in the existing contract. Detection reports this drift but does not remove declared truth; candidate application remains additive."
         ),
     }
 }
@@ -51252,24 +50624,6 @@ fn explain_next_lines(value: &str, indent: &str, fallback_max_width: usize) -> O
     Some(lines)
 }
 
-fn render_detect_change_section(
-    stdout: &mut String,
-    title: &str,
-    changes: &[DetectComparisonChange],
-) {
-    if changes.is_empty() {
-        return;
-    }
-
-    stdout.push_str(&format!("\n\n{}:", paint_section_title(title)));
-    for change in changes {
-        stdout.push_str(&format!("\n{}  {}", list_bullet(), change.field));
-        stdout.push_str(": added `");
-        stdout.push_str(&change.detected);
-        stdout.push('`');
-    }
-}
-
 fn render_diff_summary_text(summary: &DiffSummary) -> String {
     let mut stdout = String::from("\n\n");
     stdout.push_str(&paint_section_title("Summary"));
@@ -51764,54 +51118,6 @@ fn selected_detect_comparison(
     })
 }
 
-fn apply_detect_change(document: &mut YamlValue, change: &DetectComparisonChange) -> bool {
-    let Some(root) = document.as_mapping_mut() else {
-        return false;
-    };
-
-    let segments = change.field.split('.').collect::<Vec<_>>();
-    match segments.as_slice() {
-        ["project", "name"] => set_string_field(root, &segments, &change.detected),
-        ["execution", "default_context"] | ["execution", "contexts", _, "backend"] => {
-            set_string_field(root, &segments, &change.detected)
-        }
-        ["toolchains", _, "provider"]
-        | ["toolchains", _, "version"]
-        | ["toolchains", _, "fulfillment"]
-        | ["toolchains", _, "package_managers", _] => {
-            set_string_field(root, &segments, &change.detected)
-        }
-        ["runtimes", _] | ["tools", _] => set_string_field(root, &segments, &change.detected),
-        ["env", "sources", _, "kind"] | ["env", "sources", _, "path"] => {
-            set_env_source_string_field(root, &segments, &change.detected)
-        }
-        ["env", "sources", _, "must_exist"] => {
-            set_env_source_bool_field(root, &segments, &change.detected)
-        }
-        ["services", _, "manager", _]
-        | ["services", _, "provider"]
-        | ["services", _, "start"]
-        | ["services", _, "stop"]
-        | ["services", _, "healthcheck"]
-        | ["services", _, "endpoints", _, "context"]
-        | ["services", _, "endpoints", _, "address"]
-        | ["services", _, "readiness", "from"]
-        | ["services", _, "readiness", "endpoint"]
-        | ["services", _, "readiness", "kind"] => {
-            set_string_field(root, &segments, &change.detected)
-        }
-        ["services", _, "endpoints", _, "port"] => {
-            set_integer_field(root, &segments, &change.detected)
-        }
-        ["tasks", _, "run"] | ["tasks", _, "description"] => {
-            set_string_field(root, &segments, &change.detected)
-        }
-        ["tasks", _, "internal"] => set_bool_field(root, &segments, &change.detected),
-        ["tasks", _, "safe_for_agent"] => set_bool_field(root, &segments, &change.detected),
-        _ => false,
-    }
-}
-
 fn detect_high_confidence_inference_fields(inferences: &[Inference]) -> Vec<String> {
     inferences
         .iter()
@@ -51990,14 +51296,6 @@ fn detect_field_source_class_for_write(
                 .cloned()
                 .map(|source_class| (field, source_class))
         })
-        .collect()
-}
-
-fn direct_detect_field_admission(fields: &[String]) -> BTreeMap<String, &'static str> {
-    fields
-        .iter()
-        .cloned()
-        .map(|field| (field, DETECT_FIELD_ADMISSION_DIRECT))
         .collect()
 }
 
@@ -53078,148 +52376,6 @@ fn workspace_merge_contract_provenance(
 
     provenance.sort_by(|left, right| left.field.cmp(&right.field));
     provenance
-}
-
-fn set_string_field(root: &mut Mapping, segments: &[&str], value: &str) -> bool {
-    if segments.len() < 2 {
-        return false;
-    }
-
-    let mut current = root;
-    for segment in &segments[..segments.len() - 1] {
-        let key = YamlValue::String((*segment).to_string());
-        let entry = current
-            .entry(key)
-            .or_insert_with(|| YamlValue::Mapping(Mapping::new()));
-        let Some(mapping) = entry.as_mapping_mut() else {
-            return false;
-        };
-        current = mapping;
-    }
-
-    let final_key = YamlValue::String(segments[segments.len() - 1].to_string());
-    current.insert(final_key, YamlValue::String(value.to_string()));
-    true
-}
-
-fn set_bool_field(root: &mut Mapping, segments: &[&str], value: &str) -> bool {
-    if segments.len() < 2 {
-        return false;
-    }
-    let parsed = match value {
-        "true" => true,
-        "false" => false,
-        _ => return false,
-    };
-
-    let mut current = root;
-    for segment in &segments[..segments.len() - 1] {
-        let key = YamlValue::String((*segment).to_string());
-        let entry = current
-            .entry(key)
-            .or_insert_with(|| YamlValue::Mapping(Mapping::new()));
-        let Some(mapping) = entry.as_mapping_mut() else {
-            return false;
-        };
-        current = mapping;
-    }
-
-    let final_key = YamlValue::String(segments[segments.len() - 1].to_string());
-    current.insert(final_key, YamlValue::Bool(parsed));
-    true
-}
-
-fn set_integer_field(root: &mut Mapping, segments: &[&str], value: &str) -> bool {
-    if segments.len() < 2 {
-        return false;
-    }
-    let Ok(parsed) = value.parse::<i64>() else {
-        return false;
-    };
-
-    let mut current = root;
-    for segment in &segments[..segments.len() - 1] {
-        let key = YamlValue::String((*segment).to_string());
-        let entry = current
-            .entry(key)
-            .or_insert_with(|| YamlValue::Mapping(Mapping::new()));
-        let Some(mapping) = entry.as_mapping_mut() else {
-            return false;
-        };
-        current = mapping;
-    }
-
-    let final_key = YamlValue::String(segments[segments.len() - 1].to_string());
-    current.insert(final_key, YamlValue::Number(parsed.into()));
-    true
-}
-
-fn ensure_env_sources_sequence<'a>(root: &'a mut Mapping) -> Option<&'a mut Vec<YamlValue>> {
-    let env_entry = root
-        .entry(YamlValue::String(String::from("env")))
-        .or_insert_with(|| YamlValue::Mapping(Mapping::new()));
-    let env_mapping = env_entry.as_mapping_mut()?;
-    let sources_entry = env_mapping
-        .entry(YamlValue::String(String::from("sources")))
-        .or_insert_with(|| YamlValue::Sequence(Vec::new()));
-    sources_entry.as_sequence_mut()
-}
-
-fn ensure_env_source_mapping<'a>(root: &'a mut Mapping, index: usize) -> Option<&'a mut Mapping> {
-    let sequence = ensure_env_sources_sequence(root)?;
-    while sequence.len() <= index {
-        sequence.push(YamlValue::Mapping(Mapping::new()));
-    }
-    let entry = sequence.get_mut(index)?;
-    if !entry.is_mapping() {
-        *entry = YamlValue::Mapping(Mapping::new());
-    }
-    entry.as_mapping_mut()
-}
-
-fn set_env_source_string_field(root: &mut Mapping, segments: &[&str], value: &str) -> bool {
-    let Some(index) = segments
-        .get(2)
-        .and_then(|segment| segment.parse::<usize>().ok())
-    else {
-        return false;
-    };
-    let Some(field_name) = segments.get(3) else {
-        return false;
-    };
-    let Some(mapping) = ensure_env_source_mapping(root, index) else {
-        return false;
-    };
-    mapping.insert(
-        YamlValue::String((*field_name).to_string()),
-        YamlValue::String(value.to_string()),
-    );
-    true
-}
-
-fn set_env_source_bool_field(root: &mut Mapping, segments: &[&str], value: &str) -> bool {
-    let parsed = match value {
-        "true" => true,
-        "false" => false,
-        _ => return false,
-    };
-    let Some(index) = segments
-        .get(2)
-        .and_then(|segment| segment.parse::<usize>().ok())
-    else {
-        return false;
-    };
-    let Some(field_name) = segments.get(3) else {
-        return false;
-    };
-    let Some(mapping) = ensure_env_source_mapping(root, index) else {
-        return false;
-    };
-    mapping.insert(
-        YamlValue::String((*field_name).to_string()),
-        YamlValue::Bool(parsed),
-    );
-    true
 }
 
 fn render_tasks_text(
@@ -59419,7 +58575,7 @@ fn doctor_finding_group_next(
                 String::from("install the native prerequisites, then rerun `ota doctor`")
             }),
         DoctorFindingGroupKind::ContractDrift => String::from(
-            "run `ota detect --merge --dry-run .` to review the comparison, then `ota detect --merge .`",
+            "run `ota detect --candidate-out .ota/candidates/detect.json .` to publish the reviewable additions; stale removals remain unapplied",
         ),
         DoctorFindingGroupKind::PolicySurface if has_provisioning_surface => String::from(
             "use `ota policy review` to inspect the active policy source, or keep these approved sources in mind when provisioning or bootstrap needs a governed path",
@@ -62975,10 +62131,7 @@ mod tests {
         render_validate_success_output, render_windows_uninstall_scheduled, run_execution_receipt,
         run_execution_receipt_with_shared, should_use_command_terminal_passthrough,
         strip_ansi_codes, stylize_text_failure, up_doctor_mode, windows_uninstall_script,
-        workspace_refresh_command, write_detected_merge,
-    };
-    use crate::detector::{
-        Confidence, DetectContract, DetectProject, DetectReport, DetectTask, Inference,
+        workspace_refresh_command,
     };
     use crate::doctor::ProvisioningDiagnostics;
     use crate::doctor::{DoctorMode, DoctorReport, Finding, FindingSeverity};
@@ -73834,211 +72987,6 @@ tasks:
     }
 
     #[test]
-    fn detect_merge_apply_can_write_generated_task_internal_field() {
-        let repo = tempfile::tempdir().expect("repo tempdir");
-        let contract_path = repo.path().join("ota.yaml");
-        fs::write(
-            &contract_path,
-            r#"
-version: 1
-project:
-  name: demo
-tasks:
-  setup:
-    run: npm install
-"#,
-        )
-        .expect("write existing contract");
-
-        let mut tasks = BTreeMap::new();
-        tasks.insert(
-            String::from("setup"),
-            DetectTask {
-                description: None,
-                run: String::from("npm install"),
-                command: None,
-                action: None,
-                prepare: None,
-                requirements: crate::schema::TaskRequirementsSpec::default(),
-                effects: crate::schema::TaskEffectsSpec::default(),
-                depends_on: Vec::new(),
-                notes: None,
-                internal: true,
-                safe_for_agent: false,
-            },
-        );
-        let report = DetectReport {
-            root: repo.path().to_path_buf(),
-            contract: DetectContract {
-                version: 1,
-                project: Some(DetectProject {
-                    name: String::from("demo"),
-                }),
-                tasks,
-                ..DetectContract::default()
-            },
-            inferences: vec![
-                Inference::new(
-                    String::from("tasks.setup.run"),
-                    String::from("npm install"),
-                    String::from("package.json#scripts.setup"),
-                    Confidence::High,
-                ),
-                Inference::new(
-                    String::from("tasks.setup.internal"),
-                    String::from("true"),
-                    String::from("package.json#scripts.setup"),
-                    Confidence::High,
-                ),
-            ],
-        };
-
-        let apply = vec![String::from("tasks.setup.internal")];
-        let output = write_detected_merge(report, &apply, false, OutputFormat::Json);
-
-        assert_eq!(output.exit_code, 0, "{}", output.stdout);
-        let json: serde_json::Value =
-            serde_json::from_str(&output.stdout).expect("parse detect merge json");
-        assert_eq!(json["ok"], true, "{}", output.stdout);
-        assert_eq!(json["written"], true, "{}", output.stdout);
-        assert_eq!(
-            json["config"]["tasks"]["setup"]["internal"],
-            serde_json::Value::Bool(true),
-            "{}",
-            output.stdout
-        );
-
-        let merged = fs::read_to_string(&contract_path).expect("read merged contract");
-        assert!(merged.contains("internal: true"), "{merged}");
-    }
-
-    #[test]
-    fn detect_merge_apply_rejects_generated_task_internal_without_high_confidence_run() {
-        let repo = tempfile::tempdir().expect("repo tempdir");
-        let contract_path = repo.path().join("ota.yaml");
-        fs::write(
-            &contract_path,
-            r#"
-version: 1
-project:
-  name: demo
-tasks:
-  setup:
-    run: npm install
-"#,
-        )
-        .expect("write existing contract");
-
-        let mut tasks = BTreeMap::new();
-        tasks.insert(
-            String::from("setup"),
-            DetectTask {
-                description: None,
-                run: String::from("npm install"),
-                command: None,
-                action: None,
-                prepare: None,
-                requirements: crate::schema::TaskRequirementsSpec::default(),
-                effects: crate::schema::TaskEffectsSpec::default(),
-                depends_on: Vec::new(),
-                notes: None,
-                internal: true,
-                safe_for_agent: false,
-            },
-        );
-        let report = DetectReport {
-            root: repo.path().to_path_buf(),
-            contract: DetectContract {
-                version: 1,
-                project: Some(DetectProject {
-                    name: String::from("demo"),
-                }),
-                tasks,
-                ..DetectContract::default()
-            },
-            inferences: vec![Inference::new(
-                String::from("tasks.setup.run"),
-                String::from("npm install"),
-                String::from("package.json#scripts.setup"),
-                Confidence::High,
-            )],
-        };
-
-        let apply = vec![String::from("tasks.setup.internal")];
-        let output = write_detected_merge(report, &apply, false, OutputFormat::Json);
-
-        assert_eq!(output.exit_code, 0, "{}", output.stdout);
-        let json: serde_json::Value =
-            serde_json::from_str(&output.stdout).expect("parse detect merge json");
-        assert_eq!(json["ok"], true, "{}", output.stdout);
-        assert_eq!(json["written"], false, "{}", output.stdout);
-
-        let merged = fs::read_to_string(&contract_path).expect("read merged contract");
-        assert!(!merged.contains("internal: true"), "{merged}");
-    }
-
-    #[test]
-    fn detect_merge_apply_appends_inferred_env_sources_without_overwriting_existing_entries() {
-        let repo = tempfile::tempdir().expect("repo tempdir");
-        let contract_path = repo.path().join("ota.yaml");
-        fs::write(
-            &contract_path,
-            r#"
-version: 1
-project:
-  name: demo
-env:
-  sources:
-    - kind: properties
-      path: custom.properties
-"#,
-        )
-        .expect("write existing contract");
-
-        let report = DetectReport {
-            root: repo.path().to_path_buf(),
-            contract: DetectContract {
-                version: 1,
-                project: Some(DetectProject {
-                    name: String::from("demo"),
-                }),
-                env: crate::schema::EnvConfig {
-                    vars: BTreeMap::new(),
-                    sources: vec![crate::schema::EnvSource {
-                        kind: crate::schema::EnvSourceKind::Dotenv,
-                        path: String::from(".env.local"),
-                        must_exist: false,
-                    }],
-                    profiles: BTreeMap::new(),
-                },
-                ..DetectContract::default()
-            },
-            inferences: vec![
-                Inference::new(
-                    String::from("env.sources.0.kind"),
-                    String::from("dotenv"),
-                    String::from(".env.local"),
-                    Confidence::High,
-                ),
-                Inference::new(
-                    String::from("env.sources.0.path"),
-                    String::from(".env.local"),
-                    String::from(".env.local"),
-                    Confidence::High,
-                ),
-            ],
-        };
-
-        let apply = vec![String::from(".")];
-        let output = write_detected_merge(report, &apply, false, OutputFormat::Json);
-
-        assert_eq!(output.exit_code, 0, "{}", output.stdout);
-        let merged = fs::read_to_string(&contract_path).expect("read merged contract");
-        assert!(merged.contains("path: custom.properties"), "{merged}");
-        assert!(merged.contains("path: .env.local"), "{merged}");
-    }
-
-    #[test]
     fn detect_dry_run_json_prefers_python_toolchain_contract_when_provider_is_shipped() {
         let repo = tempfile::tempdir().expect("repo tempdir");
         fs::write(
@@ -74366,68 +73314,6 @@ project:
             .find(|entry| entry["field"] == "tasks.test.run")
             .expect("task comparison change");
         assert_eq!(change["source_class"], "task_command", "{json}");
-    }
-
-    #[test]
-    fn detect_merge_records_field_source_class_metadata() {
-        let repo = tempfile::tempdir().expect("repo tempdir");
-        let contract_path = repo.path().join("ota.yaml");
-        fs::write(
-            &contract_path,
-            r#"
-version: 1
-project:
-  name: demo
-"#,
-        )
-        .expect("write existing contract");
-
-        let mut tasks = BTreeMap::new();
-        tasks.insert(
-            String::from("test"),
-            DetectTask {
-                description: None,
-                run: String::from("npm test"),
-                command: None,
-                action: None,
-                prepare: None,
-                requirements: crate::schema::TaskRequirementsSpec::default(),
-                effects: crate::schema::TaskEffectsSpec::default(),
-                depends_on: Vec::new(),
-                notes: None,
-                internal: false,
-                safe_for_agent: false,
-            },
-        );
-        let report = DetectReport {
-            root: repo.path().to_path_buf(),
-            contract: DetectContract {
-                version: 1,
-                project: Some(DetectProject {
-                    name: String::from("demo"),
-                }),
-                tasks,
-                ..DetectContract::default()
-            },
-            inferences: vec![Inference::new(
-                String::from("tasks.test.run"),
-                String::from("npm test"),
-                String::from("package.json#scripts.test"),
-                Confidence::High,
-            )],
-        };
-
-        let apply = vec![String::from("tasks.test.run")];
-        let output = write_detected_merge(report, &apply, false, OutputFormat::Json);
-
-        assert_eq!(output.exit_code, 0, "{}", output.stdout);
-        let merged = fs::read_to_string(&contract_path).expect("read merged contract");
-        let yaml: serde_yaml::Value = serde_yaml::from_str(&merged).expect("parse merged yaml");
-        assert_eq!(
-            yaml["metadata"]["ota"]["detect"]["field_source_class"]["tasks.test.run"].as_str(),
-            Some("task_command"),
-            "{merged}"
-        );
     }
 
     #[test]
@@ -82958,7 +81844,7 @@ tasks:
         render_detect_comparison_section(
             &mut stdout,
             Some(&comparison),
-            DetectComparisonMode::MergePreview,
+            DetectComparisonMode::Preview,
         );
         let text = strip_ansi_codes(&stdout);
         let normalized = text.split_whitespace().collect::<Vec<_>>().join(" ");
@@ -82970,8 +81856,7 @@ tasks:
         assert!(text.contains("Review task command drift (6 removals across 4 tasks)"));
         assert!(text.contains("Review task agent-safety drift (2 removals across 2 tasks)"));
         assert!(text.contains("Why: Current repo signals no longer support the commands below."));
-        assert!(text.contains("ota detect --merge"));
-        assert!(text.contains("stale entries"));
+        assert!(text.contains("candidate application remains additive"));
         assert!(text.contains(
             "Why: Current repo signals no longer support the `safe_for_agent` entries below."
         ));
@@ -83054,7 +81939,7 @@ tasks:
         render_detect_comparison_section(
             &mut stdout,
             Some(&comparison),
-            DetectComparisonMode::MergePreview,
+            DetectComparisonMode::Preview,
         );
         super::set_concise_mode(false);
 
@@ -83067,7 +81952,7 @@ tasks:
         assert!(text.contains("» Task `build`: 1 agent-safety removal"));
         assert!(text.contains("» Task `ci`: 3 command removals, 1 agent-safety removal"));
         assert!(!text.contains("Review task command drift"));
-        assert!(!text.contains("Why: Applying detect merge"));
+        assert!(!text.contains("Applying detect merge"));
         assert!(!text.contains("remove command `cargo fmt --check`"));
     }
 
@@ -83098,8 +81983,7 @@ tasks:
         assert!(normalized.contains(
             "Why: Current repo signals no longer support the commands below in the existing contract."
         ));
-        assert!(text.contains("ota detect --merge"));
-        assert!(normalized.contains("rewrite is the full replacement path"));
+        assert!(normalized.contains("candidate application remains additive"));
         assert!(normalized.contains("no additive changes detected against the existing contract"));
         assert!(!text.contains("Applying detect merge would remove"));
     }
@@ -83130,7 +82014,7 @@ tasks:
                     "`ota.yaml` still declares `tools.node` = `22`, but repo inspection under `.` no longer detects it",
                 ),
                 next: String::from(
-                    "run `ota detect --merge --dry-run .` to review the comparison, then `ota detect --merge .`",
+                    "run `ota detect --candidate-out .ota/candidates/detect.json .` to publish reviewable additions; stale removals remain unapplied",
                 ),
             },
             Finding {
@@ -83141,7 +82025,7 @@ tasks:
                     "`ota.yaml` still declares `tools.yq` = `4.52.5`, but repo inspection under `.` no longer detects it",
                 ),
                 next: String::from(
-                    "run `ota detect --merge --dry-run .` to review the comparison, then `ota detect --merge .`",
+                    "run `ota detect --candidate-out .ota/candidates/detect.json .` to publish reviewable additions; stale removals remain unapplied",
                 ),
             },
             Finding {
@@ -83166,9 +82050,8 @@ tasks:
         assert!(text.contains("1. Fix version mismatches (2)"));
         assert!(text.contains("2. Review contract drift (2)"));
         assert!(text.contains("Next:"));
-        assert!(text.contains("ota detect --merge --dry-run"));
-        assert!(text.contains("to review the comparison, then"));
-        assert!(text.contains("ota detect --merge"));
+        assert!(text.contains("ota detect --candidate-out .ota/candidates/detect.json"));
+        assert!(text.contains("stale removals remain unapplied"));
         assert!(text.contains("Context"));
         assert!(text.contains("Review active policy surfaces"));
         assert!(!text.contains("Code:"));
@@ -83375,7 +82258,7 @@ tasks:
                         "`ota.yaml` still declares `tools.maven` = `3.9.9`, but repo inspection under `.` now detects `*`",
                     ),
                     next: String::from(
-                        "run `ota detect --merge --dry-run .` to review the comparison, then `ota detect --merge .`",
+                        "run `ota detect --candidate-out .ota/candidates/detect.json .` to publish reviewable additions; stale removals remain unapplied",
                     ),
                 },
                 Finding {
@@ -83386,7 +82269,7 @@ tasks:
                         "`ota.yaml` still declares `tools.node` = `22`, but repo inspection under `.` now detects `*`",
                     ),
                     next: String::from(
-                        "run `ota detect --merge --dry-run .` to review the comparison, then `ota detect --merge .`",
+                        "run `ota detect --candidate-out .ota/candidates/detect.json .` to publish reviewable additions; stale removals remain unapplied",
                     ),
                 },
                 Finding {
@@ -83856,7 +82739,7 @@ tasks:
                         "`ota.yaml` still declares `tools.maven` = `3.9.9`, but repo inspection under `.` now detects `*`",
                     ),
                     next: String::from(
-                        "run `ota detect --merge --dry-run .` to review the comparison, then `ota detect --merge .`",
+                        "run `ota detect --candidate-out .ota/candidates/detect.json .` to publish reviewable additions; stale removals remain unapplied",
                     ),
                 },
                 Finding {
@@ -83867,7 +82750,7 @@ tasks:
                         "`ota.yaml` still declares `tools.node` = `22`, but repo inspection under `.` now detects `*`",
                     ),
                     next: String::from(
-                        "run `ota detect --merge --dry-run .` to review the comparison, then `ota detect --merge .`",
+                        "run `ota detect --candidate-out .ota/candidates/detect.json .` to publish reviewable additions; stale removals remain unapplied",
                     ),
                 },
                 Finding {

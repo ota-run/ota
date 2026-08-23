@@ -124,8 +124,9 @@ Use `ota detect --write .` when you want the detector-led authoring path instead
 Review the delta first:
 
 ```bash
-ota detect --merge --dry-run .
-ota detect --rewrite --dry-run .
+mkdir -p .ota/candidates
+ota detect --candidate-out .ota/candidates/detect.json .
+ota contract apply-candidate .ota/candidates/detect.json --json .
 ota validate
 ```
 
@@ -218,8 +219,8 @@ ota workspace up --stream
 
 Current merge behavior:
 
-- `ota detect --merge --dry-run` is the review path for existing contracts
-- `ota detect --merge` applies only additive `high` confidence missing fields
+- `ota detect --candidate-out` is the review path for existing contracts
+- `ota contract apply-candidate ... --write --carrier git` applies reviewed additions to a tracked existing contract
 - conflicting or lower-confidence changes stay review-only
 - when nothing eligible can be added, merge returns success with `written: false`
 

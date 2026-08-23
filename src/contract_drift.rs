@@ -87,8 +87,7 @@ pub(crate) fn append_contract_drift_findings(
                 change.detected
             ),
             format!(
-                "run `ota detect --merge --dry-run {}` to review the comparison, then `ota detect --merge {}` to apply matching updates",
-                compact_display_path(root),
+                "run `ota detect --candidate-out .ota/candidates/detect.json {}` to publish reviewed changes, then apply the candidate explicitly",
                 compact_display_path(root)
             ),
         ));
@@ -114,9 +113,8 @@ pub(crate) fn append_contract_drift_findings(
                     change.field, existing, source, change.detected
                 ),
                 format!(
-                    "review whether `{}` reflects the canonical verification lane or whether the workflow is carrying repo-specific drift, then run `ota detect --dry-run {}` or `ota detect --merge --dry-run {}` before changing either side",
+                    "review whether `{}` reflects the canonical verification lane or whether the workflow is carrying repo-specific drift, then run `ota detect --dry-run {}` or publish a candidate before changing either side",
                     source,
-                    compact_display_path(root),
                     compact_display_path(root)
                 ),
             )
@@ -132,9 +130,8 @@ pub(crate) fn append_contract_drift_findings(
                     change.field, existing, source, change.detected
                 ),
                 format!(
-                    "review whether `{}` or the repo contract is canonical, then run `ota detect --dry-run {}` or `ota detect --merge --dry-run {}` before changing either side",
+                    "review whether `{}` or the repo contract is canonical, then run `ota detect --dry-run {}` or publish a candidate before changing either side",
                     source,
-                    compact_display_path(root),
                     compact_display_path(root)
                 ),
             )
@@ -184,9 +181,8 @@ pub(crate) fn append_contract_drift_findings(
                 summary,
                 why,
                 format!(
-                    "review whether workflow verification or `{}` is canonical, then run `ota detect --dry-run {}` or `ota detect --merge --dry-run {}` before changing either side",
+                    "review whether workflow verification or `{}` is canonical, then run `ota detect --dry-run {}` or publish a candidate before changing either side",
                     change.field,
-                    compact_display_path(root),
                     compact_display_path(root)
                 ),
             ));
@@ -214,9 +210,8 @@ pub(crate) fn append_contract_drift_findings(
                 summary,
                 why,
                 format!(
-                    "review whether workflow verification or `{}` is canonical, then run `ota detect --dry-run {}` or `ota detect --merge --dry-run {}` before changing either side",
+                    "review whether workflow verification or `{}` is canonical, then run `ota detect --dry-run {}` or publish a candidate before changing either side",
                     change.field,
-                    compact_display_path(root),
                     compact_display_path(root)
                 ),
             ));
@@ -299,8 +294,7 @@ pub(crate) fn append_contract_drift_findings(
                 compact_display_path(root)
             ),
             format!(
-                "run `ota detect --merge --dry-run {}` to review the comparison, then `ota detect --merge {}` to apply matching updates",
-                compact_display_path(root),
+                "run `ota detect --candidate-out .ota/candidates/detect.json {}` to publish reviewed changes; stale removals remain unapplied",
                 compact_display_path(root)
             ),
         ));

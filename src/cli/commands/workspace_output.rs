@@ -359,7 +359,7 @@ mod tests {
                             "`ota.yaml` still declares `tools.maven` = `3.9.9`, but repo inspection under `.` now detects `*`",
                         ),
                         next: String::from(
-                            "run `ota detect --merge --dry-run .` to review the comparison, then `ota detect --merge .`",
+                            "run `ota detect --candidate-out .ota/candidates/detect.json .` to review changes, then apply the candidate explicitly",
                         ),
                     },
                     Finding {
@@ -370,7 +370,7 @@ mod tests {
                             "`ota.yaml` still declares `tools.node` = `22`, but repo inspection under `.` now detects `*`",
                         ),
                         next: String::from(
-                            "run `ota detect --merge --dry-run .` to review the comparison, then `ota detect --merge .`",
+                            "run `ota detect --candidate-out .ota/candidates/detect.json .` to review changes, then apply the candidate explicitly",
                         ),
                     },
                     Finding {

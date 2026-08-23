@@ -300,16 +300,27 @@ worktree after that observation; subsequent application re-derives repository tr
 when it differs. The carrier never pushes, rebases, amends, changes unrelated paths, accepts a
 detached `HEAD`, or silently converts existing `--write` calls into commits.
 
-Shipped `detect --merge --apply`, `--apply-all`, and `--rewrite --yes` retain their existing
-semantics during a compatibility window, but every contract-writing path must construct, validate,
-and atomically apply through the one shared candidate evaluator. They are compatibility UX, not a
-second write authority. They preserve documented selection and interaction semantics only; stale,
-identity, reproducibility, collision, and semantic-conflict refusals remain mandatory. Any changed
-exit behavior caused by those refusals is a documented compatibility tightening. Deprecation, if
-later chosen, must document the equivalent `apply-candidate` invocation and preserve an explicit
-write. Runnable and agent-safety promotion are explicitly excluded from that compatibility promise:
-they must use the shared fail-closed closure classifier and may downgrade prior inferred-safe output
-to ordinary runnable or `unknown` candidates.
+The compatibility window closes with the first owned existing-contract carrier. Repo-level
+`detect --merge`, `--apply`, `--apply-all`, `--rewrite`, and `--yes` are removed from the public
+CLI rather than preserved as a second mutation authority. Parser tombstones refuse them before
+repository detection, candidate construction, locking, or mutation, with stable text and JSON
+migration output. Read-only discovery remains `ota detect`; reviewable proposed additions remain
+`ota detect --candidate-out`; create-new application remains `ota contract apply-candidate --write`;
+and an existing tracked contract update requires the explicit Git carrier. `detect --write` remains
+a temporary first-contract-only convenience alias, but must construct and apply the same
+source-bound candidate through the create-new evaluator. It refuses when `ota.yaml` already exists.
+No command claims a replacement equivalent for rewrite: detection candidates cannot express
+replacement or removal without a separately versioned, reviewable operation model. Runnable and
+agent-safety promotion remain explicitly outside this compatibility change and must use the shared
+fail-closed closure classifier.
+
+Before routing `detect --write`, Ota must add a versioned conservative first-contract candidate
+profile. The general detection-review candidate intentionally carries unresolved review findings
+and only direct inference operations; it cannot silently become the historical starter writer.
+The profile must carry every conservative detector promotion, starter-owned default, generated
+metadata field, and attributed source transformation as canonical candidate operations, then derive
+the same complete validated projection through the shared evaluator. A profile that cannot produce
+that projection refuses rather than falling back to a direct YAML writer.
 
 ## Contract Quality View
 
@@ -391,8 +402,10 @@ semantic change.
    upgrades.
 6. Display V11.14 assurance only for its existing claim families; do not reload policy or
    re-observe sources independently within one command.
-7. Only then migrate legacy high-confidence writes internally to the candidate path while retaining
-   their documented compatibility semantics.
+7. Add the versioned conservative first-contract candidate profile, then route `detect --write`
+   through candidate creation and the create-new evaluator. Remove repo-level legacy mutation flags
+   with pre-admission migration refusals; preserve no rewrite/replacement alias until a reviewed
+   operation model exists.
 
 ## Acceptance Bar
 
@@ -424,8 +437,8 @@ semantic change.
   disagreement remains an explicit non-overwriting conflict;
 - the first registered legacy flat-toolchain-fulfillment migration proves raw version-aware loading,
   lossless mapping, unsupported-old-document refusal, and reviewed application;
-- candidate artifact creation, dry-run, write, stale/conflict/incomplete refusal, and legacy
-  mutation-command compatibility each have stable JSON and exit semantics;
+- candidate artifact creation, dry-run, write, stale/conflict/incomplete refusal, and removed
+  legacy mutation-flag migration refusals each have stable JSON and exit semantics;
 - candidate output uses create-new semantics; replacement accepts only a schema-valid prior Ota
   candidate and refuses arbitrary-file, symlink, and hardlink collisions;
 - application rejects malformed identity, incompatible detector/migration implementation, stale
@@ -434,7 +447,8 @@ semantic change.
   versioned byte-equivalent derivation contract explicitly permits the replacement;
 - applicable changes can write while unrelated unknown or unsupported entries remain visible;
   same-subject, semantic-prerequisite, and `--require-complete` gaps refuse;
-- every legacy mutation command exercises the same candidate evaluator and atomic apply path;
+- removed legacy mutation flags refuse before repository inspection or mutation; `detect --write`
+  uses the same candidate evaluator and create-new apply path;
 - upgrades are versioned, deterministic, reviewable, and refuse lossy or ambiguous migration;
 - `doctor`, `init`, `detect`, and candidate output share one command-scoped source observation set;
   V11.14 records are reused only when that command evaluates an existing supported claim family;

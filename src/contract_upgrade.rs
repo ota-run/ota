@@ -153,6 +153,7 @@ fn build_contract_upgrade_candidate_with_capture_hook(
         schema_version: CONTRACT_UPGRADE_CANDIDATE_SCHEMA_VERSION,
         identity: String::new(),
         kind: CandidateKind::Upgrade,
+        profile: None,
         logical_root: String::from("."),
         discovery_inventory_identity: String::new(),
         discovery_inventory: vec![DiscoveryInventoryEntry {

@@ -3249,7 +3249,7 @@ diagnosis, `container` when the report was produced with `ota doctor --mode cont
 execution context the findings describe without inferring it from the CLI invocation.
 
 When the repo signals no longer match the declared contract, `ota doctor --json` may include
-warning findings that describe the drift and point back to `ota detect --merge --dry-run` for the
+warning findings that describe the drift and point back to `ota detect --candidate-out` for the
 comparison preview. Drift findings also include optional `owner_kind`, `ownership`, and
 `provenance` fields so CI and editors can classify the mismatch as a repo-contract issue and
 trace the source of the comparison. When that drift provenance is present, `owner_kind` is
@@ -4712,8 +4712,8 @@ Failure example:
   "ok": false,
   "path": "./ota.yaml",
   "written": false,
-  "error": "`./ota.yaml` already exists; ota init is only for repos without an ota contract\n\nNext:\n▸  review the existing contract with `ota validate`\n▸  review the existing contract with `ota doctor`\n▸  compare detected repo signals with `ota detect --merge --dry-run`\n▸  apply detected add-only high-confidence fields now with `ota detect --merge`",
-  "next": "ota detect --merge --dry-run"
+  "error": "`./ota.yaml` already exists; ota init is only for repos without an ota contract\n\nNext:\n▸  review the existing contract with `ota validate`\n▸  review the existing contract with `ota doctor`\n▸  publish detected changes with `ota detect --candidate-out .ota/candidates/detect.json`",
+  "next": "ota detect --candidate-out .ota/candidates/detect.json"
 }
 ```
 
@@ -6041,14 +6041,13 @@ shape used by `ota clean --json` instead of this success shape.
 
 ## `ota detect --json`
 
-`ota detect --merge --json --dry-run` currently uses the same success shape as `ota detect --json
---dry-run`, but requires an existing contract and includes `comparison`.
+`ota detect --json` uses the same read-only success shape whether or not a contract exists. When
+`ota.yaml` exists, it includes `comparison` without granting mutation authority.
 
-`ota detect --merge --json` uses the same success shape with:
-
-- `written: true` when additive high-confidence fields were applied
-- `written: false` when there was nothing eligible to add
-- `config` is the detected candidate contract for preview-only results; when a detect write mode succeeds (`--write`, `--merge`, or `--rewrite` with `written: true`), `config` is the exact contract ota wrote to disk, including `metadata.ota.detect.field_ownership` and `metadata.ota.detect.field_admission`
+- `written: false` for ordinary detection and candidate publication
+- `config` is the detected candidate contract for preview-only results; when `--write` succeeds,
+  it is the exact first contract Ota wrote, including `metadata.ota.detect.field_ownership` and
+  `metadata.ota.detect.field_admission`
 - `config.metadata.ota.detect.field_admission[*]` is `direct` when ota wrote the field from direct high-confidence detector evidence and `promoted` when ota admitted the field through the conservative detect-write promotion policy
 - `config.metadata.ota.detect.field_source_class[*]` records the detector-governance class ota associated with each detect-owned field it wrote, such as `task_command` or `environment_toolchain`
 - `comparison` describing detected adds and updates against the existing contract
@@ -6056,7 +6055,7 @@ shape used by `ota clean --json` instead of this success shape.
 - `comparison.changes[*].ownership` is `repo_signals` for add candidates and `repo_contract` for updates against existing fields
 - `comparison.removals[*].ownership` is `repo_contract` because those entries describe stale declared contract data
 - `comparison.changes[*].owner_kind` is `detected` for add candidates, `manual` for default hand-authored existing fields, and `merged` when ota previously wrote the field and recorded it under `metadata.ota.detect.field_ownership`
-- `comparison.removals[*].owner_kind` is `merged` on normal drift surfaces, while rewrite preview can also surface `manual` removals because a full replacement would drop those fields
+- `comparison.removals[*].owner_kind` identifies detect-owned stale fields without implying that Ota will remove them
 - `comparison.*.provenance` preserves the stable machine label `repo_signals`
 - `comparison.*.provenance_key` is the stable machine label `repo_signals`
 - `comparison.changes[*].source`, `comparison.changes[*].source_class`, and `comparison.changes[*].confidence` copy the detector evidence for that proposed add or update so consumers do not need to join back to `inferred[*]`
@@ -6189,9 +6188,8 @@ form is the first owned existing-contract update path; ordinary `--write` remain
 }
 ```
 
-In conservative mixed-repo or legacy-repo cases, `comparison.changes` can still include `add`
-entries while `written` remains `false`. That means ota found possible additions, but none were
-eligible for automatic merge under the current high-confidence-only rule.
+In conservative mixed-repo or legacy-repo cases, `comparison.changes` can include `add` entries
+while `written` remains `false`. Apply only a reviewed candidate through `apply-candidate`.
 
 Failure example:
 
@@ -6200,10 +6198,14 @@ Failure example:
   "ok": false,
   "path": "./ota.yaml",
   "written": false,
-  "error": "`./ota.yaml` already exists; refusing to overwrite an existing contract\n\nNext:\n▸  review detected changes with `ota detect --merge --dry-run .`",
-  "next": "ota detect --merge --dry-run ."
+  "error": "`./ota.yaml` already exists; detect --write is create-new-only",
+  "next": "ota detect --candidate-out .ota/candidates/detect.json ."
 }
 ```
+
+Removed repo-level mutation flags return `code: "detect_legacy_mutation_removed"`, the exact
+`removed_flags`, and `replacement: "ota detect --candidate-out .ota/candidates/detect.json"`.
+They refuse before repository access. Rewrite/removal intentionally has no replacement carrier.
 
 ## `ota workspace up --json`
 

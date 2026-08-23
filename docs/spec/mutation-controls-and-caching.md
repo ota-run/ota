@@ -41,8 +41,8 @@ Mutation controls and caching support:
 ## Mutation principles
 
 - review-only commands must not mutate source contracts
-- merge commands may apply only the explicitly selected or eligible additive changes
-- rewrite commands are destructive and require explicit confirmation
+- candidate application may apply only explicit, reviewed operations
+- destructive replacement must not exist without a versioned operation model and owned carrier
 - policy-aware diagnosis remains read-only by default
 - hidden mutation paths are not allowed
 
@@ -51,14 +51,17 @@ Mutation controls and caching support:
 ota already exposes the core mutation boundaries through existing commands:
 
 - `ota detect --dry-run` is review-only
-- `ota detect --merge` applies additive high-confidence updates
-- `ota detect --merge --apply FIELD` applies only selected additions
-- `ota detect --merge --apply-all` applies all eligible additions
-- `ota detect --rewrite --yes` replaces the existing contract from regenerated output
+- `ota detect --candidate-out PATH` publishes reviewable source-bound changes
+- `ota contract apply-candidate PATH --write` creates only a missing contract
+- `ota contract apply-candidate PATH --write --carrier git` updates an existing tracked contract
+  through reviewed candidate operations and expected-HEAD compare-and-swap
+- removed repo-level `detect --merge`, `--apply`, `--apply-all`, `--rewrite`, and `--yes` flags
+  refuse before repository access with a stable migration code
 - `ota workspace detect --merge` adds discovered repos without overwriting existing entries
 - `ota workspace detect --rewrite --yes` replaces the workspace contract with a regenerated result
 
-These controls are intentional and must remain visible in the CLI and JSON outputs.
+Workspace mutation flags retain their separate existing semantics until that surface receives its
+own candidate/application model.
 
 ## Mutation visibility
 

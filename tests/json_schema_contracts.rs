@@ -1321,7 +1321,17 @@ fn detect_schema_includes_comparison_preview() {
     let shared = load_schema("docs/spec/json-schemas/shared.json");
     let candidate = load_schema("docs/spec/json-schemas/contract-candidate.json");
     let success = &schema["oneOf"][0]["properties"];
-    let failure = &schema["oneOf"][1]["properties"];
+    let failures = schema["oneOf"].as_array().expect("detect schema branches");
+    let failure = failures
+        .iter()
+        .map(|branch| &branch["properties"])
+        .find(|properties| properties.get("next").is_some())
+        .expect("detect failure branch with next action");
+    let removed_mutation = failures
+        .iter()
+        .map(|branch| &branch["properties"])
+        .find(|properties| properties["code"]["const"] == json!("detect_legacy_mutation_removed"))
+        .expect("removed mutation failure branch");
     let comparison = &success["comparison"]["properties"];
     let change = &comparison["changes"]["items"]["properties"];
     let removal = &comparison["removals"]["items"]["properties"];
@@ -1345,7 +1355,7 @@ fn detect_schema_includes_comparison_preview() {
     assert!(success.get("candidate").is_some());
     assert_eq!(
         candidate["properties"]["schema_version"]["enum"],
-        json!([1, 2])
+        json!([1, 2, 3])
     );
     assert!(candidate["properties"].get("identity").is_some());
     assert!(candidate["properties"].get("evidence_manifest").is_some());
@@ -1361,6 +1371,8 @@ fn detect_schema_includes_comparison_preview() {
             .is_some()
     );
     assert!(failure.get("next").is_some());
+    assert!(removed_mutation.get("removed_flags").is_some());
+    assert!(removed_mutation.get("replacement").is_some());
 }
 
 #[test]
@@ -1470,6 +1482,67 @@ fn contract_candidate_schema_rejects_noncanonical_detection_artifacts() {
         .expect("candidate object")
         .remove("existing_contract_snapshot_identity");
     assert!(!compiled.is_valid(&candidate));
+}
+
+#[test]
+fn contract_candidate_schema_separates_conservative_first_contract_profile() {
+    let schema = load_schema("docs/spec/json-schemas/contract-candidate.json");
+    let compiled = JSONSchema::options()
+        .with_draft(Draft::Draft202012)
+        .compile(&schema)
+        .expect("candidate schema should compile");
+    let digest = |value: char| format!("sha256:{}", value.to_string().repeat(64));
+    let candidate = json!({
+        "schema_version": 3,
+        "identity": digest('a'),
+        "kind": "detection",
+        "profile": "detect_conservative_first_contract_v1",
+        "logical_root": ".",
+        "discovery_inventory_identity": digest('b'),
+        "discovery_inventory": [],
+        "evidence_manifest_identity": digest('c'),
+        "evidence_manifest": [],
+        "implementation_identity": digest('d'),
+        "changes": [{
+            "subject": { "path": ["version"] },
+            "field_family": "conservative_first_contract_profile",
+            "operation": "add",
+            "proposed_value": 1,
+            "confidence": "high",
+            "disposition": "applicable"
+        }],
+        "application_projection": {
+            "identity": digest('e'),
+            "operations": [{
+                "subject": { "path": ["version"] },
+                "operation": "add",
+                "value": 1
+            }],
+            "resulting_contract_identity": digest('f')
+        }
+    });
+    assert!(compiled.is_valid(&candidate));
+
+    let mut missing_profile = candidate.clone();
+    missing_profile
+        .as_object_mut()
+        .expect("candidate object")
+        .remove("profile");
+    assert!(!compiled.is_valid(&missing_profile));
+
+    let mut downgraded = candidate.clone();
+    downgraded["schema_version"] = json!(1);
+    assert!(!compiled.is_valid(&downgraded));
+
+    let mut legacy_with_profile = candidate;
+    legacy_with_profile["schema_version"] = json!(1);
+    legacy_with_profile["changes"][0]["evidence"] = json!([{
+        "source_kind": "manifest",
+        "path": "package.json",
+        "content_identity": digest('0'),
+        "extraction": "name"
+    }]);
+    assert!(!compiled.is_valid(&legacy_with_profile));
 }
 
 #[test]

@@ -26,6 +26,14 @@
 
 ## Unreleased
 
+- Removed repo-level `ota detect --merge`, `--apply`, `--apply-all`, `--rewrite`, and `--yes` as
+  parallel contract writers. Hidden parser tombstones return `detect_legacy_mutation_removed`
+  before repository access and point to source-bound candidate review; rewrite/removal has no
+  misleading replacement until candidates can represent those operations. The temporary
+  first-contract-only `ota detect --write` alias now builds the schema-v3
+  `detect_conservative_first_contract_v1` profile and publishes its verified projection through
+  the same locked, atomic create-new carrier as `ota contract apply-candidate --write`.
+
 - Added `ota contract upgrade --candidate-out <path>` as the first versioned, lossless contract
   migration review surface. It recognizes legacy flat toolchain fulfillment, emits a schema-v2
   source-bound upgrade candidate with before/after semantic and resulting-content evidence, and

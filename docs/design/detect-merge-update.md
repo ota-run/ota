@@ -24,6 +24,10 @@
 
 # Detect Merge/Update Design
 
+> Historical design record. Repo-level `ota detect --merge`, `--apply`, `--apply-all`, `--rewrite`,
+> and `--yes` were removed in V11.22. Current mutation flows through a reviewed contract candidate
+> and `ota contract apply-candidate`; workspace mutation has a separate model.
+
 `ota detect` now has three trust levels of behavior:
 
 1. dry-run candidate output

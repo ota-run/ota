@@ -3002,12 +3002,6 @@ ota detect --candidate-out PATH [PATH]
 ota detect --candidate-out PATH --json [PATH]
 ota detect --write [PATH]
 ota detect --json --write [PATH]
-ota detect --merge --dry-run [PATH]
-ota detect --merge --apply FIELD [PATH]
-ota detect --merge --apply-all [PATH]
-ota detect --merge [PATH]
-ota detect --rewrite --dry-run [PATH]
-ota detect --rewrite --yes [PATH]
 ota detect [PATH]
 ```
 
@@ -3226,8 +3220,7 @@ Current behavior:
   `candidate_unsupported`, `candidate_write_failed`, and
   `candidate_write_durability_uncertain`, and
   `candidate_write_committed_worktree_unsynced`
-- does not grant agent-safe status or authorize unreviewed candidate application; legacy detect
-  mutation paths have not yet migrated to this evaluator
+- does not grant agent-safe status or authorize unreviewed candidate application
 - admits an upgrade `--write` only through `--carrier git`; a matching reapplication is a no-op
 
 Candidate artifact output from `ota detect --candidate-out` uses the same separate publication
@@ -3239,13 +3232,16 @@ Current write behavior:
 - `ota detect --write` writes a conservative detect-write candidate: high-confidence detected
   fields plus a narrow starter-owned subset ota can model structurally without broadening into a
   full starter rewrite
+- the first-write candidate uses the versioned `detect_conservative_first_contract_v1` profile,
+  binds its complete ordered operations, and is re-derived under the same repository lock and
+  create-new evaluator as `ota contract apply-candidate --write`
 - `ota detect --write` remains conservative even when `ota init` can write a valid starter
 - versioned `pnpm`/`yarn` package-manager-backed `package.json#engines.node` is high confidence
-  for detect write, merge, rewrite, ownership metadata, and drift comparison, and is written as
+  for detect write, ownership metadata, and drift comparison, and is written as
   canonical `toolchains.node` Corepack ownership so a detected Node contract does not silently omit
   the runtime or generate legacy split ownership
 - detected Go, Ruby, and .NET runtime/tool lanes now converge to canonical toolchain ownership on
-  write/merge (`toolchains.go`, `toolchains.ruby`, and `toolchains.dotnet` with structured
+  write (`toolchains.go`, `toolchains.ruby`, and `toolchains.dotnet` with structured
   fulfillment instead of legacy split ownership), and detected `tools.bundler` ownership folds
   into `toolchains.ruby.package_managers.bundler` instead of remaining split
 - Docker Compose service `start`, `stop`, and declared `healthcheck.test` commands are high
@@ -3260,47 +3256,16 @@ Current write behavior:
 - when no `ota.yaml` exists yet, preview guidance stays compare-first: `ota detect --contract` for exact detected text, `ota init --dry-run` for the conservative starter path, then `ota detect --write` for the first detected write
 - after a successful first detect write, text output uses explanatory `Next:` steps: validate the written contract, inspect the runnable task surface, review readiness with doctor, then preview preparation with `ota up --dry-run`
 
-Current merge-preview behavior:
+Removed repo-level mutation flags:
 
-- `ota detect --merge --dry-run` is a review-only mode
-- it requires an existing `ota.yaml`
-- it does not write
-- it reuses the comparison preview instead of applying changes, including stale contract fields that no longer match repo reality
-- JSON comparison entries carry stable ownership/provenance labels; add/update entries also carry direct detector source and confidence
-- task drift in text output is grouped by task name instead of raw dotted paths
-- when both kinds are present, task drift splits command removals from `safe_for_agent` removals
-- task drift text starts with a compact summary showing affected task count and removal counts by kind
-- with `--concise`, task drift collapses to one line per affected task with removal counts instead of listing every command
-- there is no standalone `ota drift` command yet; drift review stays on `ota detect --merge --dry-run`, and operator-facing trust/readiness drift stays on `ota doctor`
-- CI verification drift stays on verification-oriented workflow evidence only; deploy, release,
-  publish, sync, and similar workflows no longer become canonical verification truth just because
-  they contain one verifier step
-- declared verifier aggregates can now be satisfied by exact coverage split across more than one
-  verification-oriented workflow file instead of forcing one workflow file to restate the whole
-  aggregate
-
-Current merge-write behavior:
-
-- `ota detect --merge` requires an existing `ota.yaml`
-- it applies only `high` confidence missing fields
-- `ota detect --merge --apply FIELD` applies only the selected high-confidence detected changes and leaves the rest of `ota.yaml` unchanged
-- `ota detect --merge --apply-all` applies all eligible high-confidence detected changes and leaves the rest of `ota.yaml` unchanged
-- inferred `env.sources` additions participate in the same high-confidence merge/apply path and are never auto-loaded at runtime unless they are declared in the contract
-- it does not overwrite conflicting existing values
-- it validates the merged contract before writing
-- it is additive only in the current implementation
-- on mixed repos, lower-confidence fields can still appear in `comparison` without being written
-- if nothing eligible can be added, it returns success with `written: false` and leaves `ota.yaml` unchanged
-- after a successful merge write, text output uses explanatory `Next:` steps: validate the updated contract first, then review any remaining add-only drift with `ota detect --merge --dry-run`, review rewrite-only drift with `ota detect --rewrite --dry-run` when the current contract is stale, and only drift-free merges hand into the same task/doctor/preparation lane used by first writes
-
-Current rewrite behavior:
-
-- `ota detect --rewrite` targets existing contracts only and is destructive
-- `ota detect --rewrite --dry-run` previews replacement without writing
-- `ota detect --rewrite --yes` replaces the existing `ota.yaml` with the regenerated detected contract
-- rewrite creates a timestamped backup file (`ota.yaml.bak-<timestamp>`) before writing
-- rewrite validates the regenerated contract before replacing the existing file
-- after a successful rewrite, text output uses explanatory `Next:` steps: validate the rewritten contract, inspect the runnable task surface, review readiness with doctor, then preview preparation with `ota up --dry-run`
+- `--merge`, `--apply`, `--apply-all`, `--rewrite`, and `--yes` are hidden parser tombstones and
+  always fail with `detect_legacy_mutation_removed` before repository detection, candidate
+  construction, locking, or mutation
+- create a review artifact with `ota detect --candidate-out PATH`
+- apply reviewed additions to an existing tracked contract with
+  `ota contract apply-candidate PATH --write --carrier git`
+- rewrite and removal have no replacement carrier until candidates can represent those operations
+  explicitly; Ota does not translate a destructive rewrite into additive Git application
 
 Example dry-run annotations for detected Compose services:
 
@@ -3371,7 +3336,7 @@ Write behavior:
   starter contract
 - validates the projected contract before writing
 - refuses to overwrite an existing `ota.yaml`
-- when `ota.yaml` already exists, points the user at `ota detect --merge --dry-run` and `ota detect --rewrite --dry-run`
+- when `ota.yaml` already exists, points the user at `ota detect --candidate-out` for reviewed changes
 - fails if the high-confidence projection is not sufficient
 - JSON failure responses can include `next` when ota can point to one safe follow-up command
 

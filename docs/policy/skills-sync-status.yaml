@@ -26,8 +26,6 @@ version: 1
 repository: ota-run/skills
 mode: synced
 reviewed_ota_commit: "b24ceaad12b2e588db1b796099dc2e4895455743"
-consumer_commit: "4e2abea95b3e8cf592f55cf3e6b1b5a096ac9b78"
-waiver_reason: ""
+consumer_commit: "8f76736a1918a85190092f161e01cd8a3f3e361e"
 notes: >
-  Git-carrier guidance is synchronized at the recorded immutable revision. The independently edited
-  partner-facing pressure-testing protocol remains outside this sync record.
+  Skill candidate-mutation guidance is committed and pinned.

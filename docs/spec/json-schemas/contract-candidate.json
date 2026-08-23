@@ -17,9 +17,10 @@
     "changes"
   ],
   "properties": {
-    "schema_version": { "enum": [1, 2] },
+    "schema_version": { "enum": [1, 2, 3] },
     "identity": { "$ref": "#/$defs/identity" },
     "kind": { "enum": ["detection", "upgrade"] },
+    "profile": { "enum": ["detect_conservative_first_contract_v1"] },
     "logical_root": { "const": "." },
     "discovery_inventory_identity": { "$ref": "#/$defs/identity" },
     "discovery_inventory": {
@@ -128,7 +129,7 @@
       "properties": {
         "path": {
           "type": "array",
-          "minItems": 2,
+          "minItems": 1,
           "items": { "type": "string", "minLength": 1 }
         }
       }
@@ -146,13 +147,7 @@
         "execution_closure": { "$ref": "#/$defs/closure" },
         "confidence": { "enum": ["high", "medium", "low"] },
         "disposition": { "enum": ["applicable", "conflict", "unknown", "unsupported"] }
-      },
-      "allOf": [
-        {
-          "if": { "properties": { "disposition": { "const": "applicable" } }, "required": ["disposition"] },
-          "then": { "properties": { "evidence": { "minItems": 1 } }, "required": ["evidence"] }
-        }
-      ]
+      }
     },
     "applicationOperation": {
       "type": "object",
@@ -235,7 +230,6 @@
       "then": {
         "not": { "required": ["migration"] },
         "properties": {
-          "schema_version": { "const": 1 },
           "changes": {
             "items": {
               "properties": { "operation": { "const": "add" } },
@@ -246,9 +240,68 @@
       }
     },
     {
+      "if": { "properties": { "schema_version": { "const": 1 } }, "required": ["schema_version"] },
+      "then": {
+        "properties": {
+          "kind": { "const": "detection" },
+          "changes": {
+            "items": {
+              "properties": {
+                "subject": {
+                  "properties": { "path": { "minItems": 2 } }
+                },
+                "evidence": { "minItems": 1 }
+              },
+              "required": ["evidence"]
+            }
+          }
+        },
+        "not": { "required": ["profile"] }
+      }
+    },
+    {
+      "if": { "properties": { "schema_version": { "const": 3 } }, "required": ["schema_version"] },
+      "then": {
+        "required": ["profile", "application_projection"],
+        "not": {
+          "anyOf": [
+            { "required": ["migration"] },
+            { "required": ["existing_contract_snapshot_identity"] }
+          ]
+        },
+        "properties": {
+          "kind": { "const": "detection" },
+          "profile": { "const": "detect_conservative_first_contract_v1" },
+          "changes": {
+            "minItems": 1,
+            "items": {
+              "properties": {
+                "field_family": { "const": "conservative_first_contract_profile" },
+                "operation": { "const": "add" },
+                "confidence": { "const": "high" },
+                "disposition": { "const": "applicable" }
+              },
+              "required": ["proposed_value"]
+            }
+          },
+          "application_projection": {
+            "properties": {
+              "operations": {
+                "minItems": 1,
+                "items": {
+                  "properties": { "operation": { "const": "add" } }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
       "if": { "properties": { "kind": { "const": "upgrade" } }, "required": ["kind"] },
       "then": {
         "required": ["migration", "existing_contract_snapshot_identity", "application_projection"],
+        "not": { "required": ["profile"] },
         "properties": {
           "schema_version": { "const": 2 },
           "discovery_inventory": {

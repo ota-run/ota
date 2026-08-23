@@ -14,10 +14,10 @@ use crate::candidate_closure::{
     CandidateClosureInput, CandidateTaskClassification, resolve_candidate_task_closure,
 };
 use crate::contract_candidate::{
-    CONTRACT_CANDIDATE_SCHEMA_VERSION, CandidateChange, CandidateConfidence, CandidateDisposition,
-    CandidateEvidence, CandidateKind, CandidateOperation, CandidateSubject, ClosureEvidence,
-    ContractCandidate, DiscoveryInventoryEntry, ExecutionClosureNode,
-    derive_candidate_application_projection,
+    CONSERVATIVE_FIRST_CONTRACT_CANDIDATE_SCHEMA_VERSION, CONTRACT_CANDIDATE_SCHEMA_VERSION,
+    CandidateChange, CandidateConfidence, CandidateDisposition, CandidateEvidence, CandidateKind,
+    CandidateOperation, CandidateProfile, CandidateSubject, ClosureEvidence, ContractCandidate,
+    DiscoveryInventoryEntry, ExecutionClosureNode, derive_candidate_application_projection,
 };
 use crate::schema::{
     EnvConfig, EnvSource, EnvSourceKind, FileCheckExpectation, ServiceManagerKind,
@@ -486,6 +486,8 @@ const DETECT_DISCOVERY_ROOT_PATHS: &[&str] = &[
     "build.sbt",
     "build.gradle",
     "build.gradle.kts",
+    "settings.gradle",
+    "settings.gradle.kts",
     "build.zig",
     "composer.json",
     "cpanfile",
@@ -503,6 +505,7 @@ const DETECT_DISCOVERY_ROOT_PATHS: &[&str] = &[
     "gleam.toml",
     "global.json",
     "go.mod",
+    "gradle/wrapper/gradle-wrapper.properties",
     "info.rkt",
     "justfile",
     "main.js",
@@ -513,6 +516,7 @@ const DETECT_DISCOVERY_ROOT_PATHS: &[&str] = &[
     "makefile",
     "mix.exs",
     "mvnw",
+    ".mvn/wrapper/maven-wrapper.properties",
     "package.json",
     "package-lock.json",
     "npm-shrinkwrap.json",
@@ -642,6 +646,55 @@ impl DetectReport {
             .map_err(|error| DetectError::Candidate(error.to_string()))?;
         Ok(SourceBoundCandidateCapture {
             candidate,
+            existing_contract_value: existing_contract.map(|snapshot| snapshot.value),
+            contract: report.contract,
+            inferences: report.inferences,
+        })
+    }
+
+    pub(crate) fn conservative_first_contract_source_capture(
+        &self,
+    ) -> Result<SourceBoundCandidateCapture, DetectError> {
+        let snapshot = capture_candidate_source_snapshot(&self.root)?;
+        let existing_contract = existing_contract_snapshot(&self.root)?;
+        let report = detect_repo(snapshot.root())?;
+        let discovery_inventory = detector_discovery_inventory(snapshot.root())?;
+        let mut evidence = BTreeMap::<(String, String, String, String), CandidateEvidence>::new();
+        for inference in &report.inferences {
+            if let Some(item) = inference_source_evidence(snapshot.root(), inference)? {
+                evidence
+                    .entry((
+                        item.source_kind.clone(),
+                        item.path.clone(),
+                        item.content_identity.clone(),
+                        item.extraction.clone(),
+                    ))
+                    .or_insert(item);
+            }
+        }
+        let implementation_identity = semantic_contract_identity(&(
+            "ota.detect",
+            "detect-conservative-first-contract-v1",
+            env!("CARGO_PKG_VERSION"),
+        ))
+        .map_err(DetectError::Candidate)?;
+        Ok(SourceBoundCandidateCapture {
+            candidate: ContractCandidate {
+                schema_version: CONSERVATIVE_FIRST_CONTRACT_CANDIDATE_SCHEMA_VERSION,
+                identity: String::new(),
+                kind: CandidateKind::Detection,
+                profile: Some(CandidateProfile::DetectConservativeFirstContractV1),
+                logical_root: String::from("."),
+                discovery_inventory_identity: String::new(),
+                discovery_inventory,
+                evidence_manifest_identity: String::new(),
+                evidence_manifest: evidence.into_values().collect(),
+                existing_contract_snapshot_identity: None,
+                implementation_identity,
+                migration: None,
+                changes: Vec::new(),
+                application_projection: None,
+            },
             existing_contract_value: existing_contract.map(|snapshot| snapshot.value),
             contract: report.contract,
             inferences: report.inferences,
@@ -1037,6 +1090,7 @@ fn source_bound_candidate_foundation_with_existing_contract(
         schema_version: CONTRACT_CANDIDATE_SCHEMA_VERSION,
         identity: String::new(),
         kind: CandidateKind::Detection,
+        profile: None,
         logical_root: String::from("."),
         discovery_inventory_identity: String::new(),
         discovery_inventory,

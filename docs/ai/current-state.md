@@ -1167,7 +1167,11 @@ while `candidate-publication:faults` and the non-Windows Release Gate permanentl
 concurrent target creation, pre-publication cleanup failure, and post-publication durability
 uncertainty. A missing projection refuses admission;
 unrelated `unknown` or `unsupported` findings remain visible review state unless
-`--require-complete` is requested. External pressure and legacy-writer migration remain open. The artifact
+`--require-complete` is requested. Repo-level legacy mutation flags now refuse before repository
+access with `detect_legacy_mutation_removed`; `detect --write` uses the versioned
+`detect_conservative_first_contract_v1` profile and the shared locked create-new carrier. Rewrite
+and removal remain unavailable until the candidate model can carry them honestly. External
+pressure remains open. The artifact
 binds a required content identity for every inventory entry, every normalized evidence tuple,
 structured contract-path segments, canonical semantic proposal values, existing-contract
 conflicts, and explicit closure facts. Equivalent existing truth is omitted before publication;
@@ -1179,8 +1183,10 @@ task. Candidate JSON distinguishes artifact publication from contract mutation t
 artifact as absent. `ota contract upgrade --candidate-out` now publishes the registered
 legacy-flat-toolchain migration as a schema-v2 review artifact and `apply-candidate` dry-runs it
 against current source truth. Its approved existing-contract application requires `--write --carrier
-git`; ordinary `--write` remains create-new-only. Skills, Examples, and Site require propagation
-for this operator workflow, but no contract-authoring shape changes.
+git`; ordinary `--write` remains create-new-only. Core docs, Site, the canonical Skill and installed
+mirrors, and Examples now carry the same operator workflow. The current uncommitted consumer state
+is recorded through explicit temporary sync waivers; immutable revisions must replace them before
+the ordered Core commit. No contract-authoring shape changes were required.
 V12 effect-bound refusal assurance and V12.1 secret-delivery governance remain planning-only and
 inactive until their published prerequisites complete; do not widen the current authority
 implementation for either.

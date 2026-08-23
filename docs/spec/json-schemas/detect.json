@@ -108,6 +108,38 @@
     {
       "type": "object",
       "additionalProperties": false,
+      "required": ["ok", "path", "written", "code", "removed_flags", "replacement", "error"],
+      "properties": {
+        "ok": { "const": false },
+        "path": { "type": "string" },
+        "written": { "const": false },
+        "code": { "const": "detect_legacy_mutation_removed" },
+        "removed_flags": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "enum": ["--merge", "--apply", "--apply-all", "--rewrite", "--yes"] }
+        },
+        "replacement": { "const": "ota detect --candidate-out .ota/candidates/detect.json" },
+        "error": { "type": "string", "minLength": 1 }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ok", "path", "written", "code", "error", "next"],
+      "properties": {
+        "ok": { "const": false },
+        "path": { "type": "string" },
+        "written": { "const": true },
+        "code": { "const": "candidate_write_durability_uncertain" },
+        "error": { "type": "string", "minLength": 1 },
+        "next": { "const": "inspect ota.yaml before retrying" }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
       "required": [
         "ok",
         "path",

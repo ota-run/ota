@@ -300,8 +300,9 @@ field, but it keeps the selected pack authoritative and does not auto-switch sta
 Review the delta before writing:
 
 ```bash
-ota detect --merge --dry-run .
-ota detect --rewrite --dry-run .
+mkdir -p .ota/candidates
+ota detect --candidate-out .ota/candidates/detect.json .
+ota contract apply-candidate .ota/candidates/detect.json --json .
 ```
 
 ### Policy boundary review
@@ -504,9 +505,9 @@ Commands like `ota validate`, `ota tasks`, `ota workspace validate`, `ota worksp
 | `ota up` | Validates, selects default workflow, runs setup early on precondition failures, starts workflow services in dependency order, activates workflow run task runtime when present, then re-checks readiness. |
 | `ota detect` | Default mode infers a candidate contract with provenance/confidence without writing. |
 | `ota detect --write` | Writes only conservative `high` confidence fields. |
-| `ota detect --merge --dry-run` | Compares detected signals with existing `ota.yaml` and surfaces stale fields without writing. |
-| `ota detect --merge` | Applies additive missing fields at `high` confidence. |
-| Drift posture | No standalone `ota drift` command yet; use `ota detect --merge --dry-run` for contract drift and `ota doctor` for trust/readiness drift. |
+| `ota detect --candidate-out PATH` | Publishes a source-bound review artifact without changing `ota.yaml`. |
+| `ota contract apply-candidate PATH --write --carrier git` | Applies reviewed additions to an existing tracked contract through the Git carrier. |
+| Drift posture | No standalone `ota drift` command yet; plain `ota detect` reports contract drift and `ota doctor` reports trust/readiness drift. |
 | `ota completion ...` | Managed completion install/remove/check, raw script output, and command/task/input/member/workspace-aware completions across `run`, `env`, `extensions`, `receipt`, and workspace commands. |
 | `ota workspace validate` | Validates `ota.workspace.yaml` separately from repo contracts. |
 | `ota workspace tasks` | Lists workspace repo tasks in dependency order (including post-outcome hooks and repo task bindings). |
@@ -732,7 +733,7 @@ ota treats detection as trust-sensitive.
 
 - `ota detect --dry-run` is the review path
 - `ota detect --contract` is the exact detected starter text path
-- `ota detect --merge --dry-run` is the review path for existing contracts
+- `ota detect --candidate-out` is the review path for existing contracts
 - every inferred field includes provenance
 - every inferred field includes confidence
 - write mode uses only `high` confidence fields

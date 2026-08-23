@@ -48,6 +48,7 @@ use crate::validator::validate_contract_with_path;
 
 pub(crate) const CONTRACT_CANDIDATE_SCHEMA_VERSION: u32 = 1;
 pub(crate) const CONTRACT_UPGRADE_CANDIDATE_SCHEMA_VERSION: u32 = 2;
+pub(crate) const CONSERVATIVE_FIRST_CONTRACT_CANDIDATE_SCHEMA_VERSION: u32 = 3;
 pub(crate) const LEGACY_FLAT_TOOLCHAIN_FULFILLMENT_V1: &str =
     "legacy_flat_toolchain_fulfillment_v1";
 
@@ -81,6 +82,12 @@ impl CandidateArtifactPublicationError {
 pub(crate) enum CandidateKind {
     Detection,
     Upgrade,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum CandidateProfile {
+    DetectConservativeFirstContractV1,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -241,6 +248,8 @@ pub(crate) struct ContractCandidate {
     pub schema_version: u32,
     pub identity: String,
     pub kind: CandidateKind,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile: Option<CandidateProfile>,
     /// Root-relative logical root; never an absolute host path.
     pub logical_root: String,
     pub discovery_inventory_identity: String,
@@ -286,12 +295,7 @@ pub(crate) fn derive_candidate_application_projection(
     existing_contract: Option<&JsonValue>,
 ) -> Result<Option<(CandidateApplicationProjection, Contract)>, CandidateError> {
     let operations = expected_application_operations(candidate)?;
-    let mut projected = existing_contract
-        .cloned()
-        .unwrap_or_else(|| serde_json::json!({ "version": 1 }));
-    for operation in &operations {
-        apply_candidate_application_operation(&mut projected, operation)?;
-    }
+    let projected = derive_candidate_application_document(candidate, existing_contract)?;
     let Ok(contract) = serde_json::from_value::<Contract>(projected) else {
         return Ok(None);
     };
@@ -309,6 +313,20 @@ pub(crate) fn derive_candidate_application_projection(
         },
         contract,
     )))
+}
+
+pub(crate) fn derive_candidate_application_document(
+    candidate: &ContractCandidate,
+    existing_contract: Option<&JsonValue>,
+) -> Result<JsonValue, CandidateError> {
+    let operations = expected_application_operations(candidate)?;
+    let mut projected = existing_contract
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!({ "version": 1 }));
+    for operation in &operations {
+        apply_candidate_application_operation(&mut projected, operation)?;
+    }
+    Ok(projected)
 }
 
 /// Verifies a stored projection by rebuilding it from the actual base contract.
@@ -462,11 +480,37 @@ impl ContractCandidate {
     }
 
     fn validate_shape(&self) -> Result<(), CandidateError> {
-        match (self.schema_version, self.kind, self.migration.as_ref()) {
-            (CONTRACT_CANDIDATE_SCHEMA_VERSION, CandidateKind::Detection, None) => {}
+        match (
+            self.schema_version,
+            self.kind,
+            self.profile,
+            self.migration.as_ref(),
+        ) {
+            (CONTRACT_CANDIDATE_SCHEMA_VERSION, CandidateKind::Detection, None, None) => {}
+            (
+                CONSERVATIVE_FIRST_CONTRACT_CANDIDATE_SCHEMA_VERSION,
+                CandidateKind::Detection,
+                Some(CandidateProfile::DetectConservativeFirstContractV1),
+                None,
+            ) => {
+                if self.existing_contract_snapshot_identity.is_some()
+                    || self.application_projection.is_none()
+                    || self.changes.is_empty()
+                    || self.changes.iter().any(|change| {
+                        change.disposition != CandidateDisposition::Applicable
+                            || change.operation != CandidateOperation::Add
+                            || change.field_family != "conservative_first_contract_profile"
+                    })
+                {
+                    return Err(CandidateError::InvalidPath(String::from(
+                        "conservative first-contract candidate profile",
+                    )));
+                }
+            }
             (
                 CONTRACT_UPGRADE_CANDIDATE_SCHEMA_VERSION,
                 CandidateKind::Upgrade,
+                None,
                 Some(migration),
             ) => {
                 if migration.id != LEGACY_FLAT_TOOLCHAIN_FULFILLMENT_V1
@@ -526,7 +570,13 @@ impl ContractCandidate {
         validate_evidence_reconciliation(&self.discovery_inventory, &self.evidence_manifest)?;
         let mut subjects = BTreeSet::new();
         for change in &self.changes {
-            if change.subject.path.len() < 2
+            let minimum_subject_segments =
+                if self.profile == Some(CandidateProfile::DetectConservativeFirstContractV1) {
+                    1
+                } else {
+                    2
+                };
+            if change.subject.path.len() < minimum_subject_segments
                 || change.subject.path.iter().any(|segment| segment.is_empty())
                 || !subjects.insert(change.subject.path.clone())
                 || change.field_family.trim().is_empty()
@@ -550,7 +600,9 @@ impl ContractCandidate {
                 }
                 CandidateKind::Detection | CandidateKind::Upgrade => {}
             }
-            if change.disposition == CandidateDisposition::Applicable && change.evidence.is_empty()
+            if change.disposition == CandidateDisposition::Applicable
+                && change.evidence.is_empty()
+                && self.profile != Some(CandidateProfile::DetectConservativeFirstContractV1)
             {
                 return Err(CandidateError::InvalidPath(String::from(
                     "applicable candidate evidence",
@@ -1451,6 +1503,7 @@ mod tests {
             schema_version: CONTRACT_CANDIDATE_SCHEMA_VERSION,
             identity: String::new(),
             kind: CandidateKind::Detection,
+            profile: None,
             logical_root: String::from("."),
             discovery_inventory_identity: String::new(),
             discovery_inventory: vec![DiscoveryInventoryEntry {

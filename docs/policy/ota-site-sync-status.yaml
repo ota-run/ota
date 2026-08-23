@@ -26,7 +26,6 @@ version: 1
 repository: ota-run/ota-site
 mode: synced
 reviewed_ota_commit: "b24ceaad12b2e588db1b796099dc2e4895455743"
-consumer_commit: "62d6b6736857880cf9bec9ee535c8b3c83437856"
-waiver_reason: ""
+consumer_commit: "78e058344889ec927a23561f4c7538b580f2f4b7"
 notes: >
-  Git-carrier command and publication guidance is synchronized at the recorded immutable revision.
+  Site candidate-mutation guidance and its reference-sync regression are committed and pinned.

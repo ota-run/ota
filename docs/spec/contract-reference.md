@@ -4501,7 +4501,8 @@ Agent semantics:
 - `bootstrap.ota.sh` and `bootstrap.ota.powershell` remain compatibility fields; when omitted,
   ota renders the approved shell and PowerShell install commands from `bootstrap.ota.source`
 - `notes` is free-form repo guidance for humans and AI agents
-- `ota detect --merge` and `ota detect --rewrite` refuse to write protected paths declared by the existing contract
+- repo-level detect mutation flags are removed; existing contracts change only through a reviewed
+  candidate and an owned application carrier
 
 Authoring ergonomics:
 
@@ -4596,8 +4597,9 @@ metadata:
 
 This is an open map for extra repo-specific values.
 
-`ota detect --write`, `ota detect --merge`, and `ota detect --rewrite` record ota-managed detect
-fields under `metadata.ota.detect.field_ownership` using `merged`.
+`ota detect --write` records its conservative first-contract fields under
+`metadata.ota.detect.field_ownership` using `merged`. Reviewed candidate application preserves
+that metadata rather than synthesizing new ownership during publication.
 
 When ota writes detector-owned fields, it can also record the additive detector-governance class
 for those fields under `metadata.ota.detect.field_source_class`, for example
@@ -4605,8 +4607,8 @@ for those fields under `metadata.ota.detect.field_source_class`, for example
 `agent_boundary`, `workspace_bootstrap`, or `heuristic`.
 
 The `metadata.ota.detect` subtree is ota-reserved and must remain mapping-shaped. If `metadata.ota`
-or `metadata.ota.detect` is repurposed as a scalar or list, detect merge cannot persist ownership
-metadata and will fail until that path is repaired.
+or `metadata.ota.detect` is repurposed as a scalar or list, conservative candidate construction
+refuses until that path is repaired.
 
 `metadata.ota.minimum_version` is the reserved compatibility hint for contracts that require a
 newer ota binary than the one an operator may have installed. Keep it as a semver string such as

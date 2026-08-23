@@ -108,6 +108,29 @@ fn relocated_binary_validates_against_its_embedded_published_schema() {
 }
 
 #[test]
+fn removed_repo_detect_mutation_flags_refuse_before_repository_access() {
+    let fixture = tempfile::tempdir().expect("tempdir");
+    let missing = fixture.path().join("missing-repository");
+    for args in [
+        vec!["detect", "--merge", "--json"],
+        vec!["detect", "--apply", "tasks.test.command", "--json"],
+        vec!["detect", "--apply-all", "--json"],
+        vec!["detect", "--rewrite", "--json"],
+        vec!["detect", "--yes", "--json"],
+    ] {
+        let mut invocation = args;
+        invocation.push(missing.to_str().expect("UTF-8 path"));
+        let refused = run_ota_with_env(&invocation, fixture.path(), &[], false);
+        assert_matches_schema("detect.json", &refused);
+        assert_eq!(refused["code"], "detect_legacy_mutation_removed");
+        assert_eq!(refused["written"], false);
+        assert!(!missing.exists());
+        assert!(!fixture.path().join("ota.yaml").exists());
+        assert!(!fixture.path().join(".ota").exists());
+    }
+}
+
+#[test]
 fn detect_candidate_artifact_matches_published_schemas_without_writing_a_contract() {
     let fixture = tempfile::tempdir().expect("tempdir");
     fs::write(
