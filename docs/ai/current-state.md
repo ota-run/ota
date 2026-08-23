@@ -1184,9 +1184,11 @@ artifact as absent. `ota contract upgrade --candidate-out` now publishes the reg
 legacy-flat-toolchain migration as a schema-v2 review artifact and `apply-candidate` dry-runs it
 against current source truth. Its approved existing-contract application requires `--write --carrier
 git`; ordinary `--write` remains create-new-only. Core docs, Site, the canonical Skill and installed
-mirrors, and Examples now carry the same operator workflow. The current uncommitted consumer state
-is recorded through explicit temporary sync waivers; immutable revisions must replace them before
-the ordered Core commit. No contract-authoring shape changes were required.
+mirrors, and Examples now carry the same operator workflow. The connected propagation is committed
+and pinned: Site `78e058344889ec927a23561f4c7538b580f2f4b7`, Skills
+`8f76736a1918a85190092f161e01cd8a3f3e361e`, and Examples
+`89467f3ad0751b5613a57382553c1a1b38dab4c7`; Core records the Site and Skills revisions as
+synced rather than waived. No contract-authoring shape changes were required.
 V12 effect-bound refusal assurance and V12.1 secret-delivery governance remain planning-only and
 inactive until their published prerequisites complete; do not widen the current authority
 implementation for either.
