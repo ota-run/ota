@@ -25,9 +25,8 @@
 version: 1
 repository: ota-run/ota-site
 mode: synced
-reviewed_ota_commit: "6641237021a4b974674d745de5055ce6c4bee48f"
-consumer_commit: "678f8b282ee28bd5a417914b20e2c4cac90c8537"
+reviewed_ota_commit: "b24ceaad12b2e588db1b796099dc2e4895455743"
+consumer_commit: "62d6b6736857880cf9bec9ee535c8b3c83437856"
 waiver_reason: ""
 notes: >
-  Synced the lossless contract-upgrade candidate command, artifact and application schemas,
-  publication-versus-contract-write posture, and dry-run-only upgrade application boundary.
+  Git-carrier command and publication guidance is synchronized at the recorded immutable revision.

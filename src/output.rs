@@ -3354,6 +3354,14 @@ pub struct ContractCandidateApplicationSuccess<'a> {
     pub resulting_contract_identity: &'a str,
     pub admitted: bool,
     pub written: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub carrier: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub previous_commit: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resulting_commit: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub branch_ref: Option<&'a str>,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub no_op: bool,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -3368,6 +3376,14 @@ pub struct ContractCandidateApplicationFailure<'a> {
     pub written: bool,
     pub code: &'static str,
     pub error: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub carrier: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub previous_commit: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resulting_commit: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub branch_ref: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next: Option<&'a str>,
 }

@@ -30,8 +30,11 @@
   migration review surface. It recognizes legacy flat toolchain fulfillment, emits a schema-v2
   source-bound upgrade candidate with before/after semantic and resulting-content evidence, and
   never changes `ota.yaml`. `ota contract apply-candidate` independently re-derives the migration
-  for dry-run admission; upgrade writes remain disabled until Ota has a safe owned carrier for
-  replacing an existing contract. Detection and upgrade candidate JSON distinguish
+  for dry-run admission; explicit `--write --carrier git` now commits a reviewed existing-contract
+  update through expected-HEAD branch compare-and-swap and verifies the resulting worktree. It
+  scrubs caller Git routing state and preserves prior/resulting commit and branch identities if
+  branch advancement succeeds but worktree reconciliation fails.
+  Default `--write` remains create-new-only. Detection and upgrade candidate JSON distinguish
   `candidate_published`/`candidate_publication` from contract mutation: durable publication is
   explicit, while a post-publication sync failure reports `durability_uncertain` without
   incorrectly claiming that the candidate was absent.
@@ -46,9 +49,9 @@
 - Added explicit `ota contract apply-candidate --write` for reviewed detection candidates. It
   takes an exclusive no-follow repository lock, re-derives and validates current source evidence
   under that lock, and atomically creates a previously absent `ota.yaml` from the shared
-  evaluator's `Contract`. It never overwrites an existing contract; a repeated matching result is
-  a semantic no-op, and a post-publication directory-sync failure is reported as durability
-  uncertainty rather than as an unwritten failure.
+  evaluator's `Contract`. Default `--write` never overwrites an existing contract; a repeated
+  matching result is a semantic no-op, and a post-publication directory-sync failure is reported
+  as durability uncertainty rather than as an unwritten failure.
 
 - Added `ota detect --candidate-out <path>` for a durable, source-bound contract-candidate review
   artifact. It derives from a command-owned immutable source snapshot, uses canonical create-new

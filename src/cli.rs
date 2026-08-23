@@ -791,13 +791,16 @@ enum ContractCommands {
         /// Path to the repository root containing ota.yaml.
         path: Option<PathBuf>,
     },
-    /// Re-derive a source-bound candidate; --write creates only a missing ota.yaml.
+    /// Re-derive a source-bound candidate; --write creates only a missing ota.yaml by default.
     ApplyCandidate {
         /// Candidate artifact to verify and re-derive.
         candidate: PathBuf,
         /// Atomically create a missing ota.yaml after lock-held revalidation; existing contracts refuse.
         #[arg(long, action = ArgAction::SetTrue)]
         write: bool,
+        /// Explicit carrier for an existing-contract update. The default writer only creates a missing ota.yaml.
+        #[arg(long, value_enum, requires = "write")]
+        carrier: Option<ContractCandidateUpdateCarrier>,
         /// Print machine-readable JSON output.
         #[arg(long, action = ArgAction::SetTrue)]
         json: bool,
@@ -807,6 +810,12 @@ enum ContractCommands {
         /// Path to the repository root recorded by the candidate.
         path: Option<PathBuf>,
     },
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum ContractCandidateUpdateCarrier {
+    /// Commit the reviewed contract through a checked-out Git branch with expected-HEAD compare-and-swap.
+    Git,
 }
 
 #[derive(Debug, Clone, Subcommand)]
@@ -5079,6 +5088,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
                 ContractCommands::ApplyCandidate {
                     candidate,
                     write,
+                    carrier,
                     json,
                     require_complete,
                     path,
@@ -5096,6 +5106,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
                     path.as_deref(),
                     &candidate,
                     write,
+                    carrier,
                     require_complete,
                     format_from_json(json),
                     debug,
@@ -20484,6 +20495,7 @@ tasks:
                     command: super::ContractCommands::ApplyCandidate {
                         candidate: PathBuf::from(".ota/candidates/detect.json"),
                         write: false,
+                        carrier: None,
                         json: true,
                         require_complete: false,
                         path: None,

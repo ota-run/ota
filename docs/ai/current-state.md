@@ -470,10 +470,13 @@ durable agent workflow belongs in the canonical Ota skill.
   unrelated `unknown` or `unsupported` findings remain review state unless `--require-complete`
   is requested. `--write` locks the retained no-follow repository descriptor, rechecks current source and evidence,
   and atomically creates only a previously absent `ota.yaml` from the shared evaluator's returned
-  validated contract; it never overwrites an existing contract, and semantic reapplication is a
-  no-op. The registered `legacy_flat_toolchain_fulfillment_v1` upgrade now emits a schema-v2
-  source-bound candidate and re-derives unchanged semantics in dry-run admission. Upgrade writes,
-  legacy mutation routing, the owned existing-contract update carrier, and agent-safe promotion
+  validated contract; default `--write` never overwrites an existing contract, and semantic
+  reapplication is a no-op. The explicit `--write --carrier git` path now admits a non-detached
+  tracked `ota.yaml` that matches `HEAD` in both index and worktree, commits only the reviewed contract with expected-HEAD branch
+  compare-and-swap, verifies the resulting worktree/index, and reports branch plus prior/resulting
+  commit identities. It never pushes, rebases, amends, or changes unrelated paths. The registered
+  `legacy_flat_toolchain_fulfillment_v1` upgrade emits a schema-v2 source-bound candidate and can
+  use the explicit Git carrier after exact re-derivation. Legacy mutation routing and agent-safe promotion
   remain unimplemented; it does not consume crossing records as approval authority. V12 effect-bound
   refusal assurance is also planning-only and inactive until V11.22 completes; it does not widen
   the completed
@@ -1156,8 +1159,10 @@ the self-verifying source-bound review artifact without writing `ota.yaml`; `ota
 apply-candidate` independently rebuilds its exact application projection and validated resulting
 contract identity. Without `--write`, admission is dry-run only. With `--write`, Ota locks the
 retained no-follow repository directory, re-derives current source/evidence, and atomically creates
-only a missing `ota.yaml`; existing contracts refuse, and a matching resulting contract is an
-explicit no-op. The non-default publication fault adapter remains unavailable to ordinary builds,
+only a missing `ota.yaml`; existing contracts require the explicit Linux/macOS Git carrier, which
+scrubs caller Git routing state and disables configured helpers, commits only the reviewed contract
+with branch-ref compare-and-swap, and verifies the materialized worktree. A matching resulting
+contract is an explicit no-op. The non-default publication fault adapter remains unavailable to ordinary builds,
 while `candidate-publication:faults` and the non-Windows Release Gate permanently exercise
 concurrent target creation, pre-publication cleanup failure, and post-publication durability
 uncertainty. A missing projection refuses admission;
@@ -1173,9 +1178,9 @@ task. Candidate JSON distinguishes artifact publication from contract mutation t
 `candidate_published` and `candidate_publication`; durability uncertainty never reports the
 artifact as absent. `ota contract upgrade --candidate-out` now publishes the registered
 legacy-flat-toolchain migration as a schema-v2 review artifact and `apply-candidate` dry-runs it
-against current source truth. Upgrade `--write` remains disabled because the create-new writer
-cannot safely replace an externally mutable existing contract. Skills, Examples, and Site require
-propagation for this operator workflow, but no contract-authoring shape changes.
+against current source truth. Its approved existing-contract application requires `--write --carrier
+git`; ordinary `--write` remains create-new-only. Skills, Examples, and Site require propagation
+for this operator workflow, but no contract-authoring shape changes.
 V12 effect-bound refusal assurance and V12.1 secret-delivery governance remain planning-only and
 inactive until their published prerequisites complete; do not widen the current authority
 implementation for either.

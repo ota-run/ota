@@ -6089,25 +6089,35 @@ application admission. Unrelated `unknown` or `unsupported` residual findings do
 projection incomplete; they remain review state and `--require-complete` refuses them. A candidate
 remains review input only; it does not establish agent safety or authorize execution.
 
-`ota contract apply-candidate CANDIDATE [--write] --json [PATH]` is the matching admission
+`ota contract apply-candidate CANDIDATE [--write] [--carrier git] --json [PATH]` is the matching admission
 surface. Without `--write`, it returns `ok: true`, `mode: "dry_run"`, and `written: false` only
 when current repository truth re-derives the exact candidate. With `--write`, Ota locks the
 repository candidate lane, repeats that admission, rechecks current source and evidence, and
 atomically creates a previously absent `ota.yaml` from the `Contract` returned by the shared
-evaluator. It refuses to replace an existing contract. A successful reapplication where
+evaluator. Existing-contract updates require the explicit Git carrier, which requires a
+non-detached tracked `ota.yaml` that matches `HEAD` in both the index and worktree, scrubs caller
+`GIT_*` routing state and disables configured Git helper execution, uses expected-HEAD branch
+compare-and-swap, and then verifies that the
+worktree and index match the committed contract. A successful reapplication where
 the current semantic contract already equals the reviewed result returns `mode: "write"`,
 `written: false`, and `no_op: true`. Every success carries the reviewed candidate and
-implementation identities plus the application-projection and resulting-contract identities. A
-refusal returns `ok: false`, `written: false`, one stable `code`, and an actionable
+implementation identities plus the application-projection and resulting-contract identities. Git
+carrier success also carries `carrier: "git"`, `branch_ref`, `previous_commit`, and
+`resulting_commit`. A
+ordinary refusal returns `ok: false`, `written: false`, one stable `code`, and an actionable
 `error`; current codes are `candidate_malformed`, `candidate_identity_invalid`,
 `candidate_implementation_incompatible`, `candidate_not_reproducible`, `candidate_stale`,
 `candidate_contract_mismatch`, `candidate_conflict`, `candidate_incomplete`,
 `candidate_unsupported`, `candidate_write_failed`, and
-`candidate_write_durability_uncertain`. A durability-uncertain failure has `written: true`, so
-callers must inspect the contract before retrying. Residual `unknown` and `unsupported`
+`candidate_write_durability_uncertain`, and `candidate_write_committed_worktree_unsynced`. A
+durability-uncertain or committed-but-worktree-unsynced failure has `written: true`, so
+callers must inspect the contract before retrying. The committed-but-worktree-unsynced form also
+carries `carrier: "git"`, `previous_commit`, `resulting_commit`, and `branch_ref` for recovery.
+Residual `unknown` and `unsupported`
 dispositions remain visible as review state and become a refusal only with `--require-complete`.
-The create-new writer currently requires Linux `renameat2(RENAME_NOREPLACE)` or macOS
-`renameatx_np(RENAME_EXCL)`; other platforms refuse rather than weaken no-replace publication.
+Both writers currently require Linux or macOS no-follow directory-descriptor support; the
+create-new writer additionally uses Linux `renameat2(RENAME_NOREPLACE)` or macOS
+`renameatx_np(RENAME_EXCL)`. Other platforms refuse rather than weaken publication guarantees.
 Legacy mutation commands have not yet migrated to this writer.
 
 Candidate artifact publication uses the same platform boundary: Linux
@@ -6130,9 +6140,8 @@ and application projection. A success uses `contract-upgrade.json`, returns `wri
 `candidate_published: true`, and `candidate_publication: "durable"`, and embeds the full
 candidate. Failure output preserves the same publication distinction and returns
 `upgrade_unsupported`, `upgrade_failed`, or `upgrade_write_failed`. `ota contract
-apply-candidate` re-derives the exact migration for dry-run admission; its `--write` form
-currently refuses upgrade candidates because the create-new contract writer cannot safely replace
-an existing externally mutable file.
+apply-candidate` re-derives the exact migration for dry-run admission. Its `--write --carrier git`
+form is the first owned existing-contract update path; ordinary `--write` remains create-new-only.
 
 ```json
 {

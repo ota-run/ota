@@ -239,6 +239,771 @@ fn contract_upgrade_candidate_is_lossless_reproducible_and_never_writes() {
     assert_eq!(stale["code"], "candidate_stale");
 }
 
+#[cfg(unix)]
+#[test]
+fn contract_upgrade_git_carrier_commits_once_and_reapplies_as_no_op() {
+    let fixture = tempfile::tempdir().expect("tempdir");
+    fs::write(
+        fixture.path().join("ota.yaml"),
+        "version: 1\nproject:\n  name: legacy-git-carrier\ntoolchains:\n  rust:\n    version: '1.95'\n    fulfillment: run\n",
+    )
+    .expect("legacy contract");
+    for arguments in [
+        ["init", "-q"].as_slice(),
+        ["config", "user.name", "Ota test"].as_slice(),
+        ["config", "user.email", "ota-test@example.test"].as_slice(),
+        ["add", "ota.yaml"].as_slice(),
+        ["commit", "-qm", "initial contract"].as_slice(),
+    ] {
+        assert!(
+            Command::new("git")
+                .args(arguments)
+                .current_dir(fixture.path())
+                .status()
+                .expect("Git invocation")
+                .success(),
+            "Git {:?}",
+            arguments
+        );
+    }
+    fs::create_dir_all(fixture.path().join(".ota/candidates")).expect("candidate directory");
+    let upgraded = run_ota(
+        &[
+            "contract",
+            "upgrade",
+            "--candidate-out",
+            ".ota/candidates/upgrade.json",
+            "--json",
+            ".",
+        ],
+        fixture.path(),
+    );
+    assert_eq!(upgraded["ok"], true);
+
+    let applied = run_ota(
+        &[
+            "contract",
+            "apply-candidate",
+            ".ota/candidates/upgrade.json",
+            "--write",
+            "--carrier",
+            "git",
+            "--json",
+            ".",
+        ],
+        fixture.path(),
+    );
+    assert_matches_schema("contract-candidate-application.json", &applied);
+    assert_eq!(applied["ok"], true);
+    assert_eq!(applied["written"], true);
+    assert_eq!(applied["carrier"], "git");
+    assert_ne!(applied["previous_commit"], applied["resulting_commit"]);
+    let branch_ref = Command::new("git")
+        .args(["symbolic-ref", "HEAD"])
+        .current_dir(fixture.path())
+        .output()
+        .expect("Git symbolic-ref");
+    assert!(branch_ref.status.success());
+    assert_eq!(
+        applied["branch_ref"],
+        Value::String(
+            String::from_utf8_lossy(&branch_ref.stdout)
+                .trim()
+                .to_string()
+        )
+    );
+    let diff = Command::new("git")
+        .args(["diff", "--quiet", "HEAD", "--", "ota.yaml"])
+        .current_dir(fixture.path())
+        .status()
+        .expect("Git diff");
+    assert!(diff.success(), "carrier leaves ota.yaml clean");
+    let committed_paths = Command::new("git")
+        .args(["diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD"])
+        .current_dir(fixture.path())
+        .output()
+        .expect("Git diff-tree");
+    assert!(committed_paths.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&committed_paths.stdout).trim(),
+        "ota.yaml",
+        "the carrier commits no unrelated repository paths"
+    );
+
+    let repeated = run_ota(
+        &[
+            "contract",
+            "apply-candidate",
+            ".ota/candidates/upgrade.json",
+            "--write",
+            "--carrier",
+            "git",
+            "--json",
+            ".",
+        ],
+        fixture.path(),
+    );
+    assert_matches_schema("contract-candidate-application.json", &repeated);
+    assert_eq!(repeated["ok"], true);
+    assert_eq!(repeated["written"], false);
+    assert_eq!(repeated["no_op"], true);
+
+    assert!(
+        Command::new("git")
+            .args(["checkout", "--detach", "-q"])
+            .current_dir(fixture.path())
+            .status()
+            .expect("Git checkout")
+            .success()
+    );
+    let detached = run_ota_with_env(
+        &[
+            "contract",
+            "apply-candidate",
+            ".ota/candidates/upgrade.json",
+            "--write",
+            "--carrier",
+            "git",
+            "--json",
+            ".",
+        ],
+        fixture.path(),
+        &[],
+        false,
+    );
+    assert_matches_schema("contract-candidate-application.json", &detached);
+    assert_eq!(detached["ok"], false);
+    assert_eq!(detached["written"], false);
+    assert_eq!(detached["code"], "candidate_write_failed");
+}
+
+#[cfg(unix)]
+#[test]
+fn contract_detection_git_carrier_updates_a_tracked_existing_contract() {
+    let fixture = tempfile::tempdir().expect("tempdir");
+    fs::write(
+        fixture.path().join("ota.yaml"),
+        "version: 1\nproject:\n  name: tracked-detection\n",
+    )
+    .expect("existing contract");
+    fs::write(
+        fixture.path().join("Cargo.toml"),
+        "[package]\nname = \"tracked-detection\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .expect("manifest");
+    for arguments in [
+        ["init", "-q"].as_slice(),
+        ["config", "user.name", "Ota test"].as_slice(),
+        ["config", "user.email", "ota-test@example.test"].as_slice(),
+        ["add", "ota.yaml", "Cargo.toml"].as_slice(),
+        ["commit", "-qm", "initial contract"].as_slice(),
+    ] {
+        assert!(
+            Command::new("git")
+                .args(arguments)
+                .current_dir(fixture.path())
+                .status()
+                .expect("Git invocation")
+                .success()
+        );
+    }
+    fs::create_dir_all(fixture.path().join(".ota/candidates")).expect("candidate directory");
+    let detected = run_ota(
+        &[
+            "detect",
+            "--candidate-out",
+            ".ota/candidates/detect.json",
+            "--json",
+            ".",
+        ],
+        fixture.path(),
+    );
+    assert_eq!(detected["ok"], true);
+
+    let applied = run_ota(
+        &[
+            "contract",
+            "apply-candidate",
+            ".ota/candidates/detect.json",
+            "--write",
+            "--carrier",
+            "git",
+            "--json",
+            ".",
+        ],
+        fixture.path(),
+    );
+    assert_matches_schema("contract-candidate-application.json", &applied);
+    assert_eq!(applied["ok"], true);
+    assert_eq!(applied["carrier"], "git");
+    assert_eq!(applied["written"], true);
+    let contract = run_ota(&["validate", "--json", "."], fixture.path());
+    assert_eq!(contract["ok"], true);
+
+    let repeated = run_ota(
+        &[
+            "contract",
+            "apply-candidate",
+            ".ota/candidates/detect.json",
+            "--write",
+            "--carrier",
+            "git",
+            "--json",
+            ".",
+        ],
+        fixture.path(),
+    );
+    assert_matches_schema("contract-candidate-application.json", &repeated);
+    assert_eq!(repeated["ok"], true);
+    assert_eq!(repeated["written"], false);
+    assert_eq!(repeated["no_op"], true);
+
+    fs::write(
+        fixture.path().join("ota.yaml"),
+        format!(
+            "{}# uncommitted semantic no-op drift\n",
+            fs::read_to_string(fixture.path().join("ota.yaml")).expect("committed contract")
+        ),
+    )
+    .expect("unstaged contract drift");
+    let unstaged = run_ota_with_env(
+        &[
+            "contract",
+            "apply-candidate",
+            ".ota/candidates/detect.json",
+            "--write",
+            "--carrier",
+            "git",
+            "--json",
+            ".",
+        ],
+        fixture.path(),
+        &[],
+        false,
+    );
+    assert_matches_schema("contract-candidate-application.json", &unstaged);
+    assert_eq!(unstaged["code"], "candidate_write_failed");
+    assert_eq!(unstaged["written"], false);
+    assert!(
+        Command::new("git")
+            .args(["add", "ota.yaml"])
+            .current_dir(fixture.path())
+            .status()
+            .expect("stage semantic no-op drift")
+            .success()
+    );
+    let staged = run_ota_with_env(
+        &[
+            "contract",
+            "apply-candidate",
+            ".ota/candidates/detect.json",
+            "--write",
+            "--carrier",
+            "git",
+            "--json",
+            ".",
+        ],
+        fixture.path(),
+        &[],
+        false,
+    );
+    assert_matches_schema("contract-candidate-application.json", &staged);
+    assert_eq!(staged["code"], "candidate_write_failed");
+    assert_eq!(staged["written"], false);
+}
+
+#[cfg(unix)]
+#[test]
+fn contract_git_carrier_ignores_caller_git_index_redirection() {
+    let fixture = tempfile::tempdir().expect("tempdir");
+    fs::write(
+        fixture.path().join("ota.yaml"),
+        "version: 1\nproject:\n  name: redirected-index\n",
+    )
+    .expect("existing contract");
+    fs::write(
+        fixture.path().join("Cargo.toml"),
+        "[package]\nname = \"redirected-index\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .expect("manifest");
+    for arguments in [
+        ["init", "-q"].as_slice(),
+        ["config", "user.name", "Ota test"].as_slice(),
+        ["config", "user.email", "ota-test@example.test"].as_slice(),
+        ["add", "ota.yaml", "Cargo.toml"].as_slice(),
+        ["commit", "-qm", "initial contract"].as_slice(),
+    ] {
+        assert!(
+            Command::new("git")
+                .args(arguments)
+                .current_dir(fixture.path())
+                .status()
+                .expect("Git invocation")
+                .success()
+        );
+    }
+    fs::create_dir_all(fixture.path().join(".ota/candidates")).expect("candidate directory");
+    let detected = run_ota(
+        &[
+            "detect",
+            "--candidate-out",
+            ".ota/candidates/detect.json",
+            "--json",
+            ".",
+        ],
+        fixture.path(),
+    );
+    assert_eq!(detected["ok"], true);
+    let redirected_index = fixture.path().join("redirected-index");
+    fs::copy(fixture.path().join(".git/index"), &redirected_index).expect("copy index");
+    let applied = run_ota_with_env(
+        &[
+            "contract",
+            "apply-candidate",
+            ".ota/candidates/detect.json",
+            "--write",
+            "--carrier",
+            "git",
+            "--json",
+            ".",
+        ],
+        fixture.path(),
+        &[(
+            "GIT_INDEX_FILE",
+            redirected_index.to_str().expect("UTF-8 path"),
+        )],
+        true,
+    );
+    assert_matches_schema("contract-candidate-application.json", &applied);
+    assert_eq!(applied["ok"], true);
+    assert!(
+        Command::new("git")
+            .args(["diff", "--quiet", "--cached", "HEAD", "--", "ota.yaml"])
+            .current_dir(fixture.path())
+            .status()
+            .expect("Git diff")
+            .success(),
+        "the primary index is synchronized, not the caller-selected index"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn contract_git_carrier_does_not_run_repository_configured_helpers() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let fixture = tempfile::tempdir().expect("tempdir");
+    let sentinel = fixture.path().join("git-helper-ran");
+    let helper = fixture.path().join("helper.sh");
+    let clean_helper = fixture.path().join("clean-helper.sh");
+    fs::write(
+        &helper,
+        format!(
+            "#!/bin/sh\ntouch '{}'\nprintf '0000000000000000000000000000000000000000\\n'\ncat\n",
+            sentinel.display()
+        ),
+    )
+    .expect("helper script");
+    let mut permissions = fs::metadata(&helper)
+        .expect("helper metadata")
+        .permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&helper, permissions).expect("helper executable");
+    fs::write(
+        &clean_helper,
+        format!("#!/bin/sh\ntouch '{}'\ncat\n", sentinel.display()),
+    )
+    .expect("clean helper script");
+    let mut permissions = fs::metadata(&clean_helper)
+        .expect("clean helper metadata")
+        .permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&clean_helper, permissions).expect("clean helper executable");
+    fs::write(
+        fixture.path().join("ota.yaml"),
+        "version: 1\nproject:\n  name: helper-free\n",
+    )
+    .expect("existing contract");
+    fs::write(
+        fixture.path().join("Cargo.toml"),
+        "[package]\nname = \"helper-free\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .expect("manifest");
+    fs::write(
+        fixture.path().join(".gitattributes"),
+        "ota.yaml filter=ota-test\n",
+    )
+    .expect("attributes");
+    for arguments in [
+        ["init", "-q"].as_slice(),
+        ["config", "user.name", "Ota test"].as_slice(),
+        ["config", "user.email", "ota-test@example.test"].as_slice(),
+        [
+            "config",
+            "core.fsmonitor",
+            helper.to_str().expect("UTF-8 path"),
+        ]
+        .as_slice(),
+        [
+            "config",
+            "filter.ota-test.smudge",
+            helper.to_str().expect("UTF-8 path"),
+        ]
+        .as_slice(),
+        ["add", "ota.yaml", "Cargo.toml", ".gitattributes"].as_slice(),
+        ["commit", "-qm", "initial contract"].as_slice(),
+    ] {
+        assert!(
+            Command::new("git")
+                .args(arguments)
+                .current_dir(fixture.path())
+                .status()
+                .expect("Git invocation")
+                .success()
+        );
+    }
+    assert!(
+        Command::new("git")
+            .args([
+                "config",
+                "filter.ota-test.clean",
+                clean_helper.to_str().expect("UTF-8 path"),
+            ])
+            .current_dir(fixture.path())
+            .status()
+            .expect("configure clean filter")
+            .success()
+    );
+    let _ = fs::remove_file(&sentinel);
+    fs::create_dir_all(fixture.path().join(".ota/candidates")).expect("candidate directory");
+    let detected = run_ota(
+        &[
+            "detect",
+            "--candidate-out",
+            ".ota/candidates/detect.json",
+            "--json",
+            ".",
+        ],
+        fixture.path(),
+    );
+    assert_eq!(detected["ok"], true);
+    let applied = run_ota(
+        &[
+            "contract",
+            "apply-candidate",
+            ".ota/candidates/detect.json",
+            "--write",
+            "--carrier",
+            "git",
+            "--json",
+            ".",
+        ],
+        fixture.path(),
+    );
+    assert_matches_schema("contract-candidate-application.json", &applied);
+    assert_eq!(applied["ok"], true);
+    assert!(
+        !sentinel.exists(),
+        "Git carrier must not run repository-configured fsmonitor or smudge helpers"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn contract_git_carrier_refuses_a_staged_contract_before_publication() {
+    let fixture = tempfile::tempdir().expect("tempdir");
+    fs::write(
+        fixture.path().join("ota.yaml"),
+        "version: 1\nproject:\n  name: staged-contract\n",
+    )
+    .expect("existing contract");
+    fs::write(
+        fixture.path().join("Cargo.toml"),
+        "[package]\nname = \"staged-contract\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .expect("manifest");
+    for arguments in [
+        ["init", "-q"].as_slice(),
+        ["config", "user.name", "Ota test"].as_slice(),
+        ["config", "user.email", "ota-test@example.test"].as_slice(),
+        ["add", "ota.yaml", "Cargo.toml"].as_slice(),
+        ["commit", "-qm", "initial contract"].as_slice(),
+    ] {
+        assert!(
+            Command::new("git")
+                .args(arguments)
+                .current_dir(fixture.path())
+                .status()
+                .expect("Git invocation")
+                .success()
+        );
+    }
+    fs::write(
+        fixture.path().join("ota.yaml"),
+        "version: 1\nproject:\n  name: staged-contract\n# reviewed elsewhere\n",
+    )
+    .expect("staged contract");
+    assert!(
+        Command::new("git")
+            .args(["add", "ota.yaml"])
+            .current_dir(fixture.path())
+            .status()
+            .expect("stage contract")
+            .success()
+    );
+    fs::create_dir_all(fixture.path().join(".ota/candidates")).expect("candidate directory");
+    let detected = run_ota(
+        &[
+            "detect",
+            "--candidate-out",
+            ".ota/candidates/detect.json",
+            "--json",
+            ".",
+        ],
+        fixture.path(),
+    );
+    assert_eq!(detected["ok"], true);
+    let before_cleanup_fault = Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(fixture.path())
+        .output()
+        .expect("Git head before cleanup fault");
+    assert!(before_cleanup_fault.status.success());
+    let cleanup_failed = run_ota_with_env(
+        &[
+            "contract",
+            "apply-candidate",
+            ".ota/candidates/detect.json",
+            "--write",
+            "--carrier",
+            "git",
+            "--json",
+            ".",
+        ],
+        fixture.path(),
+        &[(
+            "OTA_TEST_CANDIDATE_PUBLICATION_FAULT",
+            "git_temporary_index_cleanup",
+        )],
+        false,
+    );
+    assert_matches_schema("contract-candidate-application.json", &cleanup_failed);
+    assert_eq!(cleanup_failed["code"], "candidate_write_failed");
+    assert_eq!(cleanup_failed["written"], false);
+    let after_cleanup_fault = Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(fixture.path())
+        .output()
+        .expect("Git head after cleanup fault");
+    assert_eq!(before_cleanup_fault.stdout, after_cleanup_fault.stdout);
+    let failed = run_ota_with_env(
+        &[
+            "contract",
+            "apply-candidate",
+            ".ota/candidates/detect.json",
+            "--write",
+            "--carrier",
+            "git",
+            "--json",
+            ".",
+        ],
+        fixture.path(),
+        &[],
+        false,
+    );
+    assert_matches_schema("contract-candidate-application.json", &failed);
+    assert_eq!(failed["code"], "candidate_write_failed");
+    assert_eq!(failed["written"], false);
+
+    assert!(
+        Command::new("git")
+            .args(["reset", "--hard", "-q", "HEAD"])
+            .current_dir(fixture.path())
+            .status()
+            .expect("reset staged contract")
+            .success()
+    );
+    fs::write(
+        fixture.path().join("ota.yaml"),
+        "version: 1\nproject:\n  name: staged-contract\n# uncommitted edit\n",
+    )
+    .expect("unstaged contract");
+    let detected = run_ota(
+        &[
+            "detect",
+            "--candidate-out",
+            ".ota/candidates/unstaged.json",
+            "--json",
+            ".",
+        ],
+        fixture.path(),
+    );
+    assert_eq!(detected["ok"], true);
+    let failed = run_ota_with_env(
+        &[
+            "contract",
+            "apply-candidate",
+            ".ota/candidates/unstaged.json",
+            "--write",
+            "--carrier",
+            "git",
+            "--json",
+            ".",
+        ],
+        fixture.path(),
+        &[],
+        false,
+    );
+    assert_matches_schema("contract-candidate-application.json", &failed);
+    assert_eq!(failed["code"], "candidate_write_failed");
+    assert_eq!(failed["written"], false);
+}
+
+#[cfg(all(unix, feature = "test-candidate-publication-faults"))]
+#[test]
+fn contract_git_carrier_post_cas_failure_reports_recovery_identity() {
+    let fixture = tempfile::tempdir().expect("tempdir");
+    fs::write(
+        fixture.path().join("ota.yaml"),
+        "version: 1\nproject:\n  name: post-cas\n",
+    )
+    .expect("existing contract");
+    fs::write(
+        fixture.path().join("Cargo.toml"),
+        "[package]\nname = \"post-cas\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .expect("manifest");
+    for arguments in [
+        ["init", "-q"].as_slice(),
+        ["config", "user.name", "Ota test"].as_slice(),
+        ["config", "user.email", "ota-test@example.test"].as_slice(),
+        ["add", "ota.yaml", "Cargo.toml"].as_slice(),
+        ["commit", "-qm", "initial contract"].as_slice(),
+    ] {
+        assert!(
+            Command::new("git")
+                .args(arguments)
+                .current_dir(fixture.path())
+                .status()
+                .expect("Git invocation")
+                .success()
+        );
+    }
+    fs::create_dir_all(fixture.path().join(".ota/candidates")).expect("candidate directory");
+    let detected = run_ota(
+        &[
+            "detect",
+            "--candidate-out",
+            ".ota/candidates/detect.json",
+            "--json",
+            ".",
+        ],
+        fixture.path(),
+    );
+    assert_eq!(detected["ok"], true);
+    let failed = run_ota_with_env(
+        &[
+            "contract",
+            "apply-candidate",
+            ".ota/candidates/detect.json",
+            "--write",
+            "--carrier",
+            "git",
+            "--json",
+            ".",
+        ],
+        fixture.path(),
+        &[("OTA_TEST_CANDIDATE_PUBLICATION_FAULT", "git_post_cas")],
+        false,
+    );
+    assert_matches_schema("contract-candidate-application.json", &failed);
+    assert_eq!(
+        failed["code"],
+        "candidate_write_committed_worktree_unsynced"
+    );
+    assert_eq!(failed["written"], true);
+    assert_eq!(failed["carrier"], "git");
+    assert!(failed["previous_commit"].as_str().is_some());
+    assert!(failed["resulting_commit"].as_str().is_some());
+    let branch_ref = Command::new("git")
+        .args(["symbolic-ref", "HEAD"])
+        .current_dir(fixture.path())
+        .output()
+        .expect("Git symbolic-ref");
+    assert!(branch_ref.status.success());
+    assert_eq!(
+        failed["branch_ref"],
+        String::from_utf8_lossy(&branch_ref.stdout).trim()
+    );
+}
+
+#[cfg(all(unix, feature = "test-candidate-publication-faults"))]
+#[test]
+fn contract_git_carrier_refuses_a_pre_cas_branch_change() {
+    let fixture = tempfile::tempdir().expect("tempdir");
+    fs::write(
+        fixture.path().join("ota.yaml"),
+        "version: 1\nproject:\n  name: pre-cas\n",
+    )
+    .expect("existing contract");
+    fs::write(
+        fixture.path().join("Cargo.toml"),
+        "[package]\nname = \"pre-cas\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .expect("manifest");
+    for arguments in [
+        ["init", "-q"].as_slice(),
+        ["config", "user.name", "Ota test"].as_slice(),
+        ["config", "user.email", "ota-test@example.test"].as_slice(),
+        ["add", "ota.yaml", "Cargo.toml"].as_slice(),
+        ["commit", "-qm", "initial contract"].as_slice(),
+        ["commit", "--allow-empty", "-qm", "parent for CAS fault"].as_slice(),
+    ] {
+        assert!(
+            Command::new("git")
+                .args(arguments)
+                .current_dir(fixture.path())
+                .status()
+                .expect("Git invocation")
+                .success()
+        );
+    }
+    fs::create_dir_all(fixture.path().join(".ota/candidates")).expect("candidate directory");
+    let detected = run_ota(
+        &[
+            "detect",
+            "--candidate-out",
+            ".ota/candidates/detect.json",
+            "--json",
+            ".",
+        ],
+        fixture.path(),
+    );
+    assert_eq!(detected["ok"], true);
+    let failed = run_ota_with_env(
+        &[
+            "contract",
+            "apply-candidate",
+            ".ota/candidates/detect.json",
+            "--write",
+            "--carrier",
+            "git",
+            "--json",
+            ".",
+        ],
+        fixture.path(),
+        &[(
+            "OTA_TEST_CANDIDATE_PUBLICATION_FAULT",
+            "git_pre_cas_ref_change",
+        )],
+        false,
+    );
+    assert_matches_schema("contract-candidate-application.json", &failed);
+    assert_eq!(failed["code"], "candidate_write_failed");
+    assert_eq!(failed["written"], false);
+    assert!(failed.get("resulting_commit").is_none());
+}
+
 #[test]
 fn contract_upgrade_refuses_unregistered_and_tampered_migrations() {
     let fixture = tempfile::tempdir().expect("tempdir");

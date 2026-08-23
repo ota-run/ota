@@ -3173,8 +3173,9 @@ Current behavior:
 - returns `upgrade_unsupported` when the contract has no registered lossless migration
 - requires `ota contract apply-candidate CANDIDATE --json` to independently re-derive the exact
   migration before admission
-- keeps upgrade `--write` disabled until Ota has an owned existing-contract update carrier; the
-  create-new writer is intentionally not reused to overwrite a contract
+- keeps ordinary upgrade `--write` disabled; the reviewed candidate requires the explicit
+  `--write --carrier git` existing-contract update path, while the create-new writer is never
+  reused to overwrite a contract
 
 ## `ota contract apply-candidate`
 
@@ -3185,6 +3186,7 @@ ota contract apply-candidate CANDIDATE [PATH]
 ota contract apply-candidate CANDIDATE --json [PATH]
 ota contract apply-candidate CANDIDATE --require-complete --json [PATH]
 ota contract apply-candidate CANDIDATE --write --json [PATH]
+ota contract apply-candidate CANDIDATE --write --carrier git --json [PATH]
 ```
 
 Use this after a maintainer has reviewed an artifact from `ota detect --candidate-out` or
@@ -3197,14 +3199,18 @@ and fully validated resulting contract identity. Candidates that cannot produce 
 projection remain review artifacts and refuse application admission. Unrelated `unknown` or
 `unsupported` findings do not remove an otherwise complete projection; they remain visible and
 `--require-complete` turns them into a refusal. Without `--write`, it is dry-run only and
-`ota.yaml` is never changed. `--write` locks the retained no-follow repository directory, repeats admission
-against current truth, rechecks the reviewed base immediately before publication, and atomically
-creates a previously absent `ota.yaml` from the shared evaluator's validated `Contract`. It never
-replaces an existing contract, because an ordinary repository filesystem cannot safely
-compare-and-swap against an arbitrary external writer. Existing-contract candidates remain
-review-only until an owned update carrier is available. The create-new writer currently requires
-Linux `renameat2(RENAME_NOREPLACE)` or macOS `renameatx_np(RENAME_EXCL)`; other platforms refuse
-rather than weakening no-replace publication.
+`ota.yaml` is never changed. Default `--write` locks the retained no-follow repository directory,
+repeats admission against current truth, rechecks the reviewed base immediately before publication,
+and atomically creates a previously absent `ota.yaml` from the shared evaluator's validated
+`Contract`. It never replaces an existing contract, because an ordinary repository filesystem
+cannot safely compare-and-swap against an arbitrary external writer. Existing-contract updates
+require the explicit `--carrier git` path: Ota requires a non-detached checkout with a tracked,
+HEAD-matching `ota.yaml` in both the index and worktree, scrubs caller Git-routing environment and
+disables configured Git helper execution, commits only the reviewed contract through expected-HEAD
+ref compare-and-swap, then verifies the
+materialized worktree and reports the branch and prior/resulting commits. It never pushes, rebases,
+amends, or modifies unrelated paths. Both writers currently require Linux or macOS no-follow
+directory-descriptor support; other platforms refuse rather than weakening publication guarantees.
 
 Current behavior:
 
@@ -3218,11 +3224,11 @@ Current behavior:
   `candidate_implementation_incompatible`, `candidate_not_reproducible`, `candidate_stale`,
   `candidate_contract_mismatch`, `candidate_conflict`, `candidate_incomplete`,
   `candidate_unsupported`, `candidate_write_failed`, and
-  `candidate_write_durability_uncertain`
+  `candidate_write_durability_uncertain`, and
+  `candidate_write_committed_worktree_unsynced`
 - does not grant agent-safe status or authorize unreviewed candidate application; legacy detect
   mutation paths have not yet migrated to this evaluator
-- admits upgrade candidates in dry-run mode only; `--write` refuses until an owned
-  existing-contract update carrier is available
+- admits an upgrade `--write` only through `--carrier git`; a matching reapplication is a no-op
 
 Candidate artifact output from `ota detect --candidate-out` uses the same separate publication
 posture. `candidate_published` describes the review artifact; `written` continues to describe

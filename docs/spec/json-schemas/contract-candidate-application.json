@@ -17,6 +17,10 @@
         "resulting_contract_identity": { "$ref": "./contract-candidate.json#/$defs/identity" },
         "admitted": { "const": true },
         "written": { "type": "boolean" },
+        "carrier": { "const": "git" },
+        "previous_commit": { "type": "string", "pattern": "^[0-9a-f]{40,64}$" },
+        "resulting_commit": { "type": "string", "pattern": "^[0-9a-f]{40,64}$" },
+        "branch_ref": { "type": "string", "pattern": "^refs/heads/" },
         "no_op": { "type": "boolean" },
         "residual_dispositions": {
           "type": "array",
@@ -42,6 +46,22 @@
             "properties": { "mode": { "const": "write" }, "written": { "const": false } },
             "required": ["mode", "written"]
           }
+        },
+        {
+          "if": { "required": ["carrier"] },
+          "then": {
+            "properties": { "mode": { "const": "write" }, "written": { "const": true } },
+            "required": ["mode", "written", "previous_commit", "resulting_commit", "branch_ref"]
+          },
+          "else": {
+            "not": {
+              "anyOf": [
+                { "required": ["previous_commit"] },
+                { "required": ["resulting_commit"] },
+                { "required": ["branch_ref"] }
+              ]
+            }
+          }
         }
       ]
     },
@@ -66,23 +86,58 @@
             "candidate_incomplete",
             "candidate_unsupported",
             "candidate_write_failed",
-            "candidate_write_durability_uncertain"
+            "candidate_write_durability_uncertain",
+            "candidate_write_committed_worktree_unsynced"
           ]
         },
         "error": { "type": "string", "minLength": 1 },
+        "carrier": { "const": "git" },
+        "previous_commit": { "type": "string", "pattern": "^[0-9a-f]{40,64}$" },
+        "resulting_commit": { "type": "string", "pattern": "^[0-9a-f]{40,64}$" },
+        "branch_ref": { "type": "string", "pattern": "^refs/heads/" },
         "next": { "type": "string", "minLength": 1 }
       },
       "allOf": [
         {
           "if": {
-            "properties": { "code": { "const": "candidate_write_durability_uncertain" } },
+            "properties": {
+              "code": { "const": "candidate_write_durability_uncertain" }
+            },
             "required": ["code"]
           },
           "then": {
             "properties": { "mode": { "const": "write" }, "written": { "const": true } },
-            "required": ["mode", "written"]
+            "required": ["mode", "written"],
+            "not": {
+              "anyOf": [
+                { "required": ["carrier"] },
+                { "required": ["previous_commit"] },
+                { "required": ["resulting_commit"] },
+                { "required": ["branch_ref"] }
+              ]
+            }
           },
-          "else": { "properties": { "written": { "const": false } } }
+          "else": {
+            "if": {
+              "properties": { "code": { "const": "candidate_write_committed_worktree_unsynced" } },
+              "required": ["code"]
+            },
+            "then": {
+              "properties": { "mode": { "const": "write" }, "written": { "const": true } },
+              "required": ["mode", "written", "carrier", "previous_commit", "resulting_commit", "branch_ref"]
+            },
+            "else": {
+              "properties": { "written": { "const": false } },
+              "not": {
+                "anyOf": [
+                  { "required": ["carrier"] },
+                  { "required": ["previous_commit"] },
+                  { "required": ["resulting_commit"] },
+                  { "required": ["branch_ref"] }
+                ]
+              }
+            }
+          }
         }
       ]
     }

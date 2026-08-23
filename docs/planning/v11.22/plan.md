@@ -216,6 +216,7 @@ ota detect --candidate-out <path> --replace-candidate --json
 ota contract apply-candidate <path> --json
 ota contract apply-candidate <path> --write --json
 ota contract apply-candidate <path> --write --require-complete --json
+ota contract apply-candidate <path> --write --carrier git --json
 ```
 
 Creation writes only the caller-selected candidate artifact, never `ota.yaml`; it uses create-new
@@ -274,6 +275,30 @@ It deliberately refuses upgrade `--write`: the create-new contract writer cannot
 compare-and-swap against a non-cooperating external writer of an existing `ota.yaml`. A later
 owned update carrier must satisfy the write and reapplication acceptance bar before legacy
 mutation commands can route through it.
+
+### Git Existing-Contract Update Carrier
+
+The first owned update carrier is explicit: `ota contract apply-candidate <path> --write --carrier
+git`. It is not the default `--write` behavior and it does not make a generic working tree an
+authority boundary. It admits only a non-detached Git checkout where `ota.yaml` is tracked at
+`HEAD`, the index and working-tree entry both match that exact `HEAD` blob, and the candidate base
+identity, re-derived source/evidence, projection, and resulting contract all remain exact. It
+constructs one contract-only commit, updates the checked-out branch with an expected-old `HEAD`
+compare-and-swap, and then materializes and re-reads `ota.yaml` to confirm it matches the committed
+contract. A competing branch advance, staged contract change, untracked or symlinked contract,
+materialization mismatch, or post-write worktree mismatch refuses with a typed outcome.
+
+The carrier records the prior and resulting commit identities, current branch ref, candidate and
+projection identities, and resulting contract identity in successful machine output. It scrubs
+caller `GIT_*` routing state and disables configured Git helper execution before every carrier Git
+command. A successful
+ref update followed by failed materialization is not reported as an unwritten failure: it is a
+committed-but-worktree-unsynced terminal state with the exact prior/resulting commit and branch
+identities plus an operator recovery instruction. The carrier currently requires the same Linux or
+macOS no-follow directory-descriptor support as candidate application. Ota does not claim to prevent a same-user process from changing the
+worktree after that observation; subsequent application re-derives repository truth and refuses
+when it differs. The carrier never pushes, rebases, amends, changes unrelated paths, accepts a
+detached `HEAD`, or silently converts existing `--write` calls into commits.
 
 Shipped `detect --merge --apply`, `--apply-all`, and `--rewrite --yes` retain their existing
 semantics during a compatibility window, but every contract-writing path must construct, validate,

@@ -43,7 +43,7 @@ trim() {
   printf '%s' "$1" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//'
 }
 
-load_changed_files() {
+load_committed_changed_files() {
   if [ -n "${OTA_FIRST_PARTY_SYNC_CHANGED_FILES:-}" ]; then
     printf '%s\n' "${OTA_FIRST_PARTY_SYNC_CHANGED_FILES}"
     return
@@ -73,6 +73,10 @@ load_changed_files() {
     return
   fi
 
+  return 0
+}
+
+load_worktree_changed_files() {
   {
     git -C "${root}" diff --name-only --cached
     git -C "${root}" diff --name-only
@@ -139,22 +143,31 @@ check_consumer() {
   printf '%s\n' "first-party-sync: ${consumer_name} waived (${waiver_reason})"
 }
 
-changed_files="$(load_changed_files || true)"
-triggered_any="false"
+check_batch() {
+  changed_files="$1"
+  triggered_any="false"
+  check_consumer \
+    "skills" \
+    "ota-run/skills" \
+    "docs/policy/skills-sync-status.yaml" \
+    '^(src/schema\.rs|src/validator\.rs|docs/spec/contract-reference\.md|docs/spec/toolchains-runtimes-tools\.md|docs/spec/execution-topology\.md|docs/spec/local-service-topology\.md|docs/spec/command-reference\.md|examples/)' \
+    "skills_commit"
+  check_consumer \
+    "ota-site" \
+    "ota-run/ota-site" \
+    "docs/policy/ota-site-sync-status.yaml" \
+    '^(src/published_docs_manifest\.rs|docs/spec/published-docs\.md|docs/spec/published-docs/canonical-docs\.json|docs/spec/contract-reference\.md|docs/spec/workspace-reference\.md|docs/spec/command-reference\.md|docs/spec/json-output-reference\.md|docs/spec/execution-topology\.md|docs/spec/local-service-topology\.md|docs/spec/toolchains-runtimes-tools\.md)'
+  [ "${triggered_any}" = "true" ] && batches_triggered="true"
+}
 
-check_consumer \
-  "skills" \
-  "ota-run/skills" \
-  "docs/policy/skills-sync-status.yaml" \
-  '^(src/schema\.rs|src/validator\.rs|docs/spec/contract-reference\.md|docs/spec/toolchains-runtimes-tools\.md|docs/spec/execution-topology\.md|docs/spec/local-service-topology\.md|docs/spec/command-reference\.md|examples/)' \
-  "skills_commit"
+batches_triggered="false"
+if [ -n "${OTA_FIRST_PARTY_SYNC_CHANGED_FILES:-}" ] || [ -n "${OTA_SKILLS_SYNC_CHANGED_FILES:-}" ] || [ -n "${OTA_FIRST_PARTY_SYNC_BASE_SHA:-}" ] || [ -n "${OTA_SKILLS_SYNC_BASE_SHA:-}" ]; then
+  check_batch "$(load_committed_changed_files || true)"
+else
+  check_batch "$(load_committed_changed_files || true)"
+  check_batch "$(load_worktree_changed_files || true)"
+fi
 
-check_consumer \
-  "ota-site" \
-  "ota-run/ota-site" \
-  "docs/policy/ota-site-sync-status.yaml" \
-  '^(src/published_docs_manifest\.rs|docs/spec/published-docs\.md|docs/spec/published-docs/canonical-docs\.json|docs/spec/contract-reference\.md|docs/spec/workspace-reference\.md|docs/spec/command-reference\.md|docs/spec/json-output-reference\.md|docs/spec/execution-topology\.md|docs/spec/local-service-topology\.md|docs/spec/toolchains-runtimes-tools\.md)'
-
-if [ "${triggered_any}" != "true" ]; then
+if [ "${batches_triggered}" != "true" ]; then
   printf '%s\n' "first-party-sync: no governed consumer diff detected"
 fi

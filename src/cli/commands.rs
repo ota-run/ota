@@ -56,7 +56,7 @@ use super::{
     AnnotationFormat, AnnotationMode, AssistEnvSourceKindArg, AssistHostScopeArg,
     AssistNormalizeIntoArg, AssistReadinessStyleArg, AssistServiceManagerArg, AssistTaskKindArg,
     AssistTaskListenerProtocolArg, AssistTaskTargetActivationModeArg,
-    AssistTaskTargetAddressViewArg, ReceiptHistorySource,
+    AssistTaskTargetAddressViewArg, ContractCandidateUpdateCarrier, ReceiptHistorySource,
 };
 use crate::adapter_inputs::bind_workflow_adapter_overlays;
 use crate::ci_projection::{
@@ -36051,6 +36051,7 @@ pub fn apply_contract_candidate(
     path: Option<&Path>,
     candidate_path: &Path,
     write: bool,
+    carrier: Option<ContractCandidateUpdateCarrier>,
     require_complete: bool,
     format: OutputFormat,
     debug: bool,
@@ -36068,6 +36069,13 @@ pub fn apply_contract_candidate(
         format!("DEBUG repo_root={}", root.display()),
         format!("DEBUG candidate_path={candidate_path_display}"),
         format!("DEBUG write={write}"),
+        format!(
+            "DEBUG carrier={}",
+            match carrier {
+                Some(ContractCandidateUpdateCarrier::Git) => "git",
+                None => "none",
+            }
+        ),
         format!("DEBUG require_complete={require_complete}"),
     ];
     let failure = |code: &'static str, error: String, next: Option<&str>| {
@@ -36087,6 +36095,10 @@ pub fn apply_contract_candidate(
                     written: false,
                     code,
                     error: &error,
+                    carrier: None,
+                    previous_commit: None,
+                    resulting_commit: None,
+                    branch_ref: None,
                     next,
                 }))
             }
@@ -36129,8 +36141,18 @@ pub fn apply_contract_candidate(
         };
         return failure(code, error.to_string(), None);
     }
+    if write
+        && matches!(carrier, Some(ContractCandidateUpdateCarrier::Git))
+        && git_text(&root, &["symbolic-ref", "-q", "HEAD"]).is_err()
+    {
+        return failure(
+            "candidate_write_failed",
+            String::from("the Git carrier refuses a detached HEAD"),
+            Some("check out a local branch, then retry the reviewed candidate"),
+        );
+    }
     if candidate.kind == CandidateKind::Upgrade {
-        if write {
+        if write && carrier.is_none() {
             return failure(
                 "candidate_unsupported",
                 String::from(
@@ -36140,6 +36162,68 @@ pub fn apply_contract_candidate(
                     "review the dry-run result; do not replace ota.yaml until Ota ships an owned existing-contract update carrier",
                 ),
             );
+        }
+        let already_applied = matches!(
+            build_contract_upgrade_candidate(&root),
+            Err(ContractUpgradeError::NoRegisteredMigration)
+        ) && write
+            && matches!(carrier, Some(ContractCandidateUpdateCarrier::Git))
+            && git_contract_matches_head(
+                &root,
+                _write_lock
+                    .as_ref()
+                    .expect("write mode retains a protected repository directory"),
+            )
+            && candidate.migration.as_ref().is_some_and(|migration| {
+                fs::read(root.join(DEFAULT_CONTRACT_FILE))
+                    .ok()
+                    .is_some_and(|bytes| {
+                        contract_snapshot_hash(&bytes) == migration.resulting_content_identity
+                    })
+            })
+            && candidate
+                .application_projection
+                .as_ref()
+                .is_some_and(|projection| {
+                    current_contract_semantic_identity(&root)
+                        .ok()
+                        .flatten()
+                        .is_some_and(|identity| identity == projection.resulting_contract_identity)
+                });
+        if already_applied {
+            let application_projection = candidate
+                .application_projection
+                .as_ref()
+                .expect("verified upgrade candidate has an application projection");
+            let output = match format {
+                OutputFormat::Text => CommandOutput::success(format!(
+                    "{}\n\n{}\n{}\nNo-op: ota.yaml already matches the committed reviewed contract.",
+                    format_command_header("CONTRACT CANDIDATE", &compact_repo_path(&root)),
+                    format_result_line("upgrade candidate admission remains reproducible"),
+                    format_result_line(&format!("identity {}", paint_code(&candidate.identity))),
+                )),
+                OutputFormat::Json => {
+                    CommandOutput::success(to_json(&ContractCandidateApplicationSuccess {
+                        ok: true,
+                        mode,
+                        candidate_path: &candidate_path_display,
+                        candidate_identity: &candidate.identity,
+                        implementation_identity: &candidate.implementation_identity,
+                        application_projection_identity: &application_projection.identity,
+                        resulting_contract_identity: &application_projection
+                            .resulting_contract_identity,
+                        admitted: true,
+                        written: false,
+                        carrier: None,
+                        previous_commit: None,
+                        resulting_commit: None,
+                        branch_ref: None,
+                        no_op: true,
+                        residual_dispositions: Vec::new(),
+                    }))
+                }
+            };
+            return finalize_debug(output, debug, debug_lines);
         }
         let current = match build_contract_upgrade_candidate(&root) {
             Ok(current) => current,
@@ -36190,12 +36274,71 @@ pub fn apply_contract_candidate(
             .application_projection
             .as_ref()
             .expect("verified upgrade candidate has an application projection");
+        let carrier_publication = if write && !already_applied {
+            let carrier = carrier.expect("upgrade write requires an explicit carrier");
+            let publication = match carrier {
+                ContractCandidateUpdateCarrier::Git => write_candidate_contract_git(
+                    &root,
+                    _write_lock
+                        .as_ref()
+                        .expect("write mode retains a protected repository directory"),
+                    &projected_contract,
+                    candidate.existing_contract_snapshot_identity.as_deref(),
+                    &candidate.identity,
+                ),
+            };
+            match publication {
+                Ok(publication) => Some(publication),
+                Err(error) => {
+                    return match error {
+                        CandidatePublicationError::PrePublication(error) => failure(
+                            "candidate_write_failed",
+                            error,
+                            Some(
+                                "review current Git and contract state, then regenerate the candidate before retrying",
+                            ),
+                        ),
+                        CandidatePublicationError::DurabilityUncertain(error) => {
+                            candidate_publication_uncertain_failure(
+                                format,
+                                debug,
+                                debug_lines,
+                                mode,
+                                &candidate_path_display,
+                                error,
+                            )
+                        }
+                        CandidatePublicationError::CommittedButWorktreeUnsynced {
+                            error,
+                            publication,
+                        } => candidate_publication_committed_unsynced_failure(
+                            format,
+                            debug,
+                            debug_lines,
+                            mode,
+                            &candidate_path_display,
+                            error,
+                            &publication,
+                        ),
+                    };
+                }
+            }
+        } else {
+            None
+        };
         let output = match format {
             OutputFormat::Text => CommandOutput::success(format!(
-                "{}\n\n{}\n{}\nDry-run only: ota.yaml was not changed; existing-contract publication remains disabled.",
+                "{}\n\n{}\n{}\n{}",
                 format_command_header("CONTRACT CANDIDATE", &compact_repo_path(&root)),
                 format_result_line("upgrade candidate admission is reproducible"),
                 format_result_line(&format!("identity {}", paint_code(&candidate.identity))),
+                if already_applied {
+                    "No-op: ota.yaml already matches the committed reviewed contract."
+                } else if write {
+                    "Applied through the Git carrier: ota.yaml now matches the committed reviewed contract."
+                } else {
+                    "Dry-run only: ota.yaml was not changed; existing-contract publication remains disabled."
+                },
             )),
             OutputFormat::Json => {
                 CommandOutput::success(to_json(&ContractCandidateApplicationSuccess {
@@ -36208,8 +36351,18 @@ pub fn apply_contract_candidate(
                     resulting_contract_identity: &application_projection
                         .resulting_contract_identity,
                     admitted: true,
-                    written: false,
-                    no_op: false,
+                    written: write && !already_applied,
+                    carrier: carrier_publication.as_ref().map(|_| "git"),
+                    previous_commit: carrier_publication
+                        .as_ref()
+                        .map(|publication| publication.previous_commit.as_str()),
+                    resulting_commit: carrier_publication
+                        .as_ref()
+                        .map(|publication| publication.resulting_commit.as_str()),
+                    branch_ref: carrier_publication
+                        .as_ref()
+                        .map(|publication| publication.branch_ref.as_str()),
+                    no_op: already_applied,
                     residual_dispositions: Vec::new(),
                 }))
             }
@@ -36330,18 +36483,50 @@ pub fn apply_contract_candidate(
             Some("review the residual findings or rerun without `--require-complete`"),
         );
     }
-
-    let written = if write && !semantic_no_op {
-        let contract = projected_contract
-            .as_ref()
-            .expect("non-no-op write must have a verified projected contract");
-        if let Err(error) = write_candidate_contract_create_new(
+    if write
+        && semantic_no_op
+        && matches!(carrier, Some(ContractCandidateUpdateCarrier::Git))
+        && !git_contract_matches_head(
+            &root,
             _write_lock
                 .as_ref()
                 .expect("write mode retains a protected repository directory"),
-            contract,
-            candidate.existing_contract_snapshot_identity.as_deref(),
-        ) {
+        )
+    {
+        return failure(
+            "candidate_write_failed",
+            String::from(
+                "the Git carrier requires ota.yaml to match HEAD in both the index and worktree before a semantic no-op",
+            ),
+            Some("commit or discard the ota.yaml change before retrying the reviewed candidate"),
+        );
+    }
+
+    let git_carrier_publication = if write && !semantic_no_op {
+        let contract = projected_contract
+            .as_ref()
+            .expect("non-no-op write must have a verified projected contract");
+        let publication = match carrier {
+            Some(ContractCandidateUpdateCarrier::Git) => write_candidate_contract_git(
+                &root,
+                _write_lock
+                    .as_ref()
+                    .expect("write mode retains a protected repository directory"),
+                contract,
+                candidate.existing_contract_snapshot_identity.as_deref(),
+                &candidate.identity,
+            )
+            .map(Some),
+            None => write_candidate_contract_create_new(
+                _write_lock
+                    .as_ref()
+                    .expect("write mode retains a protected repository directory"),
+                contract,
+                candidate.existing_contract_snapshot_identity.as_deref(),
+            )
+            .map(|_| None),
+        };
+        if let Err(error) = publication {
             let (error, code) = match error {
                 CandidatePublicationError::PrePublication(error) => {
                     (error, "candidate_write_failed")
@@ -36356,6 +36541,17 @@ pub fn apply_contract_candidate(
                         error,
                     );
                 }
+                CandidatePublicationError::CommittedButWorktreeUnsynced { error, publication } => {
+                    return candidate_publication_committed_unsynced_failure(
+                        format,
+                        debug,
+                        debug_lines,
+                        mode,
+                        &candidate_path_display,
+                        error,
+                        &publication,
+                    );
+                }
             };
             return failure(
                 code,
@@ -36363,10 +36559,11 @@ pub fn apply_contract_candidate(
                 Some("review current contract state and regenerate the candidate before retrying"),
             );
         }
-        true
+        publication.expect("candidate publication succeeded")
     } else {
-        false
+        None
     };
+    let written = write && !semantic_no_op;
 
     let output = match format {
         OutputFormat::Text => {
@@ -36406,6 +36603,16 @@ pub fn apply_contract_candidate(
                 resulting_contract_identity: &application_projection.resulting_contract_identity,
                 admitted: true,
                 written,
+                carrier: git_carrier_publication.as_ref().map(|_| "git"),
+                previous_commit: git_carrier_publication
+                    .as_ref()
+                    .map(|publication| publication.previous_commit.as_str()),
+                resulting_commit: git_carrier_publication
+                    .as_ref()
+                    .map(|publication| publication.resulting_commit.as_str()),
+                branch_ref: git_carrier_publication
+                    .as_ref()
+                    .map(|publication| publication.branch_ref.as_str()),
                 no_op: semantic_no_op,
                 residual_dispositions,
             }))
@@ -36485,8 +36692,52 @@ fn candidate_publication_uncertain_failure(
                 written: true,
                 code: "candidate_write_durability_uncertain",
                 error: &error,
+                carrier: None,
+                previous_commit: None,
+                resulting_commit: None,
+                branch_ref: None,
                 next: Some(
                     "verify ota.yaml before retrying; do not assume this invocation can be repeated safely",
+                ),
+            }))
+        }
+    };
+    finalize_debug(output, debug, debug_lines)
+}
+
+fn candidate_publication_committed_unsynced_failure(
+    format: OutputFormat,
+    debug: bool,
+    debug_lines: Vec<String>,
+    mode: &'static str,
+    candidate_path: &str,
+    error: String,
+    publication: &GitCarrierPublication,
+) -> CommandOutput {
+    let output = match format {
+        OutputFormat::Text => CommandOutput::failure(command_message_failure_text(
+            "CONTRACT CANDIDATE",
+            ".",
+            "Candidate contract commit succeeded but ota.yaml was not reconciled",
+            &format!("candidate_write_committed_worktree_unsynced: {error}"),
+            &[String::from(
+                "inspect the recorded commit and reconcile ota.yaml before retrying; do not rerun this candidate blindly",
+            )],
+        )),
+        OutputFormat::Json => {
+            CommandOutput::failure(to_json(&ContractCandidateApplicationFailure {
+                ok: false,
+                mode,
+                candidate_path,
+                written: true,
+                code: "candidate_write_committed_worktree_unsynced",
+                error: &error,
+                carrier: Some("git"),
+                previous_commit: Some(&publication.previous_commit),
+                resulting_commit: Some(&publication.resulting_commit),
+                branch_ref: Some(&publication.branch_ref),
+                next: Some(
+                    "inspect the recorded commit and reconcile ota.yaml before retrying; do not rerun this candidate blindly",
                 ),
             }))
         }
@@ -36543,9 +36794,535 @@ fn current_contract_semantic_identity(root: &Path) -> Result<Option<String>, Str
         })
 }
 
+#[derive(Debug)]
 enum CandidatePublicationError {
     PrePublication(String),
     DurabilityUncertain(String),
+    CommittedButWorktreeUnsynced {
+        error: String,
+        publication: GitCarrierPublication,
+    },
+}
+
+#[derive(Debug, Clone)]
+struct GitCarrierPublication {
+    previous_commit: String,
+    resulting_commit: String,
+    branch_ref: String,
+}
+
+fn git_command(root: &Path) -> Command {
+    let mut command = Command::new("git");
+    command.current_dir(root);
+    // A reviewed candidate must reconcile against this checkout, never a caller-selected
+    // index, object store, config overlay, or work tree. The carrier supplies its temporary
+    // index explicitly after this scrub.
+    for (name, _) in env::vars_os() {
+        if name.to_string_lossy().starts_with("GIT_") {
+            command.env_remove(name);
+        }
+    }
+    // The carrier never asks Git to refresh an index through a configured helper or invoke a
+    // hook. Candidate bytes reach Git only through stdin/cacheinfo, never attributes filters.
+    command.args([
+        "-c",
+        "core.fsmonitor=false",
+        "-c",
+        "core.hooksPath=/dev/null",
+        "-c",
+        "commit.gpgSign=false",
+    ]);
+    command
+}
+
+fn git_output(root: &Path, arguments: &[&str]) -> Result<std::process::Output, String> {
+    git_command(root)
+        .args(arguments)
+        .output()
+        .map_err(|error| format!("failed to invoke Git: {error}"))
+}
+
+fn git_text(root: &Path, arguments: &[&str]) -> Result<String, String> {
+    let output = git_output(root, arguments)?;
+    if !output.status.success() {
+        return Err(format!(
+            "Git {} failed: {}",
+            arguments.join(" "),
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+fn git_success(root: &Path, arguments: &[&str], context: &str) -> Result<(), String> {
+    let output = git_output(root, arguments)?;
+    if output.status.success() {
+        return Ok(());
+    }
+    Err(format!(
+        "{context}: {}",
+        String::from_utf8_lossy(&output.stderr).trim()
+    ))
+}
+
+fn git_contract_matches_head(root: &Path, guard: &CandidateApplicationWriteGuard) -> bool {
+    let head_commit = match git_text(root, &["rev-parse", "HEAD"]) {
+        Ok(identity) => identity,
+        Err(_) => return false,
+    };
+    let head = match git_text(root, &["rev-parse", "--verify", "HEAD:ota.yaml"]) {
+        Ok(identity) => identity,
+        Err(_) => return false,
+    };
+    git_index_and_worktree_match(root, guard, &head_commit, &head, None).unwrap_or(false)
+}
+
+fn git_index_and_worktree_match(
+    root: &Path,
+    guard: &CandidateApplicationWriteGuard,
+    commit: &str,
+    expected_blob: &str,
+    expected_bytes: Option<&[u8]>,
+) -> Result<bool, String> {
+    if git_text(root, &["rev-parse", "HEAD"])? != commit {
+        return Ok(false);
+    }
+    if git_text(root, &["rev-parse", "--verify", ":ota.yaml"])? != expected_blob {
+        return Ok(false);
+    }
+    let bytes = read_git_carrier_contract(guard)?;
+    if let Some(expected_bytes) = expected_bytes {
+        Ok(bytes == expected_bytes)
+    } else {
+        let output = git_output(root, &["show", &format!("{commit}:ota.yaml")])?;
+        Ok(output.status.success() && bytes == output.stdout)
+    }
+}
+
+fn temporary_git_index_path(git_dir: &Path) -> Result<PathBuf, String> {
+    for attempt in 0..32_u32 {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or_default();
+        let path = git_dir.join(format!(
+            "ota-candidate-index-{}-{nonce}-{attempt}",
+            std::process::id()
+        ));
+        match OpenOptions::new().write(true).create_new(true).open(&path) {
+            Ok(_) => {
+                fs::remove_file(&path).map_err(|error| {
+                    format!(
+                        "failed to prepare temporary Git index `{}`: {error}",
+                        path.display()
+                    )
+                })?;
+                return Ok(path);
+            }
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(error) => {
+                return Err(format!(
+                    "failed to reserve temporary Git index `{}`: {error}",
+                    path.display()
+                ));
+            }
+        }
+    }
+    Err(String::from(
+        "failed to reserve a unique temporary Git index",
+    ))
+}
+
+fn git_with_index(
+    root: &Path,
+    index: &Path,
+    arguments: &[&str],
+    context: &str,
+) -> Result<String, String> {
+    let output = git_command(root)
+        .args(arguments)
+        .env("GIT_INDEX_FILE", index)
+        .output()
+        .map_err(|error| format!("failed to invoke Git for {context}: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "{context}: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+fn git_commit_tree(root: &Path, tree: &str, parent: &str, message: &str) -> Result<String, String> {
+    let mut child = git_command(root)
+        .args(["commit-tree", tree, "-p", parent])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("failed to invoke Git commit-tree: {error}"))?;
+    child
+        .stdin
+        .as_mut()
+        .expect("Git commit-tree stdin is piped")
+        .write_all(message.as_bytes())
+        .map_err(|error| format!("failed to write Git commit message: {error}"))?;
+    let output = child
+        .wait_with_output()
+        .map_err(|error| format!("failed to wait for Git commit-tree: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "failed to create contract-only Git commit: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+#[cfg(unix)]
+fn read_git_carrier_contract(guard: &CandidateApplicationWriteGuard) -> Result<Vec<u8>, String> {
+    let target = CString::new(DEFAULT_CONTRACT_FILE).expect("static contract name has no NUL");
+    let target_fd = unsafe {
+        libc::openat(
+            guard.root_directory.as_raw_fd(),
+            target.as_ptr(),
+            libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NOFOLLOW,
+        )
+    };
+    if target_fd < 0 {
+        return Err(format!(
+            "failed to reopen tracked ota.yaml without following aliases: {}",
+            io::Error::last_os_error()
+        ));
+    }
+    let mut current = unsafe { File::from_raw_fd(target_fd) };
+    if !current
+        .metadata()
+        .map_err(|error| format!("failed to inspect tracked ota.yaml: {error}"))?
+        .is_file()
+    {
+        return Err(String::from("tracked ota.yaml is not a regular file"));
+    }
+    let mut bytes = Vec::new();
+    current
+        .read_to_end(&mut bytes)
+        .map_err(|error| format!("failed to read tracked ota.yaml: {error}"))?;
+    Ok(bytes)
+}
+
+#[cfg(not(unix))]
+fn read_git_carrier_contract(_guard: &CandidateApplicationWriteGuard) -> Result<Vec<u8>, String> {
+    Err(String::from(
+        "Git-carrier contract materialization requires Unix no-follow directory support",
+    ))
+}
+
+#[cfg(unix)]
+fn materialize_git_carrier_contract(
+    guard: &CandidateApplicationWriteGuard,
+    bytes: &[u8],
+    expected_head_bytes: &[u8],
+) -> Result<(), String> {
+    let target = CString::new(DEFAULT_CONTRACT_FILE).expect("static contract name has no NUL");
+    let current_bytes = read_git_carrier_contract(guard)?;
+    if current_bytes != expected_head_bytes {
+        return Err(String::from(
+            "ota.yaml changed after branch compare-and-swap; refusing to overwrite it",
+        ));
+    }
+
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    let temporary = CString::new(format!(
+        ".ota.yaml.git-carrier-{}-{nonce}",
+        std::process::id()
+    ))
+    .expect("generated temporary name has no NUL");
+    let temporary_fd = unsafe {
+        libc::openat(
+            guard.root_directory.as_raw_fd(),
+            temporary.as_ptr(),
+            libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_CLOEXEC,
+            0o600,
+        )
+    };
+    if temporary_fd < 0 {
+        return Err(format!(
+            "failed to create Git-carrier materialization temporary: {}",
+            io::Error::last_os_error()
+        ));
+    }
+    let mut temporary_file = unsafe { File::from_raw_fd(temporary_fd) };
+    if let Err(error) = temporary_file
+        .write_all(bytes)
+        .and_then(|_| temporary_file.sync_all())
+    {
+        let cleanup = remove_candidate_publication_temporary(&guard.root_directory, &temporary)
+            .err()
+            .map(|cleanup| format!("; temporary cleanup failed: {cleanup}"))
+            .unwrap_or_default();
+        return Err(format!(
+            "failed to write Git-carrier contract materialization: {error}{cleanup}"
+        ));
+    }
+    drop(temporary_file);
+    let renamed = unsafe {
+        libc::renameat(
+            guard.root_directory.as_raw_fd(),
+            temporary.as_ptr(),
+            guard.root_directory.as_raw_fd(),
+            target.as_ptr(),
+        )
+    };
+    if renamed < 0 {
+        let cleanup = remove_candidate_publication_temporary(&guard.root_directory, &temporary)
+            .err()
+            .map(|cleanup| format!("; temporary cleanup failed: {cleanup}"))
+            .unwrap_or_default();
+        return Err(format!(
+            "failed to materialize committed ota.yaml: {}{cleanup}",
+            io::Error::last_os_error()
+        ));
+    }
+    guard
+        .root_directory
+        .sync_all()
+        .map_err(|error| format!("failed to sync Git-carrier contract directory: {error}"))
+}
+
+fn write_candidate_contract_git(
+    root: &Path,
+    guard: &CandidateApplicationWriteGuard,
+    contract: &Contract,
+    expected_base_identity: Option<&str>,
+    candidate_identity: &str,
+) -> Result<GitCarrierPublication, CandidatePublicationError> {
+    let Some(expected_base_identity) = expected_base_identity else {
+        return Err(CandidatePublicationError::PrePublication(String::from(
+            "the Git carrier applies only candidates bound to an existing ota.yaml",
+        )));
+    };
+    let canonical_root = fs::canonicalize(root).map_err(|error| {
+        CandidatePublicationError::PrePublication(format!(
+            "failed to canonicalize repository root `{}`: {error}",
+            root.display()
+        ))
+    })?;
+    let git_root = git_text(root, &["rev-parse", "--show-toplevel"])
+        .map_err(CandidatePublicationError::PrePublication)?;
+    if fs::canonicalize(&git_root).ok().as_deref() != Some(canonical_root.as_path()) {
+        return Err(CandidatePublicationError::PrePublication(String::from(
+            "the Git carrier requires the candidate repository root to be the checkout root",
+        )));
+    }
+    let branch_ref = git_text(root, &["symbolic-ref", "-q", "HEAD"]).map_err(|_| {
+        CandidatePublicationError::PrePublication(String::from(
+            "the Git carrier refuses a detached HEAD",
+        ))
+    })?;
+    let previous_commit = git_text(root, &["rev-parse", "HEAD"])
+        .map_err(CandidatePublicationError::PrePublication)?;
+    let head_blob = git_text(root, &["rev-parse", "--verify", "HEAD:ota.yaml"]).map_err(|_| {
+        CandidatePublicationError::PrePublication(String::from(
+            "the Git carrier requires ota.yaml to be tracked at HEAD",
+        ))
+    })?;
+    let head_bytes = git_output(root, &["show", "HEAD:ota.yaml"])
+        .map_err(CandidatePublicationError::PrePublication)?;
+    if !head_bytes.status.success() {
+        return Err(CandidatePublicationError::PrePublication(format!(
+            "failed to read HEAD:ota.yaml: {}",
+            String::from_utf8_lossy(&head_bytes.stderr).trim()
+        )));
+    }
+    let expected_head_bytes = head_bytes.stdout;
+    let head_identity = contract_snapshot_hash(&expected_head_bytes);
+    if head_identity != expected_base_identity {
+        return Err(CandidatePublicationError::PrePublication(String::from(
+            "the candidate base identity does not match the tracked HEAD:ota.yaml",
+        )));
+    }
+    if git_text(root, &["rev-parse", "--verify", ":ota.yaml"])
+        .map_err(CandidatePublicationError::PrePublication)?
+        != head_blob
+    {
+        return Err(CandidatePublicationError::PrePublication(String::from(
+            "the Git carrier refuses a staged ota.yaml change",
+        )));
+    }
+    if read_git_carrier_contract(guard).map_err(CandidatePublicationError::PrePublication)?
+        != expected_head_bytes
+    {
+        return Err(CandidatePublicationError::PrePublication(String::from(
+            "the Git carrier refuses a working-tree ota.yaml change",
+        )));
+    }
+
+    let bytes = serde_yaml::to_string(contract)
+        .map_err(|error| {
+            CandidatePublicationError::PrePublication(format!(
+                "failed to serialize projected contract: {error}"
+            ))
+        })?
+        .into_bytes();
+    let git_dir = git_text(root, &["rev-parse", "--git-dir"])
+        .map_err(CandidatePublicationError::PrePublication)?;
+    let git_dir = if Path::new(&git_dir).is_absolute() {
+        PathBuf::from(git_dir)
+    } else {
+        root.join(git_dir)
+    };
+    let index =
+        temporary_git_index_path(&git_dir).map_err(CandidatePublicationError::PrePublication)?;
+    let mut committed_publication = None;
+    let result = (|| {
+        let blob = git_command(root)
+            .args(["hash-object", "-w", "--stdin"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|error| format!("failed to invoke Git hash-object: {error}"))?;
+        let mut blob = blob;
+        blob.stdin
+            .as_mut()
+            .expect("Git hash-object stdin is piped")
+            .write_all(&bytes)
+            .map_err(|error| format!("failed to write projected contract to Git: {error}"))?;
+        let blob_output = blob
+            .wait_with_output()
+            .map_err(|error| format!("failed to wait for Git hash-object: {error}"))?;
+        if !blob_output.status.success() {
+            return Err(format!(
+                "failed to store projected contract blob: {}",
+                String::from_utf8_lossy(&blob_output.stderr).trim()
+            ));
+        }
+        let blob_identity = String::from_utf8_lossy(&blob_output.stdout)
+            .trim()
+            .to_string();
+        git_with_index(
+            root,
+            &index,
+            &["read-tree", "HEAD"],
+            "failed to prepare temporary Git index",
+        )?;
+        git_with_index(
+            root,
+            &index,
+            &[
+                "update-index",
+                "--add",
+                "--cacheinfo",
+                &format!("100644,{blob_identity},ota.yaml"),
+            ],
+            "failed to stage projected ota.yaml in temporary Git index",
+        )?;
+        let tree = git_with_index(
+            root,
+            &index,
+            &["write-tree"],
+            "failed to write contract-only Git tree",
+        )?;
+        let commit = git_commit_tree(
+            root,
+            &tree,
+            &previous_commit,
+            &format!("ota: apply contract candidate {candidate_identity}\n"),
+        )?;
+        if git_text(root, &["rev-parse", "HEAD"])? != previous_commit
+            || git_text(root, &["rev-parse", "--verify", ":ota.yaml"])? != head_blob
+        {
+            return Err(String::from(
+                "the staged ota.yaml changed before Git carrier publication",
+            ));
+        }
+        if read_git_carrier_contract(guard)? != expected_head_bytes {
+            return Err(String::from(
+                "the working-tree ota.yaml changed before Git carrier publication",
+            ));
+        }
+        if candidate_publication_fault("git_temporary_index_cleanup") {
+            return Err(String::from(
+                "test fault injected before temporary Git-index cleanup",
+            ));
+        }
+        fs::remove_file(&index).map_err(|error| {
+            format!("failed to remove temporary Git index before branch compare-and-swap: {error}")
+        })?;
+        if candidate_publication_fault("git_pre_cas_ref_change") {
+            let parent = git_text(root, &["rev-parse", "HEAD^"])?;
+            git_success(
+                root,
+                &["update-ref", &branch_ref, &parent, &previous_commit],
+                "test fault failed to change the branch before compare-and-swap",
+            )?;
+        }
+        git_success(
+            root,
+            &["update-ref", &branch_ref, &commit, &previous_commit],
+            "the checked-out branch advanced before the reviewed candidate could be committed",
+        )?;
+        committed_publication = Some(GitCarrierPublication {
+            previous_commit: previous_commit.clone(),
+            resulting_commit: commit.clone(),
+            branch_ref: branch_ref.clone(),
+        });
+        if candidate_publication_fault("git_post_cas") {
+            return Err(String::from(
+                "test fault injected after Git branch compare-and-swap",
+            ));
+        }
+        if git_text(root, &["rev-parse", "HEAD"])? != commit {
+            return Err(format!(
+                "committed {commit}, but the checked-out branch advanced before ota.yaml could be reconciled"
+            ));
+        }
+        if let Err(error) = materialize_git_carrier_contract(guard, &bytes, &expected_head_bytes) {
+            return Err(format!("committed {commit}, but {error}"));
+        }
+        if let Err(error) = git_success(
+            root,
+            &[
+                "update-index",
+                "--add",
+                "--cacheinfo",
+                &format!("100644,{blob_identity},ota.yaml"),
+            ],
+            "failed to synchronize ota.yaml in the primary Git index",
+        ) {
+            return Err(format!("committed {commit}, but {error}"));
+        }
+        if !git_index_and_worktree_match(root, guard, &commit, &blob_identity, Some(&bytes))? {
+            return Err(format!(
+                "committed {commit}, but ota.yaml no longer matches the committed contract"
+            ));
+        }
+        if git_text(root, &["rev-parse", "HEAD"])? != commit {
+            return Err(format!(
+                "committed {commit}, but the checked-out branch advanced during ota.yaml reconciliation"
+            ));
+        }
+        Ok::<_, String>(commit)
+    })();
+    let _ = fs::remove_file(&index);
+    match result {
+        Ok(resulting_commit) => Ok(GitCarrierPublication {
+            previous_commit,
+            resulting_commit,
+            branch_ref,
+        }),
+        Err(error) if committed_publication.is_some() => {
+            Err(CandidatePublicationError::CommittedButWorktreeUnsynced {
+                error,
+                publication: committed_publication
+                    .expect("publication remains available after CAS"),
+            })
+        }
+        Err(error) => Err(CandidatePublicationError::PrePublication(error)),
+    }
 }
 
 fn candidate_publication_fault(stage: &str) -> bool {
