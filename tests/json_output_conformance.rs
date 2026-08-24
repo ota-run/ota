@@ -1269,6 +1269,24 @@ fn contract_upgrade_refuses_unregistered_and_tampered_migrations() {
 }
 
 #[test]
+fn contract_candidate_unsupported_writer_platform_refusal_matches_schema() {
+    let refusal = json!({
+        "ok": false,
+        "mode": "write",
+        "candidate_path": ".ota/candidates/review.json",
+        "written": false,
+        "code": "candidate_write_unsupported_platform",
+        "error": "the Git candidate writer requires Linux or macOS no-follow directory support",
+        "next": "review the candidate in dry-run mode on this platform"
+    });
+    assert_matches_schema("contract-candidate-application.json", &refusal);
+
+    let mut contradictory = refusal;
+    contradictory["written"] = Value::Bool(true);
+    assert_rejected_by_schema("contract-candidate-application.json", &contradictory);
+}
+
+#[test]
 fn contract_candidate_application_rederives_or_refuses_review_artifacts() {
     let fixture = tempfile::tempdir().expect("tempdir");
     fs::write(

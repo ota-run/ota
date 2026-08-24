@@ -3219,11 +3219,14 @@ Current behavior:
 - emits stable JSON failure codes: `candidate_malformed`, `candidate_identity_invalid`,
   `candidate_implementation_incompatible`, `candidate_not_reproducible`, `candidate_stale`,
   `candidate_contract_mismatch`, `candidate_conflict`, `candidate_incomplete`,
-  `candidate_unsupported`, `candidate_write_failed`, and
+  `candidate_unsupported`, `candidate_write_unsupported_platform`,
+  `candidate_write_failed`, and
   `candidate_write_durability_uncertain`, and
   `candidate_write_committed_worktree_unsynced`
 - does not grant agent-safe status or authorize unreviewed candidate application
 - admits an upgrade `--write` only through `--carrier git`; a matching reapplication is a no-op
+- on unsupported writer platforms, refuses before candidate loading, repository locking, Git
+  invocation, or mutation with `candidate_write_unsupported_platform`
 
 Candidate artifact output from `ota detect --candidate-out` uses the same separate publication
 posture. `candidate_published` describes the review artifact; `written` continues to describe

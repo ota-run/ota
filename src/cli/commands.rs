@@ -36072,6 +36072,17 @@ pub fn apply_contract_candidate(
         finalize_debug(output, debug, debug_lines.clone())
     };
 
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    if write && matches!(carrier, Some(ContractCandidateUpdateCarrier::Git)) {
+        return failure(
+            "candidate_write_unsupported_platform",
+            String::from(
+                "the Git candidate writer requires Linux or macOS no-follow directory support",
+            ),
+            Some("review the candidate in dry-run mode on this platform"),
+        );
+    }
+
     // The lock is rooted directly in the repository and covers source re-derivation through
     // create-new publication. It is not relied on to overwrite external writers.
     let _write_lock = if write {
@@ -37071,6 +37082,7 @@ fn materialize_git_carrier_contract(
         .map_err(|error| format!("failed to sync Git-carrier contract directory: {error}"))
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn write_candidate_contract_git(
     root: &Path,
     guard: &CandidateApplicationWriteGuard,
@@ -37302,6 +37314,19 @@ fn write_candidate_contract_git(
         }
         Err(error) => Err(CandidatePublicationError::PrePublication(error)),
     }
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn write_candidate_contract_git(
+    _root: &Path,
+    _guard: &CandidateApplicationWriteGuard,
+    _contract: &Contract,
+    _expected_base_identity: Option<&str>,
+    _candidate_identity: &str,
+) -> Result<GitCarrierPublication, CandidatePublicationError> {
+    Err(CandidatePublicationError::PrePublication(String::from(
+        "the Git candidate writer requires Linux or macOS no-follow directory support",
+    )))
 }
 
 fn candidate_publication_fault(stage: &str) -> bool {

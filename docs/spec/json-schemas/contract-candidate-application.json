@@ -85,6 +85,7 @@
             "candidate_conflict",
             "candidate_incomplete",
             "candidate_unsupported",
+            "candidate_write_unsupported_platform",
             "candidate_write_failed",
             "candidate_write_durability_uncertain",
             "candidate_write_committed_worktree_unsynced"

@@ -6116,7 +6116,8 @@ ordinary refusal returns `ok: false`, `written: false`, one stable `code`, and a
 `error`; current codes are `candidate_malformed`, `candidate_identity_invalid`,
 `candidate_implementation_incompatible`, `candidate_not_reproducible`, `candidate_stale`,
 `candidate_contract_mismatch`, `candidate_conflict`, `candidate_incomplete`,
-`candidate_unsupported`, `candidate_write_failed`, and
+`candidate_unsupported`, `candidate_write_unsupported_platform`,
+`candidate_write_failed`, and
 `candidate_write_durability_uncertain`, and `candidate_write_committed_worktree_unsynced`. A
 durability-uncertain or committed-but-worktree-unsynced failure has `written: true`, so
 callers must inspect the contract before retrying. The committed-but-worktree-unsynced form also
@@ -6126,6 +6127,9 @@ dispositions remain visible as review state and become a refusal only with `--re
 Both writers currently require Linux or macOS no-follow directory-descriptor support; the
 create-new writer additionally uses Linux `renameat2(RENAME_NOREPLACE)` or macOS
 `renameatx_np(RENAME_EXCL)`. Other platforms refuse rather than weaken publication guarantees.
+Git-carrier write requests on those platforms return
+`candidate_write_unsupported_platform` before candidate loading, repository locking, Git
+invocation, or mutation; dry-run candidate admission remains available.
 Legacy mutation commands have not yet migrated to this writer.
 
 Candidate artifact publication uses the same platform boundary: Linux

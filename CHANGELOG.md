@@ -26,6 +26,11 @@
 
 ## Unreleased
 
+- Fixed candidate application compilation and refusal posture on Windows and other unsupported
+  writer platforms. `apply-candidate --write --carrier git` now returns the typed
+  `candidate_write_unsupported_platform` refusal before candidate loading, repository locking,
+  Git invocation, or mutation, while dry-run candidate review remains available.
+
 - `ota init --dry-run --json` now exposes the complete source-bound
   `init_starter_preview_v1` candidate and resulting contract identity for the exact starter
   preview; the additive preview carrier grants no write authority.
