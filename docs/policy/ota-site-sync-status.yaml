@@ -26,6 +26,7 @@ version: 1
 repository: ota-run/ota-site
 mode: synced
 reviewed_ota_commit: "b3e7a3830b9be5aed1502a46490bf5a27f199405"
-consumer_commit: "0a972df819a45d1594dd1a35e32415c383a67d01"
+consumer_commit: "00e5e40d04d93313fac5f87f1ca8204bf31b7799"
 notes: >
-  Site candidate-writer platform-refusal reference and command guidance is committed and pinned.
+  Site candidate-writer platform-refusal guidance and the bounded Caddy pressure note are
+  committed and pinned.

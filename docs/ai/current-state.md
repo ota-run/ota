@@ -1213,6 +1213,21 @@ and pinned: Site `c46acd079f5fab88d85f71fc57f0dbcf8d1bbeba`, Skills
 `89467f3ad0751b5613a57382553c1a1b38dab4c7`; Core records the Site and Skills revisions as
 synced rather than waived. Init and detect candidate output changed, while the `ota.yaml`
 contract-authoring shape did not.
+Immutable Caddy candidate/application pressure is green across Linux, macOS, and Windows in
+[run 32742495306](https://github.com/bobaikato/caddy/actions/runs/32742495306) against Core
+`850ac767c8be582fc5a804b89f5ed2a781bbbbee` and Caddy pressure revision
+`e9f45dbb0b9bdd2c3ff598b3667f49c3ba44c9dd`. Linux and macOS independently produced the same
+candidate, application-projection, and resulting-contract identities; retained an inferred Caddy
+test command as `unknown`; refused disputed project truth as `candidate_conflict`; refused the
+residual finding under `--require-complete`; preserved the existing contract under ordinary
+create-new `--write`; and used the explicit Git carrier to commit exactly `ota.yaml`. Windows
+completed read-only detection, refused durable candidate publication without leaving an artifact,
+and returned `candidate_write_unsupported_platform` before loading a deliberately missing
+candidate or mutating the contract. This exposed and fixed one real Core portability defect: the
+Unix-only Git materializer had remained reachable from a Windows compilation path. The result is
+candidate/application evidence only. It does not prove Caddy build, test, server, runtime,
+lifecycle, container, release, network, or repo-global governance, and it must not be combined with
+earlier Caddy runtime/OCI pressure to imply one continuous proof.
 V12 effect-bound refusal assurance and V12.1 secret-delivery governance remain planning-only and
 inactive until their published prerequisites complete; do not widen the current authority
 implementation for either.
