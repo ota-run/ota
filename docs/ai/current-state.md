@@ -1256,14 +1256,33 @@ with candidate, projection, and resulting-contract identities
 `sha256:f72f4afe88046ec96207250ebe8200606fb9402228c146a99896618c50c12f03`.
 The candidate retained 32 unresolved findings, projected zero tasks, proposed zero agent-safe
 authority, and refused strict application; the two reusable-workflow commands did not become
-runnable truth. Windows again remained read-only. These runs prove candidate capture,
-cross-platform identity, conservative non-promotion, dry-run admission, and strict refusal only.
-They do not prove either repository's build, tests, desktop/runtime behavior, complete LFS
-checkout, contract approval or write, task execution, lifecycle, release, deployment, or
-repo-global governance. Atuin's detector-produced distinct-lane pressure remains the next required
-V11.22 external gate. The bounded engineering note is committed as a draft in Site
-`ef064658e1de6aea895d3b40ce500b3064f2e19f`; it is not publication evidence and must remain draft
-until the V11.22 release posture is chosen.
+runnable truth. Windows again remained read-only. These GitButler and BAML runs prove candidate
+capture, cross-platform identity, conservative non-promotion, dry-run admission, and strict
+refusal only. They do not prove either repository's build, tests, desktop/runtime behavior,
+complete LFS checkout, contract approval or write, task execution, lifecycle, release,
+deployment, or repo-global governance.
+Immutable Atuin distinct-lane pressure is green across Linux, macOS, and Windows in
+[run 32753440076](https://github.com/bobaikato/atuin/actions/runs/32753440076) against Core
+`a4c38c7224fcc49efc5eb2c0b4e89881c9236d23`, pressure-controller revision
+`0d641aea0598a397bd058cc2d33400fad1a65e14`, and clean upstream fixture
+`atuinsh/atuin@824c8716d82bed774ee6a83c683087ae77715814`. Linux and macOS produced
+byte-identical candidate artifacts with candidate identity
+`sha256:68a5208d2cf8614842cca6fcbc353230ac474384f589cc4ed71d41ce5401ef12`
+and byte digest `bfaf21e1179180729362641a4c2042e47fe10f90af6a0e9211831cafac69f556`.
+The detector retained `check`, nightly `fmt`, `test:unit`, and PostgreSQL-backed
+`test:integration` as four separate unresolved changes. Their closure evidence preserves the
+repository-selected Rust `1.98.0` posture, command-selected nightly toolchain, matrix-unknown
+platforms, Linux integration platform, PostgreSQL service image, and `ATUIN_DB_URI` requirement
+name without treating CI as authority or exposing the environment value. The candidate contains
+9 unknown and 5 applicable findings, proposes zero agent-safe authority, emits no application
+projection, and refuses application as `candidate_incomplete`. Windows observes all four lanes
+through read-only detection and refuses durable candidate publication without leaving an
+artifact. The run does not prove Atuin compilation, formatting, tests, PostgreSQL state, sync
+behavior, shell integration, runtime, release, deployment, or repo-global governance. The named
+external V11.22 candidate-pressure bar is now satisfied; V11.22 remains active pending independent
+closure review and canonical status reconciliation. The bounded engineering note remains a draft
+in Site `ef5e2398ad160edca9612cc6c0a983a801d99015`; it is not publication evidence and must remain
+draft until the V11.22 release posture is chosen.
 V12 effect-bound refusal assurance and V12.1 secret-delivery governance remain planning-only and
 inactive until their published prerequisites complete; do not widen the current authority
 implementation for either.

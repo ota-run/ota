@@ -26,7 +26,7 @@ version: 1
 repository: ota-run/ota-site
 mode: synced
 reviewed_ota_commit: "a4c38c7224fcc49efc5eb2c0b4e89881c9236d23"
-consumer_commit: "96781d65b2fb9ba310d727a8a4c39fc6a1c44d67"
+consumer_commit: "ef5e2398ad160edca9612cc6c0a983a801d99015"
 notes: >
-  Candidate-reference guidance for distinct CI verifier lanes and non-authoritative closure
-  observations is committed and pinned.
+  Candidate-reference guidance and the draft GitButler, BAML, and Atuin pressure engineering note
+  are committed and pinned.
