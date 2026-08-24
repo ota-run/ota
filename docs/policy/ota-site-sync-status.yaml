@@ -25,7 +25,7 @@
 version: 1
 repository: ota-run/ota-site
 mode: synced
-reviewed_ota_commit: "c718df2e25894c5c284605e6b70a4ae38f78f5c4"
-consumer_commit: "c46acd079f5fab88d85f71fc57f0dbcf8d1bbeba"
+reviewed_ota_commit: "b3e7a3830b9be5aed1502a46490bf5a27f199405"
+consumer_commit: "0a972df819a45d1594dd1a35e32415c383a67d01"
 notes: >
-  Site source-bound init-preview and exact applied-candidate guidance is committed and pinned.
+  Site candidate-writer platform-refusal reference and command guidance is committed and pinned.

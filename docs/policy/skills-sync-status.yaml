@@ -25,7 +25,7 @@
 version: 1
 repository: ota-run/skills
 mode: synced
-reviewed_ota_commit: "c718df2e25894c5c284605e6b70a4ae38f78f5c4"
-consumer_commit: "4348b3a9e00c9402c5514ab49188ad3d99c149b9"
+reviewed_ota_commit: "b3e7a3830b9be5aed1502a46490bf5a27f199405"
+consumer_commit: "c039cc450faa8f06c3f38317955f79409b987ff9"
 notes: >
-  Skill source-bound init-preview and exact applied-candidate guidance is committed and pinned.
+  Skill candidate-writer platform-refusal guidance is committed and pinned.
