@@ -1192,6 +1192,10 @@ fn source_bound_candidate_foundation_with_existing_contract(
             None
         };
         let closure_resolution = if let Some(command) = command.as_ref() {
+            let CandidateTaskClosureContext {
+                platform,
+                requirements,
+            } = candidate_task_closure_context(root, inferences, inference, evidence.as_ref())?;
             Some(resolve_candidate_task_closure(CandidateClosureInput {
                 task_name: inference_task_name(&inference.field).unwrap_or("unknown"),
                 task_command: &inference.value,
@@ -1199,8 +1203,8 @@ fn source_bound_candidate_foundation_with_existing_contract(
                 package_manager: command.package_manager.as_deref(),
                 package_scripts: command.package_scripts.as_ref(),
                 root_script_name: command.root_script_name.as_deref(),
-                platform: "unknown",
-                requirements: closure_requirements(root, inferences, inference)?,
+                platform: &platform,
+                requirements,
                 source_is_execution_authoritative: matches!(
                     inference.source_class,
                     InferenceSourceClass::TaskCommand
@@ -2023,6 +2027,39 @@ fn closure_evidence_from_candidate_evidence(evidence: &CandidateEvidence) -> Clo
     }
 }
 
+struct CandidateTaskClosureContext {
+    platform: String,
+    requirements: Vec<ExecutionClosureNode>,
+}
+
+fn candidate_task_closure_context(
+    root: &Path,
+    inferences: &[Inference],
+    task: &Inference,
+    task_evidence: Option<&CandidateEvidence>,
+) -> Result<CandidateTaskClosureContext, DetectError> {
+    let mut requirements = closure_requirements(root, inferences, task)?
+        .into_iter()
+        .map(|requirement| (requirement.id.clone(), requirement))
+        .collect::<BTreeMap<_, _>>();
+    if let Some(requirement) = cargo_toolchain_closure_requirement(root, inferences, task)? {
+        requirements.insert(requirement.id.clone(), requirement);
+    }
+
+    let mut platform = String::from("unknown");
+    if let Some(context) = ci_workflow_task_context(root, task, task_evidence)? {
+        platform = context.platform;
+        for requirement in context.requirements {
+            requirements.insert(requirement.id.clone(), requirement);
+        }
+    }
+
+    Ok(CandidateTaskClosureContext {
+        platform,
+        requirements: requirements.into_values().collect(),
+    })
+}
+
 fn closure_requirements(
     root: &Path,
     inferences: &[Inference],
@@ -2078,6 +2115,160 @@ fn closure_requirements(
             });
     }
     Ok(requirements.into_values().collect())
+}
+
+fn cargo_toolchain_closure_requirement(
+    root: &Path,
+    inferences: &[Inference],
+    task: &Inference,
+) -> Result<Option<ExecutionClosureNode>, DetectError> {
+    let tokens = task.value.split_whitespace().collect::<Vec<_>>();
+    if tokens.first() != Some(&"cargo") {
+        return Ok(None);
+    }
+    if let Some(toolchain) = tokens.get(1).and_then(|token| token.strip_prefix('+')) {
+        let Some(evidence) = inference_source_evidence(root, task)? else {
+            return Ok(None);
+        };
+        return Ok(Some(ExecutionClosureNode {
+            id: String::from("toolchain:rust"),
+            kind: String::from("toolchain"),
+            value: toolchain.to_string(),
+            classification: String::from("command_selected"),
+            evidence: vec![closure_evidence_from_candidate_evidence(&evidence)],
+        }));
+    }
+
+    let Some(inference) = inferences
+        .iter()
+        .find(|inference| inference.field == "runtimes.rust")
+    else {
+        return Ok(None);
+    };
+    let Some(evidence) = inference_source_evidence(root, inference)? else {
+        return Ok(None);
+    };
+    Ok(Some(ExecutionClosureNode {
+        id: String::from("toolchain:rust"),
+        kind: String::from("toolchain"),
+        value: inference.value.clone(),
+        classification: String::from("repository_selected"),
+        evidence: vec![closure_evidence_from_candidate_evidence(&evidence)],
+    }))
+}
+
+struct CiWorkflowTaskContext {
+    platform: String,
+    requirements: Vec<ExecutionClosureNode>,
+}
+
+fn ci_workflow_task_context(
+    root: &Path,
+    task: &Inference,
+    task_evidence: Option<&CandidateEvidence>,
+) -> Result<Option<CiWorkflowTaskContext>, DetectError> {
+    let Some((workflow_path, job_name, step_index)) = ci_workflow_task_source(&task.source) else {
+        return Ok(None);
+    };
+    let Some(exact_path) = candidate_source_path(root, workflow_path)? else {
+        return Ok(None);
+    };
+    let contents = read_file(&root.join(&exact_path))?;
+    let workflow: YamlValue =
+        serde_yaml::from_str(&contents).map_err(|source_error| DetectError::Parse {
+            path: exact_path.clone(),
+            message: source_error.to_string(),
+        })?;
+    let Some(job) = workflow.get("jobs").and_then(|jobs| jobs.get(job_name)) else {
+        return Ok(None);
+    };
+
+    let platform = job
+        .get("runs-on")
+        .and_then(YamlValue::as_str)
+        .map(ci_runner_platform)
+        .unwrap_or("unknown")
+        .to_string();
+    let evidence = task_evidence
+        .map(closure_evidence_from_candidate_evidence)
+        .into_iter()
+        .collect::<Vec<_>>();
+    let mut requirements = BTreeMap::new();
+
+    if let Some(services) = job.get("services").and_then(YamlValue::as_mapping) {
+        for (name, service) in services {
+            let Some(name) = name.as_str() else {
+                continue;
+            };
+            let value = service
+                .get("image")
+                .and_then(YamlValue::as_str)
+                .unwrap_or(name);
+            let id = format!("ci_service:{name}");
+            requirements.insert(
+                id.clone(),
+                ExecutionClosureNode {
+                    id,
+                    kind: String::from("ci_service"),
+                    value: value.to_string(),
+                    classification: String::from("ci_observed_non_authoritative"),
+                    evidence: evidence.clone(),
+                },
+            );
+        }
+    }
+
+    for environment in [
+        job.get("env"),
+        job.get("steps")
+            .and_then(YamlValue::as_sequence)
+            .and_then(|steps| steps.get(step_index))
+            .and_then(|step| step.get("env")),
+    ]
+    .into_iter()
+    .flatten()
+    .filter_map(YamlValue::as_mapping)
+    {
+        for name in environment.keys().filter_map(YamlValue::as_str) {
+            let id = format!("environment:{name}");
+            requirements.insert(
+                id.clone(),
+                ExecutionClosureNode {
+                    id,
+                    kind: String::from("environment"),
+                    value: name.to_string(),
+                    classification: String::from("ci_observed_non_authoritative"),
+                    evidence: evidence.clone(),
+                },
+            );
+        }
+    }
+
+    Ok(Some(CiWorkflowTaskContext {
+        platform,
+        requirements: requirements.into_values().collect(),
+    }))
+}
+
+fn ci_workflow_task_source(source: &str) -> Option<(&str, &str, usize)> {
+    let source = source.rsplit("::").next().unwrap_or(source);
+    let (workflow_path, job_and_step) = source.split_once("#jobs.")?;
+    let (job_name, step) = job_and_step.split_once(".steps[")?;
+    let step_index = step.split_once(']')?.0.parse().ok()?;
+    Some((workflow_path, job_name, step_index))
+}
+
+fn ci_runner_platform(runner: &str) -> &'static str {
+    let normalized = runner.to_ascii_lowercase();
+    if normalized.contains("ubuntu") || normalized.contains("linux") {
+        "linux"
+    } else if normalized.contains("macos") {
+        "macos"
+    } else if normalized.contains("windows") {
+        "windows"
+    } else {
+        "unknown"
+    }
 }
 
 struct CandidateTaskCommand {
@@ -2749,6 +2940,7 @@ fn collect_github_actions_verification_tasks_from_workflow(
                     let (field, command, exact_command) = if let Some((task_name, command)) =
                         infer_ci_verification_task_line(&command)
                     {
+                        let task_name = ci_job_scoped_verification_task_name(job_name, &task_name);
                         (format!("tasks.{task_name}.run"), command, true)
                     } else if let Some(task_name) =
                         step_name.and_then(infer_ci_verification_task_name_from_step_name)
@@ -3302,11 +3494,53 @@ fn infer_node_script_ci_verification_task(
 }
 
 fn infer_cargo_ci_verification_task(tokens: &[&str], original: &str) -> Option<(String, String)> {
-    match tokens.get(1).copied() {
+    let command_index = usize::from(tokens.get(1).is_some_and(|token| token.starts_with('+'))) + 1;
+    match tokens.get(command_index).copied() {
         Some("test") => Some((String::from("test"), original.to_string())),
+        Some("nextest") if tokens.get(command_index + 1) == Some(&"run") => {
+            Some((String::from("test"), original.to_string()))
+        }
         Some("clippy") => Some((String::from("lint"), original.to_string())),
         Some("fmt") => Some((String::from("fmt"), original.to_string())),
         Some("check") => Some((String::from("check"), original.to_string())),
+        _ => None,
+    }
+}
+
+fn ci_job_scoped_verification_task_name(job_name: &str, task_name: &str) -> String {
+    let canonical_task = canonical_verifier_token(task_name).unwrap_or(task_name);
+    let tokens = workflow_tokens(job_name)
+        .map(|token| token.to_ascii_lowercase())
+        .collect::<Vec<_>>();
+    let Some(verifier_index) = tokens
+        .iter()
+        .position(|token| canonical_verifier_token(token) == Some(canonical_task))
+    else {
+        return task_name.to_string();
+    };
+    let qualifiers = tokens
+        .iter()
+        .enumerate()
+        .filter(|(index, token)| {
+            *index != verifier_index && !matches!(token.as_str(), "job" | "run" | "runs" | "cargo")
+        })
+        .map(|(_, token)| token.as_str())
+        .collect::<Vec<_>>();
+    if qualifiers.is_empty() {
+        task_name.to_string()
+    } else {
+        format!("{canonical_task}:{}", qualifiers.join("-"))
+    }
+}
+
+fn canonical_verifier_token(token: &str) -> Option<&'static str> {
+    match token.to_ascii_lowercase().as_str() {
+        "test" | "tests" => Some("test"),
+        "lint" | "clippy" => Some("lint"),
+        "typecheck" => Some("typecheck"),
+        "check" | "checks" | "verify" | "verification" => Some("check"),
+        "fmt" | "format" => Some("fmt"),
+        "build" => Some("build"),
         _ => None,
     }
 }
@@ -11961,6 +12195,142 @@ jobs:
                 && inference.source_class == InferenceSourceClass::CiVerification
                 && inference.confidence == Confidence::Medium
         }));
+    }
+
+    #[test]
+    fn source_bound_candidate_preserves_distinct_ci_verification_lanes() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "Cargo.toml",
+            "[package]\nname = \"ci-lanes\"\nversion = \"0.1.0\"\n",
+        );
+        fixture.write("rust-toolchain.toml", "[toolchain]\nchannel = \"1.98.0\"\n");
+        fixture.write(
+            ".github/workflows/rust.yml",
+            r#"
+name: Rust
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - run: cargo check --all-features --workspace
+  unit-test:
+    runs-on: macos-latest
+    steps:
+      - run: cargo nextest run --lib --bins
+  integration-test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+    steps:
+      - run: cargo nextest run --test '*'
+        env:
+          DATABASE_URL: postgres://example.invalid/test
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - run: cargo +nightly fmt -- --check
+"#,
+        );
+
+        let report = detect_repo(fixture.path()).expect("detect report");
+        assert_eq!(
+            report
+                .contract
+                .tasks
+                .get("test:unit")
+                .map(|task| task.run.as_str()),
+            Some("cargo nextest run --lib --bins")
+        );
+        assert_eq!(
+            report
+                .contract
+                .tasks
+                .get("test:integration")
+                .map(|task| task.run.as_str()),
+            Some("cargo nextest run --test '*'")
+        );
+        assert_eq!(
+            report
+                .contract
+                .tasks
+                .get("fmt")
+                .map(|task| task.run.as_str()),
+            Some("cargo +nightly fmt -- --check")
+        );
+
+        let candidate = source_bound_candidate_foundation(fixture.path(), &report.inferences)
+            .expect("candidate foundation");
+        let integration = candidate
+            .changes
+            .iter()
+            .find(|change| {
+                change
+                    .subject
+                    .is_path(&["tasks", "test:integration", "run"])
+            })
+            .expect("integration candidate");
+        assert_eq!(integration.disposition, CandidateDisposition::Unknown);
+        let integration_closure = integration
+            .execution_closure
+            .as_ref()
+            .expect("integration closure");
+        assert_eq!(integration_closure.platform, "linux");
+        assert!(integration_closure.requirements.iter().any(|requirement| {
+            requirement.id == "ci_service:postgres"
+                && requirement.value == "postgres:17"
+                && requirement.classification == "ci_observed_non_authoritative"
+        }));
+        assert!(integration_closure.requirements.iter().any(|requirement| {
+            requirement.id == "environment:DATABASE_URL"
+                && requirement.value == "DATABASE_URL"
+                && requirement.classification == "ci_observed_non_authoritative"
+        }));
+        assert!(integration_closure.requirements.iter().any(|requirement| {
+            requirement.id == "toolchain:rust" && requirement.value == "1.98.0"
+        }));
+
+        let unit = candidate
+            .changes
+            .iter()
+            .find(|change| change.subject.is_path(&["tasks", "test:unit", "command"]))
+            .expect("unit candidate");
+        assert_eq!(
+            unit.execution_closure
+                .as_ref()
+                .expect("unit closure")
+                .platform,
+            "macos"
+        );
+        assert!(
+            !unit
+                .execution_closure
+                .as_ref()
+                .expect("unit closure")
+                .requirements
+                .iter()
+                .any(|requirement| requirement.kind == "ci_service")
+        );
+
+        let format = candidate
+            .changes
+            .iter()
+            .find(|change| change.subject.is_path(&["tasks", "fmt", "command"]))
+            .expect("format candidate");
+        assert!(
+            format
+                .execution_closure
+                .as_ref()
+                .expect("format closure")
+                .requirements
+                .iter()
+                .any(|requirement| {
+                    requirement.id == "toolchain:rust"
+                        && requirement.value == "nightly"
+                        && requirement.classification == "command_selected"
+                })
+        );
     }
 
     #[test]

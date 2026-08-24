@@ -102,7 +102,7 @@ pub(crate) fn resolve_candidate_task_closure(
                 platform: input.platform.to_string(),
                 nodes: vec![task_node("unknown")],
                 edges: Vec::new(),
-                requirements: Vec::new(),
+                requirements: input.requirements,
                 effects: Vec::new(),
                 unresolved_reasons: vec![String::from("execution_closure_unresolved")],
             },

@@ -26,6 +26,12 @@
 
 ## Unreleased
 
+- Source-bound candidates now preserve distinct CI verifier lanes instead of flattening every
+  Cargo test into one generic task. Exact Cargo `+toolchain` and Nextest commands retain
+  job-scoped task identity, while unresolved CI closures carry observed runner platform,
+  repository-selected Rust toolchain, service, and environment requirements as explicitly
+  non-authoritative review evidence. CI evidence still cannot authorize agent-safe execution.
+
 - Fixed source-bound candidate inventory on case-insensitive filesystems so registered detector
   paths must match every repository path component exactly. Lowercase aliases such as
   `claude.md` and case-folded names such as `makefile` can no longer be reinterpreted as distinct

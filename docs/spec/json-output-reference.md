@@ -6096,6 +6096,12 @@ operations cannot produce a complete valid contract omit that projection and can
 application admission. Unrelated `unknown` or `unsupported` residual findings do not make a
 projection incomplete; they remain review state and `--require-complete` refuses them. A candidate
 remains review input only; it does not establish agent safety or authorize execution.
+Exact CI verifier commands may retain job-scoped lane identity when one workflow separates, for
+example, unit and integration tests. Their closure records can carry the selected Cargo toolchain,
+observed runner platform, service names/images, and environment requirement names. Those
+observations are source-bound review evidence, not contract authority: CI-derived tasks remain
+`unknown`, service or environment values are not promoted into `ota.yaml`, and no lane becomes
+agent-safe without reviewed contract truth.
 
 `ota contract apply-candidate CANDIDATE [--write] [--carrier git] --json [PATH]` is the matching admission
 surface. Without `--write`, it returns `ok: true`, `mode: "dry_run"`, and `written: false` only
@@ -6130,7 +6136,8 @@ create-new writer additionally uses Linux `renameat2(RENAME_NOREPLACE)` or macOS
 Git-carrier write requests on those platforms return
 `candidate_write_unsupported_platform` before candidate loading, repository locking, Git
 invocation, or mutation; dry-run candidate admission remains available.
-Legacy mutation commands have not yet migrated to this writer.
+Removed repo-level legacy mutation flags return `detect_legacy_mutation_removed`; workspace
+mutation remains a separate surface until it has its own candidate/apply model.
 
 Candidate artifact publication uses the same platform boundary: Linux
 `renameat2(RENAME_NOREPLACE)` or macOS `renameatx_np(RENAME_EXCL)` through a retained no-follow
