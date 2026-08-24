@@ -1192,10 +1192,11 @@ legacy-flat-toolchain migration as a schema-v2 review artifact and `apply-candid
 against current source truth. Its approved existing-contract application requires `--write --carrier
 git`; ordinary `--write` remains create-new-only. Core docs, Site, the canonical Skill and installed
 mirrors, and Examples now carry the same operator workflow. The connected propagation is committed
-and pinned: Site `78e058344889ec927a23561f4c7538b580f2f4b7`, Skills
-`8f76736a1918a85190092f161e01cd8a3f3e361e`, and Examples
+and pinned: Site `c46acd079f5fab88d85f71fc57f0dbcf8d1bbeba`, Skills
+`4348b3a9e00c9402c5514ab49188ad3d99c149b9`, and Examples
 `89467f3ad0751b5613a57382553c1a1b38dab4c7`; Core records the Site and Skills revisions as
-synced rather than waived. No contract-authoring shape changes were required.
+synced rather than waived. Init and detect candidate output changed, while the `ota.yaml`
+contract-authoring shape did not.
 V12 effect-bound refusal assurance and V12.1 secret-delivery governance remain planning-only and
 inactive until their published prerequisites complete; do not widen the current authority
 implementation for either.
