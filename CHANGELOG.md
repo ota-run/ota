@@ -26,6 +26,18 @@
 
 ## Unreleased
 
+- Fixed source-bound candidate reapplication when a retained execution closure references evidence
+  for a field that became unchanged after the first contract write. Candidate manifests now derive
+  from every retained direct and nested closure reference, so an unchanged reviewed application
+  remains a semantic no-op without weakening source-drift detection. Projected contracts now pass
+  through the canonical parser, preserving registered compatibility normalization during a
+  lossless legacy upgrade.
+
+- Clarified the V11.22 safety boundary: detection candidates classify execution closure but never
+  infer agent-safe authority. Maintainer-authored declarations remain canonical; positive inferred
+  safety is deferred until the planned typed effect and realization evaluator can prove every
+  material effect rather than relying on verifier names or command shape.
+
 - Source-bound candidates now preserve distinct CI verifier lanes instead of flattening every
   Cargo test into one generic task. Exact Cargo `+toolchain` and Nextest commands retain
   job-scoped task identity, while unresolved CI closures carry observed runner platform,

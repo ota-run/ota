@@ -25,8 +25,9 @@
 version: 1
 repository: ota-run/skills
 mode: synced
-reviewed_ota_commit: "a4c38c7224fcc49efc5eb2c0b4e89881c9236d23"
-consumer_commit: "16d9fd8542a3be935ddea3155566d44e36593480"
+reviewed_ota_commit: "4ed43f7a96308933ab4243872c608ca27f4aea9d"
+consumer_commit: "ac8e89694f92d4f1418c7d13d1f105707f689503"
 notes: >
-  Candidate-review guidance for distinct CI verifier lanes and non-authoritative closure
-  observations is committed and pinned.
+  The canonical Skill and both installed mirrors state that V11.22 does not infer agent-safe
+  authority and that positive effect-backed promotion is deferred to V12; the propagation is
+  committed and pinned.

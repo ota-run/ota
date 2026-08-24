@@ -25,8 +25,9 @@
 version: 1
 repository: ota-run/ota-site
 mode: synced
-reviewed_ota_commit: "a4c38c7224fcc49efc5eb2c0b4e89881c9236d23"
-consumer_commit: "ef5e2398ad160edca9612cc6c0a983a801d99015"
+reviewed_ota_commit: "4ed43f7a96308933ab4243872c608ca27f4aea9d"
+consumer_commit: "20b397a41671269617d909e9869778a3f35ccc76"
 notes: >
-  Candidate-reference guidance and the draft GitButler, BAML, and Atuin pressure engineering note
-  are committed and pinned.
+  Site reference and Learn surfaces preserve the V11.22 no-inferred-agent-safety boundary, while
+  the pressure note keeps immutable Buzz and Flowise evidence explicitly open; the propagation is
+  committed and pinned.

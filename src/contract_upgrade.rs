@@ -324,7 +324,8 @@ mod tests {
     use std::fs;
 
     use super::{
-        build_contract_upgrade_candidate, build_contract_upgrade_candidate_with_capture_hook,
+        ContractUpgradeError, build_contract_upgrade_candidate,
+        build_contract_upgrade_candidate_with_capture_hook,
     };
     use crate::contract_candidate::{
         CandidateKind, CandidateOperation, LEGACY_FLAT_TOOLCHAIN_FULFILLMENT_V1,
@@ -351,6 +352,58 @@ mod tests {
             capture.candidate.migration.as_ref().expect("migration").id,
             LEGACY_FLAT_TOOLCHAIN_FULFILLMENT_V1
         );
+    }
+
+    #[test]
+    fn legacy_upgrade_uses_canonical_parser_normalization() {
+        let fixture = tempfile::tempdir().expect("fixture");
+        fs::write(
+            fixture.path().join("ota.yaml"),
+            r#"version: 1
+project:
+  name: legacy-service
+toolchains:
+  node:
+    provider: corepack
+    version: '20'
+    fulfillment: run
+surfaces:
+  app:
+    kind: http
+    port: 3000
+tasks:
+  dev:
+    run: npm run dev
+    runtime:
+      kind: service
+      surfaces:
+        app: {}
+"#,
+        )
+        .expect("legacy contract");
+
+        let capture = build_contract_upgrade_candidate(fixture.path())
+            .expect("parser-compatible upgrade candidate");
+        let migration = capture.candidate.migration.expect("migration");
+        assert_eq!(
+            migration.before_semantic_identity,
+            migration.after_semantic_identity
+        );
+        assert!(capture.candidate.application_projection.is_some());
+    }
+
+    #[test]
+    fn legacy_upgrade_refuses_an_invalid_flat_historical_contract() {
+        let fixture = tempfile::tempdir().expect("fixture");
+        fs::write(
+            fixture.path().join("ota.yaml"),
+            "version: 1\ntoolchains:\n  node:\n    version: '20'\n    fulfillment: run\n",
+        )
+        .expect("invalid legacy contract");
+
+        let error = build_contract_upgrade_candidate(fixture.path())
+            .expect_err("missing required project truth must refuse");
+        assert!(matches!(error, ContractUpgradeError::LegacyParse(_)));
     }
 
     #[cfg(unix)]

@@ -481,8 +481,10 @@ durable agent workflow belongs in the canonical Ota skill.
   `init --dry-run --json` now emits the read-only schema-v4 `init_starter_preview_v1` candidate,
   binding the exact starter preview to its immutable source capture and resulting contract identity
   without an application projection or write authority. The pre-commit Buzz observation is local
-  only and has no retained artifact or hosted run, so it is not completion evidence. Agent-safe
-  promotion remains unimplemented;
+  only and has no retained artifact or hosted run, so it is not completion evidence. V11.22
+  intentionally emits no inferred agent-safe proposal: maintainer-authored contract safety remains
+  authoritative, and positive effect-backed promotion is deferred to V12's typed effect and
+  realization evaluator rather than treated as a V11.22 closure gate;
   V11.22 does not consume crossing records as approval authority. V12 effect-bound
   refusal assurance is also planning-only and inactive until V11.22 completes; it does not widen
   the completed
@@ -1279,8 +1281,19 @@ projection, and refuses application as `candidate_incomplete`. Windows observes 
 through read-only detection and refuses durable candidate publication without leaving an
 artifact. The run does not prove Atuin compilation, formatting, tests, PostgreSQL state, sync
 behavior, shell integration, runtime, release, deployment, or repo-global governance. The named
-external V11.22 candidate-pressure bar is now satisfied; V11.22 remains active pending independent
-closure review and canonical status reconciliation. The bounded engineering note remains a draft
+Atuin, GitButler, and BAML detector-pressure matrix is satisfied, but the complete V11.22 pressure
+bar is not. Immutable hosted proof still must cover source-bound candidate creation, explicit
+create-new application, and matching no-op reapplication against clean upstream Buzz `2d280376a`,
+plus the registered legacy-flat-toolchain upgrade and Git-carrier application against Flowise
+historical revision `90121fac54e234ca83e2a85c435354af1df8ac8f`. Local Buzz pressure exposed and
+Core now fixes one evidence-manifest defect: after the first write, a retained execution closure
+could reference package-manager evidence whose unchanged top-level proposal had been omitted from
+the rebuilt manifest, causing exact reapplication to refuse rather than report a semantic no-op.
+Local Flowise pressure exposed and Core now fixes a second projection defect: the candidate
+evaluator bypassed canonical parser normalization, so historical service-runtime `surfaces` that
+normal Ota parsing accepts prevented the registered representation-only upgrade from projecting.
+V11.22 remains active pending review of that fix, both immutable pressure runs, independent closure
+review, and canonical status reconciliation. The bounded engineering note remains a draft
 in Site `ef5e2398ad160edca9612cc6c0a983a801d99015`; it is not publication evidence and must remain
 draft until the V11.22 release posture is chosen.
 V12 effect-bound refusal assurance and V12.1 secret-delivery governance remain planning-only and

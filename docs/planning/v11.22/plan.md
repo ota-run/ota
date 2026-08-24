@@ -134,16 +134,18 @@ inference.
 
 ### Detection Safety and Source Limits
 
-Detection may propose a runnable or agent-safe task only from an exact, finite, repository-owned
-execution closure that it serializes in the candidate change and classifies node-by-node. The
-closure identity covers its ordered nodes and edges, working directory, platform, requirements,
-effects, and unresolved reasons. An agent-safe proposal requires every material node, requirement,
-and effect to have an affirmative result from an existing Ota safety semantic or registered
-conservative detector rule, with zero unknowns or conflicts. Absence of a detected effect is never
-an affirmative safety result. The candidate remains review input until a maintainer explicitly
-applies it. A verifier-like task name is not evidence of safe execution. The following remain
-`unknown` and must not produce `agent.safe_tasks` or `tasks.<name>.safe_for_agent: true` candidates
-until a shipped resolver proves their complete closure and requirements:
+Detection may propose a runnable task only from an exact, finite, repository-owned execution
+closure that it serializes in the candidate change and classifies node-by-node. The closure
+identity covers its ordered nodes and edges, working directory, platform, requirements, effects,
+and unresolved reasons. V11.22 does not emit `agent.safe_tasks` or
+`tasks.<name>.safe_for_agent: true` proposals: resolving command shape is not proof of effect
+safety, and absence of a detected effect is never affirmative safety evidence. Existing
+maintainer-authored agent-safe declarations remain authoritative contract truth. Positive inferred
+safety is deferred to V12's typed effect and realization evaluator, where every material node,
+requirement, and effect must receive an affirmative result with zero unknowns or conflicts before
+any future registered detector rule may propose it. The candidate remains review input until a
+maintainer explicitly applies it. A verifier-like task name is not evidence of safe execution. The
+following remain `unknown` in V11.22:
 
 - package-manager scripts, task-runner recipes, and other wrapper commands whose referenced body
   or dependency closure is unresolved;
@@ -417,12 +419,11 @@ semantic change.
 - unchanged repository evidence yields byte-stable normalized candidate JSON and the same
   candidate identity even when unrelated Git provenance changes;
 - every proposed field has named source evidence or is explicitly `unknown`/`unsupported`;
-- every runnable or agent-safety proposal serializes its canonical closure and attributable source
-  evidence for every material node, edge, requirement, effect, classification, and unresolved
-  reason; any unknown or conflict prevents agent-safe promotion;
-- agent-safe promotion requires an affirmative existing Ota safety semantic or registered
-  conservative detector rule for every material node and effect; absent effect detection is never
-  affirmative safety evidence;
+- every runnable proposal serializes its canonical closure and attributable source evidence for
+  every material node, edge, requirement, effect, classification, and unresolved reason;
+- V11.22 emits no inferred agent-safe proposal; unknown effects remain explicit, existing
+  maintainer-authored safety remains authoritative, and positive effect-backed promotion is
+  deferred to V12;
 - verifier-like names alone never yield agent-safe candidates; unresolved wrapper, CI-context, and
   shell-variable fixtures remain `unknown` with attributed source evidence;
 - CI and agent-guidance fixtures prove corroboration/contradiction without creating
@@ -472,9 +473,10 @@ The first pressure set should be deliberately different:
   helper sequencing explicitly unknown or unsupported;
 - an existing-contract Caddy checkout, where candidate non-overwrite and a deterministic
   contract/source conflict can be proved without inventing deployment truth;
-- a separately identified existing adopter that already carries a legacy flat toolchain fulfillment
-  declaration, where the first upgrade is proven against committed historical truth. A synthetic
-  Caddy history cannot close this migration pressure gate.
+- Flowise at committed historical revision `90121fac54e234ca83e2a85c435354af1df8ac8f`, which carries
+  the legacy flat Node toolchain fulfillment declaration, where the first upgrade must be proven
+  against that exact historical truth. A synthetic Caddy history cannot close this migration
+  pressure gate.
 - Atuin, after a manually reviewed local candidate models separate stable Rust verification,
   nightly formatting, non-service Nextest, and PostgreSQL-backed integration lanes. Its detected
   starter must not select `install.sh` as project identity or collapse service-backed integration
@@ -523,5 +525,6 @@ classification before V11.22 is called complete.
 - account, billing, bot, fleet, or automatic pull-request features;
 - bidirectional synchronization with CI providers;
 - automatic baseline or identity-pin updates;
+- inferred agent-safe promotion before V12 supplies typed effect and realization eligibility;
 - proving opaque shell behavior, external service state, or maintainer intent from absence of
   evidence.

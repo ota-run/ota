@@ -42,6 +42,7 @@ use std::os::unix::io::{AsRawFd as _, FromRawFd as _};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
+use crate::parser::parse_contract_str;
 use crate::schema::Contract;
 use crate::semantic_identity::semantic_contract_identity;
 use crate::validator::validate_contract_with_path;
@@ -298,7 +299,9 @@ pub(crate) fn derive_candidate_application_projection(
 ) -> Result<Option<(CandidateApplicationProjection, Contract)>, CandidateError> {
     let operations = expected_application_operations(candidate)?;
     let projected = derive_candidate_application_document(candidate, existing_contract)?;
-    let Ok(contract) = serde_json::from_value::<Contract>(projected) else {
+    let projected_yaml = serde_yaml::to_string(&projected)
+        .map_err(|error| CandidateError::Application(error.to_string()))?;
+    let Ok(contract) = parse_contract_str(Path::new("ota.yaml"), &projected_yaml) else {
         return Ok(None);
     };
     if validate_contract_with_path(&contract, None).is_err() {

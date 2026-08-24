@@ -3318,8 +3318,9 @@ Current precedence is conservative:
 - verifier-style inferred tasks (for example `test`, `lint`, `typecheck`, `check`, `verify`, and
   `fmt`) remain runnable review candidates, not agent-safe authorization. Ota does not infer
   `safe_for_agent: true` from task names, package/task-runner wrappers, or opaque shell scripts;
-  maintainer-owned contract truth remains required until the V11.22 closure classifier can prove a
-  complete affirmative safety basis
+  V11.22 deliberately emits no inferred agent-safe proposal, and maintainer-owned contract truth
+  remains required until the planned typed effect/realization evaluator can support a future
+  affirmative safety rule
 - GitHub Actions `run:` lines containing `${{ ... }}` interpolation or shell-variable expansion
   are excluded from command-truth inference instead of being promoted into repo task bodies
 - `Pipfile` can contribute `python` runtime inference and `pipenv` tool inference conservatively

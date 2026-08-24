@@ -1178,8 +1178,6 @@ fn source_bound_candidate_foundation_with_existing_contract(
         env!("CARGO_PKG_VERSION"),
     ))
     .map_err(DetectError::Candidate)?;
-    let mut evidence_by_identity =
-        BTreeMap::<(String, String, String, String), CandidateEvidence>::new();
     let discovery_inventory = detector_discovery_inventory(root)?;
     let mut changes = Vec::new();
 
@@ -1237,17 +1235,6 @@ fn source_bound_candidate_foundation_with_existing_contract(
         if existing_value.is_some() {
             disposition = CandidateDisposition::Conflict;
         }
-        if let Some(evidence) = &evidence {
-            evidence_by_identity
-                .entry((
-                    evidence.source_kind.clone(),
-                    evidence.path.clone(),
-                    evidence.content_identity.clone(),
-                    evidence.extraction.clone(),
-                ))
-                .or_insert_with(|| evidence.clone());
-        }
-
         let execution_closure = closure_resolution.map(|resolution| resolution.closure);
         changes.push(CandidateChange {
             subject,
@@ -1262,6 +1249,7 @@ fn source_bound_candidate_foundation_with_existing_contract(
     }
 
     align_new_task_metadata_dispositions(&mut changes, existing_contract);
+    let evidence_manifest = candidate_evidence_manifest(&changes);
 
     let mut candidate = ContractCandidate {
         schema_version: CONTRACT_CANDIDATE_SCHEMA_VERSION,
@@ -1272,7 +1260,7 @@ fn source_bound_candidate_foundation_with_existing_contract(
         discovery_inventory_identity: String::new(),
         discovery_inventory,
         evidence_manifest_identity: String::new(),
-        evidence_manifest: evidence_by_identity.into_values().collect(),
+        evidence_manifest,
         existing_contract_snapshot_identity: None,
         implementation_identity,
         migration: None,
@@ -1286,6 +1274,47 @@ fn source_bound_candidate_foundation_with_existing_contract(
         .verify_identities()
         .map_err(|error| DetectError::Candidate(error.to_string()))?;
     Ok(candidate)
+}
+
+fn candidate_evidence_manifest(changes: &[CandidateChange]) -> Vec<CandidateEvidence> {
+    let mut evidence_by_identity =
+        BTreeMap::<(String, String, String, String), CandidateEvidence>::new();
+    let mut insert = |evidence: CandidateEvidence| {
+        evidence_by_identity
+            .entry((
+                evidence.source_kind.clone(),
+                evidence.path.clone(),
+                evidence.content_identity.clone(),
+                evidence.extraction.clone(),
+            ))
+            .or_insert(evidence);
+    };
+
+    for change in changes {
+        for evidence in &change.evidence {
+            insert(evidence.clone());
+        }
+        let Some(closure) = &change.execution_closure else {
+            continue;
+        };
+        for evidence in closure
+            .nodes
+            .iter()
+            .chain(&closure.requirements)
+            .chain(&closure.effects)
+            .flat_map(|node| &node.evidence)
+            .chain(closure.edges.iter().flat_map(|edge| &edge.evidence))
+        {
+            insert(CandidateEvidence {
+                source_kind: evidence.source_kind.clone(),
+                path: evidence.path.clone(),
+                content_identity: evidence.content_identity.clone(),
+                extraction: evidence.extraction.clone(),
+            });
+        }
+    }
+
+    evidence_by_identity.into_values().collect()
 }
 
 fn align_new_task_metadata_dispositions(

@@ -1631,6 +1631,133 @@ fn contract_candidate_write_is_atomic_rechecked_and_idempotent() {
     );
 }
 
+#[test]
+fn contract_candidate_no_op_retains_nested_closure_evidence() {
+    let fixture = tempfile::tempdir().expect("tempdir");
+    fs::write(
+        fixture.path().join("package.json"),
+        r#"{
+  "name": "candidate-closure-no-op",
+  "packageManager": "pnpm@10.0.0",
+  "scripts": {
+    "test": "pnpm lint",
+    "lint": "eslint ."
+  }
+}"#,
+    )
+    .expect("package manifest");
+    fs::create_dir_all(fixture.path().join(".ota/candidates")).expect("candidate directory");
+
+    let detected = run_ota(
+        &[
+            "detect",
+            "--candidate-out",
+            ".ota/candidates/closure.json",
+            "--json",
+            ".",
+        ],
+        fixture.path(),
+    );
+    assert_eq!(detected["ok"], true);
+    let candidate: Value = serde_json::from_slice(
+        &fs::read(fixture.path().join(".ota/candidates/closure.json")).expect("candidate artifact"),
+    )
+    .expect("candidate JSON");
+    assert!(
+        candidate["evidence_manifest"]
+            .as_array()
+            .expect("evidence manifest")
+            .iter()
+            .any(|evidence| evidence["extraction"] == "package.json#scripts.lint")
+    );
+    assert!(
+        candidate["changes"]
+            .as_array()
+            .expect("candidate changes")
+            .iter()
+            .filter_map(|change| change["execution_closure"].as_object())
+            .flat_map(|closure| closure["nodes"].as_array().into_iter().flatten())
+            .flat_map(|node| node["evidence"].as_array().into_iter().flatten())
+            .any(|evidence| evidence["extraction"] == "package.json#scripts.lint")
+    );
+    let written = run_ota(
+        &[
+            "contract",
+            "apply-candidate",
+            ".ota/candidates/closure.json",
+            "--write",
+            "--json",
+            ".",
+        ],
+        fixture.path(),
+    );
+    assert_eq!(written["ok"], true);
+    assert_eq!(written["written"], true);
+
+    let repeated = run_ota(
+        &[
+            "contract",
+            "apply-candidate",
+            ".ota/candidates/closure.json",
+            "--write",
+            "--json",
+            ".",
+        ],
+        fixture.path(),
+    );
+    assert_matches_schema("contract-candidate-application.json", &repeated);
+    assert_eq!(repeated["ok"], true);
+    assert_eq!(repeated["written"], false);
+    assert_eq!(repeated["no_op"], true);
+
+    fs::write(
+        fixture.path().join("package.json"),
+        r#"{
+  "name": "candidate-closure-no-op",
+  "packageManager": "pnpm@10.0.0",
+  "scripts": {
+    "test": "pnpm lint",
+    "lint": "eslint src"
+  }
+}"#,
+    )
+    .expect("mutated nested closure evidence");
+    let mutated = run_ota_with_env(
+        &[
+            "contract",
+            "apply-candidate",
+            ".ota/candidates/closure.json",
+            "--write",
+            "--json",
+            ".",
+        ],
+        fixture.path(),
+        &[],
+        false,
+    );
+    assert_matches_schema("contract-candidate-application.json", &mutated);
+    assert_eq!(mutated["ok"], false);
+    assert_eq!(mutated["code"], "candidate_stale");
+
+    fs::remove_file(fixture.path().join("package.json")).expect("removed nested closure evidence");
+    let removed = run_ota_with_env(
+        &[
+            "contract",
+            "apply-candidate",
+            ".ota/candidates/closure.json",
+            "--write",
+            "--json",
+            ".",
+        ],
+        fixture.path(),
+        &[],
+        false,
+    );
+    assert_matches_schema("contract-candidate-application.json", &removed);
+    assert_eq!(removed["ok"], false);
+    assert_eq!(removed["code"], "candidate_stale");
+}
+
 #[cfg(unix)]
 #[test]
 fn contract_candidate_write_does_not_use_aliased_state_directory_for_its_lock() {
