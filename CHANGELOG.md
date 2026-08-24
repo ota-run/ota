@@ -26,6 +26,11 @@
 
 ## Unreleased
 
+- Fixed source-bound candidate inventory on case-insensitive filesystems so registered detector
+  paths must match every repository path component exactly. Lowercase aliases such as
+  `claude.md` and case-folded names such as `makefile` can no longer be reinterpreted as distinct
+  `CLAUDE.md` or `Makefile` evidence and change candidate identity across Linux and macOS.
+
 - Fixed candidate application compilation and refusal posture on Windows and other unsupported
   writer platforms. `apply-candidate --write --carrier git` now returns the typed
   `candidate_write_unsupported_platform` refusal before candidate loading, repository locking,

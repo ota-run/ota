@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::ffi::OsStr;
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -1605,6 +1606,42 @@ fn inference_source_evidence_path(
 }
 
 fn candidate_source_path(root: &Path, path: &str) -> Result<Option<String>, DetectError> {
+    let mut parent = root.to_path_buf();
+    for component in path.split('/') {
+        let mut exact_entry = None;
+        let entries = match fs::read_dir(&parent) {
+            Ok(entries) => entries,
+            Err(source)
+                if matches!(
+                    source.kind(),
+                    std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+                ) =>
+            {
+                return Ok(None);
+            }
+            Err(source) => {
+                return Err(DetectError::Read {
+                    path: parent.display().to_string(),
+                    source,
+                });
+            }
+        };
+        for entry in entries {
+            let entry = entry.map_err(|source| DetectError::Read {
+                path: parent.display().to_string(),
+                source,
+            })?;
+            if entry.file_name() == OsStr::new(component) {
+                exact_entry = Some(entry.path());
+                break;
+            }
+        }
+        let Some(entry_path) = exact_entry else {
+            return Ok(None);
+        };
+        parent = entry_path;
+    }
+
     let source_path = root.join(path);
     if !source_path.is_file() {
         return Ok(None);
@@ -8354,6 +8391,7 @@ fn is_long_running_task_name(name: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
     use std::fs;
     use std::path::Path;
 
@@ -8361,7 +8399,7 @@ mod tests {
 
     use super::{
         CandidateDisposition, Confidence, DetectReport, InferenceSourceClass, detect_repo,
-        source_bound_candidate_foundation,
+        detector_discovery_inventory, source_bound_candidate_foundation,
     };
     use crate::schema::{
         EnvSource, EnvSourceKind, ServiceManagerKind, ServiceReadinessKind, ToolchainProvider,
@@ -12686,6 +12724,23 @@ env:
             first.discovery_inventory_identity,
             second.discovery_inventory_identity
         );
+    }
+
+    #[test]
+    fn candidate_inventory_requires_exact_registered_path_spelling() {
+        let fixture = Fixture::new();
+        fixture.write("Makefile", "test:\n\t@true\n");
+        fixture.write("claude.md", "Repository guidance only.\n");
+
+        let inventory = detector_discovery_inventory(fixture.path()).expect("candidate inventory");
+        let paths = inventory
+            .iter()
+            .map(|entry| entry.path.as_str())
+            .collect::<BTreeSet<_>>();
+
+        assert!(paths.contains("Makefile"));
+        assert!(!paths.contains("makefile"));
+        assert!(!paths.contains("CLAUDE.md"));
     }
 
     #[cfg(unix)]
