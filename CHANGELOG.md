@@ -57,7 +57,9 @@
   contract/sources/evidence, exact re-derivation, and an identity-bound application projection
   before reporting a typed result. Candidates without a complete valid projection cannot enter
   application admission; unrelated `unknown` or `unsupported` findings remain visible review
-  state unless `--require-complete` is used.
+  state unless `--require-complete` is used. Metadata for a newly detected task now inherits that
+  task execution's fail-closed disposition, so an unresolved wrapper cannot leave orphaned
+  applicable metadata that blocks projection of unrelated contract truth.
 
 - Added explicit `ota contract apply-candidate --write` for reviewed detection candidates. It
   takes an exclusive no-follow repository lock, re-derives and validates current source evidence

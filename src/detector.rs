@@ -1256,6 +1256,8 @@ fn source_bound_candidate_foundation_with_existing_contract(
         });
     }
 
+    align_new_task_metadata_dispositions(&mut changes, existing_contract);
+
     let mut candidate = ContractCandidate {
         schema_version: CONTRACT_CANDIDATE_SCHEMA_VERSION,
         identity: String::new(),
@@ -1279,6 +1281,46 @@ fn source_bound_candidate_foundation_with_existing_contract(
         .verify_identities()
         .map_err(|error| DetectError::Candidate(error.to_string()))?;
     Ok(candidate)
+}
+
+fn align_new_task_metadata_dispositions(
+    changes: &mut [CandidateChange],
+    existing_contract: Option<&JsonValue>,
+) {
+    let execution_dispositions = changes
+        .iter()
+        .filter_map(|change| match change.subject.path.as_slice() {
+            [tasks, task_name, field]
+                if tasks == "tasks" && matches!(field.as_str(), "run" | "command") =>
+            {
+                Some((task_name.clone(), change.disposition))
+            }
+            _ => None,
+        })
+        .collect::<BTreeMap<_, _>>();
+
+    for change in changes {
+        let [tasks, task_name, field] = change.subject.path.as_slice() else {
+            continue;
+        };
+        if tasks != "tasks"
+            || matches!(field.as_str(), "run" | "command")
+            || change.disposition != CandidateDisposition::Applicable
+        {
+            continue;
+        }
+        let task_exists = existing_contract
+            .and_then(|contract| contract.get("tasks"))
+            .and_then(JsonValue::as_object)
+            .is_some_and(|tasks| tasks.contains_key(task_name));
+        if task_exists {
+            continue;
+        }
+        change.disposition = execution_dispositions
+            .get(task_name)
+            .copied()
+            .unwrap_or(CandidateDisposition::Unknown);
+    }
 }
 
 fn existing_contract_snapshot(
@@ -12176,6 +12218,50 @@ edition = "2024"
                 .any(|inference| inference.field == "tasks.verify.run")
         );
         assert!(capture.candidate.application_projection.is_some());
+    }
+
+    #[test]
+    fn source_bound_candidate_does_not_project_metadata_for_an_unresolved_new_task() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "candidate-fixture",
+  "scripts": { "setup": "./scripts/dev-setup.sh" }
+}"#,
+        );
+        fixture.write("scripts/dev-setup.sh", "#!/bin/sh\necho setup\n");
+
+        let capture = detect_repo(fixture.path())
+            .expect("detect report")
+            .source_bound_candidate()
+            .expect("source-bound candidate");
+        let setup_execution = capture
+            .candidate
+            .changes
+            .iter()
+            .find(|change| change.subject.is_path(&["tasks", "setup", "command"]))
+            .expect("setup execution change");
+        let setup_internal = capture
+            .candidate
+            .changes
+            .iter()
+            .find(|change| change.subject.is_path(&["tasks", "setup", "internal"]))
+            .expect("setup metadata change");
+
+        assert_eq!(setup_execution.disposition, CandidateDisposition::Unknown);
+        assert_eq!(setup_internal.disposition, CandidateDisposition::Unknown);
+        let projection = capture
+            .candidate
+            .application_projection
+            .as_ref()
+            .expect("unrelated applicable truth remains projectable");
+        assert!(!projection.operations.iter().any(|operation| {
+            operation
+                .subject
+                .path
+                .starts_with(&[String::from("tasks"), String::from("setup")])
+        }));
     }
 
     #[test]
