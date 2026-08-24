@@ -18,6 +18,30 @@
             "pack"
           ]
         },
+        "preview_candidate": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["candidate", "identity", "schema_version", "profile", "resulting_contract_identity"],
+          "properties": {
+            "candidate": {
+              "allOf": [
+                { "$ref": "./contract-candidate.json" },
+                {
+                  "type": "object",
+                  "required": ["schema_version", "profile"],
+                  "properties": {
+                    "schema_version": { "const": 4 },
+                    "profile": { "const": "init_starter_preview_v1" }
+                  }
+                }
+              ]
+            },
+            "identity": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+            "schema_version": { "const": 4 },
+            "profile": { "const": "init_starter_preview_v1" },
+            "resulting_contract_identity": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }
+          }
+        },
         "pack": {
           "enum": [
             "node",
@@ -147,7 +171,17 @@
           "type": "array",
           "items": { "$ref": "./shared.json#/$defs/contractFieldProvenance" }
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "written": { "const": false } }, "required": ["written"] },
+          "then": { "required": ["preview_candidate"] }
+        },
+        {
+          "if": { "required": ["preview_candidate"] },
+          "then": { "properties": { "written": { "const": false } } }
+        }
+      ]
     },
     {
       "type": "object",

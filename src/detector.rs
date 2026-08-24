@@ -430,15 +430,24 @@ pub(crate) struct SourceBoundCandidateCapture {
     pub existing_contract_value: Option<JsonValue>,
     pub contract: DetectContract,
     pub inferences: Vec<Inference>,
+    snapshot: CandidateSourceSnapshot,
 }
 
+impl SourceBoundCandidateCapture {
+    pub(crate) fn snapshot_root(&self) -> &Path {
+        self.snapshot.root()
+    }
+}
+
+#[derive(Debug)]
 struct CandidateSourceSnapshot {
     _storage: TempDir,
     root: PathBuf,
+    inventory: Vec<DiscoveryInventoryEntry>,
 }
 
 impl CandidateSourceSnapshot {
-    fn root(&self) -> &Path {
+    pub(crate) fn root(&self) -> &Path {
         &self.root
     }
 }
@@ -446,6 +455,112 @@ impl CandidateSourceSnapshot {
 struct ExistingContractSnapshot {
     identity: String,
     value: JsonValue,
+}
+
+const INIT_STARTER_TOPOLOGY_MAX_ENTRIES: usize = 1_024;
+const INIT_STARTER_TOPOLOGY_MAX_VISITED_ENTRIES: usize = 16_384;
+const STARTER_TOPOLOGY_MAX_DIRECTORY_ENTRIES: usize = 4_096;
+const STARTER_TOPOLOGY_SELECTED_DIRECTORY_ENTRIES: usize = 256;
+const INIT_STARTER_EXISTENCE_ROOTS: &[&str] = &[
+    "tests",
+    "test",
+    "docs",
+    "doc",
+    "app",
+    "components",
+    "lib",
+    "public",
+    "scripts",
+    "cmd",
+    "internal",
+    "pkg",
+    "pages",
+    "server",
+    "client",
+    "frontend",
+    "backend",
+    "shared",
+    "ui",
+    "api",
+    "hooks",
+    "utils",
+    "types",
+    "routes",
+    "resources",
+    "prisma",
+];
+const INIT_STARTER_NESTED_ROOTS: &[&str] =
+    &["src", "apps", "packages", "crates", "services", "examples"];
+const INIT_STARTER_SOURCE_EXTENSIONS: &[&str] = &[
+    "rs", "py", "js", "jsx", "ts", "tsx", "java", "kt", "kts", "go", "rb", "php", "cs", "c", "cc",
+    "cpp", "h", "hpp", "swift", "scala", "ex", "exs", "dart", "vue", "svelte", "html", "css",
+    "scss", "sql",
+];
+
+#[derive(Debug, Default)]
+struct InitStarterTopology {
+    directories: BTreeSet<String>,
+    source_markers: BTreeSet<String>,
+}
+
+pub(crate) fn starter_topology_entries(directory: &Path) -> Result<Vec<fs::DirEntry>, String> {
+    let entries = fs::read_dir(directory).map_err(|error| {
+        format!(
+            "failed to observe starter topology at `{}`: {error}",
+            directory.display()
+        )
+    })?;
+    let mut observed = Vec::new();
+    for entry in entries {
+        if observed.len() == STARTER_TOPOLOGY_MAX_DIRECTORY_ENTRIES {
+            return Err(format!(
+                "starter topology directory `{}` exceeds {} entries",
+                directory.display(),
+                STARTER_TOPOLOGY_MAX_DIRECTORY_ENTRIES
+            ));
+        }
+        observed.push(entry.map_err(|error| {
+            format!(
+                "failed to observe starter topology at `{}`: {error}",
+                directory.display()
+            )
+        })?);
+    }
+    observed.sort_by_key(fs::DirEntry::file_name);
+    observed.truncate(STARTER_TOPOLOGY_SELECTED_DIRECTORY_ENTRIES);
+    Ok(observed)
+}
+
+pub(crate) fn starter_topology_ignored_dir(name: &str) -> bool {
+    matches!(
+        name,
+        ".git"
+            | ".hg"
+            | ".svn"
+            | ".github"
+            | ".next"
+            | ".nuxt"
+            | ".turbo"
+            | ".cache"
+            | ".venv"
+            | "venv"
+            | "__pycache__"
+            | "node_modules"
+            | "vendor"
+            | "target"
+            | "dist"
+            | "build"
+            | "coverage"
+            | "out"
+            | "config"
+            | "database"
+            | "migrations"
+            | "manifests"
+            | "deploy"
+            | "infra"
+            | "bin"
+            | "obj"
+    )
 }
 
 const DETECT_ENV_SOURCE_CANDIDATES: &[(EnvSourceKind, &str)] = &[
@@ -621,7 +736,22 @@ impl DetectReport {
     pub(crate) fn source_bound_candidate(
         &self,
     ) -> Result<SourceBoundCandidateCapture, DetectError> {
-        let snapshot = capture_candidate_source_snapshot(&self.root)?;
+        self.source_bound_candidate_with_snapshot(capture_candidate_source_snapshot(&self.root)?)
+    }
+
+    /// Captures the additional bounded source set used by `ota init --dry-run` before
+    /// deriving its starter transforms. This is intentionally separate from ordinary
+    /// candidate detection, whose inventory remains compatibility-preserving.
+    pub(crate) fn source_bound_init_preview_candidate(
+        &self,
+    ) -> Result<SourceBoundCandidateCapture, DetectError> {
+        self.source_bound_candidate_with_snapshot(capture_init_preview_source_snapshot(&self.root)?)
+    }
+
+    fn source_bound_candidate_with_snapshot(
+        &self,
+        snapshot: CandidateSourceSnapshot,
+    ) -> Result<SourceBoundCandidateCapture, DetectError> {
         let existing_contract = existing_contract_snapshot(&self.root)?;
         let report = detect_repo(snapshot.root())?;
         let mut candidate = source_bound_candidate_foundation_with_existing_contract(
@@ -629,6 +759,7 @@ impl DetectReport {
             &report.inferences,
             existing_contract.as_ref().map(|snapshot| &snapshot.value),
         )?;
+        candidate.discovery_inventory = snapshot.inventory.clone();
         candidate.existing_contract_snapshot_identity = existing_contract
             .as_ref()
             .map(|snapshot| snapshot.identity.clone());
@@ -649,16 +780,17 @@ impl DetectReport {
             existing_contract_value: existing_contract.map(|snapshot| snapshot.value),
             contract: report.contract,
             inferences: report.inferences,
+            snapshot,
         })
     }
 
     pub(crate) fn conservative_first_contract_source_capture(
         &self,
     ) -> Result<SourceBoundCandidateCapture, DetectError> {
-        let snapshot = capture_candidate_source_snapshot(&self.root)?;
+        let snapshot = capture_init_preview_source_snapshot(&self.root)?;
         let existing_contract = existing_contract_snapshot(&self.root)?;
         let report = detect_repo(snapshot.root())?;
-        let discovery_inventory = detector_discovery_inventory(snapshot.root())?;
+        let discovery_inventory = snapshot.inventory.clone();
         let mut evidence = BTreeMap::<(String, String, String, String), CandidateEvidence>::new();
         for inference in &report.inferences {
             if let Some(item) = inference_source_evidence(snapshot.root(), inference)? {
@@ -698,6 +830,44 @@ impl DetectReport {
             existing_contract_value: existing_contract.map(|snapshot| snapshot.value),
             contract: report.contract,
             inferences: report.inferences,
+            snapshot,
+        })
+    }
+
+    /// Explicit starter packs do not use detector inference. They still bind their
+    /// preview to an immutable source capture without parsing arbitrary manifests.
+    pub(crate) fn init_pack_preview_source_capture(
+        root: &Path,
+    ) -> Result<SourceBoundCandidateCapture, DetectError> {
+        let snapshot = capture_init_preview_source_snapshot(root)?;
+        let discovery_inventory = snapshot.inventory.clone();
+        let implementation_identity = semantic_contract_identity(&(
+            "ota.init",
+            "init-starter-preview-v1",
+            env!("CARGO_PKG_VERSION"),
+        ))
+        .map_err(DetectError::Candidate)?;
+        Ok(SourceBoundCandidateCapture {
+            candidate: ContractCandidate {
+                schema_version: 4,
+                identity: String::new(),
+                kind: CandidateKind::Detection,
+                profile: None,
+                logical_root: String::from("."),
+                discovery_inventory_identity: String::new(),
+                discovery_inventory,
+                evidence_manifest_identity: String::new(),
+                evidence_manifest: Vec::new(),
+                existing_contract_snapshot_identity: None,
+                implementation_identity,
+                migration: None,
+                changes: Vec::new(),
+                application_projection: None,
+            },
+            existing_contract_value: None,
+            contract: DetectContract::default(),
+            inferences: Vec::new(),
+            snapshot,
         })
     }
 
@@ -1492,11 +1662,180 @@ fn detector_discovery_inventory(root: &Path) -> Result<Vec<DiscoveryInventoryEnt
 }
 
 fn capture_candidate_source_snapshot(root: &Path) -> Result<CandidateSourceSnapshot, DetectError> {
+    capture_source_snapshot(root, detector_discovery_inventory(root)?, None)
+}
+
+fn capture_init_preview_source_snapshot(
+    root: &Path,
+) -> Result<CandidateSourceSnapshot, DetectError> {
+    let mut inventory = detector_discovery_inventory(root)?;
+    let mut paths = BTreeSet::new();
+    paths.extend(inventory.iter().map(|entry| entry.path.clone()));
+    paths.insert(String::from(".env.example"));
+    paths.insert(String::from("gradlew"));
+
+    // Starter boundary inference depends on directory topology and source-file presence, not
+    // source contents. Capture that bounded topology with empty source markers instead of
+    // copying arbitrary source files into the temporary evaluation root.
+    let topology = capture_init_starter_topology(root)?;
+    for path in paths {
+        let Some(path) = candidate_source_path(root, &path)? else {
+            continue;
+        };
+        if inventory.iter().any(|entry| entry.path == path) {
+            continue;
+        }
+        let bytes = fs::read(root.join(&path)).map_err(|source| DetectError::Read {
+            path: path.clone(),
+            source,
+        })?;
+        inventory.push(DiscoveryInventoryEntry {
+            source_kind: discovery_source_kind(&path).to_string(),
+            path,
+            content_identity: contract_snapshot_hash(&bytes),
+        });
+    }
+    let existing_paths = inventory
+        .iter()
+        .map(|entry| entry.path.clone())
+        .collect::<BTreeSet<_>>();
+    for path in &topology.directories {
+        if !existing_paths.contains(path) {
+            inventory.push(topology_inventory_entry(path, "directory")?);
+        }
+    }
+    for path in &topology.source_markers {
+        if !existing_paths.contains(path) {
+            inventory.push(topology_inventory_entry(path, "regular_file")?);
+        }
+    }
+    inventory.sort_by(|left, right| left.path.cmp(&right.path));
+    capture_source_snapshot(root, inventory, Some(&topology))
+}
+
+fn topology_inventory_entry(
+    path: &str,
+    entry_type: &str,
+) -> Result<DiscoveryInventoryEntry, DetectError> {
+    Ok(DiscoveryInventoryEntry {
+        source_kind: format!("init_starter_topology_{entry_type}"),
+        path: path.to_string(),
+        content_identity: semantic_contract_identity(&(
+            "ota.init",
+            "starter-topology-v1",
+            entry_type,
+            path,
+        ))
+        .map_err(DetectError::Candidate)?,
+    })
+}
+
+fn capture_init_starter_topology(root: &Path) -> Result<InitStarterTopology, DetectError> {
+    let mut topology = InitStarterTopology::default();
+    let mut visited_entries = 0;
+    collect_init_starter_topology(root, root, 4, &mut visited_entries, &mut topology)?;
+    Ok(topology)
+}
+
+fn collect_init_starter_topology(
+    root: &Path,
+    directory: &Path,
+    depth: usize,
+    visited_entries: &mut usize,
+    topology: &mut InitStarterTopology,
+) -> Result<(), DetectError> {
+    let entries = starter_topology_entries(directory).map_err(DetectError::Candidate)?;
+    *visited_entries += entries.len();
+    if *visited_entries > INIT_STARTER_TOPOLOGY_MAX_VISITED_ENTRIES {
+        return Err(DetectError::Candidate(format!(
+            "init starter topology exceeds {} visited entries",
+            INIT_STARTER_TOPOLOGY_MAX_VISITED_ENTRIES
+        )));
+    }
+    for entry in entries {
+        let path = entry.path();
+        let file_type = entry.file_type().map_err(|source| DetectError::Read {
+            path: path.display().to_string(),
+            source,
+        })?;
+        let relative = path
+            .strip_prefix(root)
+            .expect("topology path stays beneath its root")
+            .to_string_lossy()
+            .replace('\\', "/");
+        if file_type.is_dir() {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if starter_topology_ignored_dir(&name) {
+                continue;
+            }
+            if directory == root && INIT_STARTER_EXISTENCE_ROOTS.contains(&name.as_ref()) {
+                topology.directories.insert(relative);
+                ensure_init_starter_topology_is_bounded(topology)?;
+            }
+            if depth > 0 {
+                collect_init_starter_topology(root, &path, depth - 1, visited_entries, topology)?;
+            }
+            continue;
+        }
+        if !file_type.is_file()
+            || !path
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .is_some_and(|extension| {
+                    INIT_STARTER_SOURCE_EXTENSIONS
+                        .iter()
+                        .any(|candidate| extension.eq_ignore_ascii_case(candidate))
+                })
+        {
+            continue;
+        }
+        let first_segment = Path::new(&relative)
+            .iter()
+            .next()
+            .and_then(|segment| segment.to_str());
+        if first_segment.is_some_and(|segment| INIT_STARTER_EXISTENCE_ROOTS.contains(&segment)) {
+            continue;
+        }
+        let component_count = Path::new(&relative).components().count();
+        let maximum_components =
+            if first_segment.is_some_and(|segment| INIT_STARTER_NESTED_ROOTS.contains(&segment)) {
+                5
+            } else {
+                4
+            };
+        if component_count > maximum_components {
+            continue;
+        }
+        topology.source_markers.insert(relative);
+        ensure_init_starter_topology_is_bounded(topology)?;
+    }
+    Ok(())
+}
+
+fn ensure_init_starter_topology_is_bounded(
+    topology: &InitStarterTopology,
+) -> Result<(), DetectError> {
+    if topology.directories.len() + topology.source_markers.len()
+        > INIT_STARTER_TOPOLOGY_MAX_ENTRIES
+    {
+        return Err(DetectError::Candidate(format!(
+            "init starter topology exceeds {} relevant observations",
+            INIT_STARTER_TOPOLOGY_MAX_ENTRIES
+        )));
+    }
+    Ok(())
+}
+
+fn capture_source_snapshot(
+    root: &Path,
+    inventory: Vec<DiscoveryInventoryEntry>,
+    topology: Option<&InitStarterTopology>,
+) -> Result<CandidateSourceSnapshot, DetectError> {
     let root = fs::canonicalize(root).map_err(|source| DetectError::Read {
         path: root.display().to_string(),
         source,
     })?;
-    let inventory = detector_discovery_inventory(&root)?;
     let storage = tempfile::tempdir().map_err(|source| DetectError::Read {
         path: String::from("candidate source snapshot"),
         source,
@@ -1511,7 +1850,37 @@ fn capture_candidate_source_snapshot(root: &Path) -> Result<CandidateSourceSnaps
         path: String::from("candidate source snapshot root"),
         source,
     })?;
-    for entry in inventory {
+    if let Some(topology) = topology {
+        for directory in &topology.directories {
+            fs::create_dir_all(snapshot_root.join(directory)).map_err(|source| {
+                DetectError::Read {
+                    path: directory.clone(),
+                    source,
+                }
+            })?;
+        }
+    }
+    for entry in &inventory {
+        let topology_directory = entry.source_kind == "init_starter_topology_directory";
+        let topology_marker = entry.source_kind == "init_starter_topology_regular_file";
+        if topology_directory {
+            continue;
+        }
+        let target = snapshot_root.join(&entry.path);
+        let parent = target
+            .parent()
+            .expect("root-relative snapshot path has a parent");
+        fs::create_dir_all(parent).map_err(|source| DetectError::Read {
+            path: entry.path.clone(),
+            source,
+        })?;
+        if topology_marker {
+            fs::write(&target, []).map_err(|source| DetectError::Read {
+                path: entry.path.clone(),
+                source,
+            })?;
+            continue;
+        }
         let source_path = root.join(&entry.path);
         let bytes = fs::read(&source_path).map_err(|source| DetectError::Read {
             path: entry.path.clone(),
@@ -1524,22 +1893,15 @@ fn capture_candidate_source_snapshot(root: &Path) -> Result<CandidateSourceSnaps
                 entry.path
             )));
         }
-        let target = snapshot_root.join(&entry.path);
-        let parent = target
-            .parent()
-            .expect("root-relative snapshot path has a parent");
-        fs::create_dir_all(parent).map_err(|source| DetectError::Read {
-            path: entry.path.clone(),
-            source,
-        })?;
         fs::write(&target, bytes).map_err(|source| DetectError::Read {
-            path: entry.path,
+            path: entry.path.clone(),
             source,
         })?;
     }
     Ok(CandidateSourceSnapshot {
         _storage: storage,
         root: snapshot_root,
+        inventory,
     })
 }
 
@@ -11814,6 +12176,174 @@ edition = "2024"
                 .any(|inference| inference.field == "tasks.verify.run")
         );
         assert!(capture.candidate.application_projection.is_some());
+    }
+
+    #[test]
+    fn init_preview_capture_retains_starter_inputs_after_live_source_mutation() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "package.json",
+            r#"{ "name": "init-capture", "scripts": { "test": "vitest run" } }"#,
+        );
+        fixture.write(".env.example", "API_URL=http://before.example\n");
+        fixture.write("src/main.ts", "export const version = 'before';\n");
+        fs::create_dir(fixture.path().join("docs")).expect("empty docs directory");
+
+        let report = detect_repo(fixture.path()).expect("detect report");
+        let capture = report
+            .source_bound_init_preview_candidate()
+            .expect("init preview source capture");
+
+        fixture.write(
+            "package.json",
+            r#"{ "name": "init-capture", "scripts": { "verify": "vitest run --coverage" } }"#,
+        );
+        fixture.write(".env.example", "API_URL=http://after.example\n");
+        fixture.write("src/main.ts", "export const version = 'after';\n");
+
+        assert!(capture.snapshot_root().join(".env.example").is_file());
+        assert!(capture.snapshot_root().join("docs").is_dir());
+        assert_eq!(
+            fs::read_to_string(capture.snapshot_root().join(".env.example"))
+                .expect("captured environment template"),
+            "API_URL=http://before.example\n"
+        );
+        assert_eq!(
+            fs::read_to_string(capture.snapshot_root().join("src/main.ts"))
+                .expect("captured source marker"),
+            ""
+        );
+        assert!(
+            capture
+                .candidate
+                .discovery_inventory
+                .iter()
+                .any(|entry| entry.path == ".env.example")
+        );
+        assert!(
+            capture
+                .candidate
+                .discovery_inventory
+                .iter()
+                .any(|entry| entry.path == "src/main.ts")
+        );
+        let captured_report = detect_repo(capture.snapshot_root()).expect("captured detection");
+        assert!(
+            captured_report
+                .inferences
+                .iter()
+                .any(|inference| inference.field == "tasks.test.run")
+        );
+        assert!(
+            !captured_report
+                .inferences
+                .iter()
+                .any(|inference| inference.field == "tasks.verify.run")
+        );
+    }
+
+    #[test]
+    fn init_preview_capture_ignores_unconsumed_directory_topology() {
+        let fixture = Fixture::new();
+        let before = detect_repo(fixture.path())
+            .expect("initial detect report")
+            .source_bound_init_preview_candidate()
+            .expect("initial init preview capture");
+        for index in 0..=super::INIT_STARTER_TOPOLOGY_MAX_ENTRIES {
+            fs::create_dir(fixture.path().join(format!("source-{index}")))
+                .expect("topology directory");
+        }
+
+        let after = detect_repo(fixture.path())
+            .expect("detect report with irrelevant directories")
+            .source_bound_init_preview_candidate()
+            .expect("irrelevant directories do not consume topology observations");
+        assert_eq!(before.candidate.identity, after.candidate.identity);
+        assert_eq!(before.candidate.changes, after.candidate.changes);
+
+        fs::create_dir(fixture.path().join("docs")).expect("starter-consumed directory");
+        let with_docs = detect_repo(fixture.path())
+            .expect("detect report with starter-consumed directory")
+            .source_bound_init_preview_candidate()
+            .expect("starter-consumed directory remains captured");
+        assert_ne!(after.candidate.identity, with_docs.candidate.identity);
+    }
+
+    #[test]
+    fn starter_topology_entries_are_sorted_and_bounded_for_inference() {
+        let fixture = Fixture::new();
+        for index in (0..300).rev() {
+            fs::create_dir(fixture.path().join(format!("source-{index:03}")))
+                .expect("topology directory");
+        }
+
+        let entries =
+            super::starter_topology_entries(fixture.path()).expect("bounded topology observation");
+        let names = entries
+            .into_iter()
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(names.len(), 256);
+        assert_eq!(names.first().map(String::as_str), Some("source-000"));
+        assert_eq!(names.last().map(String::as_str), Some("source-255"));
+
+        for index in 300..=super::STARTER_TOPOLOGY_MAX_DIRECTORY_ENTRIES {
+            fs::create_dir(fixture.path().join(format!("source-{index:04}")))
+                .expect("overflow topology directory");
+        }
+        let error = super::starter_topology_entries(fixture.path())
+            .expect_err("unbounded directory observation must refuse");
+        assert!(error.contains("starter topology directory"));
+        assert!(error.contains("exceeds 4096 entries"));
+    }
+
+    #[test]
+    fn init_preview_topology_accepts_large_marker_files_without_reading_contents() {
+        let fixture = Fixture::new();
+        let marker =
+            fs::File::create(fixture.path().join("schema.sql")).expect("large topology marker");
+        marker
+            .set_len(9 * 1024 * 1024)
+            .expect("large topology marker size");
+
+        let report = detect_repo(fixture.path()).expect("detect report");
+        report
+            .source_bound_init_preview_candidate()
+            .expect("large marker is topology, not source content");
+    }
+
+    #[test]
+    fn init_preview_topology_identity_ignores_marker_content_but_binds_marker_paths() {
+        let fixture = Fixture::new();
+        fixture.write("src/main.ts", "export const value = 'first';\n");
+
+        let first = detect_repo(fixture.path())
+            .expect("first report")
+            .source_bound_init_preview_candidate()
+            .expect("first capture");
+        fixture.write("src/main.ts", "export const value = 'second';\n");
+        let second = detect_repo(fixture.path())
+            .expect("second report")
+            .source_bound_init_preview_candidate()
+            .expect("second capture");
+        assert_eq!(first.candidate.identity, second.candidate.identity);
+
+        fixture.write("src/worker.ts", "export const worker = true;\n");
+        let third = detect_repo(fixture.path())
+            .expect("third report")
+            .source_bound_init_preview_candidate()
+            .expect("third capture");
+        assert_ne!(second.candidate.identity, third.candidate.identity);
+
+        fixture.write(
+            "unrelated/one/two/three/ignored.ts",
+            "export const ignored = true;\n",
+        );
+        let fourth = detect_repo(fixture.path())
+            .expect("fourth report")
+            .source_bound_init_preview_candidate()
+            .expect("fourth capture");
+        assert_eq!(third.candidate.identity, fourth.candidate.identity);
     }
 
     #[test]

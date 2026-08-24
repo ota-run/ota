@@ -476,8 +476,14 @@ durable agent workflow belongs in the canonical Ota skill.
   compare-and-swap, verifies the resulting worktree/index, and reports branch plus prior/resulting
   commit identities. It never pushes, rebases, amends, or changes unrelated paths. The registered
   `legacy_flat_toolchain_fulfillment_v1` upgrade emits a schema-v2 source-bound candidate and can
-  use the explicit Git carrier after exact re-derivation. Legacy mutation routing and agent-safe promotion
-  remain unimplemented; it does not consume crossing records as approval authority. V12 effect-bound
+  use the explicit Git carrier after exact re-derivation. Repo-level legacy mutation flags now refuse
+  before repository access; `detect --write` remains the temporary conservative create-new alias.
+  `init --dry-run --json` now emits the read-only schema-v4 `init_starter_preview_v1` candidate,
+  binding the exact starter preview to its immutable source capture and resulting contract identity
+  without an application projection or write authority. The pre-commit Buzz observation is local
+  only and has no retained artifact or hosted run, so it is not completion evidence. Agent-safe
+  promotion remains unimplemented;
+  V11.22 does not consume crossing records as approval authority. V12 effect-bound
   refusal assurance is also planning-only and inactive until V11.22 completes; it does not widen
   the completed
   crossing implementation. See [V11.7](../planning/v11.7/plan.md),
@@ -1169,7 +1175,8 @@ uncertainty. A missing projection refuses admission;
 unrelated `unknown` or `unsupported` findings remain visible review state unless
 `--require-complete` is requested. Repo-level legacy mutation flags now refuse before repository
 access with `detect_legacy_mutation_removed`; `detect --write` uses the versioned
-`detect_conservative_first_contract_v1` profile and the shared locked create-new carrier. Rewrite
+`detect_conservative_first_contract_v1` profile and the shared locked create-new carrier, and its
+successful JSON records the exact `write_candidate` identity, schema version, and profile. Rewrite
 and removal remain unavailable until the candidate model can carry them honestly. External
 pressure remains open. The artifact
 binds a required content identity for every inventory entry, every normalized evidence tuple,

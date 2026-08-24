@@ -17,10 +17,10 @@
     "changes"
   ],
   "properties": {
-    "schema_version": { "enum": [1, 2, 3] },
+    "schema_version": { "enum": [1, 2, 3, 4] },
     "identity": { "$ref": "#/$defs/identity" },
     "kind": { "enum": ["detection", "upgrade"] },
-    "profile": { "enum": ["detect_conservative_first_contract_v1"] },
+    "profile": { "enum": ["detect_conservative_first_contract_v1", "init_starter_preview_v1"] },
     "logical_root": { "const": "." },
     "discovery_inventory_identity": { "$ref": "#/$defs/identity" },
     "discovery_inventory": {
@@ -292,6 +292,37 @@
                   "properties": { "operation": { "const": "add" } }
                 }
               }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "schema_version": { "const": 4 } }, "required": ["schema_version"] },
+      "then": {
+        "required": ["profile"],
+        "not": {
+          "anyOf": [
+            { "required": ["migration"] },
+            { "required": ["existing_contract_snapshot_identity"] },
+            { "required": ["application_projection"] }
+          ]
+        },
+        "properties": {
+          "kind": { "const": "detection" },
+          "profile": { "const": "init_starter_preview_v1" },
+          "changes": {
+            "minItems": 1,
+            "maxItems": 1,
+            "items": {
+              "properties": {
+                "subject": { "properties": { "path": { "const": ["starter_contract"] } } },
+                "field_family": { "const": "init_starter_preview_profile" },
+                "operation": { "const": "add" },
+                "confidence": { "const": "high" },
+                "disposition": { "const": "applicable" }
+              },
+              "required": ["proposed_value"]
             }
           }
         }

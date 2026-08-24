@@ -26,6 +26,6 @@ version: 1
 repository: ota-run/skills
 mode: synced
 reviewed_ota_commit: "b24ceaad12b2e588db1b796099dc2e4895455743"
-consumer_commit: "8f76736a1918a85190092f161e01cd8a3f3e361e"
+consumer_commit: "4348b3a9e00c9402c5514ab49188ad3d99c149b9"
 notes: >
-  Skill candidate-mutation guidance is committed and pinned.
+  Skill source-bound init-preview and exact applied-candidate guidance is committed and pinned.

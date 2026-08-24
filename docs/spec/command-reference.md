@@ -1944,6 +1944,8 @@ Current behavior:
 - `--packs` lists the built-in starter packs, what they seed, the exact `ota init --pack ...` selection command, the safe dry-run preview command to use next, and any explicit starter knobs exposed by that pack
 - when no stronger project identity is inferred, `--bootstrap` can fall back to the repo directory name for `project.name`
 - supports preview mode with `--dry-run`
+- `--dry-run --json` includes the complete source-bound `init_starter_preview_v1` candidate and
+  resulting contract identity for the exact starter preview; it is review evidence, not a writer
 - refuses to run when `ota.yaml` already exists
 - can initialize both detected repos and blank repos
 - keeps JSON output stable while using text output to guide review, write, and first validation steps
@@ -3235,6 +3237,8 @@ Current write behavior:
 - the first-write candidate uses the versioned `detect_conservative_first_contract_v1` profile,
   binds its complete ordered operations, and is re-derived under the same repository lock and
   create-new evaluator as `ota contract apply-candidate --write`
+- successful text and JSON output disclose the exact applied candidate identity, schema version,
+  and profile under `write_candidate`, so the temporary convenience alias remains auditable
 - `ota detect --write` remains conservative even when `ota init` can write a valid starter
 - versioned `pnpm`/`yarn` package-manager-backed `package.json#engines.node` is high confidence
   for detect write, ownership metadata, and drift comparison, and is written as

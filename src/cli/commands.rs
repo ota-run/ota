@@ -66,9 +66,9 @@ use crate::ci_projection::{
 use crate::contract_candidate::{
     CONSERVATIVE_FIRST_CONTRACT_CANDIDATE_SCHEMA_VERSION, CandidateChange, CandidateConfidence,
     CandidateDisposition, CandidateError, CandidateKind, CandidateOperation, CandidateProfile,
-    CandidateSubject, ContractCandidate, derive_candidate_application_document,
-    derive_candidate_application_projection, verify_candidate_application_projection,
-    write_candidate_create_new,
+    CandidateSubject, ContractCandidate, INIT_STARTER_PREVIEW_CANDIDATE_SCHEMA_VERSION,
+    derive_candidate_application_document, derive_candidate_application_projection,
+    verify_candidate_application_projection, write_candidate_create_new,
 };
 use crate::contract_drift::{
     DETECT_OWNER_KIND_MERGED, append_contract_drift_findings, collect_detect_changes,
@@ -76,7 +76,8 @@ use crate::contract_drift::{
 };
 use crate::contract_upgrade::{ContractUpgradeError, build_contract_upgrade_candidate};
 use crate::detector::{
-    Confidence, DetectContract, DetectReport, DetectTask, Inference, detect_repo,
+    Confidence, DetectContract, DetectReport, DetectTask, Inference, SourceBoundCandidateCapture,
+    detect_repo,
 };
 use crate::doctor::{
     DoctorMode, DoctorPolicySnapshot, DoctorReport, Finding, FindingIdentity, FindingSeverity,
@@ -116,30 +117,31 @@ use crate::output::{
     ContractFieldProvenance, ContractIdentity, ContractIdentityCounts, ContractIdentityExecution,
     ContractIdentityMetadata, ContractIdentityProject, ContractUpgradeFailure,
     ContractUpgradeSuccess, DetectCandidatePublicationFailure, DetectComparison,
-    DetectComparisonChange, DetectComparisonRemoval, DetectFailure, DetectSuccess, DiffChange,
-    DiffFailure, DiffSuccess, DiffSummary, DoctorFindingGroupSummary, DoctorFixActionSummary,
-    DoctorFixSummary, DoctorPrimaryBlocker, DoctorSuccess, DoctorSummary, DoctorVerdict, EnvEntry,
-    EnvEntryKind, EnvEntryStatus, EnvFailure, EnvRenderedArtifactEntry, EnvSourceEntry,
-    EnvSourceStatus, EnvSuccess, EnvSummary, ExecutionContextSummary, ExecutionEnvSummary,
-    ExecutionEvidenceClass, ExecutionPlanFailure, ExecutionPlanOverrides, ExecutionPlanResolved,
-    ExecutionPlanSuccess, ExecutionReceipt, ExecutionReceiptArtifactLineage,
-    ExecutionReceiptEnvSource, ExecutionReceiptEvaluatedInput, ExecutionReceiptHydrationProvenance,
-    ExecutionReceiptHydrationSourceIdentity, ExecutionReceiptHydrationSourcePosture,
-    ExecutionReceiptLogs, ExecutionReceiptQueryTraceDivergence,
-    ExecutionReceiptQueryTraceObservation, ExecutionReceiptQueryTraceRecord,
-    ExecutionReceiptQueryTraceSummary, ExecutionReceiptReplayBaselineRecording,
-    ExecutionReceiptStep, ExecutionReceiptSummary, ExecutionReceiptWitnessedObservations,
-    ExecutionSummary, ExecutionTopologyFailure, ExecutionTopologyHostProjectionSummary,
-    ExecutionTopologyListenerSummary, ExecutionTopologyProbeObserverSummary,
-    ExecutionTopologyProbeSummary, ExecutionTopologyProbeTargetSummary,
-    ExecutionTopologyReadinessSummary, ExecutionTopologyRuntimeSummary,
-    ExecutionTopologySharedBackendEnvironmentSummary, ExecutionTopologySharedBackendSummary,
-    ExecutionTopologySuccess, ExecutionTopologyTargetServiceSummary,
-    ExecutionTopologyTargetSummary, ExecutionTopologyTaskSummary, ExplainFailure, ExplainStep,
-    ExplainSuccess, ExplainSummary, HarnessCapabilityProfile, HarnessEnvironmentBoundary,
-    HarnessLaneCapability, InitFailure, InitPackAdvisory, InitPackAdvisorySignal,
-    InitPackCatalogSuccess, InitPackInfo, InitPackOption, InitPackSeeds, InitSelectedPackOptions,
-    InitSuccess, LifecycleProofAssertion, LifecycleProofServiceRecord, LifecycleProofStatus,
+    DetectComparisonChange, DetectComparisonRemoval, DetectFailure, DetectSuccess,
+    DetectWriteCandidate, DiffChange, DiffFailure, DiffSuccess, DiffSummary,
+    DoctorFindingGroupSummary, DoctorFixActionSummary, DoctorFixSummary, DoctorPrimaryBlocker,
+    DoctorSuccess, DoctorSummary, DoctorVerdict, EnvEntry, EnvEntryKind, EnvEntryStatus,
+    EnvFailure, EnvRenderedArtifactEntry, EnvSourceEntry, EnvSourceStatus, EnvSuccess, EnvSummary,
+    ExecutionContextSummary, ExecutionEnvSummary, ExecutionEvidenceClass, ExecutionPlanFailure,
+    ExecutionPlanOverrides, ExecutionPlanResolved, ExecutionPlanSuccess, ExecutionReceipt,
+    ExecutionReceiptArtifactLineage, ExecutionReceiptEnvSource, ExecutionReceiptEvaluatedInput,
+    ExecutionReceiptHydrationProvenance, ExecutionReceiptHydrationSourceIdentity,
+    ExecutionReceiptHydrationSourcePosture, ExecutionReceiptLogs,
+    ExecutionReceiptQueryTraceDivergence, ExecutionReceiptQueryTraceObservation,
+    ExecutionReceiptQueryTraceRecord, ExecutionReceiptQueryTraceSummary,
+    ExecutionReceiptReplayBaselineRecording, ExecutionReceiptStep, ExecutionReceiptSummary,
+    ExecutionReceiptWitnessedObservations, ExecutionSummary, ExecutionTopologyFailure,
+    ExecutionTopologyHostProjectionSummary, ExecutionTopologyListenerSummary,
+    ExecutionTopologyProbeObserverSummary, ExecutionTopologyProbeSummary,
+    ExecutionTopologyProbeTargetSummary, ExecutionTopologyReadinessSummary,
+    ExecutionTopologyRuntimeSummary, ExecutionTopologySharedBackendEnvironmentSummary,
+    ExecutionTopologySharedBackendSummary, ExecutionTopologySuccess,
+    ExecutionTopologyTargetServiceSummary, ExecutionTopologyTargetSummary,
+    ExecutionTopologyTaskSummary, ExplainFailure, ExplainStep, ExplainSuccess, ExplainSummary,
+    HarnessCapabilityProfile, HarnessEnvironmentBoundary, HarnessLaneCapability, InitFailure,
+    InitPackAdvisory, InitPackAdvisorySignal, InitPackCatalogSuccess, InitPackInfo, InitPackOption,
+    InitPackSeeds, InitPreviewCandidate, InitSelectedPackOptions, InitSuccess,
+    LifecycleProofAssertion, LifecycleProofServiceRecord, LifecycleProofStatus,
     ListedWorkflowSummary, MemberServicesSuccess, MemberTasksSuccess, MemberWorkflowsSuccess,
     OutputFormat, PolicyInitFailure, PolicyInitSuccess, PolicyReviewSuccess, PolicyReviewSummary,
     ProofRuntimeArchive, ProofRuntimeArtifacts, ProofRuntimeCrossingEvidence,
@@ -32387,6 +32389,54 @@ pub fn init(
             detect_repo(&root)
         } {
             Ok(report) => {
+                let preview_capture = if write {
+                    None
+                } else {
+                    let capture = if pack.is_some() {
+                        DetectReport::init_pack_preview_source_capture(&root)
+                    } else {
+                        report.source_bound_init_preview_candidate()
+                    };
+                    match capture {
+                        Ok(capture) => Some(capture),
+                        Err(error) => {
+                            let error = format!(
+                                "failed to capture source-bound init preview truth: {error}"
+                            );
+                            return match format {
+                                OutputFormat::Text => CommandOutput::failure(error),
+                                OutputFormat::Json => {
+                                    CommandOutput::failure(to_json(&InitFailure {
+                                        ok: false,
+                                        path: &path_display,
+                                        written: false,
+                                        error: &error,
+                                        next: None,
+                                    }))
+                                }
+                            };
+                        }
+                    }
+                };
+                // Both paths derive their preview from immutable capture. Explicit packs retain
+                // their own contract and empty inference report; detector parsing is advisory only.
+                let report = if let Some(capture) = &preview_capture {
+                    if let Some(pack) = pack {
+                        DetectReport {
+                            root: capture.snapshot_root().to_path_buf(),
+                            contract: starter_pack_contract(pack, capture.snapshot_root()),
+                            inferences: Vec::new(),
+                        }
+                    } else {
+                        DetectReport {
+                            root: capture.snapshot_root().to_path_buf(),
+                            contract: capture.contract.clone(),
+                            inferences: capture.inferences.clone(),
+                        }
+                    }
+                } else {
+                    report
+                };
                 let toolchain_opportunities = if pack.is_some() {
                     pack_toolchain_opportunities
                 } else {
@@ -32400,6 +32450,7 @@ pub fn init(
                     pack,
                     pack_advisory,
                     toolchain_opportunities,
+                    preview_capture,
                     format,
                 )
             }
@@ -35683,6 +35734,7 @@ pub fn detect(
                         candidate_published: None,
                         candidate_publication: None,
                         candidate: None,
+                        write_candidate: None,
                     })),
                 }
             }
@@ -35832,6 +35884,7 @@ fn write_detect_candidate_artifact(
                 candidate_published: Some(true),
                 candidate_publication: Some("durable"),
                 candidate: Some(candidate),
+                write_candidate: None,
             }))
         }
     }
@@ -37487,7 +37540,11 @@ fn render_detect_contract_preview(
     report: &crate::detector::DetectReport,
     contract_path: &Path,
 ) -> CommandOutput {
-    let compact_root_display = compact_repo_path(&report.root);
+    let compact_root_display = compact_repo_path(
+        contract_path
+            .parent()
+            .expect("contract path has a repository parent"),
+    );
     let bootstrap_contract = bootstrap_init_contract(report);
     let review_yaml = serde_yaml::to_string(&bootstrap_contract)
         .expect("serializing detected starter contract should not fail");
@@ -41066,9 +41123,14 @@ fn write_detected_contract(report: DetectReport, format: OutputFormat) -> Comman
             OutputFormat::Text => {
                 let highlighted_written = paint_code(&compact_path_display);
                 let mut stdout = format!(
-                    "{}\n\n{}\nPolicy: only the conservative detect-write candidate is written automatically{}",
+                    "{}\n\n{}\n{}\nPolicy: only the conservative detect-write candidate is written automatically{}",
                     format_command_header("DETECT WRITE", &compact_root_display),
                     format_result_line(&format!("wrote {highlighted_written}")),
+                    format_result_line(&format!(
+                        "candidate identity {} (profile {})",
+                        paint_code(&candidate.identity),
+                        paint_code("detect_conservative_first_contract_v1")
+                    )),
                     format_next_timeline(&repo_contract_write_next_steps(&contract_path))
                 );
                 render_inference_section(
@@ -41094,6 +41156,11 @@ fn write_detected_contract(report: DetectReport, format: OutputFormat) -> Comman
                 candidate_published: None,
                 candidate_publication: None,
                 candidate: None,
+                write_candidate: Some(DetectWriteCandidate {
+                    identity: &candidate.identity,
+                    schema_version: candidate.schema_version,
+                    profile: "detect_conservative_first_contract_v1",
+                }),
             })),
         },
         Err(error) => match error {
@@ -41146,12 +41213,19 @@ fn build_conservative_first_contract_candidate(
         .conservative_first_contract_source_capture()
         .map_err(|error| format!("failed to capture candidate source truth: {error}"))?;
     let candidate_report = DetectReport {
-        root: report.root.clone(),
+        root: capture.snapshot_root().to_path_buf(),
         contract: capture.contract.clone(),
         inferences: capture.inferences.clone(),
     };
     let Some(detected_candidate) = build_detect_write_candidate(&candidate_report) else {
-        return Err(render_detect_write_blocked_error(&candidate_report));
+        // Evaluation uses the immutable snapshot, but remediation must never expose its
+        // transient path as an operator command.
+        let guidance_report = DetectReport {
+            root: report.root.clone(),
+            contract: candidate_report.contract.clone(),
+            inferences: candidate_report.inferences.clone(),
+        };
+        return Err(render_detect_write_blocked_error(&guidance_report));
     };
     let mut configured = detected_candidate.clone();
     apply_detected_starter_contract_defaults(&mut configured, &candidate_report);
@@ -41171,7 +41245,7 @@ fn build_conservative_first_contract_candidate(
     )?;
     let yaml = serde_yaml::to_string(&document)
         .map_err(|error| format!("failed to serialize conservative candidate: {error}"))?;
-    let contract_path = candidate_report.root.join(DEFAULT_CONTRACT_FILE);
+    let contract_path = report.root.join(DEFAULT_CONTRACT_FILE);
     let contract = parse_contract_str(&contract_path, &yaml).map_err(|error| error.to_string())?;
     validate_contract_with_path(&contract, Some(&contract_path))
         .map_err(|error| error.to_string())?;
@@ -48658,13 +48732,18 @@ fn render_init(
     pack: Option<StarterPackConfig>,
     pack_advisory: Option<InitPackAdvisory>,
     toolchain_opportunities: Vec<DetectedToolchainOpportunity>,
+    source_capture: Option<SourceBoundCandidateCapture>,
     format: OutputFormat,
 ) -> CommandOutput {
     let init_inferences = report.inferences.clone();
     let mode = pack.map_or_else(|| init_mode(&init_inferences), |_| "pack");
     let path_display = contract_path.display().to_string();
     let compact_path_display = compact_contract_path(contract_path);
-    let compact_root_display = compact_repo_path(&report.root);
+    let compact_root_display = compact_repo_path(
+        contract_path
+            .parent()
+            .expect("contract path has a repository parent"),
+    );
     let bootstrap_contract = if let Some(pack) = pack {
         starter_pack_contract(pack, &report.root)
     } else {
@@ -48685,43 +48764,78 @@ fn render_init(
     let review_yaml = serde_yaml::to_string(&bootstrap_contract)
         .expect("serializing init contract should not fail");
 
-    if let Err(error) = parse_contract_str(contract_path, &review_yaml)
+    let preview_contract = match parse_contract_str(contract_path, &review_yaml)
         .map_err(|error| error.to_string())
         .and_then(|contract| {
             validate_contract_with_path(&contract, Some(contract_path))
+                .map(|()| contract)
                 .map_err(|error| error.to_string())
-        })
-    {
-        let error = if write && bootstrap && error.contains("missing field `project`") {
-            format!(
-                "bootstrap mode could not infer `project.name` for this repo root{}",
-                format_next_timeline(&[
-                    String::from(
-                        "if this is a workspace root, run `ota workspace init --bootstrap`",
-                    ),
-                    String::from(
-                        "if you meant a member repo, run `ota init <member-path>` from that repo directory",
-                    ),
-                ]),
-            )
-        } else {
-            error
-        };
-        return match format {
-            OutputFormat::Text => CommandOutput::failure(error),
-            OutputFormat::Json => CommandOutput::failure(to_json(&InitFailure {
-                ok: false,
-                path: &path_display,
-                written: false,
-                error: &error,
-                next: if write && bootstrap && error.contains("bootstrap mode could not infer") {
-                    Some("ota workspace init --bootstrap")
-                } else {
-                    None
-                },
-            })),
-        };
-    }
+        }) {
+        Ok(contract) => contract,
+        Err(error) => {
+            let error = if write && bootstrap && error.contains("missing field `project`") {
+                format!(
+                    "bootstrap mode could not infer `project.name` for this repo root{}",
+                    format_next_timeline(&[
+                        String::from(
+                            "if this is a workspace root, run `ota workspace init --bootstrap`",
+                        ),
+                        String::from(
+                            "if you meant a member repo, run `ota init <member-path>` from that repo directory",
+                        ),
+                    ]),
+                )
+            } else {
+                error
+            };
+            return match format {
+                OutputFormat::Text => CommandOutput::failure(error),
+                OutputFormat::Json => CommandOutput::failure(to_json(&InitFailure {
+                    ok: false,
+                    path: &path_display,
+                    written: false,
+                    error: &error,
+                    next: if write && bootstrap && error.contains("bootstrap mode could not infer")
+                    {
+                        Some("ota workspace init --bootstrap")
+                    } else {
+                        None
+                    },
+                })),
+            };
+        }
+    };
+
+    let preview_candidate = if write {
+        None
+    } else {
+        match source_capture.as_ref() {
+            Some(capture) => {
+                match build_init_starter_preview_candidate(
+                    capture.candidate.clone(),
+                    &preview_contract,
+                ) {
+                    Ok(candidate) => Some(candidate),
+                    Err(error) => return CommandOutput::failure(error),
+                }
+            }
+            None => {
+                return CommandOutput::failure(String::from(
+                    "init preview did not retain its source-bound candidate capture",
+                ));
+            }
+        }
+    };
+    let preview_contract_identity = preview_candidate.as_ref().map(|candidate| {
+        let value = candidate.changes[0]
+            .proposed_value
+            .as_ref()
+            .expect("verified init preview candidate carries a starter contract");
+        let contract = serde_json::from_value::<Contract>(value.clone())
+            .expect("verified init preview candidate carries a valid starter contract");
+        semantic_contract_identity(&contract)
+            .expect("valid init preview contract has a semantic identity")
+    });
 
     if write {
         let selected_detected_contract = if mode == "detected" {
@@ -48926,6 +49040,7 @@ fn render_init(
                     path: &path_display,
                     written: true,
                     mode,
+                    preview_candidate: None,
                     pack: pack.map(|config| config.pack.as_str()),
                     pack_options: pack.and_then(init_selected_pack_options),
                     pack_advisory,
@@ -48994,11 +49109,14 @@ fn render_init(
             render_inference_section(&mut stdout, "Annotations", init_inferences.iter());
             render_toolchain_opportunity_section(&mut stdout, &toolchain_opportunities);
             if pack.is_none() {
+                let operator_repo_root = contract_path
+                    .parent()
+                    .expect("contract path has a repository parent");
                 append_agent_boundary_outcome_section(
                     &mut stdout,
                     &bootstrap_contract,
                     &agent_boundary,
-                    &report.root,
+                    operator_repo_root,
                     AgentBoundaryRenderContext::InitPreview,
                 );
             }
@@ -49024,6 +49142,17 @@ fn render_init(
             path: &path_display,
             written: false,
             mode,
+            preview_candidate: preview_candidate
+                .as_ref()
+                .map(|candidate| InitPreviewCandidate {
+                    candidate,
+                    identity: &candidate.identity,
+                    schema_version: candidate.schema_version,
+                    profile: "init_starter_preview_v1",
+                    resulting_contract_identity: preview_contract_identity
+                        .as_deref()
+                        .expect("init preview candidate identity is present"),
+                }),
             pack: pack.map(|config| config.pack.as_str()),
             pack_options: pack.and_then(init_selected_pack_options),
             pack_advisory,
@@ -49044,6 +49173,42 @@ fn render_init(
             ),
         })),
     }
+}
+
+fn build_init_starter_preview_candidate(
+    mut candidate: ContractCandidate,
+    contract: &Contract,
+) -> Result<ContractCandidate, String> {
+    let proposed_value = serde_json::to_value(contract)
+        .map_err(|error| format!("failed to serialize init starter preview: {error}"))?;
+    candidate.schema_version = INIT_STARTER_PREVIEW_CANDIDATE_SCHEMA_VERSION;
+    candidate.profile = Some(CandidateProfile::InitStarterPreviewV1);
+    candidate.existing_contract_snapshot_identity = None;
+    candidate.migration = None;
+    candidate.implementation_identity = semantic_contract_identity(&(
+        "ota.init",
+        "init-starter-preview-v1",
+        env!("CARGO_PKG_VERSION"),
+    ))
+    .map_err(|error| format!("failed to identify init starter preview: {error}"))?;
+    candidate.changes = vec![CandidateChange {
+        subject: CandidateSubject::new(["starter_contract"]),
+        field_family: String::from("init_starter_preview_profile"),
+        operation: CandidateOperation::Add,
+        proposed_value: Some(proposed_value),
+        evidence: candidate.evidence_manifest.clone(),
+        execution_closure: None,
+        confidence: CandidateConfidence::High,
+        disposition: CandidateDisposition::Applicable,
+    }];
+    candidate.application_projection = None;
+    candidate
+        .finalize_identities()
+        .map_err(|error| format!("failed to identify init starter preview: {error}"))?;
+    candidate
+        .verify_identities()
+        .map_err(|error| format!("init starter preview is not source-bound: {error}"))?;
+    Ok(candidate)
 }
 
 fn compare_detected_contract(
@@ -73343,6 +73508,53 @@ project:
         assert!(stdout.contains("uv: '*'"), "{stdout}");
         assert!(stdout.contains("toolchains:"), "{stdout}");
         assert!(!stdout.contains("Toolchain Opportunities"), "{stdout}");
+    }
+
+    #[test]
+    fn init_preview_text_keeps_snapshot_root_out_of_operator_guidance() {
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        fs::write(
+            repo.path().join("pyproject.toml"),
+            "[project]\nname = 'demo'\nrequires-python = '>=3.12'\n",
+        )
+        .expect("write pyproject");
+
+        let live_report = crate::detector::detect_repo(repo.path()).expect("detect report");
+        let capture = live_report
+            .source_bound_init_preview_candidate()
+            .expect("init preview source capture");
+        let snapshot_root = capture.snapshot_root().to_path_buf();
+        let report = crate::detector::DetectReport {
+            root: snapshot_root.clone(),
+            contract: capture.contract.clone(),
+            inferences: capture.inferences.clone(),
+        };
+        let toolchain_opportunities = super::detect_toolchain_opportunities(&report);
+        let output = super::render_init(
+            report,
+            &repo.path().join("ota.yaml"),
+            false,
+            false,
+            None,
+            None,
+            toolchain_opportunities,
+            Some(capture),
+            super::OutputFormat::Text,
+        );
+
+        assert_eq!(output.exit_code, 0, "{}", output.stdout);
+        let stdout = super::strip_ansi_codes(&output.stdout);
+        assert!(
+            stdout.contains(&format!(
+                "run `ota agents --write {}",
+                repo.path().display()
+            )),
+            "{stdout}"
+        );
+        assert!(
+            !stdout.contains(&snapshot_root.display().to_string()),
+            "snapshot root escaped into operator guidance: {stdout}"
+        );
     }
 
     #[test]

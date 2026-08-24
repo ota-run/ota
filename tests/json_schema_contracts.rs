@@ -1354,8 +1354,16 @@ fn detect_schema_includes_comparison_preview() {
     assert!(success.get("candidate_path").is_some());
     assert!(success.get("candidate").is_some());
     assert_eq!(
+        success["write_candidate"]["properties"]["schema_version"]["const"],
+        3
+    );
+    assert_eq!(
+        success["write_candidate"]["properties"]["profile"]["const"],
+        "detect_conservative_first_contract_v1"
+    );
+    assert_eq!(
         candidate["properties"]["schema_version"]["enum"],
-        json!([1, 2, 3])
+        json!([1, 2, 3, 4])
     );
     assert!(candidate["properties"].get("identity").is_some());
     assert!(candidate["properties"].get("evidence_manifest").is_some());
@@ -2072,6 +2080,14 @@ fn init_schema_includes_optional_next_on_failures() {
         json!(["pytest", "unittest"])
     );
     assert!(success.get("pack_advisory").is_some());
+    assert_eq!(
+        success["preview_candidate"]["properties"]["schema_version"]["const"],
+        4
+    );
+    assert_eq!(
+        success["preview_candidate"]["properties"]["profile"]["const"],
+        "init_starter_preview_v1"
+    );
     assert!(success.get("config").is_some());
     assert!(success.get("inferred").is_some());
     assert!(success.get("toolchain_opportunities").is_some());

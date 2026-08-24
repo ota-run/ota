@@ -32109,7 +32109,7 @@ name = "fastapi"
         assert!(preview_stdout.contains(
             "Ota only writes an inferred `agent` block when at least one safe task is present"
         ));
-        assert!(preview_stdout.contains("run `ota agents --write"));
+        assert!(preview_stdout.contains(&format!("run `ota agents --write {}", fixture.path())));
         assert!(!preview_stdout.contains("\nagent:\n"));
     }
 
@@ -39506,6 +39506,16 @@ tasks:
         assert_eq!(output.exit_code, 0);
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
         assert_eq!(json["written"], true);
+        assert!(
+            json["write_candidate"]["identity"]
+                .as_str()
+                .is_some_and(|identity| identity.starts_with("sha256:"))
+        );
+        assert_eq!(json["write_candidate"]["schema_version"], 3);
+        assert_eq!(
+            json["write_candidate"]["profile"],
+            "detect_conservative_first_contract_v1"
+        );
         assert_eq!(json["config"]["project"]["name"], "ota-web");
         assert_eq!(
             json["config"]["metadata"]["ota"]["detect"]["field_ownership"]["project.name"],

@@ -26,6 +26,6 @@ version: 1
 repository: ota-run/ota-site
 mode: synced
 reviewed_ota_commit: "b24ceaad12b2e588db1b796099dc2e4895455743"
-consumer_commit: "78e058344889ec927a23561f4c7538b580f2f4b7"
+consumer_commit: "c46acd079f5fab88d85f71fc57f0dbcf8d1bbeba"
 notes: >
-  Site candidate-mutation guidance and its reference-sync regression are committed and pinned.
+  Site source-bound init-preview and exact applied-candidate guidance is committed and pinned.

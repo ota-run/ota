@@ -27,8 +27,41 @@ use std::process::{Command, Stdio};
 use std::{env, fs};
 
 use jsonschema::{Draft, JSONSchema};
-use serde_json::Value;
+use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use tempfile::TempDir;
+
+fn independently_normalize_semantic_json(value: Value) -> Option<Value> {
+    match value {
+        Value::Null | Value::Bool(false) => None,
+        Value::String(value) if value.trim().is_empty() => None,
+        Value::Array(values) => {
+            let values = values
+                .into_iter()
+                .filter_map(independently_normalize_semantic_json)
+                .collect::<Vec<_>>();
+            (!values.is_empty()).then_some(Value::Array(values))
+        }
+        Value::Object(values) => {
+            let values = values
+                .into_iter()
+                .filter_map(|(key, value)| {
+                    independently_normalize_semantic_json(value).map(|value| (key, value))
+                })
+                .collect::<serde_json::Map<_, _>>();
+            (!values.is_empty()).then_some(Value::Object(values))
+        }
+        other => Some(other),
+    }
+}
+
+fn independently_derive_contract_identity(contract: &ota::schema::Contract) -> String {
+    let value = serde_json::to_value(contract).expect("contract serializes");
+    let normalized = independently_normalize_semantic_json(value)
+        .unwrap_or_else(|| Value::Object(Default::default()));
+    let bytes = serde_json::to_vec_pretty(&normalized).expect("normalized contract serializes");
+    format!("sha256:{:x}", Sha256::digest(bytes))
+}
 
 fn run_ota(args: &[&str], cwd: &Path) -> Value {
     run_ota_with_env(args, cwd, &[], true)
@@ -171,6 +204,142 @@ fn detect_candidate_artifact_matches_published_schemas_without_writing_a_contrac
     let artifact = load_json(&fixture.path().join(".ota/candidates/detect.json"));
     assert_matches_schema("contract-candidate.json", &artifact);
     assert_eq!(artifact["identity"], output["candidate"]["identity"]);
+}
+
+#[test]
+fn detect_write_exposes_the_verified_conservative_candidate_identity() {
+    let fixture = tempfile::tempdir().expect("tempdir");
+    fs::write(
+        fixture.path().join("package.json"),
+        "{\"name\":\"candidate-write-schema\",\"scripts\":{\"check\":\"echo ok\"}}\n",
+    )
+    .expect("manifest");
+
+    let output = run_ota(&["detect", "--write", "--json", "."], fixture.path());
+    assert_matches_schema("detect.json", &output);
+    assert_eq!(output["written"], true);
+    assert!(output.get("candidate").is_none());
+    assert_eq!(
+        output["write_candidate"]["profile"],
+        "detect_conservative_first_contract_v1"
+    );
+    assert_eq!(output["write_candidate"]["schema_version"], 3);
+    assert!(
+        output["write_candidate"]["identity"]
+            .as_str()
+            .is_some_and(|identity| identity.starts_with("sha256:"))
+    );
+
+    let mut missing_write_candidate = output.clone();
+    missing_write_candidate
+        .as_object_mut()
+        .expect("detect output object")
+        .remove("write_candidate");
+    assert_rejected_by_schema("detect.json", &missing_write_candidate);
+
+    let mut wrong_profile = output.clone();
+    wrong_profile["write_candidate"]["profile"] = Value::String(String::from("other"));
+    assert_rejected_by_schema("detect.json", &wrong_profile);
+
+    let mut contradictory_review_artifact = output.clone();
+    contradictory_review_artifact["candidate"] = json!({});
+    assert_rejected_by_schema("detect.json", &contradictory_review_artifact);
+}
+
+#[test]
+fn init_dry_run_exposes_a_source_bound_starter_preview_candidate() {
+    let fixture = tempfile::tempdir().expect("tempdir");
+    fs::write(
+        fixture.path().join("package.json"),
+        "{\"name\":\"init-preview-schema\",\"scripts\":{\"check\":\"echo ok\"}}\n",
+    )
+    .expect("manifest");
+
+    let output = run_ota(&["init", "--dry-run", "--json", "."], fixture.path());
+    assert_matches_schema("init.json", &output);
+    assert_eq!(output["written"], false);
+    assert_eq!(
+        output["preview_candidate"]["profile"],
+        "init_starter_preview_v1"
+    );
+    assert_eq!(output["preview_candidate"]["schema_version"], 4);
+    assert_eq!(
+        output["preview_candidate"]["candidate"]["identity"],
+        output["preview_candidate"]["identity"]
+    );
+    assert_eq!(
+        output["preview_candidate"]["candidate"]["schema_version"],
+        output["preview_candidate"]["schema_version"]
+    );
+    let rendered_contract =
+        serde_json::from_value::<ota::schema::Contract>(output["config"].clone())
+            .expect("init config parses as a contract");
+    let normalized_rendered_contract =
+        serde_json::to_value(&rendered_contract).expect("contract serializes canonically");
+    assert_eq!(
+        output["preview_candidate"]["candidate"]["changes"][0]["proposed_value"],
+        normalized_rendered_contract,
+        "the inspectable preview candidate must carry the semantic starter contract"
+    );
+    assert_eq!(
+        output["preview_candidate"]["resulting_contract_identity"],
+        independently_derive_contract_identity(&rendered_contract),
+        "the preview result identity must bind the semantic config"
+    );
+    for field in ["identity", "resulting_contract_identity"] {
+        assert!(
+            output["preview_candidate"][field]
+                .as_str()
+                .is_some_and(|identity| identity.starts_with("sha256:"))
+        );
+    }
+    assert!(!fixture.path().join("ota.yaml").exists());
+
+    let mut missing_candidate = output.clone();
+    missing_candidate
+        .as_object_mut()
+        .expect("init output object")
+        .remove("preview_candidate");
+    assert_rejected_by_schema("init.json", &missing_candidate);
+
+    let mut write_with_candidate = output.clone();
+    write_with_candidate["written"] = Value::Bool(true);
+    assert_rejected_by_schema("init.json", &write_with_candidate);
+
+    let mut nested_wrong_profile = output.clone();
+    nested_wrong_profile["preview_candidate"]["candidate"]["profile"] =
+        Value::String(String::from("detect_conservative_first_contract_v1"));
+    assert_rejected_by_schema("init.json", &nested_wrong_profile);
+
+    let mut detector_without_class = output.clone();
+    let provenance = detector_without_class["provenance"]
+        .as_array_mut()
+        .and_then(|entries| entries.first_mut())
+        .expect("init output has provenance");
+    provenance["provenance"] = Value::String(String::from("detector-inferred"));
+    provenance["provenance_key"] = Value::String(String::from("repo_signals"));
+    provenance
+        .as_object_mut()
+        .expect("provenance object")
+        .remove("source_class");
+    assert_rejected_by_schema("init.json", &detector_without_class);
+
+    let mut template_with_detector_key = output.clone();
+    let provenance = template_with_detector_key["provenance"]
+        .as_array_mut()
+        .and_then(|entries| entries.first_mut())
+        .expect("init output has provenance");
+    provenance["provenance"] = Value::String(String::from("template-derived"));
+    provenance["provenance_key"] = Value::String(String::from("repo_signals"));
+    provenance
+        .as_object_mut()
+        .expect("provenance object")
+        .remove("source_class");
+    provenance
+        .as_object_mut()
+        .expect("provenance object")
+        .remove("confidence");
+    assert_rejected_by_schema("init.json", &template_with_detector_key);
 }
 
 #[test]

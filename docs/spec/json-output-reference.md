@@ -4623,7 +4623,13 @@ Each `inferred[*]` entry now carries additive metadata for human and machine con
 
 In dry-run preview mode, `config` matches the starter contract ota would review or write,
 including derived starter defaults such as a minimal `agent` block when ota can infer one
-safely.
+and `preview_candidate` contains the complete source-bound candidate for that exact preview. Its
+`schema_version` is `4`, its profile is `init_starter_preview_v1`, and
+`resulting_contract_identity` is the semantic identity of `config`. Consumers must reconcile the
+wrapper `identity`, schema version, and profile with `preview_candidate.candidate`, then parse
+`config` and compare its semantic identity with `resulting_contract_identity`; JSON Schema enforces
+the local shape but not those cross-record equalities. This is review evidence only: it has no
+application projection and grants no contract-write authority.
 
 When `mode` is `pack`, the payload also includes `pack` with the selected built-in starter pack
 name. Pack-generated tasks can carry short `description` fields, optional `pack_options` records
@@ -6050,6 +6056,9 @@ shape used by `ota clean --json` instead of this success shape.
   `metadata.ota.detect.field_admission`
 - `config.metadata.ota.detect.field_admission[*]` is `direct` when ota wrote the field from direct high-confidence detector evidence and `promoted` when ota admitted the field through the conservative detect-write promotion policy
 - `config.metadata.ota.detect.field_source_class[*]` records the detector-governance class ota associated with each detect-owned field it wrote, such as `task_command` or `environment_toolchain`
+- `write_candidate` appears only after a successful `detect --write`; it records the exact
+  source-bound candidate `identity`, schema version, and
+  `detect_conservative_first_contract_v1` profile whose verified projection became `ota.yaml`
 - `comparison` describing detected adds and updates against the existing contract
 - `comparison.removals` describing stale contract fields that are no longer detected in the repo
 - `comparison.changes[*].ownership` is `repo_signals` for add candidates and `repo_contract` for updates against existing fields

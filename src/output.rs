@@ -3153,6 +3153,8 @@ pub struct InitSuccess<'a> {
     pub written: bool,
     pub mode: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub preview_candidate: Option<InitPreviewCandidate<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub pack: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pack_options: Option<InitSelectedPackOptions>,
@@ -3164,6 +3166,15 @@ pub struct InitSuccess<'a> {
     pub toolchain_opportunities: Vec<ToolchainOpportunityAdvisory>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub provenance: Vec<ContractFieldProvenance>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct InitPreviewCandidate<'a> {
+    pub(crate) candidate: &'a crate::contract_candidate::ContractCandidate,
+    pub identity: &'a str,
+    pub schema_version: u32,
+    pub profile: &'a str,
+    pub resulting_contract_identity: &'a str,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -3301,6 +3312,13 @@ pub struct AgentsFailure<'a> {
 }
 
 #[derive(Debug, Serialize)]
+pub struct DetectWriteCandidate<'a> {
+    pub identity: &'a str,
+    pub schema_version: u32,
+    pub profile: &'a str,
+}
+
+#[derive(Debug, Serialize)]
 pub struct DetectSuccess<'a> {
     pub ok: bool,
     pub path: &'a str,
@@ -3319,6 +3337,8 @@ pub struct DetectSuccess<'a> {
     pub candidate_publication: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub candidate: Option<JsonValue>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub write_candidate: Option<DetectWriteCandidate<'a>>,
 }
 
 #[derive(Debug, Serialize)]

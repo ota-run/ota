@@ -49,6 +49,7 @@ use crate::validator::validate_contract_with_path;
 pub(crate) const CONTRACT_CANDIDATE_SCHEMA_VERSION: u32 = 1;
 pub(crate) const CONTRACT_UPGRADE_CANDIDATE_SCHEMA_VERSION: u32 = 2;
 pub(crate) const CONSERVATIVE_FIRST_CONTRACT_CANDIDATE_SCHEMA_VERSION: u32 = 3;
+pub(crate) const INIT_STARTER_PREVIEW_CANDIDATE_SCHEMA_VERSION: u32 = 4;
 pub(crate) const LEGACY_FLAT_TOOLCHAIN_FULFILLMENT_V1: &str =
     "legacy_flat_toolchain_fulfillment_v1";
 
@@ -88,6 +89,7 @@ pub(crate) enum CandidateKind {
 #[serde(rename_all = "snake_case")]
 pub(crate) enum CandidateProfile {
     DetectConservativeFirstContractV1,
+    InitStarterPreviewV1,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -508,6 +510,33 @@ impl ContractCandidate {
                 }
             }
             (
+                INIT_STARTER_PREVIEW_CANDIDATE_SCHEMA_VERSION,
+                CandidateKind::Detection,
+                Some(CandidateProfile::InitStarterPreviewV1),
+                None,
+            ) => {
+                if self.existing_contract_snapshot_identity.is_some()
+                    || self.application_projection.is_some()
+                    || self.changes.len() != 1
+                {
+                    return Err(CandidateError::InvalidPath(String::from(
+                        "init starter-preview candidate profile",
+                    )));
+                }
+                let change = &self.changes[0];
+                if change.subject.path != ["starter_contract"]
+                    || change.field_family != "init_starter_preview_profile"
+                    || change.operation != CandidateOperation::Add
+                    || change.confidence != CandidateConfidence::High
+                    || change.disposition != CandidateDisposition::Applicable
+                    || change.proposed_value.is_none()
+                {
+                    return Err(CandidateError::InvalidPath(String::from(
+                        "init starter-preview candidate change",
+                    )));
+                }
+            }
+            (
                 CONTRACT_UPGRADE_CANDIDATE_SCHEMA_VERSION,
                 CandidateKind::Upgrade,
                 None,
@@ -570,12 +599,15 @@ impl ContractCandidate {
         validate_evidence_reconciliation(&self.discovery_inventory, &self.evidence_manifest)?;
         let mut subjects = BTreeSet::new();
         for change in &self.changes {
-            let minimum_subject_segments =
-                if self.profile == Some(CandidateProfile::DetectConservativeFirstContractV1) {
-                    1
-                } else {
-                    2
-                };
+            let minimum_subject_segments = if matches!(
+                self.profile,
+                Some(CandidateProfile::DetectConservativeFirstContractV1)
+                    | Some(CandidateProfile::InitStarterPreviewV1)
+            ) {
+                1
+            } else {
+                2
+            };
             if change.subject.path.len() < minimum_subject_segments
                 || change.subject.path.iter().any(|segment| segment.is_empty())
                 || !subjects.insert(change.subject.path.clone())
@@ -602,7 +634,11 @@ impl ContractCandidate {
             }
             if change.disposition == CandidateDisposition::Applicable
                 && change.evidence.is_empty()
-                && self.profile != Some(CandidateProfile::DetectConservativeFirstContractV1)
+                && !matches!(
+                    self.profile,
+                    Some(CandidateProfile::DetectConservativeFirstContractV1)
+                        | Some(CandidateProfile::InitStarterPreviewV1)
+                )
             {
                 return Err(CandidateError::InvalidPath(String::from(
                     "applicable candidate evidence",

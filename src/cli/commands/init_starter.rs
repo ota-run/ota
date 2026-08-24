@@ -28,7 +28,8 @@ use serde_json::Value as JsonValue;
 
 use crate::detector::{
     DetectCheck, DetectCheckKind, DetectCheckSeverity, DetectContract, DetectProject, DetectReport,
-    DetectTask, DetectToolchainSpec, Inference,
+    DetectTask, DetectToolchainSpec, Inference, starter_topology_entries,
+    starter_topology_ignored_dir,
 };
 use crate::schema::{
     AgentBootstrapConfig, AgentBootstrapTargetConfig, AgentBoundaryProvenanceConfig, AgentConfig,
@@ -1774,8 +1775,8 @@ fn starter_agent_writable_paths_with_semantic_roots(
         }
     }
 
-    if let Ok(entries) = fs::read_dir(root) {
-        for entry in entries.flatten().take(256) {
+    if let Ok(entries) = starter_topology_entries(root) {
+        for entry in entries {
             let path = entry.path();
             if !path.is_dir() {
                 continue;
@@ -1784,7 +1785,7 @@ fn starter_agent_writable_paths_with_semantic_roots(
             let Some(name) = name.to_str() else {
                 continue;
             };
-            if starter_agent_ignored_scan_dir(name) {
+            if starter_topology_ignored_dir(name) {
                 continue;
             }
             if matches!(
@@ -1945,7 +1946,7 @@ fn starter_agent_semantic_root_from_source(
         .iter()
         .filter_map(|segment| segment.to_str())
         .collect::<Vec<_>>();
-    if segments.len() < 2 || starter_agent_ignored_scan_dir(segments[0]) {
+    if segments.len() < 2 || starter_topology_ignored_dir(segments[0]) {
         return None;
     }
 
@@ -2220,11 +2221,11 @@ fn starter_agent_collect_nested_source_roots(
     allowed_extensions: Option<&[&'static str]>,
 ) -> Vec<String> {
     let mut roots = BTreeSet::new();
-    let Ok(entries) = fs::read_dir(dir) else {
+    let Ok(entries) = starter_topology_entries(dir) else {
         return Vec::new();
     };
 
-    for entry in entries.flatten().take(256) {
+    for entry in entries {
         let path = entry.path();
         if !path.is_dir() {
             continue;
@@ -2233,7 +2234,7 @@ fn starter_agent_collect_nested_source_roots(
         let Some(name) = name.to_str() else {
             continue;
         };
-        if starter_agent_ignored_scan_dir(name) {
+        if starter_topology_ignored_dir(name) {
             continue;
         }
         let candidate = format!("{prefix}/{name}");
@@ -2251,11 +2252,11 @@ fn starter_agent_dir_has_direct_source_files(
     dir: &Path,
     allowed_extensions: Option<&[&'static str]>,
 ) -> bool {
-    let Ok(entries) = fs::read_dir(dir) else {
+    let Ok(entries) = starter_topology_entries(dir) else {
         return false;
     };
 
-    for entry in entries.flatten().take(256) {
+    for entry in entries {
         let path = entry.path();
         if path.is_file() && starter_agent_is_source_like_file(&path, allowed_extensions) {
             return true;
@@ -2277,7 +2278,7 @@ fn starter_agent_valid_writable_path(root: &Path, candidate: &str) -> bool {
         .iter()
         .next()
         .and_then(|segment| segment.to_str());
-    !first_segment.is_some_and(starter_agent_ignored_scan_dir)
+    !first_segment.is_some_and(starter_topology_ignored_dir)
 }
 
 fn starter_agent_writable_path_from_effect_write(root: &Path, write_path: &str) -> Option<String> {
@@ -2292,7 +2293,7 @@ fn starter_agent_writable_path_from_effect_write(root: &Path, write_path: &str) 
     if first_segment.is_empty() || first_segment == "." || first_segment == ".." {
         return None;
     }
-    if starter_agent_ignored_scan_dir(first_segment)
+    if starter_topology_ignored_dir(first_segment)
         && !matches!(first_segment, ".gradle" | ".venv" | ".mypy_cache")
     {
         return None;
@@ -2517,38 +2518,6 @@ fn starter_agent_stack_source_extensions(contract: &DetectContract) -> Option<Ve
     }
 }
 
-fn starter_agent_ignored_scan_dir(name: &str) -> bool {
-    matches!(
-        name,
-        ".git"
-            | ".hg"
-            | ".svn"
-            | ".github"
-            | ".next"
-            | ".nuxt"
-            | ".turbo"
-            | ".cache"
-            | ".venv"
-            | "venv"
-            | "__pycache__"
-            | "node_modules"
-            | "vendor"
-            | "target"
-            | "dist"
-            | "build"
-            | "coverage"
-            | "out"
-            | "config"
-            | "database"
-            | "migrations"
-            | "manifests"
-            | "deploy"
-            | "infra"
-            | "bin"
-            | "obj"
-    )
-}
-
 fn starter_agent_dir_contains_source_files(
     dir: &Path,
     depth: usize,
@@ -2558,11 +2527,11 @@ fn starter_agent_dir_contains_source_files(
         return false;
     }
 
-    let Ok(entries) = fs::read_dir(dir) else {
+    let Ok(entries) = starter_topology_entries(dir) else {
         return false;
     };
 
-    for entry in entries.flatten().take(256) {
+    for entry in entries {
         let path = entry.path();
         if path.is_file() && starter_agent_is_source_like_file(&path, allowed_extensions) {
             return true;
@@ -2572,7 +2541,7 @@ fn starter_agent_dir_contains_source_files(
             let Some(name) = name.to_str() else {
                 continue;
             };
-            if starter_agent_ignored_scan_dir(name) {
+            if starter_topology_ignored_dir(name) {
                 continue;
             }
             if starter_agent_dir_contains_source_files(

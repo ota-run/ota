@@ -241,8 +241,13 @@ outcomes are `candidate_malformed`, `candidate_identity_invalid`, `candidate_imp
 and `candidate_write_durability_uncertain`; a successful reapplication is an explicit semantic
 no-op.
 
-- `ota init` may create a complete starter only when no contract exists and its candidate is
-  explicit about every inferred source.
+- `ota init --dry-run` emits the versioned `init_starter_preview_v1` source-bound candidate for
+  the exact starter contract it previews. It binds the immutable discovery inventory, selected
+  evidence, candidate identity, and resulting contract identity; every detected starter transform
+  reads that retained capture, while an explicit pack retains its own detector-independent
+  semantics. It carries no application projection or write authority. `ota init` may create a
+  complete starter only when no contract exists; migrating that legacy writer through candidate
+  application remains a separate change.
 - `kind: detection` candidates use `operation: add` only. `ota detect` may propose additions to an
   existing contract, but must not overwrite an existing semantic field implicitly.
 - V11.2 field-family precedence ranks external evidence and selects the primary proposed value

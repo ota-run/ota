@@ -180,8 +180,37 @@
           ]
         },
         "source": { "type": "string" },
+        "source_class": {
+          "enum": [
+            "environment_toolchain",
+            "task_command",
+            "runtime_service",
+            "ci_verification",
+            "agent_boundary",
+            "workspace_bootstrap",
+            "heuristic"
+          ]
+        },
         "confidence": { "enum": ["low", "medium", "high"] }
-      }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "provenance": { "const": "detector-inferred" } }, "required": ["provenance"] },
+          "then": { "required": ["source", "source_class", "confidence"], "properties": { "provenance_key": { "const": "repo_signals" } } }
+        },
+        {
+          "if": { "properties": { "provenance": { "const": "template-derived" } }, "required": ["provenance"] },
+          "then": { "required": ["source"], "properties": { "provenance_key": { "const": "template_derived" } }, "not": { "anyOf": [{ "required": ["source_class"] }, { "required": ["confidence"] }] } }
+        },
+        {
+          "if": { "properties": { "provenance": { "const": "workspace-derived" } }, "required": ["provenance"] },
+          "then": { "properties": { "provenance_key": { "const": "workspace_scaffold" } } }
+        },
+        {
+          "if": { "properties": { "provenance": { "const": "workspace-declared" } }, "required": ["provenance"] },
+          "then": { "properties": { "provenance_key": { "const": "workspace_contract" } } }
+        }
+      ]
     },
     "provisioningPlanEntry": {
       "type": "object",

@@ -72,9 +72,26 @@
         "candidate_publication": { "const": "durable" },
         "candidate": {
           "$ref": "./contract-candidate.json"
+        },
+        "write_candidate": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["identity", "schema_version", "profile"],
+          "properties": {
+            "identity": {
+              "type": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$"
+            },
+            "schema_version": { "const": 3 },
+            "profile": { "const": "detect_conservative_first_contract_v1" }
+          }
         }
       },
       "allOf": [
+        {
+          "if": { "properties": { "written": { "const": true } } },
+          "then": { "required": ["write_candidate"] }
+        },
         {
           "if": { "required": ["candidate"] },
           "then": {
@@ -101,6 +118,13 @@
           "then": {
             "required": ["candidate", "candidate_path", "candidate_published"],
             "properties": { "written": { "const": false } }
+          }
+        },
+        {
+          "if": { "required": ["write_candidate"] },
+          "then": {
+            "properties": { "written": { "const": true } },
+            "not": { "required": ["candidate"] }
           }
         }
       ]
