@@ -25,8 +25,8 @@
 version: 1
 repository: ota-run/ota-site
 mode: synced
-reviewed_ota_commit: "996090390d8544908bbb222614ece28f4dca8b4c"
-consumer_commit: "ef064658e1de6aea895d3b40ce500b3064f2e19f"
+reviewed_ota_commit: "a4c38c7224fcc49efc5eb2c0b4e89881c9236d23"
+consumer_commit: "96781d65b2fb9ba310d727a8a4c39fc6a1c44d67"
 notes: >
-  The bounded GitButler and BAML candidate-pressure engineering note and generated Site content
-  are committed and pinned.
+  Candidate-reference guidance for distinct CI verifier lanes and non-authoritative closure
+  observations is committed and pinned.

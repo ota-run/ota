@@ -25,7 +25,8 @@
 version: 1
 repository: ota-run/skills
 mode: synced
-reviewed_ota_commit: "b3e7a3830b9be5aed1502a46490bf5a27f199405"
-consumer_commit: "c039cc450faa8f06c3f38317955f79409b987ff9"
+reviewed_ota_commit: "a4c38c7224fcc49efc5eb2c0b4e89881c9236d23"
+consumer_commit: "16d9fd8542a3be935ddea3155566d44e36593480"
 notes: >
-  Skill candidate-writer platform-refusal guidance is committed and pinned.
+  Candidate-review guidance for distinct CI verifier lanes and non-authoritative closure
+  observations is committed and pinned.
