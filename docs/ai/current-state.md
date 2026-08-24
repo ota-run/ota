@@ -1178,7 +1178,23 @@ access with `detect_legacy_mutation_removed`; `detect --write` uses the versione
 `detect_conservative_first_contract_v1` profile and the shared locked create-new carrier, and its
 successful JSON records the exact `write_candidate` identity, schema version, and profile. Rewrite
 and removal remain unavailable until the candidate model can carry them honestly. External
-pressure remains open. The artifact
+pressure remains open. A clean local macOS pressure pass against
+`block/buzz@2d280376ad36134cec1f23bead6d866d30bed147` with Core
+`76dd13417131978b894e34194842f2ab55e5cb20` exposed and fixed one candidate-domain defect:
+an unresolved new `setup` wrapper left `tasks.setup.internal` independently applicable, which
+prevented projection of unrelated contract truth. New-task metadata now inherits the execution
+change's fail-closed disposition unless the task already exists. The corrected candidate is
+byte-stable across repeated capture, proposes no agent-safe task, retains unresolved Just and shell
+closures as `unknown`, dry-runs and creates one valid missing contract, reapplies as a semantic
+no-op, refuses selected-source drift as `candidate_stale`, and refuses residual findings under
+`--require-complete`. Its candidate, projection, and resulting-contract identities are respectively
+`sha256:9459433bcb349d227dcb78763a3d2bd035a4c47f120e4b1edb73241d60b29333`,
+`sha256:f3adc3ffa7e07440835dd47962ce73d0ad060945b539e75b133fc711512b44d2`, and
+`sha256:d0e5a4860150ea9321a2813c3e9fd7d6c570c03b69801bb0b94e13de25af04c4`.
+The generated contract validates and exposes zero safe tasks; Doctor remains locally `not_ready`
+because the host's resolved `pnpm` cannot report its version, plus bounded hygiene and CI-drift
+warnings. This is retained local product evidence only: it does not prove native/container task
+execution, hosted pressure, or complete Buzz governance. The artifact
 binds a required content identity for every inventory entry, every normalized evidence tuple,
 structured contract-path segments, canonical semantic proposal values, existing-contract
 conflicts, and explicit closure facts. Equivalent existing truth is omitted before publication;
