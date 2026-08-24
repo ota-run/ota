@@ -25,8 +25,8 @@
 version: 1
 repository: ota-run/ota-site
 mode: synced
-reviewed_ota_commit: "b3e7a3830b9be5aed1502a46490bf5a27f199405"
-consumer_commit: "00e5e40d04d93313fac5f87f1ca8204bf31b7799"
+reviewed_ota_commit: "996090390d8544908bbb222614ece28f4dca8b4c"
+consumer_commit: "ef064658e1de6aea895d3b40ce500b3064f2e19f"
 notes: >
-  Site candidate-writer platform-refusal guidance and the bounded Caddy pressure note are
-  committed and pinned.
+  The bounded GitButler and BAML candidate-pressure engineering note and generated Site content
+  are committed and pinned.

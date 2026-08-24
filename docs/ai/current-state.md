@@ -1177,8 +1177,8 @@ unrelated `unknown` or `unsupported` findings remain visible review state unless
 access with `detect_legacy_mutation_removed`; `detect --write` uses the versioned
 `detect_conservative_first_contract_v1` profile and the shared locked create-new carrier, and its
 successful JSON records the exact `write_candidate` identity, schema version, and profile. Rewrite
-and removal remain unavailable until the candidate model can carry them honestly. External
-pressure remains open. A clean local macOS pressure pass against
+and removal remain unavailable until the candidate model can carry them honestly. Required
+external pressure remains active. A clean local macOS pressure pass against
 `block/buzz@2d280376ad36134cec1f23bead6d866d30bed147` with Core
 `76dd13417131978b894e34194842f2ab55e5cb20` exposed and fixed one candidate-domain defect:
 an unresolved new `setup` wrapper left `tasks.setup.internal` independently applicable, which
@@ -1228,6 +1228,42 @@ Unix-only Git materializer had remained reachable from a Windows compilation pat
 candidate/application evidence only. It does not prove Caddy build, test, server, runtime,
 lifecycle, container, release, network, or repo-global governance, and it must not be combined with
 earlier Caddy runtime/OCI pressure to imply one continuous proof.
+Immutable GitButler candidate pressure is green across Linux, macOS, and Windows in
+[run 32749052846](https://github.com/bobaikato/gitbutler/actions/runs/32749052846) against Core
+`996090390d8544908bbb222614ece28f4dca8b4c`, pressure-controller revision
+`f208f8d1d0e9da7fc7e1b32c6e58288e97afb80d`, and clean upstream fixture
+`gitbutlerapp/gitbutler@2068a7811629950c05bd6f17429c5f2454f8ef4f`. Linux and macOS produced
+byte-identical candidates with candidate, projection, and resulting-contract identities
+`sha256:5d3211d1a3e8a57702d71dfec0abc6a549b755379024ccfabe6f56d033ef6fa7`,
+`sha256:064b9aed754ed8c7d57529327cb0ce2f4fbf03fc05a965971fd5316aadb425be`, and
+`sha256:7d409f2dcebd3900a3c625af6086077cabe743df095c95ee6f3d77e640474c39`.
+The candidate retained 43 unresolved findings, kept 12 selected package/Turbo/Tauri/Playwright
+tasks `unknown`, proposed zero agent-safe authority, admitted only the unrelated applicable
+projection in ordinary dry-run, and refused under `--require-complete`. Windows completed
+read-only detection and refused durable candidate publication without leaving an artifact. The
+first hosted run exposed a real cross-platform identity defect: case-insensitive macOS lookup
+reinterpreted GitButler's lowercase `claude.md` symlink and uppercase `Makefile` as separate
+registered paths. Core now requires exact spelling for every registered source-path component;
+the retained Linux/macOS candidates have identical bytes after that fix.
+Immutable BAML candidate pressure is green across the same matrix in
+[run 32749052420](https://github.com/bobaikato/baml/actions/runs/32749052420) against the same Core,
+pressure-controller revision `72e1bcf5e12e6c755de747db2330ef4e1f9f2e41`, and clean revision-pinned
+upstream fixture `BoundaryML/baml@a50430fba33012bea9a740ab0466c10697050678`. The checkout is
+explicitly recorded as Git LFS pointer-only. Linux and macOS produced byte-identical candidates
+with candidate, projection, and resulting-contract identities
+`sha256:042392f506455ffc4e14d9c4c015c954cd148fe0e29268c76bc366d5c0cb2ab8`,
+`sha256:fa9134aa371de6e15772da2aa0071035b02656a9a612ba1b25590e28608c7584`, and
+`sha256:f72f4afe88046ec96207250ebe8200606fb9402228c146a99896618c50c12f03`.
+The candidate retained 32 unresolved findings, projected zero tasks, proposed zero agent-safe
+authority, and refused strict application; the two reusable-workflow commands did not become
+runnable truth. Windows again remained read-only. These runs prove candidate capture,
+cross-platform identity, conservative non-promotion, dry-run admission, and strict refusal only.
+They do not prove either repository's build, tests, desktop/runtime behavior, complete LFS
+checkout, contract approval or write, task execution, lifecycle, release, deployment, or
+repo-global governance. Atuin's detector-produced distinct-lane pressure remains the next required
+V11.22 external gate. The bounded engineering note is committed as a draft in Site
+`ef064658e1de6aea895d3b40ce500b3064f2e19f`; it is not publication evidence and must remain draft
+until the V11.22 release posture is chosen.
 V12 effect-bound refusal assurance and V12.1 secret-delivery governance remain planning-only and
 inactive until their published prerequisites complete; do not widen the current authority
 implementation for either.
