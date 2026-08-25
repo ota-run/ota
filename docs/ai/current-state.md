@@ -1210,7 +1210,7 @@ legacy-flat-toolchain migration as a schema-v2 review artifact and `apply-candid
 against current source truth. Its approved existing-contract application requires `--write --carrier
 git`; ordinary `--write` remains create-new-only. Core docs, Site, the canonical Skill and installed
 mirrors, and Examples now carry the same operator workflow. The connected propagation is committed
-and pinned: Site `b5ac5bc199712833e6ec7120b09b8cde46ecbd70`, Skills
+and pinned: Site `5b4c59fb4c471c147c60bcd3e1002d89d1ce55d7`, Skills
 `ac8e89694f92d4f1418c7d13d1f105707f689503`, and Examples
 `89467f3ad0751b5613a57382553c1a1b38dab4c7`; Core records the Site and Skills revisions as
 synced rather than waived. Init and detect candidate output changed, while the `ota.yaml`
