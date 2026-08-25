@@ -25,7 +25,7 @@
 version: 1
 repository: ota-run/skills
 mode: synced
-reviewed_ota_commit: "4ed43f7a96308933ab4243872c608ca27f4aea9d"
+reviewed_ota_commit: "cf9d734d749cfb1259cc8249f9cc88e36bb1e00d"
 consumer_commit: "ac8e89694f92d4f1418c7d13d1f105707f689503"
 notes: >
   The canonical Skill and both installed mirrors state that V11.22 does not infer agent-safe

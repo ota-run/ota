@@ -25,9 +25,10 @@
 version: 1
 repository: ota-run/ota-site
 mode: synced
-reviewed_ota_commit: "4ed43f7a96308933ab4243872c608ca27f4aea9d"
-consumer_commit: "20b397a41671269617d909e9869778a3f35ccc76"
+reviewed_ota_commit: "cf9d734d749cfb1259cc8249f9cc88e36bb1e00d"
+consumer_commit: "b5ac5bc199712833e6ec7120b09b8cde46ecbd70"
 notes: >
   Site reference and Learn surfaces preserve the V11.22 no-inferred-agent-safety boundary, while
-  the pressure note keeps immutable Buzz and Flowise evidence explicitly open; the propagation is
-  committed and pinned.
+  the repository-specific pressure drafts record bounded immutable Caddy, GitButler, BAML, Atuin,
+  Buzz, and Flowise evidence without claiming execution approval or V11.22 closure; the propagation
+  is committed and pinned.

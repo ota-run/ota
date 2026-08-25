@@ -1210,8 +1210,8 @@ legacy-flat-toolchain migration as a schema-v2 review artifact and `apply-candid
 against current source truth. Its approved existing-contract application requires `--write --carrier
 git`; ordinary `--write` remains create-new-only. Core docs, Site, the canonical Skill and installed
 mirrors, and Examples now carry the same operator workflow. The connected propagation is committed
-and pinned: Site `c46acd079f5fab88d85f71fc57f0dbcf8d1bbeba`, Skills
-`4348b3a9e00c9402c5514ab49188ad3d99c149b9`, and Examples
+and pinned: Site `b5ac5bc199712833e6ec7120b09b8cde46ecbd70`, Skills
+`ac8e89694f92d4f1418c7d13d1f105707f689503`, and Examples
 `89467f3ad0751b5613a57382553c1a1b38dab4c7`; Core records the Site and Skills revisions as
 synced rather than waived. Init and detect candidate output changed, while the `ota.yaml`
 contract-authoring shape did not.
@@ -1281,21 +1281,25 @@ projection, and refuses application as `candidate_incomplete`. Windows observes 
 through read-only detection and refuses durable candidate publication without leaving an
 artifact. The run does not prove Atuin compilation, formatting, tests, PostgreSQL state, sync
 behavior, shell integration, runtime, release, deployment, or repo-global governance. The named
-Atuin, GitButler, and BAML detector-pressure matrix is satisfied, but the complete V11.22 pressure
-bar is not. Immutable hosted proof still must cover source-bound candidate creation, explicit
-create-new application, and matching no-op reapplication against clean upstream Buzz `2d280376a`,
-plus the registered legacy-flat-toolchain upgrade and Git-carrier application against Flowise
-historical revision `90121fac54e234ca83e2a85c435354af1df8ac8f`. Local Buzz pressure exposed and
-Core now fixes one evidence-manifest defect: after the first write, a retained execution closure
+Atuin, GitButler, and BAML detector-pressure matrix is satisfied. Immutable hosted
+[Buzz pressure](https://github.com/bobaikato/buzz/actions/runs/32795701879) now proves source-bound
+candidate creation, explicit create-new application, and matching no-op reapplication against clean
+upstream `block/buzz@2d280376ad36134cec1f23bead6d866d30bed147` on Linux and macOS. Its artifacts
+are byte-identical across platforms, create only `ota.yaml`, retain residual `unknown` review
+state, and propose no agent-safe authority. Immutable hosted
+[Flowise pressure](https://github.com/bobaikato/Flowise/actions/runs/32794430600) now proves the
+registered legacy-flat-toolchain upgrade and Git-carrier application against historical revision
+`90121fac54e234ca83e2a85c435354af1df8ac8f`, with byte-identical artifacts, unchanged before/after
+semantic contract identity, a commit limited to `ota.yaml`, and matching no-op reapplication on
+Linux and macOS. Neither run executes repository tasks or approves candidate changes. Local Buzz
+pressure exposed and Core now fixes one evidence-manifest defect: after the first write, a retained execution closure
 could reference package-manager evidence whose unchanged top-level proposal had been omitted from
 the rebuilt manifest, causing exact reapplication to refuse rather than report a semantic no-op.
 Local Flowise pressure exposed and Core now fixes a second projection defect: the candidate
 evaluator bypassed canonical parser normalization, so historical service-runtime `surfaces` that
 normal Ota parsing accepts prevented the registered representation-only upgrade from projecting.
-V11.22 remains active pending review of that fix, both immutable pressure runs, independent closure
-review, and canonical status reconciliation. The bounded engineering note remains a draft
-in Site `ef5e2398ad160edca9612cc6c0a983a801d99015`; it is not publication evidence and must remain
-draft until the V11.22 release posture is chosen.
+V11.22 remains active pending independent closure review and canonical status reconciliation. The
+bounded engineering note remains a draft; the pressure evidence is not a release claim.
 V12 effect-bound refusal assurance and V12.1 secret-delivery governance remain planning-only and
 inactive until their published prerequisites complete; do not widen the current authority
 implementation for either.
