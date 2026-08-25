@@ -199,11 +199,12 @@ The completed sandbox-enforcement slice is:
   `1.6.26-implementation`. It applies the provider-neutral canonical policy envelope through the
   bounded stock OCI subset and refuses unsupported authoritative controls before work begins.
 
-The subsequent planned OSS authoring slice is:
+The completed OSS authoring slice is:
 
-- [V11.22: contract creation and quality UX](../v11.22/plan.md) - active. It is implementing
-  deterministic, source-bound contract candidates and fail-closed execution-closure classification
-  without inventing a second claim model or hosted intelligence dependency.
+- [V11.22: contract creation and quality UX](../v11.22/plan.md) - completed. It provides
+  deterministic, source-bound contract candidates, fail-closed execution-closure classification,
+  explicit create-new and Git write carriers, and registered lossless upgrades without inventing a
+  second claim model or hosted intelligence dependency.
 
 One deferred harness-integration follow-on is recorded in the completed
 [V11.6 plan](../v11.6/plan.md#deferred-integration-follow-on-agent-evaluation-disposition): an

@@ -447,7 +447,7 @@ durable agent workflow belongs in the canonical Ota skill.
   freshness refusing before authorization, and two executions of one broad three-task semantic
   scope consuming distinct work units with two valid archives. At that revision, V11.7 still
   required the hardened-launcher separation later proved by runs `31939777636` and `31953535665`.
-  Provider attestation is optional stronger follow-on hardening. V11.22 is active for its
+  Provider attestation is optional stronger follow-on hardening. V11.22 is complete for its
   source-bound candidate and fail-closed closure-classification foundation. The internal
   candidate now binds the registered detector source inventory: fixed root markers, supported
   environment files, package-manager locks, direct workflow files, bounded .NET project paths,
@@ -486,8 +486,8 @@ durable agent workflow belongs in the canonical Ota skill.
   authoritative, and positive effect-backed promotion is deferred to V12's typed effect and
   realization evaluator rather than treated as a V11.22 closure gate;
   V11.22 does not consume crossing records as approval authority. V12 effect-bound
-  refusal assurance is also planning-only and inactive until V11.22 completes; it does not widen
-  the completed
+  refusal assurance is also planning-only and inactive; its V11.22 prerequisite is complete, but
+  no V12 activation is implied. It does not widen the completed
   crossing implementation. See [V11.7](../planning/v11.7/plan.md),
   [V11.22](../planning/v11.22/plan.md), [V12](../planning/v12/plan.md), and the planned,
   inactive [V12.1 secret-delivery governance follow-on](../planning/v12.1/plan.md).
@@ -1159,7 +1159,7 @@ of the systemd carrier.
 Each terminal transaction is bound to a fresh runner-generated proof execution identity, and
 ordinary post-admission failures finalize explicitly; local content addressing remains integrity
 reconciliation rather than tamper-proof storage against the same host user.
-V11.22 is active for its source-bound candidate and fail-closed closure-classification foundation.
+V11.22 is complete for its source-bound candidate and fail-closed closure-classification foundation.
 Its first implementation checkpoint demotes task-name, wrapper, opaque-shell, CI-fragment, and
 agent-guidance signals from agent authorization: they may remain review evidence, but cannot emit
 `safe_for_agent` or a starter executable agent boundary. `ota detect --candidate-out` now writes
@@ -1180,7 +1180,7 @@ access with `detect_legacy_mutation_removed`; `detect --write` uses the versione
 `detect_conservative_first_contract_v1` profile and the shared locked create-new carrier, and its
 successful JSON records the exact `write_candidate` identity, schema version, and profile. Rewrite
 and removal remain unavailable until the candidate model can carry them honestly. Required
-external pressure remains active. A clean local macOS pressure pass against
+external pressure is complete. A clean local macOS pressure pass against
 `block/buzz@2d280376ad36134cec1f23bead6d866d30bed147` with Core
 `76dd13417131978b894e34194842f2ab55e5cb20` exposed and fixed one candidate-domain defect:
 an unresolved new `setup` wrapper left `tasks.setup.internal` independently applicable, which
@@ -1210,7 +1210,7 @@ legacy-flat-toolchain migration as a schema-v2 review artifact and `apply-candid
 against current source truth. Its approved existing-contract application requires `--write --carrier
 git`; ordinary `--write` remains create-new-only. Core docs, Site, the canonical Skill and installed
 mirrors, and Examples now carry the same operator workflow. The connected propagation is committed
-and pinned: Site `5b4c59fb4c471c147c60bcd3e1002d89d1ce55d7`, Skills
+and pinned: Site `fca59417df3c56c31719d8ebb14d133456fe1503`, Skills
 `ac8e89694f92d4f1418c7d13d1f105707f689503`, and Examples
 `89467f3ad0751b5613a57382553c1a1b38dab4c7`; Core records the Site and Skills revisions as
 synced rather than waived. Init and detect candidate output changed, while the `ota.yaml`
@@ -1298,11 +1298,13 @@ the rebuilt manifest, causing exact reapplication to refuse rather than report a
 Local Flowise pressure exposed and Core now fixes a second projection defect: the candidate
 evaluator bypassed canonical parser normalization, so historical service-runtime `surfaces` that
 normal Ota parsing accepts prevented the registered representation-only upgrade from projecting.
-V11.22 remains active pending independent closure review and canonical status reconciliation. The
-bounded engineering note remains a draft; the pressure evidence is not a release claim.
+The independent closure audit accepted V11.22 with no remaining P1/P2 findings after the buildable
+Site propagation was pinned. The bounded engineering notes remain drafts pending publication
+review; their draft status is not an implementation or evidence gap, and the pressure evidence is
+not a release claim.
 V12 effect-bound refusal assurance and V12.1 secret-delivery governance remain planning-only and
-inactive until their published prerequisites complete; do not widen the current authority
-implementation for either.
+inactive; completion of V11.22 does not activate either follow-on. Do not widen the current
+authority implementation for either.
 The local real-OCI
 fixture plus create-chrome-extension run
 [30544809360](https://github.com/bobaikato/create-chrome-extension/actions/runs/30544809360)
@@ -1317,7 +1319,7 @@ Core broker-session, crossing, archive, schema, and JSON conformance tests plus 
 example/skill/site checks are green. Do not reopen V11.21 or widen its bounded claims. Provider
 attestation remains optional stronger follow-on hardening, and contract-authored
 `governance.crossing_requirements` remains explicit follow-on authoring work; neither is part of the
-completed V11.7 claim. V11.22 is active only for its reviewed candidate and source-closure work;
+completed V11.7 claim. V11.22 is complete only for its reviewed candidate and source-closure work;
 do not imply that a generated contract is approved, written, or pressure-proven.
 
 ## Working Rules

@@ -24,10 +24,10 @@
 
 # V11.22: Contract Creation and Quality UX
 
-Status: active. This OSS authoring slice follows completed V11.21 and V11.7. Activation authorizes
-only the reviewed source-bound candidate and fail-closed execution-closure foundation; public
-candidate commands, contract writes, and external pressure claims remain gated by their own
-implementation and proof bars.
+Status: completed. This bounded OSS authoring slice ships the reviewed source-bound candidate,
+fail-closed execution-closure classification, explicit candidate application, and registered
+lossless upgrade foundation. Its public commands, write carriers, immutable pressure set, and
+first-party claims have passed independent closure review.
 
 ## Sequencing
 
@@ -41,8 +41,8 @@ follow-on authoring work.
 
 V11.22 neither authorizes execution nor consumes a crossing record as candidate authority, so its
 candidate model does not depend on a crossing record. V11.7 completion satisfies this sequencing
-prerequisite, and V11.22 is now active. It must not imply that a crossing record is approval or
-grant authority.
+prerequisite, and V11.22 is complete. It does not imply that a crossing record is approval or grant
+authority.
 
 ## Problem
 
@@ -491,7 +491,7 @@ The first pressure set should be deliberately different:
 The next reviewed public-repository queue is intentionally staged rather than cloned or contacted
 all at once:
 
-- Pixi is the first V11.22 detection-safety pressure target after activation: its declared
+- Pixi is the first post-V11.22 detection-safety pressure target: its declared
   environments, platforms, task dependencies, generated-schema work, and secret-backed slow tests
   must remain separate candidates with explicit evidence boundaries.
 - Biome is the confirming task-closure target: Rust, pnpm, Just, WASM, code generation, and
@@ -528,8 +528,10 @@ agent-safe proposal. Immutable Linux/macOS Flowise pressure
 legacy upgrade and Git-carrier application at
 `FlowiseAI/Flowise@90121fac54e234ca83e2a85c435354af1df8ac8f`; its semantic contract identity is
 unchanged, its commit contains only `ota.yaml`, and reapplication is a no-op. These runs do not
-execute repository tasks or approve candidate changes. V11.22 remains active until an independent
-closure audit accepts the implementation, evidence, and propagated public claims.
+execute repository tasks or approve candidate changes. The independent closure audit accepted the
+implementation, immutable evidence, and propagated public claims with no remaining P1/P2 findings.
+This closes the bounded V11.22 OSS slice without promoting any candidate to approval or agent-safe
+authority.
 
 ## Explicit Non-Goals
 

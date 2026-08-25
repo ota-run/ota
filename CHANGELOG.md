@@ -26,6 +26,12 @@
 
 ## Unreleased
 
+- Closed the bounded V11.22 OSS authoring slice after independent review of its source-bound
+  candidate model, fail-closed closure classification, create-new and Git write carriers,
+  registered lossless upgrade, schemas, first-party propagation, and immutable Caddy, GitButler,
+  BAML, Atuin, Buzz, and Flowise pressure evidence. Closure does not approve candidate changes,
+  infer agent-safe authority, execute pressure-repository tasks, or claim repo-global governance.
+
 - Fixed source-bound candidate reapplication when a retained execution closure references evidence
   for a field that became unchanged after the first contract write. Candidate manifests now derive
   from every retained direct and nested closure reference, so an unchanged reviewed application
@@ -111,7 +117,7 @@
   opaque shell scripts, and CI `run:` fragments no longer emit `safe_for_agent: true` merely
   because they resemble verification. Shell-variable and GitHub-expression CI commands remain
   outside command-truth inference; shell markers contribute toolchain presence only. Detected
-  tasks remain reviewable runnable candidates until Ota ships the V11.22 closure classifier and a
+  tasks remain reviewable runnable candidates under the V11.22 closure classifier until a
   maintainer explicitly applies a reviewed contract change.
 
 - Strengthen runtime-proof negative-control evidence for downstream consumers. A validated
