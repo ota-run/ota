@@ -51,6 +51,8 @@ work complete:
 - `ota-run/examples` when authors need a copy-ready contract shape
 - `ota-run/skills` when authoring, review, pressure, or agent guidance changes
 - `ota-site` when public reference, onboarding, or product claims change
+- `ota-site` Learn curriculum when canonical concepts, operator workflows, examples, or proof
+  boundaries change
 
 Update each surface that is affected. If one is not affected, state that decision in the handoff or
 completion summary; do not silently assume core code alone is enough.
