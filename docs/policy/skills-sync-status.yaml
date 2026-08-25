@@ -25,9 +25,9 @@
 version: 1
 repository: ota-run/skills
 mode: synced
-reviewed_ota_commit: "cf9d734d749cfb1259cc8249f9cc88e36bb1e00d"
-consumer_commit: "ac8e89694f92d4f1418c7d13d1f105707f689503"
+reviewed_ota_commit: "f3d4b8e115fd9ca36521758c26f38fb46e4f9e9d"
+consumer_commit: "d05b1d136a79cd7c6cfe9b2e3f49307fd5971a45"
 notes: >
-  The canonical Skill and both installed mirrors state that V11.22 does not infer agent-safe
-  authority and that positive effect-backed promotion is deferred to V12; the propagation is
+  The canonical Skill and both installed mirrors document strict typed-effect authoring and review
+  without presenting declared-only effects as agent-safe or positively assured; the propagation is
   committed and pinned.

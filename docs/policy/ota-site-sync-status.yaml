@@ -25,10 +25,8 @@
 version: 1
 repository: ota-run/ota-site
 mode: synced
-reviewed_ota_commit: "cf9d734d749cfb1259cc8249f9cc88e36bb1e00d"
-consumer_commit: "fca59417df3c56c31719d8ebb14d133456fe1503"
+reviewed_ota_commit: "f3d4b8e115fd9ca36521758c26f38fb46e4f9e9d"
+consumer_commit: "5926f69d40f651dfa3dd3074c7391b0310ec0bd6"
 notes: >
-  Site reference and Learn surfaces preserve the V11.22 no-inferred-agent-safety boundary, while
-  the repository-specific pressure drafts record bounded immutable Caddy, GitButler, BAML, Atuin,
-  Buzz, and Flowise evidence without claiming execution approval or repo-global governance; they
-  now reflect the accepted V11.22 closure, and the propagation is committed and pinned.
+  Site reference and Learn surfaces explain the v1.6.27 typed-effect declaration shape and retain
+  its no-admission and no-positive-assurance boundary; the propagation is committed and pinned.

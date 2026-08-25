@@ -36,11 +36,17 @@ durable agent workflow belongs in the canonical Ota skill.
 - branch: `1.6.27-implementation`
 - released baseline: `v1.6.26`
 - active version: V12 effect-bound refusal assurance. V11 is reconciled complete and V12 is the sole
-  active version as of 2026-08-25. Implementation begins with the provider-neutral effect domain,
-  canonical effect/realization/resource identities, origin and derivation posture, and strict
-  resource-binding branches without changing execution admission. No V12 implementation, positive
-  assurance, or pressure evidence exists yet. V12.1 onward and both cross-cutting plans remain
-  planned and inactive.
+  active version as of 2026-08-25. The first local implementation batch adds strict PostgreSQL
+  resource bindings, discriminated database schema-mutation definitions, exact task attachment
+  origins, and separate JCS/SHA-256 domains for resource, consequence, attachment, evidence, and
+  realization identity. Contract validation rejects ambiguous namespace authority, unresolved or
+  duplicate references, action/bounds substitution, noncanonical migration paths, and malformed
+  identities. Authored migration content identities remain expected declaration truth rather than
+  observed byte evidence. This batch does not change execution admission, evaluate policy, derive a
+  typed adapter plan, contact a provider, emit canaries, or establish positive assurance. The
+  foundation is committed at Core `f3d4b8e1`, Site `5926f69`, Skills `d05b1d1`, and Examples
+  `2dad574`; it has no pressure evidence. V12.1 onward and both cross-cutting plans remain planned
+  and inactive.
 - completed V11.21 enforced sandbox policy application. Core now derives one
   provider-neutral, target-platform-bound segment graph from the selected task/workflow closure,
   applies only identified monotonic policy restrictions, and fails closed before preparation when
