@@ -26,6 +26,14 @@
 
 ## Unreleased
 
+- Began the V12 effect-bound assurance foundation with strict provider-neutral resource bindings,
+  typed database schema-mutation definitions, task-local effect attachments, and separate
+  domain-separated identities for consequence, attachment origin, resource evidence, and
+  realization posture. Validation rejects ambiguous namespaces, unknown or duplicate references,
+  noncanonical paths and identities, and action/bounds substitution. This is declaration and
+  identity infrastructure only: it does not alter execution admission, verify migration bytes,
+  evaluate policy, contact a provider, or produce positive effect-refusal assurance.
+
 - added `/learn` as a first-class site surface with 25 versioned lessons across foundations,
   contract authoring, execution, evidence, governance, operations, and hands-on labs. Every lesson
   carries substantive teaching content, canonical terminology, bounded claims, knowledge checks,

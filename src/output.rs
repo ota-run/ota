@@ -4802,6 +4802,8 @@ pub struct TaskSummary<'a> {
 #[derive(Debug, Serialize, Clone, Default, PartialEq, Eq)]
 pub struct TaskEffectsSummary {
     #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub declared: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub writes: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub workspace_writes: Vec<String>,
@@ -4922,6 +4924,7 @@ impl TaskBakeAdapterInputsSummary {
 impl TaskEffectsSummary {
     pub fn from_spec(spec: &crate::schema::TaskEffectsSpec) -> Self {
         Self {
+            declared: spec.declared.clone(),
             writes: spec.writes.clone(),
             workspace_writes: spec.workspace_writes.clone(),
             network: spec.network,
@@ -4932,7 +4935,8 @@ impl TaskEffectsSummary {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.writes.is_empty()
+        self.declared.is_empty()
+            && self.writes.is_empty()
             && self.workspace_writes.is_empty()
             && !self.network
             && self.network_kind.is_none()

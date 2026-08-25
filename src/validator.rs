@@ -35,6 +35,7 @@ use crate::adapter_inputs::{
 use crate::capabilities::{
     format_minimum_version_error, unsupported_declared_contract_capabilities_in_contract,
 };
+use crate::effect_domain::resolve_declared_effect_catalog;
 use crate::execution::{
     format_lifecycle, matching_declared_execution_context_name, normalize_dependency_isolated_path,
 };
@@ -135,6 +136,7 @@ pub fn validate_contract_with_path(
     validate_readiness(contract, &mut errors);
     validate_surfaces(contract, &mut errors);
     validate_services(contract, contract_path, &mut errors);
+    validate_effect_domain(contract, &mut errors);
     validate_tasks(contract, contract_path, &mut errors);
     validate_task_replay_inputs(contract, &mut errors);
     validate_task_witnessed_observations(contract, &mut errors);
@@ -147,6 +149,26 @@ pub fn validate_contract_with_path(
         Ok(())
     } else {
         Err(ValidationErrors::from_vec(errors))
+    }
+}
+
+fn validate_effect_domain(contract: &Contract, errors: &mut Vec<ValidationError>) {
+    if let Err(error) = resolve_declared_effect_catalog(contract) {
+        errors.push(ValidationError::new(format!(
+            "effect domain invalid ({}): {}",
+            error.code, error.message
+        )));
+    }
+
+    for (task_name, task) in &contract.tasks {
+        let mut declared = BTreeSet::new();
+        for definition_ref in &task.effects.declared {
+            if !declared.insert(definition_ref) {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` must not declare effect definition `{definition_ref}` more than once"
+                )));
+            }
+        }
     }
 }
 
@@ -19594,6 +19616,76 @@ tasks:
         if let Err(errors) = validate_contract(&contract) {
             panic!("unexpected validation errors: {errors}");
         }
+    }
+
+    #[test]
+    fn validates_declared_database_schema_mutation_effect() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: effect-fixture
+resource_bindings:
+  production_primary:
+    kind: database
+    provider: postgresql
+    namespace:
+      authority: dns:example.org
+      tenant: platform
+      environment: production
+effect_definitions:
+  production_schema_migration:
+    kind: database_schema_mutation
+    action: apply_migration_set
+    resource:
+      engine: postgresql
+      target_ref: production_primary
+      schema: public
+    bounds:
+      migration_set:
+        root: migrations
+        content_identity: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      start_state: any_within_set
+tasks:
+  db-migrate:
+    command:
+      exe: true
+    effects:
+      declared: [production_schema_migration]
+"#,
+        )
+        .expect("parse typed effect contract");
+
+        validate_contract(&contract).expect("typed effect contract must validate");
+    }
+
+    #[test]
+    fn rejects_unknown_and_duplicate_declared_effect_attachments() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: effect-fixture
+tasks:
+  db-migrate:
+    command:
+      exe: true
+    effects:
+      declared: [missing_effect, missing_effect]
+"#,
+        )
+        .expect("parse invalid effect contract");
+
+        let error = validate_contract(&contract)
+            .expect_err("unknown and duplicate effect attachments must refuse")
+            .to_string();
+        assert!(error.contains("effect_definition_unknown"), "{error}");
+        assert!(
+            error.contains("must not declare effect definition"),
+            "{error}"
+        );
     }
 
     #[test]

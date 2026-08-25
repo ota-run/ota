@@ -2054,6 +2054,10 @@ Fields:
 
 `effects` fields:
 
+- `declared`: optional ordered list of contract-local references into top-level
+  `effect_definitions`. V12 initially accepts only typed `database_schema_mutation` definitions
+  against a canonical PostgreSQL `resource_binding`. A declaration records reviewable consequence
+  truth; it does not authorize execution or establish positive effect assurance.
 - `writes`: optional list of normalized relative paths the task body is expected to mutate
 - `workspace_writes`: optional list of normalized workspace-relative paths the task body is
   expected to mutate when the runnable path truthfully writes outside the repo root, such as a
@@ -2067,6 +2071,71 @@ Fields:
   durable adapter-owned state the task mutates, such as `compose_volume:bundle_data`
 - `external_state`: optional list of lowercase tokens naming out-of-repo state the task mutates,
   such as `docker` or `postgres`
+
+### Typed effect definitions
+
+V12 separates a real resource binding, a reusable effect definition, and the task attachment that
+names one exact contract origin:
+
+```yaml
+resource_bindings:
+  production_primary:
+    kind: database
+    provider: postgresql
+    namespace:
+      authority: dns:example.org
+      tenant: platform
+      environment: production
+      account: primary
+
+effect_definitions:
+  production_schema_migration:
+    kind: database_schema_mutation
+    action: apply_migration_set
+    resource:
+      engine: postgresql
+      target_ref: production_primary
+      schema: public
+    bounds:
+      migration_set:
+        root: migrations
+        content_identity: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      start_state: any_within_set
+
+tasks:
+  db:migrate:
+    command:
+      exe: ./scripts/migrate
+    effects:
+      declared: [production_schema_migration]
+```
+
+`resource_bindings` use canonical lowercase labels. The initial database branch requires
+`provider: postgresql`, a lowercase `dns:` namespace authority, and at least one non-secret scope
+component such as tenant, environment, account, region, cluster, organization, or repository. A
+bare logical target such as `production_primary` is only a lookup label and never identifies the
+real resource by itself.
+
+`effect_definitions` also use canonical lowercase labels. The initial
+`database_schema_mutation` family has discriminated bounds:
+
+- `apply_migration_set` requires `migration_set` and `start_state`;
+- `rollback_migration_set` additionally requires `target_migration_identity`;
+- `reset_schema` requires `reset_scope: schema` plus either `post_reset: empty` or a typed
+  `apply_migration_set` posture.
+
+Migration roots are normalized contract-relative paths. Content, state, and target migration
+identities use lowercase `sha256:<64-hex>` form. The authored migration content identity is an
+expected semantic bound, not evidence that current repository bytes match it. The typed adapter
+must independently derive and reconcile those bytes before any future positive assurance.
+
+Ota derives separate domain-separated identities for the canonical resource binding, effect
+consequence, exact attachment origin, resource-binding evidence, and effect realization. Task
+names, display labels, and contract-local definition labels do not split equal consequence
+identities. Adapter/profile, application-plan, evidence-posture, and invocation-origin changes do
+split realization identities. This foundation does not change execution admission, evaluate
+policy, contact a provider, emit a refusal canary, or make `declared_only` effects eligible for a
+protected claim.
 
 Task-effect rules:
 

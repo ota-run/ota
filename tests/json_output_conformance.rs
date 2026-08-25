@@ -4109,6 +4109,55 @@ tasks:
 }
 
 #[test]
+fn tasks_json_output_preserves_typed_effect_attachments() {
+    let fixture = TempDir::new().expect("fixture");
+    write_contract(
+        &fixture,
+        r#"
+version: 1
+project:
+  name: typed-effect-output
+resource_bindings:
+  production_primary:
+    kind: database
+    provider: postgresql
+    namespace:
+      authority: dns:example.org
+      tenant: platform
+effect_definitions:
+  production_schema_migration:
+    kind: database_schema_mutation
+    action: apply_migration_set
+    resource:
+      engine: postgresql
+      target_ref: production_primary
+      schema: public
+    bounds:
+      migration_set:
+        root: migrations
+        content_identity: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      start_state: any_within_set
+tasks:
+  db-migrate:
+    command:
+      exe: true
+    effects:
+      declared: [production_schema_migration]
+"#,
+    );
+
+    let json = run_ota(
+        &["tasks", "--json", fixture.path().to_str().unwrap()],
+        fixture.path(),
+    );
+    assert_matches_schema("tasks.json", &json);
+    assert_eq!(
+        json["tasks"][0]["effects"]["declared"],
+        json!(["production_schema_migration"])
+    );
+}
+
+#[test]
 fn tasks_json_output_reports_resolved_default_auto_interaction() {
     let fixture = TempDir::new().expect("fixture");
     write_contract(

@@ -270,8 +270,8 @@ Current shape:
 ```json
 {
   "ok": true,
-  "semver": "1.6.16",
-  "version": "v1.6.16",
+  "semver": "1.6.27",
+  "version": "v1.6.27",
   "source_build": false,
   "commit": null,
   "dirty": false,
@@ -288,6 +288,18 @@ Current shape:
     {
       "id": "metadata.ota.minimum_version",
       "introduced_in": "1.6.15"
+    },
+    {
+      "id": "resource_bindings",
+      "introduced_in": "1.6.27"
+    },
+    {
+      "id": "effect_definitions",
+      "introduced_in": "1.6.27"
+    },
+    {
+      "id": "tasks.effects.declared",
+      "introduced_in": "1.6.27"
     },
     {
       "id": "tasks.effects.writes",

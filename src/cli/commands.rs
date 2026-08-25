@@ -15837,6 +15837,7 @@ fn collect_task_closure_effects_summary(
     overrides: ExecutionOverrides,
 ) -> crate::output::TaskEffectsSummary {
     let mut summary = crate::output::TaskEffectsSummary::default();
+    let mut seen_declared = BTreeSet::new();
     let mut seen_writes = BTreeSet::new();
     let mut seen_workspace_writes = BTreeSet::new();
     let mut seen_adapter_state = BTreeSet::new();
@@ -15851,6 +15852,11 @@ fn collect_task_closure_effects_summary(
         }
         if let Some(kind) = task.effects.effective_network_kind() {
             summary.network_kind = merge_network_kind(summary.network_kind, kind);
+        }
+        for effect in &task.effects.declared {
+            if seen_declared.insert(effect.clone()) {
+                summary.declared.push(effect.clone());
+            }
         }
         for path in &task.effects.writes {
             if seen_writes.insert(path.clone()) {
@@ -18327,6 +18333,7 @@ fn workflow_effects_summary(
     workflow_name: &str,
 ) -> crate::output::TaskEffectsSummary {
     let mut summary = crate::output::TaskEffectsSummary::default();
+    let mut seen_declared = BTreeSet::new();
     let mut seen_writes = BTreeSet::new();
     let mut seen_workspace_writes = BTreeSet::new();
     let mut seen_adapter_state = BTreeSet::new();
@@ -18342,6 +18349,11 @@ fn workflow_effects_summary(
         summary.network |= task_summary.network;
         if let Some(kind) = task_summary.network_kind {
             summary.network_kind = merge_network_kind(summary.network_kind, kind);
+        }
+        for effect in task_summary.declared {
+            if seen_declared.insert(effect.clone()) {
+                summary.declared.push(effect);
+            }
         }
         for path in task_summary.writes {
             if seen_writes.insert(path.clone()) {
@@ -52726,6 +52738,9 @@ fn render_task_effects_text(effects: &crate::output::TaskEffectsSummary) -> Stri
     }
 
     let mut parts = Vec::new();
+    if !effects.declared.is_empty() {
+        parts.push(format!("declared={}", effects.declared.join(",")));
+    }
     if !effects.writes.is_empty() {
         parts.push(format!("writes={}", effects.writes.join(",")));
     }
@@ -52757,6 +52772,12 @@ fn render_task_effects_text(effects: &crate::output::TaskEffectsSummary) -> Stri
 
 fn render_task_safety_posture_text(task: &TaskSummary<'_>) -> String {
     let mut signals = Vec::new();
+
+    if !task.effects.declared.is_empty() {
+        signals.push(String::from(
+            "typed declared effect requires effect-policy review",
+        ));
+    }
 
     if task.launch.is_some() {
         signals.push(String::from("launch/service lifecycle"));
@@ -70697,6 +70718,7 @@ tasks:
             prepare: None,
             aggregate: None,
             effects: crate::output::TaskEffectsSummary {
+                declared: Vec::new(),
                 writes: vec![String::from("node_modules")],
                 workspace_writes: Vec::new(),
                 network: true,
@@ -70846,6 +70868,7 @@ tasks:
             }),
             aggregate: None,
             effects: crate::output::TaskEffectsSummary {
+                declared: Vec::new(),
                 writes: vec![String::from("node_modules"), String::from(".venv")],
                 workspace_writes: Vec::new(),
                 network: true,
@@ -72353,6 +72376,7 @@ workflows:
                     prepare: None,
                     aggregate: None,
                     effects: crate::output::TaskEffectsSummary {
+                        declared: Vec::new(),
                         writes: vec![String::from("node_modules")],
                         workspace_writes: Vec::new(),
                         network: true,

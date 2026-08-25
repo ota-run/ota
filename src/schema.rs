@@ -161,6 +161,10 @@ pub struct Contract {
     pub orchestrators: BTreeMap<String, OrchestratorSpec>,
     #[serde(default)]
     pub native_prerequisites: BTreeMap<String, NativePrerequisiteSpec>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub resource_bindings: BTreeMap<String, ResourceBindingSpec>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub effect_definitions: BTreeMap<String, EffectDefinitionSpec>,
     #[serde(default)]
     pub env: EnvConfig,
     #[serde(default)]
@@ -187,6 +191,145 @@ pub struct Contract {
     pub metadata: BTreeMap<String, serde_yaml::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent: Option<AgentConfig>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ResourceBindingSpec {
+    Database {
+        provider: DatabaseEffectProvider,
+        namespace: ResourceNamespaceSpec,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        resource_id: Option<String>,
+    },
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ResourceNamespaceSpec {
+    pub authority: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub organization: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tenant: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub environment: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub region: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cluster: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repository: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum DatabaseEffectProvider {
+    Postgresql,
+}
+
+impl DatabaseEffectProvider {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Postgresql => "postgresql",
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum EffectDefinitionSpec {
+    DatabaseSchemaMutation {
+        action: DatabaseSchemaMutationAction,
+        resource: DatabaseSchemaMutationResourceSpec,
+        bounds: DatabaseSchemaMutationBoundsSpec,
+    },
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum DatabaseSchemaMutationAction {
+    ApplyMigrationSet,
+    RollbackMigrationSet,
+    ResetSchema,
+}
+
+impl DatabaseSchemaMutationAction {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::ApplyMigrationSet => "apply_migration_set",
+            Self::RollbackMigrationSet => "rollback_migration_set",
+            Self::ResetSchema => "reset_schema",
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct DatabaseSchemaMutationResourceSpec {
+    pub engine: DatabaseEffectProvider,
+    pub target_ref: String,
+    pub schema: String,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(untagged)]
+pub enum DatabaseSchemaMutationBoundsSpec {
+    ApplyMigrationSet(ApplyMigrationSetBoundsSpec),
+    RollbackMigrationSet(RollbackMigrationSetBoundsSpec),
+    ResetSchema(ResetSchemaBoundsSpec),
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ApplyMigrationSetBoundsSpec {
+    pub migration_set: MigrationSetSpec,
+    pub start_state: String,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct RollbackMigrationSetBoundsSpec {
+    pub migration_set: MigrationSetSpec,
+    pub target_migration_identity: String,
+    pub start_state: String,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ResetSchemaBoundsSpec {
+    pub reset_scope: ResetSchemaScope,
+    pub post_reset: ResetSchemaPostResetSpec,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ResetSchemaScope {
+    Schema,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(untagged)]
+pub enum ResetSchemaPostResetSpec {
+    Empty(ResetSchemaEmptyPosture),
+    ApplyMigrationSet {
+        apply_migration_set: MigrationSetSpec,
+    },
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ResetSchemaEmptyPosture {
+    Empty,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct MigrationSetSpec {
+    pub root: String,
+    pub content_identity: String,
 }
 
 #[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq)]
@@ -5045,6 +5188,8 @@ fn shell_single_quote(input: &str) -> String {
 #[serde(deny_unknown_fields)]
 pub struct TaskEffectsSpec {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub declared: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub writes: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub workspace_writes: Vec<String>,
@@ -5060,7 +5205,8 @@ pub struct TaskEffectsSpec {
 
 impl TaskEffectsSpec {
     pub fn is_empty(&self) -> bool {
-        self.writes.is_empty()
+        self.declared.is_empty()
+            && self.writes.is_empty()
             && self.workspace_writes.is_empty()
             && !self.network
             && self.network_kind.is_none()

@@ -313,6 +313,12 @@ fn tasks_schema_includes_agent_and_variant_fields() {
 #[test]
 fn published_contract_schema_includes_integration_test_network_kind() {
     let schema = load_schema("docs/spec/json-schemas/contract.json");
+    assert!(
+        schema["$defs"]["taskEffects"]["properties"]
+            .get("declared")
+            .is_some(),
+        "task effects must publish typed declaration attachments"
+    );
     let network_kind_enum = schema["$defs"]["taskEffects"]["properties"]["network_kind"]["enum"]
         .as_array()
         .expect("task effects network kind enum");
@@ -350,6 +356,90 @@ fn published_contract_schema_includes_container_image_hydration_network_kind() {
             .iter()
             .any(|entry| entry == "container_image_hydration")
     );
+}
+
+#[test]
+fn published_contract_schema_discriminates_typed_effect_bounds() {
+    let schema = load_schema("docs/spec/json-schemas/contract.json");
+    let compiled = JSONSchema::options()
+        .with_draft(Draft::Draft202012)
+        .compile(&schema)
+        .expect("contract schema should compile");
+    let valid = json!({
+        "version": 1,
+        "project": { "name": "effect-fixture" },
+        "resource_bindings": {
+            "production_primary": {
+                "kind": "database",
+                "provider": "postgresql",
+                "namespace": {
+                    "authority": "dns:example.org",
+                    "tenant": "platform",
+                    "environment": "production"
+                }
+            }
+        },
+        "effect_definitions": {
+            "production_schema_migration": {
+                "kind": "database_schema_mutation",
+                "action": "apply_migration_set",
+                "resource": {
+                    "engine": "postgresql",
+                    "target_ref": "production_primary",
+                    "schema": "public"
+                },
+                "bounds": {
+                    "migration_set": {
+                        "root": "migrations",
+                        "content_identity": format!("sha256:{}", "a".repeat(64))
+                    },
+                    "start_state": "any_within_set"
+                }
+            }
+        },
+        "tasks": {
+            "db-migrate": {
+                "command": { "exe": "true" },
+                "effects": { "declared": ["production_schema_migration"] }
+            }
+        }
+    });
+    assert!(compiled.is_valid(&valid));
+
+    let mut mismatched_bounds = valid.clone();
+    mismatched_bounds["effect_definitions"]["production_schema_migration"]["action"] =
+        json!("reset_schema");
+    assert!(!compiled.is_valid(&mismatched_bounds));
+
+    let mut ambiguous_namespace = valid.clone();
+    ambiguous_namespace["resource_bindings"]["production_primary"]["namespace"]["authority"] =
+        json!("dns:production");
+    assert!(!compiled.is_valid(&ambiguous_namespace));
+
+    let mut overlong_dns_label = valid.clone();
+    overlong_dns_label["resource_bindings"]["production_primary"]["namespace"]["authority"] =
+        json!(format!("dns:{}.example.org", "a".repeat(64)));
+    assert!(!compiled.is_valid(&overlong_dns_label));
+
+    let mut whitespace_namespace = valid.clone();
+    whitespace_namespace["resource_bindings"]["production_primary"]["namespace"]["tenant"] =
+        json!("platform team");
+    assert!(!compiled.is_valid(&whitespace_namespace));
+
+    let mut absolute_migration_root = valid.clone();
+    absolute_migration_root["effect_definitions"]["production_schema_migration"]["bounds"]["migration_set"]
+        ["root"] = json!("C:/migrations");
+    assert!(!compiled.is_valid(&absolute_migration_root));
+
+    let mut aliased_migration_root = valid.clone();
+    aliased_migration_root["effect_definitions"]["production_schema_migration"]["bounds"]["migration_set"]
+        ["root"] = json!("./migrations");
+    assert!(!compiled.is_valid(&aliased_migration_root));
+
+    let mut uppercase_identity = valid;
+    uppercase_identity["effect_definitions"]["production_schema_migration"]["bounds"]["migration_set"]
+        ["content_identity"] = format!("sha256:{}", "A".repeat(64)).into();
+    assert!(!compiled.is_valid(&uppercase_identity));
 }
 
 #[test]

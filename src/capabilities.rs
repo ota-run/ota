@@ -55,6 +55,18 @@ const CONTRACT_CAPABILITY_SPECS: &[ContractCapabilitySpec] = &[
         introduced_in: "1.6.15",
     },
     ContractCapabilitySpec {
+        id: "resource_bindings",
+        introduced_in: "1.6.27",
+    },
+    ContractCapabilitySpec {
+        id: "effect_definitions",
+        introduced_in: "1.6.27",
+    },
+    ContractCapabilitySpec {
+        id: "tasks.effects.declared",
+        introduced_in: "1.6.27",
+    },
+    ContractCapabilitySpec {
         id: "tasks.effects.writes",
         introduced_in: "1.6.15",
     },
@@ -354,6 +366,9 @@ fn capability_present_in_document(capability: &ContractCapabilitySpec, document:
         "metadata.ota.minimum_version" => {
             document_has_path(document, &["metadata", "ota", "minimum_version"])
         }
+        "resource_bindings" => nonempty_mapping_child(document, "resource_bindings"),
+        "effect_definitions" => nonempty_mapping_child(document, "effect_definitions"),
+        "tasks.effects.declared" => tasks_effects_declared_present(document),
         "tasks.effects.writes" => tasks_effects_writes_present(document),
         "tasks.effects.workspace_writes" => tasks_effects_workspace_writes_present(document),
         "tasks.effects.network" => tasks_effects_network_present(document),
@@ -416,6 +431,12 @@ fn capability_present_in_contract(
             })
             .unwrap_or(false),
         "metadata.ota.minimum_version" => contract.minimum_ota_version().is_some(),
+        "resource_bindings" => !contract.resource_bindings.is_empty(),
+        "effect_definitions" => !contract.effect_definitions.is_empty(),
+        "tasks.effects.declared" => contract
+            .tasks
+            .values()
+            .any(|task| !task.effects.declared.is_empty()),
         "tasks.effects.writes" => contract
             .tasks
             .values()
@@ -607,6 +628,15 @@ fn tasks_effects_external_state_present(document: &Value) -> bool {
         return false;
     };
     tasks.values().any(task_effects_external_state_present)
+}
+
+fn tasks_effects_declared_present(document: &Value) -> bool {
+    let Some(tasks) = mapping_child(document, "tasks").and_then(Value::as_mapping) else {
+        return false;
+    };
+    tasks
+        .values()
+        .any(|task| document_has_path(task, &["effects", "declared"]))
 }
 
 fn tasks_effects_adapter_state_present(document: &Value) -> bool {
@@ -936,6 +966,37 @@ fn nonempty_mapping_child(value: &Value, key: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn publishes_and_detects_v12_typed_effect_capabilities() {
+        let document: Value = serde_yaml::from_str(
+            r#"
+resource_bindings:
+  production_primary:
+    kind: database
+effect_definitions:
+  production_schema_migration:
+    kind: database_schema_mutation
+tasks:
+  db-migrate:
+    effects:
+      declared: [production_schema_migration]
+"#,
+        )
+        .unwrap();
+        let detected = detect_declared_contract_capabilities(&document)
+            .into_iter()
+            .map(|capability| (capability.id, capability.introduced_in))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            detected,
+            vec![
+                ("resource_bindings", "1.6.27"),
+                ("effect_definitions", "1.6.27"),
+                ("tasks.effects.declared", "1.6.27"),
+            ]
+        );
+    }
 
     #[test]
     fn detects_declared_contract_capabilities_from_document() {

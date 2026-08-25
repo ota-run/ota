@@ -25,7 +25,9 @@
 # V12: Effect-Bound Refusal Assurance
 
 Status: active. Activated on 2026-08-25 after V11 closure reconciliation and independent plan
-review. No V12 implementation or pressure evidence exists yet.
+review. The first local implementation batch provides declaration and canonical-identity
+foundations without changing execution admission; it remains uncommitted and has no pressure
+evidence.
 
 ## Activation Gates
 
@@ -157,7 +159,7 @@ The contract gains a versioned catalog of reusable effect definitions. Tasks and
 steps attach definitions by contract-local reference. The reference is an authoring locator; it is
 not authority and is excluded from the effect's semantic identity.
 
-Provisional shape:
+Initial activated shape:
 
 ```yaml
 resource_bindings:
@@ -181,6 +183,7 @@ effect_definitions:
     bounds:
       migration_set:
         root: migrations
+        content_identity: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
       start_state: any_within_set
 
 tasks:
@@ -190,7 +193,7 @@ tasks:
         - production_schema_migration
 ```
 
-The exact public schema is finalized during activation, but it must preserve these rules:
+The public schema may grow through versioned additive branches, but it must preserve these rules:
 
 - effect definitions are immutable semantic values within one contract snapshot;
 - unknown fields refuse validation rather than disappearing from identity;

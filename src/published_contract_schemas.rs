@@ -1751,10 +1751,176 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
         { "$ref": "#/$defs/taskActionStep" }
       ]
     },
+    "effectCatalogLabel": {
+      "type": "string",
+      "maxLength": 128,
+      "pattern": "^[a-z][a-z0-9_-]*$"
+    },
+    "sha256Identity": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "resourceNamespaceComponent": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[^\\s@?#\\u0000-\\u001f\\u007f]+$"
+    },
+    "resourceNamespace": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["authority"],
+      "properties": {
+        "authority": {
+          "type": "string",
+          "maxLength": 257,
+          "pattern": "^dns:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$"
+        },
+        "organization": { "$ref": "#/$defs/resourceNamespaceComponent" },
+        "tenant": { "$ref": "#/$defs/resourceNamespaceComponent" },
+        "environment": { "$ref": "#/$defs/resourceNamespaceComponent" },
+        "account": { "$ref": "#/$defs/resourceNamespaceComponent" },
+        "region": { "$ref": "#/$defs/resourceNamespaceComponent" },
+        "cluster": { "$ref": "#/$defs/resourceNamespaceComponent" },
+        "repository": { "$ref": "#/$defs/resourceNamespaceComponent" }
+      },
+      "anyOf": [
+        { "required": ["organization"] },
+        { "required": ["tenant"] },
+        { "required": ["environment"] },
+        { "required": ["account"] },
+        { "required": ["region"] },
+        { "required": ["cluster"] },
+        { "required": ["repository"] }
+      ]
+    },
+    "resourceBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "provider", "namespace"],
+      "properties": {
+        "kind": { "const": "database" },
+        "provider": { "const": "postgresql" },
+        "namespace": { "$ref": "#/$defs/resourceNamespace" },
+        "resource_id": { "$ref": "#/$defs/resourceNamespaceComponent" }
+      }
+    },
+    "migrationSet": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["root", "content_identity"],
+      "properties": {
+        "root": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^(?![A-Za-z]:)(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*\\\\).+$"
+        },
+        "content_identity": { "$ref": "#/$defs/sha256Identity" }
+      }
+    },
+    "databaseEffectResource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["engine", "target_ref", "schema"],
+      "properties": {
+        "engine": { "const": "postgresql" },
+        "target_ref": { "$ref": "#/$defs/effectCatalogLabel" },
+        "schema": { "type": "string", "pattern": "^[a-z_][a-z0-9_]{0,62}$" }
+      }
+    },
+    "effectDefinition": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "action", "resource", "bounds"],
+          "properties": {
+            "kind": { "const": "database_schema_mutation" },
+            "action": { "const": "apply_migration_set" },
+            "resource": { "$ref": "#/$defs/databaseEffectResource" },
+            "bounds": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["migration_set", "start_state"],
+              "properties": {
+                "migration_set": { "$ref": "#/$defs/migrationSet" },
+                "start_state": {
+                  "oneOf": [
+                    { "const": "any_within_set" },
+                    { "$ref": "#/$defs/sha256Identity" }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "action", "resource", "bounds"],
+          "properties": {
+            "kind": { "const": "database_schema_mutation" },
+            "action": { "const": "rollback_migration_set" },
+            "resource": { "$ref": "#/$defs/databaseEffectResource" },
+            "bounds": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["migration_set", "target_migration_identity", "start_state"],
+              "properties": {
+                "migration_set": { "$ref": "#/$defs/migrationSet" },
+                "target_migration_identity": { "$ref": "#/$defs/sha256Identity" },
+                "start_state": {
+                  "oneOf": [
+                    { "const": "any_within_set" },
+                    { "$ref": "#/$defs/sha256Identity" }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "action", "resource", "bounds"],
+          "properties": {
+            "kind": { "const": "database_schema_mutation" },
+            "action": { "const": "reset_schema" },
+            "resource": { "$ref": "#/$defs/databaseEffectResource" },
+            "bounds": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["reset_scope", "post_reset"],
+              "properties": {
+                "reset_scope": { "const": "schema" },
+                "post_reset": {
+                  "oneOf": [
+                    { "const": "empty" },
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["apply_migration_set"],
+                      "properties": {
+                        "apply_migration_set": { "$ref": "#/$defs/migrationSet" }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
     "taskEffects": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
+        "declared": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/effectCatalogLabel" }
+        },
         "writes": { "$ref": "#/$defs/stringArray" },
         "workspace_writes": { "$ref": "#/$defs/stringArray" },
         "network": { "type": "boolean" },
@@ -2418,6 +2584,16 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
     "native_prerequisites": {
       "type": "object",
       "additionalProperties": { "$ref": "#/$defs/nativePrerequisite" }
+    },
+    "resource_bindings": {
+      "type": "object",
+      "propertyNames": { "$ref": "#/$defs/effectCatalogLabel" },
+      "additionalProperties": { "$ref": "#/$defs/resourceBinding" }
+    },
+    "effect_definitions": {
+      "type": "object",
+      "propertyNames": { "$ref": "#/$defs/effectCatalogLabel" },
+      "additionalProperties": { "$ref": "#/$defs/effectDefinition" }
     },
     "env": { "$ref": "#/$defs/envConfig" },
     "readiness": {

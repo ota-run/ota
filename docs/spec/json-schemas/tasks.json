@@ -603,6 +603,11 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
+        "declared": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^[a-z][a-z0-9_-]*$" },
+          "uniqueItems": true
+        },
         "writes": {
           "type": "array",
           "items": { "type": "string" }

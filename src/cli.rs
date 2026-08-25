@@ -20779,6 +20779,18 @@ tasks:
             }),
             "{json}"
         );
+        for capability_id in [
+            "resource_bindings",
+            "effect_definitions",
+            "tasks.effects.declared",
+        ] {
+            assert!(
+                capabilities.iter().any(|capability| {
+                    capability["id"] == capability_id && capability["introduced_in"] == "1.6.27"
+                }),
+                "{json}"
+            );
+        }
         assert!(
             capabilities.iter().any(|capability| {
                 capability["id"] == "tasks.action.ensure_env_file"
