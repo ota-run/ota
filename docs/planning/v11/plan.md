@@ -24,7 +24,8 @@
 
 # V11 Plan
 
-Status: active version frame.
+Status: complete. Every bounded V11.1-V11.22 implementation slice is complete. Explicit follow-ons
+remain owned by their named plans and do not keep the V11 version frame active.
 
 Release target:
 
@@ -213,6 +214,11 @@ agent capability failure while still allowing an expected refusal to pass an exp
 admission-compliance evaluation. It remains inactive until V11.7 closes and real
 evaluation-harness pressure validates the need; it must derive scoring eligibility from existing
 governance truth rather than introduce a parallel verdict taxonomy.
+
+That follow-on remains durably owned by V11.6 and inactive pending real harness demand and pressure;
+it is not part of V11 completion and does not move into V12. Contract-authored crossing requirements
+are owned by V12.2, while optional provider-attested and non-Linux carrier work is owned by the
+demand-gated V12.3-V12.5 plans.
 
 Those slices make Ota higher in the stack without abandoning the open execution spec:
 

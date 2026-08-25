@@ -24,7 +24,8 @@
 
 # V12: Effect-Bound Refusal Assurance
 
-Status: planned and inactive. This future version frame does not authorize implementation.
+Status: active. Activated on 2026-08-25 after V11 closure reconciliation and independent plan
+review. No V12 implementation or pressure evidence exists yet.
 
 ## Activation Gates
 
@@ -43,6 +44,18 @@ V11.7 must not be widened to implement this plan. It keeps one prerequisite only
 bind the exact selected invocation, complete executable closure, and normalized declared effect
 set. A crossing grant authorizes one bounded work unit; it does not prove that an effect policy is
 complete or that equivalent paths are covered.
+
+## Activation Record
+
+- V11.7 completed its bounded authority, transaction, cleanup, archive, and immutable-pressure bar.
+- V11.22 completed its reviewed source-bound candidate, re-derivation, and atomic application
+  machinery.
+- The V11 parent frame is complete; deferred follow-ons remain durably owned outside V12.
+- Independent review found no remaining material planning findings.
+- The canonical handoff activates V12 as the sole active version and keeps V12.1 onward inactive.
+
+Activation authorizes implementation order step 1 only. It does not establish effect support,
+policy enforcement, canary assurance, receipt/archive evidence, or pressure proof.
 
 Planned follow-on: [V12.1 Secret Delivery Governance](../v12.1/plan.md) remains inactive and may be
 activated only after V12 completes and its own activation gates are satisfied. The reviewed

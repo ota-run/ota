@@ -35,6 +35,12 @@ durable agent workflow belongs in the canonical Ota skill.
 
 - branch: `1.6.27-implementation`
 - released baseline: `v1.6.26`
+- active version: V12 effect-bound refusal assurance. V11 is reconciled complete and V12 is the sole
+  active version as of 2026-08-25. Implementation begins with the provider-neutral effect domain,
+  canonical effect/realization/resource identities, origin and derivation posture, and strict
+  resource-binding branches without changing execution admission. No V12 implementation, positive
+  assurance, or pressure evidence exists yet. V12.1 onward and both cross-cutting plans remain
+  planned and inactive.
 - completed V11.21 enforced sandbox policy application. Core now derives one
   provider-neutral, target-platform-bound segment graph from the selected task/workflow closure,
   applies only identified monotonic policy restrictions, and fails closed before preparation when
@@ -486,8 +492,8 @@ durable agent workflow belongs in the canonical Ota skill.
   authoritative, and positive effect-backed promotion is deferred to V12's typed effect and
   realization evaluator rather than treated as a V11.22 closure gate;
   V11.22 does not consume crossing records as approval authority. V12 effect-bound
-  refusal assurance is also planning-only and inactive; its V11.22 prerequisite is complete, but
-  no V12 activation is implied. It does not widen the completed
+  refusal assurance is now active after explicit V11 closure reconciliation and independent plan
+  review. Activation does not widen the completed
   crossing implementation. See [V11.7](../planning/v11.7/plan.md),
   [V11.22](../planning/v11.22/plan.md), [V12](../planning/v12/plan.md), and the planned,
   inactive [V12.1 secret-delivery governance follow-on](../planning/v12.1/plan.md).
@@ -1302,8 +1308,8 @@ The independent closure audit accepted V11.22 with no remaining P1/P2 findings a
 Site propagation was pinned. The bounded engineering notes remain drafts pending publication
 review; their draft status is not an implementation or evidence gap, and the pressure evidence is
 not a release claim.
-The reviewed post-V11 sequence is now explicit but remains entirely planning-only and inactive:
-[V12 effect-bound refusal assurance](../planning/v12/plan.md),
+The reviewed post-V11 sequence is now explicit. [V12 effect-bound refusal
+assurance](../planning/v12/plan.md) is the sole active version; the following plans remain inactive:
 [V12.1 secret-delivery governance](../planning/v12.1/plan.md),
 [V12.2 contract-authored crossing requirements](../planning/v12.2/plan.md),
 [V12.3 provider-attested authority carrier](../planning/v12.3/plan.md),
@@ -1312,9 +1318,10 @@ The reviewed post-V11 sequence is now explicit but remains entirely planning-onl
 [V12.6 OSS Enterprise interoperability foundation](../planning/v12.6/plan.md) umbrella. V12.6
 separates portable export, repository reporting, authority history, and authority references into
 independently activated and closed sub-slices rather than one trust-sensitive batch. Completion of
-V11.22 does not activate V12 or any later slice. One version may activate only after its predecessor
-completes or is formally deferred and its own feasibility, pressure, and independent-review gates
-are met.
+V11.22 did not implicitly activate V12; the explicit V11 parent reconciliation and reviewed V12
+activation record did. V12 activation does not activate any later slice. One successor may activate
+only after its predecessor completes or is formally deferred and its own feasibility, pressure, and
+independent-review gates are met.
 The platform plans do not claim parity in advance: Linux/systemd remains the completed V11.7
 hardened carrier, provider attestation remains unimplemented, and macOS/Windows containment and
 recovery remain unproved. Enterprise approvals, organization policy distribution, provider
