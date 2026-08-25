@@ -82116,10 +82116,12 @@ tasks:
         ));
         assert!(text.contains("Review task command drift (6 removals across 4 tasks)"));
         assert!(text.contains("Review task agent-safety drift (2 removals across 2 tasks)"));
-        assert!(text.contains("Why: Current repo signals no longer support the commands below."));
-        assert!(text.contains("candidate application remains additive"));
         assert!(text.contains(
-            "Why: Current repo signals no longer support the `safe_for_agent` entries below."
+            "Why: Current repo signals no longer support the commands below in the existing contract."
+        ));
+        assert!(text.contains("candidate application remains additive"));
+        assert!(normalized.contains(
+            "Why: Current repo signals no longer support the `safe_for_agent` entries below in the existing contract."
         ));
         assert!(text.contains("Review runtime drift (1 removal across 1 runtime)"));
         assert!(text.contains("Review tool drift (1 removal across 1 tool)"));

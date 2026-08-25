@@ -26,6 +26,8 @@
 
 ## Unreleased
 
+## 1.6.27
+
 - Began the V12 effect-bound assurance foundation with strict provider-neutral resource bindings,
   typed database schema-mutation definitions, task-local effect attachments, and separate
   domain-separated identities for consequence, attachment origin, resource evidence, and

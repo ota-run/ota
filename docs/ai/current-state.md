@@ -48,9 +48,10 @@ durable agent workflow belongs in the canonical Ota skill.
   foundation is committed at Core `f3d4b8e1`, Site `5926f69`, Skills `d05b1d1`, and Examples
   `2dad574`; canonical-identity hardening is committed at Core `1b9a03d6`, Site `e78b963`, and
   Skills `30c8dbd`. It has no pressure evidence. V12.1 onward and both cross-cutting plans remain
-  planned and inactive. The reference Example correctly requires Ota `1.6.27`; the current
-  development binary still reports the released `1.6.26` baseline, so exact Example validation
-  remains an explicit pre-pressure and pre-release gate rather than a passing validation claim.
+  planned and inactive. The reference Example correctly requires Ota `1.6.27`; the source-built
+  `v1.6.27` development binary validated that exact contract locally on 2026-08-25. This closes
+  only the local minimum-version gate; typed-adapter continuity and independent pressure remain
+  unproved.
 - completed V11.21 enforced sandbox policy application. Core now derives one
   provider-neutral, target-platform-bound segment graph from the selected task/workflow closure,
   applies only identified monotonic policy restrictions, and fails closed before preparation when
