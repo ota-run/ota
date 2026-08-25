@@ -25,8 +25,9 @@
 version: 1
 repository: ota-run/ota-site
 mode: synced
-reviewed_ota_commit: "f3d4b8e115fd9ca36521758c26f38fb46e4f9e9d"
-consumer_commit: "5926f69d40f651dfa3dd3074c7391b0310ec0bd6"
+reviewed_ota_commit: "1b9a03d6dc147f48b4b4ab8fe3cf565a0f886373"
+consumer_commit: "e78b963a060a1ce039f174224ce03980aa51927c"
 notes: >
   Site reference and Learn surfaces explain the v1.6.27 typed-effect declaration shape and retain
-  its no-admission and no-positive-assurance boundary; the propagation is committed and pinned.
+  its no-admission and no-positive-assurance boundary. The source-owned lesson-version correction
+  and semantic curriculum guard are committed in the pinned consumer revision.

@@ -25,9 +25,9 @@
 version: 1
 repository: ota-run/skills
 mode: synced
-reviewed_ota_commit: "f3d4b8e115fd9ca36521758c26f38fb46e4f9e9d"
-consumer_commit: "d05b1d136a79cd7c6cfe9b2e3f49307fd5971a45"
+reviewed_ota_commit: "1b9a03d6dc147f48b4b4ab8fe3cf565a0f886373"
+consumer_commit: "30c8dbd4758afaf269de9e42e518caa0692a7af9"
 notes: >
   The canonical Skill and both installed mirrors document strict typed-effect authoring and review
-  without presenting declared-only effects as agent-safe or positively assured; the propagation is
-  committed and pinned.
+  without presenting declared-only effects as agent-safe or positively assured. The connected
+  canonical namespace and migration-path profile wording is committed in the pinned revision.
