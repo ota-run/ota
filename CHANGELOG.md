@@ -26,6 +26,13 @@
 
 ## Unreleased
 
+- added `/learn` as a first-class site surface with 25 versioned lessons across foundations,
+  contract authoring, execution, evidence, governance, operations, and hands-on labs. Every lesson
+  carries substantive teaching content, canonical terminology, bounded claims, knowledge checks,
+  and exact reference links. Learn is indexed through `llms.txt`, the sitemap, and a
+  machine-readable `/learn/index.json` curriculum, while curriculum, module, lesson, and breadcrumb
+  JSON-LD make the rendered pages discoverable without presenting the material as a credential
+
 - Closed the bounded V11.22 OSS authoring slice after independent review of its source-bound
   candidate model, fail-closed closure classification, create-new and Git write carriers,
   registered lossless upgrade, schemas, first-party propagation, and immutable Caddy, GitButler,
