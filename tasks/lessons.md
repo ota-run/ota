@@ -264,3 +264,13 @@
   resource rows at the existing ownership boundary, while keeping detailed remediation above it.
 - Rule: Error-specific UX may enrich the shared summary, but it must not replace or reorder the
   stable summary contract.
+
+## 2026-08-25
+
+- Pattern: A detailed roadmap can make optional provider and platform carriers look mandatory even
+  when no operator has requested or can pressure the exact boundary.
+- Correction: Use signal-rich public repositories for V12 through V12.2 technical discovery, but
+  require documented operator or design-partner demand plus immutable native pressure before
+  activating provider-attested, macOS, or Windows carriers.
+- Rule: Technical pressure may select general OSS semantics; expensive optional carriers remain
+  inactive and are formally deferred when exact provider/platform adoption demand is absent.

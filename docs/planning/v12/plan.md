@@ -45,8 +45,47 @@ set. A crossing grant authorizes one bounded work unit; it does not prove that a
 complete or that equivalent paths are covered.
 
 Planned follow-on: [V12.1 Secret Delivery Governance](../v12.1/plan.md) remains inactive and may be
-activated only after V12 completes and its own activation gates are satisfied. This link does not
-change V12 status or authorize V12.1 implementation.
+activated only after V12 completes and its own activation gates are satisfied. The reviewed
+sequence then continues through [V12.2 Contract-Authored Crossing Requirements](../v12.2/plan.md),
+[V12.3 Provider-Attested Authority Carrier](../v12.3/plan.md),
+[V12.4 macOS Protected Authority Carrier](../v12.4/plan.md), and
+[V12.5 Windows Protected Authority Carrier](../v12.5/plan.md), followed by the public
+[V12.6 OSS Enterprise Interoperability Foundation](../v12.6/plan.md) umbrella and its independently
+closed sub-slices. These links record sequencing only; they do not activate any follow-on or make
+its feasibility, implementation, or pressure evidence true.
+
+Two cross-cutting plans support this sequence without becoming additional product versions:
+
+- [OSS Adapter and Profile Conformance](../adapter-profile-conformance/plan.md) defines how effect,
+  secret-delivery, provider-attestation, authority-carrier, platform, and export-consumer profiles
+  separate shared profile semantics, exact implementation subjects, evidence-backed registration,
+  implementation lifecycle, and capability status; and
+- [Authority Distribution Lifecycle](../authority-distribution-lifecycle/plan.md) defines the
+  normative acceptance standard for any future version that owns reproducible artifacts,
+  protected installation, upgrade, rollback, and support policy.
+
+Both remain planned and inactive. Conformance constrains implementations activated by versioned
+plans; distribution requires a future version plan to name the exact implementation it owns.
+Neither bypasses the one-active-version rule or authorizes Enterprise V1 work.
+
+## Pressure And Demand Sequencing
+
+V12 through V12.2 do not require a design partner before technical implementation or pressure.
+Ota may select signal-rich public repositories at immutable revisions, author bounded contracts in
+controlled forks, use synthetic/disposable providers and resources, and retain honest evidence
+without upstream maintainer participation. That pressure proves technical behavior and discovers
+platform gaps; it does not prove maintainer adoption, authoring usability, or commercial demand.
+
+Design partners remain valuable but opportunistic. Their evidence establishes adoption posture,
+maintenance cost, authoring clarity, and repeated organization needs. A design partner relationship
+is never implied by testing a public repository.
+
+V12.3 through V12.5 are different. Provider-attested, macOS, and Windows carriers are optional,
+high-cost trust boundaries and must not activate from roadmap order, technical curiosity, or public
+repository signals alone. Each requires documented demand from at least one real operator or
+design partner for that exact provider/platform boundary plus access to immutable native pressure.
+When that demand is absent, the slice should remain inactive and be formally deferred so V12.6 may
+proceed without manufacturing support nobody has requested.
 
 ## Why This Is V12
 

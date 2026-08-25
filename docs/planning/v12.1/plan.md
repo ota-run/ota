@@ -42,6 +42,10 @@ V12.1 may be activated only after:
 V12.1 must not widen V11.7 authority transport or reinterpret a crossing grant as secret-delivery
 authority. Crossing admission and secret-delivery admission are separate and both must pass.
 
+Planned follow-on: [V12.2 Contract-Authored Crossing Requirements](../v12.2/plan.md) remains
+inactive and may be activated only after V12.1 completes or is formally deferred. This sequencing
+link does not authorize implementation.
+
 ## Product Boundary
 
 Ota does not store, rotate, mint, encrypt, export, or centrally manage secret values. It governs
@@ -478,6 +482,10 @@ and management UX. Enterprise consumes Core's canonical model rather than defini
 secret taxonomy.
 
 ## Initial Pressure Bar
+
+The adapter must also satisfy the cross-cutting
+[OSS Adapter and Profile Conformance](../adapter-profile-conformance/plan.md) plan before Ota may
+call it supported. Registration or successful local execution alone is insufficient.
 
 Activation names one concrete adapter from a real design-partner or pressure case. Pressure uses
 synthetic canary material so leak scanning is possible without retaining real values. It proves:

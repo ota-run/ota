@@ -1302,9 +1302,64 @@ The independent closure audit accepted V11.22 with no remaining P1/P2 findings a
 Site propagation was pinned. The bounded engineering notes remain drafts pending publication
 review; their draft status is not an implementation or evidence gap, and the pressure evidence is
 not a release claim.
-V12 effect-bound refusal assurance and V12.1 secret-delivery governance remain planning-only and
-inactive; completion of V11.22 does not activate either follow-on. Do not widen the current
-authority implementation for either.
+The reviewed post-V11 sequence is now explicit but remains entirely planning-only and inactive:
+[V12 effect-bound refusal assurance](../planning/v12/plan.md),
+[V12.1 secret-delivery governance](../planning/v12.1/plan.md),
+[V12.2 contract-authored crossing requirements](../planning/v12.2/plan.md),
+[V12.3 provider-attested authority carrier](../planning/v12.3/plan.md),
+[V12.4 macOS protected authority carrier](../planning/v12.4/plan.md), and
+[V12.5 Windows protected authority carrier](../planning/v12.5/plan.md), followed by the public
+[V12.6 OSS Enterprise interoperability foundation](../planning/v12.6/plan.md) umbrella. V12.6
+separates portable export, repository reporting, authority history, and authority references into
+independently activated and closed sub-slices rather than one trust-sensitive batch. Completion of
+V11.22 does not activate V12 or any later slice. One version may activate only after its predecessor
+completes or is formally deferred and its own feasibility, pressure, and independent-review gates
+are met.
+The platform plans do not claim parity in advance: Linux/systemd remains the completed V11.7
+hardened carrier, provider attestation remains unimplemented, and macOS/Windows containment and
+recovery remain unproved. Enterprise approvals, organization policy distribution, provider
+rotation operations, controlled retention, and fleet reporting remain a separate Enterprise
+roadmap. V12.6 allocates public references, policy-authority evidence, verifier history, portable
+export, repository reporting, and compatibility to separately reviewed OSS sub-slices that prevent
+that Enterprise roadmap from inventing parallel truth. Core-owned export profiles permit original
+bytes only when verified public-safe; other artifacts require a distinctly identified redacted
+projection or refuse. Redacted projections expose source identities or digests only when each
+linkage field is independently public-safe; otherwise linkage remains protected or omitted with
+the resulting verification loss explicit. Repository fleet reports use a separate Core-owned
+`RepositoryReportProfile` that classifies every identity and drill-down reference as public,
+protected, or omitted; protected values cannot leak through stable hashes, pseudonyms, references,
+or report identity.
+Two additional cross-cutting plans remain planning-only and inactive rather than extending the
+version sequence:
+[OSS adapter and profile conformance](../planning/adapter-profile-conformance/plan.md)
+defines registration, capability, pressure, support, deprecation, and revocation rules for V12+
+implementations. Shared behavior derives `profile_semantic_identity`, while owner, source, build,
+compatibility ranges, and exact target posture derive `implementation_subject_identity`.
+Conformance, pressure, and release evidence bind that subject, and the final evidence-backed
+registration derives `implementation_registration_identity` without a cycle. Lifecycle remains
+separate registry-snapshot state; admissions and retained evidence bind all three identities plus
+the observed lifecycle and snapshot;
+[authority distribution lifecycle](../planning/authority-distribution-lifecycle/plan.md)
+defines the normative acceptance standard for reproducible artifacts, compatibility, protected
+installation, upgrade, rollback, state recovery, uninstall, and support policy. It cannot activate
+or assign implementation by itself; a future version plan must explicitly own a bounded delivery
+slice. Neither cross-cutting plan registers an adapter, publishes an artifact, activates V12, or
+begins the deferred Enterprise V1 control-plane roadmap.
+Implementation-registration revocation is bounded to the accepted installed registry snapshot
+rather than claimed as globally immediate under an offline release model. Positive admission and
+retained evidence must name all three exact identities plus the observed registry identity,
+lifecycle, and freshness posture; an installation without a fresh update source reports
+`installed_snapshot_only` and cannot claim awareness of later revocations.
+Roadmap activation now distinguishes technical pressure from adoption demand. V12 through V12.2
+may use signal-selected public repositories, controlled forks, and synthetic/disposable external
+resources without waiting for a design partner; those runs prove bounded technical behavior, not
+maintainer adoption or commercial demand. V12.3 provider-attested authority, V12.4 macOS protected
+authority, and V12.5 Windows protected authority are optional demand-gated carriers. None may
+activate from roadmap order, feasibility, public-repository signals, or technical curiosity alone:
+each requires a documented current operator/design-partner need for the exact provider/platform
+boundary and access to immutable native pressure. In the absence of that demand, formally defer
+the carrier rather than implementing nominal parity, and allow V12.6 to proceed after the recorded
+deferrals.
 The local real-OCI
 fixture plus create-chrome-extension run
 [30544809360](https://github.com/bobaikato/create-chrome-extension/actions/runs/30544809360)
