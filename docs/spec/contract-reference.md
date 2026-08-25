@@ -2114,7 +2114,9 @@ tasks:
 `provider: postgresql`, a lowercase `dns:` namespace authority, and at least one non-secret scope
 component such as tenant, environment, account, region, cluster, organization, or repository. A
 bare logical target such as `production_primary` is only a lookup label and never identifies the
-real resource by itself.
+real resource by itself. Namespace components and `resource_id` use the versioned ASCII profile
+`[A-Za-z0-9][A-Za-z0-9._:/+=,-]{0,255}` so Unicode normalization cannot split identities across
+implementations.
 
 `effect_definitions` also use canonical lowercase labels. The initial
 `database_schema_mutation` family has discriminated bounds:
@@ -2124,8 +2126,11 @@ real resource by itself.
 - `reset_schema` requires `reset_scope: schema` plus either `post_reset: empty` or a typed
   `apply_migration_set` posture.
 
-Migration roots are normalized contract-relative paths. Content, state, and target migration
-identities use lowercase `sha256:<64-hex>` form. The authored migration content identity is an
+Migration roots must already be exact, alias-free, slash-separated contract-relative paths;
+repeated separators, trailing separators, and `.` or `..` components refuse rather than being
+silently normalized. Control characters and Unicode line separators also refuse. Content, state,
+and target migration identities use lowercase
+`sha256:<64-hex>` form. The authored migration content identity is an
 expected semantic bound, not evidence that current repository bytes match it. The typed adapter
 must independently derive and reconcile those bytes before any future positive assurance.
 

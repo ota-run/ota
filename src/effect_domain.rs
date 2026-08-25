@@ -699,10 +699,11 @@ fn canonical_optional_component(
 fn canonical_component(value: &str, label: &str) -> Result<String, EffectDomainError> {
     if value.is_empty()
         || value.len() > 256
-        || value != value.trim()
-        || value.chars().any(char::is_whitespace)
-        || value.chars().any(char::is_control)
-        || value.contains(['?', '#', '@'])
+        || !value.as_bytes()[0].is_ascii_alphanumeric()
+        || !value.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric()
+                || matches!(byte, b'.' | b'_' | b':' | b'/' | b'+' | b'=' | b',' | b'-')
+        })
     {
         return Err(EffectDomainError::new(
             "resource_namespace_component_invalid",
@@ -787,6 +788,9 @@ fn canonical_relative_path(value: &str) -> Result<String, EffectDomainError> {
         || value != value.trim()
         || value.starts_with(['/', '\\'])
         || value.contains('\\')
+        || value
+            .chars()
+            .any(|character| character.is_control() || matches!(character, '\u{2028}' | '\u{2029}'))
         || (value.len() >= 2
             && value.as_bytes()[0].is_ascii_alphabetic()
             && value.as_bytes()[1] == b':')
@@ -817,7 +821,14 @@ fn canonical_relative_path(value: &str) -> Result<String, EffectDomainError> {
             "effect path must not be empty",
         ));
     }
-    Ok(parts.join("/"))
+    let canonical = parts.join("/");
+    if canonical != value {
+        return Err(EffectDomainError::new(
+            "effect_path_invalid",
+            format!("effect path `{value}` must already use canonical slash-separated form"),
+        ));
+    }
+    Ok(canonical)
 }
 
 fn canonical_start_state(value: &str) -> Result<String, EffectDomainError> {
@@ -967,6 +978,8 @@ mod tests {
         "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     const DIGEST_B: &str =
         "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    const DIGEST_C: &str =
+        "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
 
     fn contract_with(task_name: &str, resource_label: &str, effect_label: &str) -> Contract {
         parse_contract_str(
@@ -1005,6 +1018,65 @@ tasks:
     effects:
       declared:
         - {effect_label}
+"#
+            ),
+        )
+        .unwrap()
+    }
+
+    fn resource_identity(contract: &Contract) -> String {
+        resolve_declared_effect_catalog(contract)
+            .unwrap()
+            .resource_bindings
+            .values()
+            .next()
+            .unwrap()
+            .identity
+            .clone()
+    }
+
+    fn effect_identity(contract: &Contract) -> String {
+        resolve_declared_effect_catalog(contract)
+            .unwrap()
+            .effect_definitions
+            .values()
+            .next()
+            .unwrap()
+            .identity
+            .clone()
+    }
+
+    fn contract_with_action(action: &str, bounds: &str) -> Contract {
+        parse_contract_str(
+            Path::new("ota.yaml"),
+            &format!(
+                r#"
+version: 1
+project:
+  name: effect-fixture
+resource_bindings:
+  production_primary:
+    kind: database
+    provider: postgresql
+    namespace:
+      authority: dns:example.org
+      environment: production
+effect_definitions:
+  production_schema_migration:
+    kind: database_schema_mutation
+    action: {action}
+    resource:
+      engine: postgresql
+      target_ref: production_primary
+      schema: public
+    bounds:
+{bounds}
+tasks:
+  db-migrate:
+    command:
+      exe: "true"
+    effects:
+      declared: [production_schema_migration]
 "#
             ),
         )
@@ -1075,7 +1147,7 @@ tasks:
     }
 
     #[test]
-    fn consequence_and_realization_identity_domains_remain_separate() {
+    fn all_identity_domains_remain_separate() {
         let catalog = resolve_declared_effect_catalog(&contract_with(
             "db-migrate",
             "production_primary",
@@ -1112,7 +1184,7 @@ tasks:
                 derivation_posture: EffectDerivationPosture::TypedDerived,
                 adapter_profile_identity: Some(DIGEST_A.to_string()),
                 application_plan_identity: Some(DIGEST_B.to_string()),
-                resource_binding_evidence: evidence,
+                resource_binding_evidence: evidence.clone(),
                 origin,
             },
         )
@@ -1120,47 +1192,283 @@ tasks:
 
         assert_eq!(declared.effect_identity, typed.effect_identity);
         assert_ne!(declared.identity, typed.identity);
+
+        let identities = std::collections::BTreeSet::from([
+            resource.identity.as_str(),
+            effect.identity.as_str(),
+            catalog.attachments[0].identity.as_str(),
+            evidence.identity.as_str(),
+            typed.identity.as_str(),
+        ]);
+        assert_eq!(identities.len(), 5, "all five identity domains must differ");
     }
 
     #[test]
-    fn resource_namespace_and_bounds_are_identity_material() {
+    fn every_resource_namespace_input_is_identity_material() {
+        let mut base = contract_with(
+            "db-migrate",
+            "production_primary",
+            "production_schema_migration",
+        );
+        let ResourceBindingSpec::Database {
+            namespace,
+            resource_id,
+            ..
+        } = base
+            .resource_bindings
+            .get_mut("production_primary")
+            .unwrap();
+        namespace.organization = Some("ota".to_string());
+        namespace.region = Some("eu-west-2".to_string());
+        namespace.cluster = Some("primary-cluster".to_string());
+        namespace.repository = Some("ota-run/ota".to_string());
+        *resource_id = Some("db:primary/1".to_string());
+        let base_identity = resource_identity(&base);
+
+        for field in [
+            "authority",
+            "organization",
+            "tenant",
+            "environment",
+            "account",
+            "region",
+            "cluster",
+            "repository",
+            "resource_id",
+        ] {
+            let mut changed = base.clone();
+            let ResourceBindingSpec::Database {
+                namespace,
+                resource_id,
+                ..
+            } = changed
+                .resource_bindings
+                .get_mut("production_primary")
+                .unwrap();
+            match field {
+                "authority" => namespace.authority = "dns:other.example.org".to_string(),
+                "organization" => namespace.organization = Some("other".to_string()),
+                "tenant" => namespace.tenant = Some("other".to_string()),
+                "environment" => namespace.environment = Some("staging".to_string()),
+                "account" => namespace.account = Some("secondary".to_string()),
+                "region" => namespace.region = Some("us-east-1".to_string()),
+                "cluster" => namespace.cluster = Some("secondary-cluster".to_string()),
+                "repository" => namespace.repository = Some("ota-run/site".to_string()),
+                "resource_id" => *resource_id = Some("db:secondary/2".to_string()),
+                _ => unreachable!(),
+            }
+            assert_ne!(base_identity, resource_identity(&changed), "{field}");
+        }
+    }
+
+    #[test]
+    fn effect_resource_and_all_valid_bound_branches_are_identity_material() {
         let base = contract_with(
             "db-migrate",
             "production_primary",
             "production_schema_migration",
         );
-        let mut changed_namespace = base.clone();
-        let ResourceBindingSpec::Database { namespace, .. } = changed_namespace
-            .resource_bindings
-            .get_mut("production_primary")
-            .unwrap();
-        namespace.account = Some("secondary".to_string());
-        let mut changed_bounds = base.clone();
-        let EffectDefinitionSpec::DatabaseSchemaMutation { bounds, .. } = changed_bounds
+        let base_identity = effect_identity(&base);
+
+        let mut changed_schema = base.clone();
+        let EffectDefinitionSpec::DatabaseSchemaMutation { resource, .. } = changed_schema
             .effect_definitions
             .get_mut("production_schema_migration")
             .unwrap();
-        let DatabaseSchemaMutationBoundsSpec::ApplyMigrationSet(bounds) = bounds else {
-            panic!("expected apply bounds");
-        };
-        bounds.migration_set.content_identity = DIGEST_B.to_string();
+        resource.schema = "audit".to_string();
+        assert_ne!(base_identity, effect_identity(&changed_schema));
 
-        let base = resolve_declared_effect_catalog(&base).unwrap();
-        let namespace = resolve_declared_effect_catalog(&changed_namespace).unwrap();
-        let bounds = resolve_declared_effect_catalog(&changed_bounds).unwrap();
-        assert_ne!(
-            base.resource_bindings.values().next().unwrap().identity,
-            namespace
-                .resource_bindings
-                .values()
-                .next()
-                .unwrap()
-                .identity
+        for (field, value) in [
+            ("root", "migrations/v2"),
+            ("content_identity", DIGEST_B),
+            ("start_state", DIGEST_C),
+        ] {
+            let mut changed = base.clone();
+            let EffectDefinitionSpec::DatabaseSchemaMutation { bounds, .. } = changed
+                .effect_definitions
+                .get_mut("production_schema_migration")
+                .unwrap();
+            let DatabaseSchemaMutationBoundsSpec::ApplyMigrationSet(bounds) = bounds else {
+                panic!("expected apply bounds");
+            };
+            match field {
+                "root" => bounds.migration_set.root = value.to_string(),
+                "content_identity" => bounds.migration_set.content_identity = value.to_string(),
+                "start_state" => bounds.start_state = value.to_string(),
+                _ => unreachable!(),
+            }
+            assert_ne!(base_identity, effect_identity(&changed), "{field}");
+        }
+
+        let rollback = contract_with_action(
+            "rollback_migration_set",
+            &format!(
+                "      migration_set:\n        root: migrations\n        content_identity: {DIGEST_A}\n      target_migration_identity: {DIGEST_B}\n      start_state: {DIGEST_C}"
+            ),
         );
-        assert_ne!(
-            base.effect_definitions.values().next().unwrap().identity,
-            bounds.effect_definitions.values().next().unwrap().identity
+        let reset_empty = contract_with_action(
+            "reset_schema",
+            "      reset_scope: schema\n      post_reset: empty",
         );
+        let reset_apply = contract_with_action(
+            "reset_schema",
+            &format!(
+                "      reset_scope: schema\n      post_reset:\n        apply_migration_set:\n          root: migrations\n          content_identity: {DIGEST_A}"
+            ),
+        );
+        let identities = std::collections::BTreeSet::from([
+            base_identity,
+            effect_identity(&rollback),
+            effect_identity(&reset_empty),
+            effect_identity(&reset_apply),
+        ]);
+        assert_eq!(identities.len(), 4);
+    }
+
+    #[test]
+    fn realization_identity_binds_evidence_adapter_plan_and_origin() {
+        let catalog = resolve_declared_effect_catalog(&contract_with(
+            "db-migrate",
+            "production_primary",
+            "production_schema_migration",
+        ))
+        .unwrap();
+        let resource = catalog.resource_bindings.values().next().unwrap();
+        let effect = catalog.effect_definitions.values().next().unwrap();
+        let base_origin = EffectOrigin {
+            contract_snapshot_identity: DIGEST_A.to_string(),
+            invocation_subject: vec!["tasks".to_string(), "db-migrate".to_string()],
+            closure_path: vec![vec!["tasks".to_string(), "db-migrate".to_string()]],
+        };
+        let realize = |posture, adapter, plan, evidence_posture, source, origin| {
+            effect_realization_identity(
+                effect,
+                EffectRealizationInput {
+                    derivation_posture: posture,
+                    adapter_profile_identity: adapter,
+                    application_plan_identity: plan,
+                    resource_binding_evidence: resource_binding_evidence(
+                        &resource.identity,
+                        evidence_posture,
+                        source,
+                    )
+                    .unwrap(),
+                    origin,
+                },
+            )
+            .unwrap()
+            .identity
+        };
+        let base = realize(
+            EffectDerivationPosture::TypedDerived,
+            Some(DIGEST_A.to_string()),
+            Some(DIGEST_B.to_string()),
+            ResourceBindingEvidencePosture::RepositoryDeclared,
+            DIGEST_C,
+            base_origin.clone(),
+        );
+        let variants = [
+            realize(
+                EffectDerivationPosture::DeclaredAndTyped,
+                Some(DIGEST_A.to_string()),
+                Some(DIGEST_B.to_string()),
+                ResourceBindingEvidencePosture::RepositoryDeclared,
+                DIGEST_C,
+                base_origin.clone(),
+            ),
+            realize(
+                EffectDerivationPosture::Incomplete,
+                Some(DIGEST_A.to_string()),
+                Some(DIGEST_B.to_string()),
+                ResourceBindingEvidencePosture::RepositoryDeclared,
+                DIGEST_C,
+                base_origin.clone(),
+            ),
+            realize(
+                EffectDerivationPosture::Opaque,
+                Some(DIGEST_A.to_string()),
+                Some(DIGEST_B.to_string()),
+                ResourceBindingEvidencePosture::RepositoryDeclared,
+                DIGEST_C,
+                base_origin.clone(),
+            ),
+            realize(
+                EffectDerivationPosture::TypedDerived,
+                Some(DIGEST_B.to_string()),
+                Some(DIGEST_B.to_string()),
+                ResourceBindingEvidencePosture::RepositoryDeclared,
+                DIGEST_C,
+                base_origin.clone(),
+            ),
+            realize(
+                EffectDerivationPosture::TypedDerived,
+                Some(DIGEST_A.to_string()),
+                Some(DIGEST_C.to_string()),
+                ResourceBindingEvidencePosture::RepositoryDeclared,
+                DIGEST_C,
+                base_origin.clone(),
+            ),
+            realize(
+                EffectDerivationPosture::TypedDerived,
+                Some(DIGEST_A.to_string()),
+                Some(DIGEST_B.to_string()),
+                ResourceBindingEvidencePosture::PolicyBound,
+                DIGEST_C,
+                base_origin.clone(),
+            ),
+            realize(
+                EffectDerivationPosture::TypedDerived,
+                Some(DIGEST_A.to_string()),
+                Some(DIGEST_B.to_string()),
+                ResourceBindingEvidencePosture::ProviderVerified,
+                DIGEST_C,
+                base_origin.clone(),
+            ),
+            realize(
+                EffectDerivationPosture::TypedDerived,
+                Some(DIGEST_A.to_string()),
+                Some(DIGEST_B.to_string()),
+                ResourceBindingEvidencePosture::RepositoryDeclared,
+                DIGEST_B,
+                base_origin.clone(),
+            ),
+            realize(
+                EffectDerivationPosture::TypedDerived,
+                Some(DIGEST_A.to_string()),
+                Some(DIGEST_B.to_string()),
+                ResourceBindingEvidencePosture::RepositoryDeclared,
+                DIGEST_C,
+                EffectOrigin {
+                    contract_snapshot_identity: DIGEST_B.to_string(),
+                    ..base_origin.clone()
+                },
+            ),
+            realize(
+                EffectDerivationPosture::TypedDerived,
+                Some(DIGEST_A.to_string()),
+                Some(DIGEST_B.to_string()),
+                ResourceBindingEvidencePosture::RepositoryDeclared,
+                DIGEST_C,
+                EffectOrigin {
+                    invocation_subject: vec!["tasks".to_string(), "other".to_string()],
+                    ..base_origin.clone()
+                },
+            ),
+            realize(
+                EffectDerivationPosture::TypedDerived,
+                Some(DIGEST_A.to_string()),
+                Some(DIGEST_B.to_string()),
+                ResourceBindingEvidencePosture::RepositoryDeclared,
+                DIGEST_C,
+                EffectOrigin {
+                    closure_path: vec![vec!["tasks".to_string(), "dependency".to_string()]],
+                    ..base_origin
+                },
+            ),
+        ];
+        for variant in variants {
+            assert_ne!(base, variant);
+        }
     }
 
     #[test]
@@ -1197,25 +1505,88 @@ tasks:
             "resource_namespace_component_invalid"
         );
 
-        let mut aliased_root = contract_with(
-            "db-migrate",
-            "production_primary",
-            "production_schema_migration",
-        );
-        let EffectDefinitionSpec::DatabaseSchemaMutation { bounds, .. } = aliased_root
-            .effect_definitions
-            .get_mut("production_schema_migration")
-            .unwrap();
-        let DatabaseSchemaMutationBoundsSpec::ApplyMigrationSet(bounds) = bounds else {
-            panic!("expected apply bounds");
-        };
-        bounds.migration_set.root = "./migrations".to_string();
-        assert_eq!(
-            resolve_declared_effect_catalog(&aliased_root)
-                .unwrap_err()
-                .code,
-            "effect_path_invalid"
-        );
+        for unicode in ["caf\u{e9}", "cafe\u{301}"] {
+            for field in [
+                "organization",
+                "tenant",
+                "environment",
+                "account",
+                "region",
+                "cluster",
+                "repository",
+                "resource_id",
+            ] {
+                let mut unicode_component = contract_with(
+                    "db-migrate",
+                    "production_primary",
+                    "production_schema_migration",
+                );
+                let ResourceBindingSpec::Database {
+                    namespace,
+                    resource_id,
+                    ..
+                } = unicode_component
+                    .resource_bindings
+                    .get_mut("production_primary")
+                    .unwrap();
+                match field {
+                    "organization" => namespace.organization = Some(unicode.to_string()),
+                    "tenant" => namespace.tenant = Some(unicode.to_string()),
+                    "environment" => namespace.environment = Some(unicode.to_string()),
+                    "account" => namespace.account = Some(unicode.to_string()),
+                    "region" => namespace.region = Some(unicode.to_string()),
+                    "cluster" => namespace.cluster = Some(unicode.to_string()),
+                    "repository" => namespace.repository = Some(unicode.to_string()),
+                    "resource_id" => *resource_id = Some(unicode.to_string()),
+                    _ => unreachable!(),
+                }
+                assert_eq!(
+                    resolve_declared_effect_catalog(&unicode_component)
+                        .unwrap_err()
+                        .code,
+                    "resource_namespace_component_invalid",
+                    "{field}: {unicode:?}"
+                );
+            }
+        }
+
+        for root in [
+            "./migrations",
+            "migrations/./nested",
+            "migrations//nested",
+            "migrations/",
+            "migrations/../other",
+            "/migrations",
+            "C:/migrations",
+            "migrations\\nested",
+            "migrations/\nnext",
+            "migrations/\rnext",
+            "migrations/\tnext",
+            "migrations/\0next",
+            "migrations/\u{2028}next",
+            "migrations/\u{2029}next",
+        ] {
+            let mut aliased_root = contract_with(
+                "db-migrate",
+                "production_primary",
+                "production_schema_migration",
+            );
+            let EffectDefinitionSpec::DatabaseSchemaMutation { bounds, .. } = aliased_root
+                .effect_definitions
+                .get_mut("production_schema_migration")
+                .unwrap();
+            let DatabaseSchemaMutationBoundsSpec::ApplyMigrationSet(bounds) = bounds else {
+                panic!("expected apply bounds");
+            };
+            bounds.migration_set.root = root.to_string();
+            assert_eq!(
+                resolve_declared_effect_catalog(&aliased_root)
+                    .unwrap_err()
+                    .code,
+                "effect_path_invalid",
+                "{root}"
+            );
+        }
 
         let catalog = resolve_declared_effect_catalog(&contract_with(
             "db-migrate",

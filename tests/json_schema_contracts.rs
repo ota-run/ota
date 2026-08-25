@@ -426,15 +426,67 @@ fn published_contract_schema_discriminates_typed_effect_bounds() {
         json!("platform team");
     assert!(!compiled.is_valid(&whitespace_namespace));
 
+    for unicode in ["caf\u{e9}", "cafe\u{301}"] {
+        let mut unicode_namespace = valid.clone();
+        unicode_namespace["resource_bindings"]["production_primary"]["namespace"]["tenant"] =
+            json!(unicode);
+        assert!(!compiled.is_valid(&unicode_namespace), "{unicode:?}");
+    }
+
     let mut absolute_migration_root = valid.clone();
     absolute_migration_root["effect_definitions"]["production_schema_migration"]["bounds"]["migration_set"]
         ["root"] = json!("C:/migrations");
     assert!(!compiled.is_valid(&absolute_migration_root));
 
-    let mut aliased_migration_root = valid.clone();
-    aliased_migration_root["effect_definitions"]["production_schema_migration"]["bounds"]["migration_set"]
-        ["root"] = json!("./migrations");
-    assert!(!compiled.is_valid(&aliased_migration_root));
+    for root in [
+        "./migrations",
+        "migrations/./nested",
+        "migrations//nested",
+        "migrations/",
+        "migrations/../other",
+        "migrations\\nested",
+        "migrations/\nnext",
+        "migrations/\rnext",
+        "migrations/\tnext",
+        "migrations/\u{0000}next",
+        "migrations/\u{2028}next",
+        "migrations/\u{2029}next",
+    ] {
+        let mut aliased_migration_root = valid.clone();
+        aliased_migration_root["effect_definitions"]["production_schema_migration"]["bounds"]["migration_set"]
+            ["root"] = json!(root);
+        assert!(!compiled.is_valid(&aliased_migration_root), "{root}");
+    }
+
+    let mut rollback = valid.clone();
+    rollback["effect_definitions"]["production_schema_migration"]["action"] =
+        json!("rollback_migration_set");
+    rollback["effect_definitions"]["production_schema_migration"]["bounds"]["target_migration_identity"] =
+        json!(format!("sha256:{}", "b".repeat(64)));
+    assert!(compiled.is_valid(&rollback));
+
+    let mut reset_empty = valid.clone();
+    reset_empty["effect_definitions"]["production_schema_migration"]["action"] =
+        json!("reset_schema");
+    reset_empty["effect_definitions"]["production_schema_migration"]["bounds"] = json!({
+        "reset_scope": "schema",
+        "post_reset": "empty"
+    });
+    assert!(compiled.is_valid(&reset_empty));
+
+    let mut reset_apply = valid.clone();
+    reset_apply["effect_definitions"]["production_schema_migration"]["action"] =
+        json!("reset_schema");
+    reset_apply["effect_definitions"]["production_schema_migration"]["bounds"] = json!({
+        "reset_scope": "schema",
+        "post_reset": {
+            "apply_migration_set": {
+                "root": "migrations",
+                "content_identity": format!("sha256:{}", "a".repeat(64))
+            }
+        }
+    });
+    assert!(compiled.is_valid(&reset_apply));
 
     let mut uppercase_identity = valid;
     uppercase_identity["effect_definitions"]["production_schema_migration"]["bounds"]["migration_set"]

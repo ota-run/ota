@@ -30,7 +30,9 @@
   typed database schema-mutation definitions, task-local effect attachments, and separate
   domain-separated identities for consequence, attachment origin, resource evidence, and
   realization posture. Validation rejects ambiguous namespaces, unknown or duplicate references,
-  noncanonical paths and identities, and action/bounds substitution. This is declaration and
+  noncanonical paths and identities, and action/bounds substitution. Resource namespace components
+  use a versioned ASCII profile, and migration roots refuse every path alias instead of normalizing
+  authored values. This is declaration and
   identity infrastructure only: it does not alter execution admission, verify migration bytes,
   evaluate policy, contact a provider, or produce positive effect-refusal assurance.
 

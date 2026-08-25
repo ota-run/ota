@@ -1732,7 +1732,7 @@
       "type": "string",
       "minLength": 1,
       "maxLength": 256,
-      "pattern": "^[^\\s@?#\\u0000-\\u001f\\u007f]+$"
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+=,-]{0,255}$"
     },
     "resourceNamespace": {
       "type": "object",
@@ -1781,7 +1781,7 @@
         "root": {
           "type": "string",
           "minLength": 1,
-          "pattern": "^(?![A-Za-z]:)(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*\\\\).+$"
+          "pattern": "^(?![A-Za-z]:)(?!/)(?!.*[\\u0000-\\u001f\\u007f-\\u009f\\u2028\\u2029])(?!.*//)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*\\\\)(?!.*\/$).+$"
         },
         "content_identity": { "$ref": "#/$defs/sha256Identity" }
       }

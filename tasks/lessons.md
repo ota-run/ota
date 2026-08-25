@@ -267,6 +267,21 @@
 
 ## 2026-08-25
 
+- Pattern: Canonical semantic identities can still split when validation accepts Unicode aliases or
+  silently normalizes authored path aliases before hashing.
+- Correction: Give every identity-bearing string a versioned byte profile and require authored
+  paths to equal their canonical reconstruction before identity derivation.
+- Rule: Identity validation must reject alternate byte representations at admission; canonical
+  hashing cannot repair an ambiguous input domain after the fact.
+- Pattern: A representative review matrix can pass while missing identity-bearing fields, Unicode
+  byte aliases, path aliases erased by platform helpers, generated metadata overrides, or an exact
+  consumer-version refusal.
+- Correction: For identity-sensitive surfaces, enumerate every semantic input and domain, mutate
+  each independently, test alternate byte representations, inspect generated/public metadata, and
+  run the exact pinned consumer without lowering its declared minimum version.
+- Rule: Do not call an identity boundary reviewed from representative controls alone; require an
+  exhaustive input/domain matrix plus exact-version cross-repository validation or name the latter
+  as an explicit open gate.
 - Pattern: A detailed roadmap can make optional provider and platform carriers look mandatory even
   when no operator has requested or can pressure the exact boundary.
 - Correction: Use signal-rich public repositories for V12 through V12.2 technical discovery, but

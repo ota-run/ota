@@ -259,10 +259,13 @@ ordered account, organization, tenant, environment, region, cluster, repository,
 provider-specific non-secret canonical resource identifier when available
 ```
 
-The namespace authority is explicit, such as an organization-controlled DNS/URI namespace or a
-provider-owned account/tenant namespace. Ota rejects ambiguous bare aliases. Provider-specific
-fields use typed normalized branches; irrelevant or contradictory fields are forbidden. A policy
-wildcard is an explicit selector over resolved identities, never an omitted identity component.
+The namespace authority is explicit. The initial profile uses an organization-controlled
+lowercase `dns:` authority; future profiles may add separately versioned URI or provider-owned
+authority branches. Ota rejects ambiguous bare aliases. Every initial namespace component and
+provider-specific resource identifier uses the exact versioned ASCII profile
+`[A-Za-z0-9][A-Za-z0-9._:/+=,-]{0,255}` rather than Unicode normalization. Irrelevant or
+contradictory fields are forbidden. A policy wildcard is an explicit selector over resolved
+identities, never an omitted identity component.
 
 `ResourceBindingEvidence` separately records how that identity was obtained:
 
@@ -331,7 +334,10 @@ from another action branch refuse schema validation:
 are explicit inside their action branch and participate in identity; omission never imports a
 field from another branch. The action discriminator already encodes apply versus rollback
 direction; a separate `direction` field is forbidden so equivalent effects cannot split between
-redundant representations.
+redundant representations. Migration roots must be exact alias-free slash-separated paths as
+authored; repeated or trailing separators and `.` or `..` components refuse instead of being
+normalized before identity derivation. Controls and Unicode line separators are outside the path
+character profile and refuse in both contract validation and published schema admission.
 
 The first adapter must be a typed task body with a deterministic application plan. Wrapping
 `psql`, `prisma migrate`, `rails db:migrate`, or another tool in opaque shell does not become typed
