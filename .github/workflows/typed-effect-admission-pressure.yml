@@ -188,10 +188,10 @@ jobs:
           test "$run_status" -eq 1
           test "$up_status" -eq 1
           test "$proof_status" -eq 1
-          rg -q 'provider execution is disabled' "$proof_root/run-refusal.txt"
-          rg -q 'provider execution is disabled' "$proof_root/up-refusal.txt"
-          rg -q 'Phase: preconditions' "$proof_root/proof-refusal.txt"
-          rg -q 'provider execution is disabled' "$fixture/.ota/proof/typed/up.log"
+          grep -Fq 'provider execution is disabled' "$proof_root/run-refusal.txt"
+          grep -Fq 'provider execution is disabled' "$proof_root/up-refusal.txt"
+          grep -Fq 'Phase: preconditions' "$proof_root/proof-refusal.txt"
+          grep -Fq 'provider execution is disabled' "$fixture/.ota/proof/typed/up.log"
           test ! -e "$fixture/setup-sentinel"
           test ! -e "$fixture/.env.typed"
           test ! -e "$fixture/.ota/state/logs"
@@ -217,7 +217,7 @@ jobs:
           stale_status=$?
           set -e
           test "$stale_status" -eq 1
-          rg -q 'effect_application_plan' "$proof_root/stale-refusal.json"
+          grep -Fq 'effect_application_plan' "$proof_root/stale-refusal.json"
           test ! -e "$proof_root/stale-fixture/setup-sentinel"
 
           mkdir -p "$proof_root/outside/migrations"
@@ -237,7 +237,7 @@ jobs:
           symlink_status=$?
           set -e
           test "$symlink_status" -eq 1
-          rg -q 'effect_application_plan' "$proof_root/symlink-refusal.json"
+          grep -Fq 'effect_application_plan' "$proof_root/symlink-refusal.json"
 
       - name: Upload pressure evidence
         if: always()
