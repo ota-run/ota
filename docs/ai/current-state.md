@@ -63,16 +63,26 @@ durable agent workflow belongs in the canonical Ota skill.
   cannot replace the previewed typed action. Non-dry-run `ota up` emits its ordinary blocked
   readiness receipt with `execution_attempted: false`; the typed adapter emits no positive effect
   or execution receipt, archive, success claim, agent-safe authority, canary, or positive assurance.
-  Provider execution, independently
-  administered policy admission, provider-side mutation semantics, and independent pressure remain
-  unproved. The
+  Provider execution, independently administered policy admission, provider-side mutation
+  semantics, and independent real-repository effect pressure remain unproved. The bounded internal
+  carrier is now immutable-hosted on Linux/x64 and macOS in
+  [Smoke run 32994303400](https://github.com/ota-run/ota/actions/runs/32994303400) against exact Core
+  `73f7fea9fb76af514e6a97e42562d30b683768ad`. Both retained artifacts bind that revision and prove
+  contract validation, typed run/up previews, direct run/up/proof refusal before setup and environment
+  rendering, blocked-receipt schema conformance with `execution_attempted: false`, stale migration-byte
+  refusal, and intermediate-symlink escape refusal. Every execution/refusal status is exactly `1`,
+  and neither setup sentinel, rendered environment, nor durable execution logs exist. This internal
+  fixture does not contact a provider, execute a repository task, prove provider mutation semantics,
+  or substitute for later independent real-repository pressure. The
   foundation is committed at Core `f3d4b8e1`, Site `5926f69`, Skills `d05b1d1`, and Examples
   `2dad574`; canonical-identity hardening is committed at Core `1b9a03d6`, Site `e78b963`, and
-  Skills `30c8dbd`. It has no pressure evidence. V12.1 onward and both cross-cutting plans remain
+  Skills `30c8dbd`. The hosted carrier above exercises the selected plan/admission path but does not
+  replace the exhaustive local identity-domain regression matrix. V12.1 onward and both cross-cutting plans remain
   planned and inactive. The reference Example correctly requires Ota `1.6.27`; the source-built
   `v1.6.27` development binary validated that exact contract locally on 2026-08-25. This closes
-  only the local minimum-version gate. Local plan-to-executor continuity is implemented but has no
-  independent pressure evidence. Contract validation now also rejects a released `agent.bootstrap.ota.source.version`
+  only the local minimum-version gate. Plan-to-executor continuity now has the bounded hosted internal
+  fixture evidence above but no independent real-repository effect pressure. Contract validation now
+  also rejects a released `agent.bootstrap.ota.source.version`
   below `metadata.ota.minimum_version`; `source: contract` is the canonical CI consumer so a
   workflow cannot maintain a divergent released bootstrap version. Git revisions and pressure
   branches remain intentionally incomparable to a release floor. The connected typed-adapter
