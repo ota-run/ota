@@ -138,7 +138,7 @@ jobs:
                 exe: sh
                 args: [-c, \"touch setup-sentinel\"]
             migrate:
-              action: {{ kind: database_schema_mutation, effect: migration }}
+              action: { kind: database_schema_mutation, effect: migration }
               effects:
                 declared: [migration]
           workflows:
@@ -156,8 +156,8 @@ jobs:
           PY
 
           git -C "$GITHUB_WORKSPACE" rev-parse HEAD > "$proof_root/core-revision.txt"
-          "$ota" validate "$fixture" --plain | tee "$proof_root/validate.txt"
-          "$ota" validate "$preview_fixture" --plain | tee "$proof_root/preview-validate.txt"
+          "$ota" validate "$fixture" --plain 2>&1 | tee "$proof_root/validate.txt"
+          "$ota" validate "$preview_fixture" --plain 2>&1 | tee "$proof_root/preview-validate.txt"
 
           "$ota" json validate \
             --schema run-preview.json \
