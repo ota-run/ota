@@ -20783,6 +20783,7 @@ tasks:
             "resource_bindings",
             "effect_definitions",
             "tasks.effects.declared",
+            "tasks.action.database_schema_mutation",
         ] {
             assert!(
                 capabilities.iter().any(|capability| {

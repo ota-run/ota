@@ -36,6 +36,7 @@ pub(crate) mod crossing_authority;
 pub(crate) mod crossing_transaction;
 pub mod detector;
 pub mod doctor;
+pub mod effect_application_plan;
 pub mod effect_domain;
 pub(crate) mod execution;
 pub(crate) mod execution_boundary;

@@ -82,6 +82,62 @@
       "type": "string",
       "pattern": "^sha256:[0-9a-f]{64}$"
     },
+    "effectApplicationManifestFile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "identity"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "identity": { "$ref": "#/$defs/sha256Identity" }
+      }
+    },
+    "effectApplicationManifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "root", "identity", "files"],
+      "properties": {
+        "schema_version": { "const": 1 },
+        "root": { "type": "string", "minLength": 1 },
+        "identity": { "$ref": "#/$defs/sha256Identity" },
+        "files": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/effectApplicationManifestFile" }
+        }
+      }
+    },
+    "effectApplicationPlan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "identity",
+        "adapter_profile_identity",
+        "task",
+        "effect_ref",
+        "attachment_identity",
+        "effect_identity",
+        "resource_binding_identity",
+        "action",
+        "migration_manifests"
+      ],
+      "properties": {
+        "schema_version": { "const": 1 },
+        "identity": { "$ref": "#/$defs/sha256Identity" },
+        "adapter_profile_identity": { "$ref": "#/$defs/sha256Identity" },
+        "task": { "type": "string", "minLength": 1 },
+        "effect_ref": { "type": "string", "minLength": 1 },
+        "attachment_identity": { "$ref": "#/$defs/sha256Identity" },
+        "effect_identity": { "$ref": "#/$defs/sha256Identity" },
+        "resource_binding_identity": { "$ref": "#/$defs/sha256Identity" },
+        "action": {
+          "enum": ["apply_migration_set", "rollback_migration_set", "reset_schema"]
+        },
+        "migration_manifests": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/effectApplicationManifest" }
+        }
+      }
+    },
     "sandboxRestrictionOverlay": {
       "type": "object",
       "additionalProperties": false,
@@ -455,6 +511,10 @@
               }
             }
           }
+        },
+        "effect_application_plans": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/effectApplicationPlan" }
         },
         "notes": {
           "type": "array",

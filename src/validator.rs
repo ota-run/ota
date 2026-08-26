@@ -169,6 +169,42 @@ fn validate_effect_domain(contract: &Contract, errors: &mut Vec<ValidationError>
                 )));
             }
         }
+        if let Some(crate::schema::TaskActionSpec::DatabaseSchemaMutation(action)) =
+            task.action.as_ref()
+        {
+            let references = task
+                .effects
+                .declared
+                .iter()
+                .filter(|definition_ref| definition_ref.as_str() == action.effect.trim())
+                .count();
+            if references != 1 {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` action `database_schema_mutation` must name exactly one matching entry in `effects.declared`"
+                )));
+            }
+
+            for (backend, branch) in task
+                .execution
+                .iter()
+                .flat_map(|execution| execution.modes.iter())
+            {
+                if has_mode_execution_body(branch) {
+                    errors.push(ValidationError::new(format!(
+                        "task `{task_name}` action `database_schema_mutation` must not declare an execution-body override under `execution.modes.{}`",
+                        format_backend(backend)
+                    )));
+                }
+            }
+
+            for (index, variant) in task.variants.iter().enumerate() {
+                if variant.has_execution_override() {
+                    errors.push(ValidationError::new(format!(
+                        "task `{task_name}` action `database_schema_mutation` must not declare an execution-body override under `variants[{index}]`"
+                    )));
+                }
+            }
+        }
     }
 }
 
@@ -579,6 +615,20 @@ fn validate_ota_minimum_version(contract: &Contract, errors: &mut Vec<Validation
             return;
         }
     };
+
+    if let Some(AgentBootstrapOtaSource::Version { version }) = contract
+        .agent
+        .as_ref()
+        .and_then(|agent| agent.bootstrap.as_ref())
+        .and_then(|bootstrap| bootstrap.ota.as_ref())
+        .and_then(|ota| ota.effective_source())
+        && let Ok(bootstrap_version) = Version::parse(version.trim_start_matches('v').trim())
+        && bootstrap_version < minimum
+    {
+        errors.push(ValidationError::new(format!(
+            "`agent.bootstrap.ota.source.version` ({version}) must be greater than or equal to `metadata.ota.minimum_version` ({minimum})"
+        )));
+    }
 
     let current = match Version::parse(env!("CARGO_PKG_VERSION")) {
         Ok(version) => version,
@@ -5308,6 +5358,13 @@ fn validate_task_action(
             }
             for (index, step) in spec.steps.iter().enumerate() {
                 validate_task_ensure_bundle_step(task_name, index, step, errors);
+            }
+        }
+        crate::schema::TaskActionSpec::DatabaseSchemaMutation(spec) => {
+            if spec.effect.trim().is_empty() {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` action `database_schema_mutation` must declare a non-empty `action.effect`"
+                )));
             }
         }
     }
@@ -19658,6 +19715,76 @@ tasks:
         .expect("parse typed effect contract");
 
         validate_contract(&contract).expect("typed effect contract must validate");
+    }
+
+    #[test]
+    fn rejects_database_schema_mutation_execution_body_overrides() {
+        let base = r#"
+version: 1
+project:
+  name: effect-fixture
+resource_bindings:
+  production_primary:
+    kind: database
+    provider: postgresql
+    namespace:
+      authority: dns:example.org
+      tenant: platform
+      environment: production
+effect_definitions:
+  production_schema_migration:
+    kind: database_schema_mutation
+    action: apply_migration_set
+    resource:
+      engine: postgresql
+      target_ref: production_primary
+      schema: public
+    bounds:
+      migration_set:
+        root: migrations
+        content_identity: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      start_state: any_within_set
+tasks:
+  db-migrate:
+    action:
+      kind: database_schema_mutation
+      effect: production_schema_migration
+    effects:
+      declared: [production_schema_migration]
+"#;
+
+        let mode_override = parse_contract_str(
+            Path::new("ota.yaml"),
+            &format!(
+                "{base}    execution:\n      default_mode: native\n      modes:\n        native:\n          run: echo bypass\n"
+            ),
+        )
+        .expect("parse mode override contract");
+        let mode_error = validate_contract(&mode_override)
+            .expect_err("typed actions must reject mode execution-body overrides")
+            .to_string();
+        assert!(
+            mode_error.contains(
+                "must not declare an execution-body override under `execution.modes.native`"
+            ),
+            "{mode_error}"
+        );
+
+        let variant_override = parse_contract_str(
+            Path::new("ota.yaml"),
+            &format!(
+                "{base}    variants:\n      - when:\n          os: linux\n        command:\n          exe: echo\n          args: [bypass]\n"
+            ),
+        )
+        .expect("parse variant override contract");
+        let variant_error = validate_contract(&variant_override)
+            .expect_err("typed actions must reject OS execution-body overrides")
+            .to_string();
+        assert!(
+            variant_error
+                .contains("must not declare an execution-body override under `variants[0]`"),
+            "{variant_error}"
+        );
     }
 
     #[test]
@@ -41228,6 +41355,91 @@ agent:
             error.message
                 == "`agent.bootstrap.ota.source.rev` must be a full 40-character git commit SHA"
         }));
+    }
+
+    #[test]
+    fn rejects_bootstrap_release_below_declared_minimum_ota_version() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+metadata:
+  ota:
+    minimum_version: "1.6.26"
+project:
+  name: ota
+tasks:
+  test:
+    run: cargo test
+agent:
+  bootstrap:
+    ota:
+      source:
+        kind: version
+        version: v1.6.25
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert!(errors.errors().iter().any(|error| {
+            error.message
+                == "`agent.bootstrap.ota.source.version` (v1.6.25) must be greater than or equal to `metadata.ota.minimum_version` (1.6.26)"
+        }));
+    }
+
+    #[test]
+    fn accepts_bootstrap_release_equal_to_declared_minimum_ota_version() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+metadata:
+  ota:
+    minimum_version: "1.6.26"
+project:
+  name: ota
+tasks:
+  test:
+    run: cargo test
+agent:
+  bootstrap:
+    ota:
+      source:
+        kind: version
+        version: v1.6.26
+"#,
+        )
+        .unwrap();
+
+        assert!(validate_contract(&contract).is_ok());
+    }
+
+    #[test]
+    fn accepts_bootstrap_git_revision_with_declared_minimum_ota_version() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+metadata:
+  ota:
+    minimum_version: "1.6.26"
+project:
+  name: ota
+tasks:
+  test:
+    run: cargo test
+agent:
+  bootstrap:
+    ota:
+      source:
+        kind: git_rev
+        rev: e71931d6a41cc52a15966e0125725b67a05cc073
+"#,
+        )
+        .unwrap();
+
+        assert!(validate_contract(&contract).is_ok());
     }
 
     #[test]

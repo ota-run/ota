@@ -26,7 +26,23 @@
 
 ## Unreleased
 
+- Validate that a released `agent.bootstrap.ota.source.version` is not below
+  `metadata.ota.minimum_version`. CI can consume that single checked source through
+  `ota-run/setup@v1` or `ota-run/action@v1` with `source: contract`, instead of maintaining a
+  separate workflow-owned version declaration.
+
 ## 1.6.27
+
+- Added the execution-disabled V12 `action.kind: database_schema_mutation` adapter. It requires
+  one matching declared effect, captures bounded migration input with retained no-follow handles on
+  Unix, refuses execution on non-Unix, and derives one exact selected-task-bound
+  domain-separated application-plan identity. `ota run --dry-run --json` publishes the non-secret
+  plan, while selected execution re-observes source truth and verifies the exact retained bytes at
+  the typed executor boundary before task conditions, required services, dependencies, or provider
+  execution. Validation rejects mode or OS-variant execution-body overrides that could replace the
+  typed action after preview. It does not run a shell migration
+  command, contact PostgreSQL, authorize execution, mark work agent-safe, or claim a successful
+  mutation.
 
 - Began the V12 effect-bound assurance foundation with strict provider-neutral resource bindings,
   typed database schema-mutation definitions, task-local effect attachments, and separate

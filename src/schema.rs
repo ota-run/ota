@@ -7272,6 +7272,7 @@ pub enum TaskActionSpec {
     BuildContainerImage(TaskBuildContainerImageActionSpec),
     ResetComposeServiceVolume(TaskResetComposeServiceVolumeActionSpec),
     EnsureBundle(TaskEnsureBundleActionSpec),
+    DatabaseSchemaMutation(TaskDatabaseSchemaMutationActionSpec),
 }
 
 impl TaskActionSpec {
@@ -7289,6 +7290,7 @@ impl TaskActionSpec {
             Self::BuildContainerImage(_) => "build_container_image",
             Self::ResetComposeServiceVolume(_) => "reset_compose_service_volume",
             Self::EnsureBundle(_) => "ensure_bundle",
+            Self::DatabaseSchemaMutation(_) => "database_schema_mutation",
         }
     }
 
@@ -7418,6 +7420,10 @@ impl TaskActionSpec {
                     action.steps.len()
                 )
             }
+            Self::DatabaseSchemaMutation(action) => format!(
+                "derive typed database schema-mutation plan for effect `{}`",
+                action.effect
+            ),
         }
     }
 }
@@ -8648,6 +8654,13 @@ const fn is_default_container_runtime_provider(value: &TaskContainerRuntimeProvi
 pub struct TaskEnsureBundleActionSpec {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub steps: Vec<TaskEnsureBundleStepSpec>,
+}
+
+/// A provider-neutral V12 adapter with no command, credentials, or provider endpoint.
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TaskDatabaseSchemaMutationActionSpec {
+    pub effect: String,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]

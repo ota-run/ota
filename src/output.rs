@@ -1212,6 +1212,8 @@ pub struct RunPreviewPlan {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub staged_actions: Vec<PreviewStageAction>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub effect_application_plans: Vec<crate::effect_application_plan::EffectApplicationPlan>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub notes: Vec<String>,
 }
 
@@ -6087,6 +6089,12 @@ fn summarize_task_action<'a>(
             to: None,
             context: None,
         }),
+        crate::schema::TaskActionSpec::DatabaseSchemaMutation(spec) => Some(TaskActionSummary {
+            kind: "database_schema_mutation",
+            from: Some(spec.effect.as_str()),
+            to: None,
+            context: None,
+        }),
     }
 }
 
@@ -6232,6 +6240,14 @@ pub fn summarize_task_action_owned(
             to: None,
             context: None,
         }),
+        crate::schema::TaskActionSpec::DatabaseSchemaMutation(spec) => {
+            Some(WorkspaceTaskActionSummary {
+                kind: "database_schema_mutation",
+                from: Some(spec.effect.clone()),
+                to: None,
+                context: None,
+            })
+        }
     }
 }
 

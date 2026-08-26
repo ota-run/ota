@@ -84,6 +84,12 @@ That keeps `ota.yaml` as the single install source of truth for both agent boots
 Actions jobs that later run direct `ota` commands, while keeping GitHub install behavior on the
 single public `ota-run/setup` action surface.
 
+When the contract declares `metadata.ota.minimum_version`, a released
+`agent.bootstrap.ota.source.version` must meet that floor before CI can consume it. This prevents
+one repository from declaring a newer contract surface while its contract-owned GitHub install
+still selects an older release. Git revisions and named pressure branches are intentionally not
+compared to a release floor.
+
 `ota doctor` now warns when workflows restate ota install truth through explicit installer
 commands, explicit `ota-run/setup` / `ota-run/action` mode, or source-install helpers while the
 repo already declares `agent.bootstrap.ota.source`. Treat that as install-governance drift and

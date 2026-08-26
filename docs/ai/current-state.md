@@ -43,15 +43,34 @@ durable agent workflow belongs in the canonical Ota skill.
   duplicate references, action/bounds substitution, noncanonical or non-printable migration paths,
   Unicode or otherwise non-profile namespace components, and malformed identities. Authored migration
   content identities remain expected declaration truth rather than observed byte evidence. This
-  batch does not change execution admission, evaluate policy, derive a
-  typed adapter plan, contact a provider, emit canaries, or establish positive assurance. The
+  batch includes a local, execution-disabled PostgreSQL schema-mutation action carrier: it
+  captures the declared migration set with explicit entry-count, per-file, and total-byte limits.
+  Unix capture retains no-follow directory/file handles; non-Unix execution refuses because an
+  equivalent race-safe traversal is not implemented. The adapter requires its manifest identity to equal
+  `migration_set.content_identity`, and derives a domain-separated application plan bound to the
+  exact task attachment and effect realization. Dry-run publishes that non-secret plan. Selected
+  execution uses the same effective working directory and admission path, re-observes source truth,
+  verifies the selected-task-bound plan and retained materialized bytes, and refuses before task
+  conditions, required services, dependencies, shell dispatch, provider contact, policy evaluation,
+  or mutation. Validation refuses mode or OS-variant execution-body overrides so runtime selection
+  cannot replace the previewed typed action. It emits no success claim, agent-safe
+  authority, canary, receipt, archive, or positive assurance. Provider execution, independently
+  administered policy admission, provider-side mutation semantics, and independent pressure remain
+  unproved. The
   foundation is committed at Core `f3d4b8e1`, Site `5926f69`, Skills `d05b1d1`, and Examples
   `2dad574`; canonical-identity hardening is committed at Core `1b9a03d6`, Site `e78b963`, and
   Skills `30c8dbd`. It has no pressure evidence. V12.1 onward and both cross-cutting plans remain
   planned and inactive. The reference Example correctly requires Ota `1.6.27`; the source-built
   `v1.6.27` development binary validated that exact contract locally on 2026-08-25. This closes
-  only the local minimum-version gate; typed-adapter continuity and independent pressure remain
-  unproved.
+  only the local minimum-version gate. Local plan-to-executor continuity is implemented but has no
+  independent pressure evidence. Contract validation now also rejects a released `agent.bootstrap.ota.source.version`
+  below `metadata.ota.minimum_version`; `source: contract` is the canonical CI consumer so a
+  workflow cannot maintain a divergent released bootstrap version. Git revisions and pressure
+  branches remain intentionally incomparable to a release floor. The connected typed-adapter
+  propagation is committed at Site `93c5e2e39e67b5d94a56b67a72142e4a1e842f84`, Skills
+  `a00d52510890516cb20d0209de59d8c1d43b72fd`, and Examples
+  `c798640e8f5efa3d31d270a6a61a1f97ff55c547`; the unrelated generated Site pressure note remains
+  outside this batch.
 - completed V11.21 enforced sandbox policy application. Core now derives one
   provider-neutral, target-platform-bound segment graph from the selected task/workflow closure,
   applies only identified monotonic policy restrictions, and fails closed before preparation when

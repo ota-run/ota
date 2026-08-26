@@ -2104,8 +2104,9 @@ effect_definitions:
 
 tasks:
   db:migrate:
-    command:
-      exe: ./scripts/migrate
+    action:
+      kind: database_schema_mutation
+      effect: production_schema_migration
     effects:
       declared: [production_schema_migration]
 ```
@@ -2696,7 +2697,7 @@ Ota does not maintain an allowlist for `command.exe`. The examples above are ill
 
 - `action.kind`: required action kind; currently `copy_if_missing`, `ensure_env_file`, or
   `ensure_file`, `ensure_directory`, `ensure_virtualenv`, `ensure_git_checkout`, `ensure_git_template`, `ensure_git_checkouts`, `ensure_container_network`, `build_container_image`,
-  `reset_compose_service_volume`, or `ensure_bundle`
+  `reset_compose_service_volume`, `ensure_bundle`, or `database_schema_mutation`
 - `action` is the first-class surface for deterministic preparation and explicitly governed local
   materialization. File-preparation actions are native-only because they mutate the host working
   tree directly; `build_container_image` is a direct Docker-owned task action and materializes
@@ -2785,6 +2786,26 @@ Ota does not maintain an allowlist for `command.exe`. The examples above are ill
     - `kind: ensure_container_network`
     - `kind: reset_compose_service_volume`
   - each step uses the same fields and validation rules as the corresponding top-level action kind
+- `action.kind: database_schema_mutation`
+  - `action.effect`: required exact reference to one matching `effects.declared` entry on the same
+    task
+  - this is the V12 PostgreSQL schema-mutation adapter. It has no shell command, credential, or
+    provider endpoint. Ota resolves the named effect and observes each declared migration set with
+    bounded entry-count and byte limits. Unix capture retains no-follow directory/file handles;
+    non-Unix execution refuses because equivalent race-safe descriptor traversal is not implemented.
+    Ota derives an ordered file manifest and requires that manifest
+    identity to equal the effect's declared
+    `migration_set.content_identity`.
+  - Ota then derives one domain-separated `EffectApplicationPlan` from the adapter profile, exact
+    task attachment, canonical effect, resource binding, action, and observed migration manifest.
+    Dry-run publishes the non-secret selected-task-bound plan. Selected execution uses the same
+    effective working directory and admission path, re-observes source truth, and verifies the exact
+    retained migration bytes and plan identity at its typed executor boundary.
+  - provider execution is intentionally disabled in this slice. `ota run` refuses after the plan
+    is bound and before task conditions, required services, dependencies, PostgreSQL, or any other provider is
+    started. This is not a successful
+    migration, policy admission, agent-safe classification, receipt, archive, or positive
+    assurance claim.
 
 Use `action.kind: copy_if_missing` for setup steps like creating `.env.local` from
 `.env.example` without depending on POSIX `test` / `cp` or PowerShell conditionals. The action is
@@ -2874,6 +2895,15 @@ task (for example env file seeding plus secret file creation plus cache director
 shared Docker network plus host file prep) without shell orchestration. Ota executes steps in
 order, preserves the same idempotent semantics as each step kind, and keeps validation/error
 reporting inside the contract surface.
+
+Use `action.kind: database_schema_mutation` only when the selected task is the exact bounded V12
+schema-mutation effect you have declared. It replaces neither an arbitrary migration script nor a
+database provider integration. Keep the action outside `agent.safe_tasks`; declare the real
+PostgreSQL resource binding and migration-set identity without credentials; and expect current Ota
+to refuse before provider contact after verifying the migration bytes. Do not use this action as a
+successful migration signal until a later V12 policy and provider-continuity slice is shipped and
+independently pressure-proven. Mode and OS-variant overlays may refine non-execution inputs, but
+must not replace the typed action with `run`, `script`, `command`, `compose`, `prepare`, or `launch`.
 
 `requirements` fields:
 
@@ -4480,6 +4510,9 @@ Current validation rules:
 - `inferred_boundary` must include at least one provenance entry when present
 - `bootstrap.ota` must include at least one of `source`, `sh`, or `powershell` when present
 - `bootstrap.ota.source.kind: version` must declare a pinned ota release like `v1.6.21`
+- when `metadata.ota.minimum_version` is declared, a released `bootstrap.ota.source.kind: version`
+  must be greater than or equal to that floor; use `source: contract` in CI so every Ota step
+  consumes the same checked release truth
 - `bootstrap.ota.source.kind: git_rev` must declare a full 40-character commit SHA
 - `bootstrap.ota.source.kind: branch` must declare a non-empty branch name
 - unpinned `bootstrap.ota.sh` / `bootstrap.ota.powershell` commands now warn during `ota validate`
@@ -4684,10 +4717,14 @@ The `metadata.ota.detect` subtree is ota-reserved and must remain mapping-shaped
 or `metadata.ota.detect` is repurposed as a scalar or list, conservative candidate construction
 refuses until that path is repaired.
 
-`metadata.ota.minimum_version` is the reserved compatibility hint for contracts that require a
-newer ota binary than the one an operator may have installed. Keep it as a semver string such as
-`1.6.16`. Current ota builds validate it, reject contracts whose declared minimum exceeds the
-running binary, and use it to explain newer-field parse failures more clearly than a raw
+`metadata.ota.minimum_version` is the compatibility floor for contracts that require a newer ota
+binary than the one an operator may have installed. Keep it as a semver string such as `1.6.16`.
+Current ota builds validate it, reject contracts whose declared minimum exceeds the running binary,
+and reject a released `agent.bootstrap.ota.source.version` below that floor. Git revisions and
+pressure branches remain intentionally incomparable to a release floor. GitHub Actions should use
+`ota-run/setup@v1` or `ota-run/action@v1` with `source: contract` so the workflow consumes the
+checked source instead of duplicating a version. Ota uses the floor to explain newer-field parse
+failures more clearly than a raw
 `unknown field` message. Compatibility failures now report the contract minimum, the current
 binary identity, any detected unsupported contract feature, and the next upgrade or rebuild step;
 `ota --version --json` is the confirmation surface for that operator path.

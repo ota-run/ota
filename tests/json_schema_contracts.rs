@@ -91,6 +91,11 @@ fn tasks_schema_includes_agent_and_variant_fields() {
         .expect("task mode kind enum");
 
     assert!(success.get("workflow").is_some());
+    assert!(task_kind_enum.contains(&json!("database_schema_mutation")));
+    assert!(task_action_variants.iter().any(|variant| {
+        variant["properties"]["kind"]["const"] == "database_schema_mutation"
+            && variant["properties"].get("from").is_some()
+    }));
     assert!(success.get("artifacts").is_some());
     assert!(sandbox_network.get("enforcement").is_some());
     assert!(sandbox_network.get("outbound_targets").is_some());
@@ -1146,6 +1151,7 @@ fn run_preview_schema_includes_selected_task_env_and_plan_fields() {
     assert!(plan.get("dependency_chain").is_some());
     assert!(plan.get("requirement_lines").is_some());
     assert!(plan.get("actions").is_some());
+    assert!(plan.get("effect_application_plans").is_some());
     assert!(plan.get("notes").is_some());
     assert_eq!(
         simple_failure["dry_run"],
@@ -2394,6 +2400,11 @@ fn workspace_tasks_schema_exists_and_covers_repo_task_reports() {
         .expect("task action variants");
 
     assert!(properties.get("summary").is_some());
+    assert!(task_kind_enum.contains(&json!("database_schema_mutation")));
+    assert!(task_action_variants.iter().any(|variant| {
+        variant["properties"]["kind"]["const"] == "database_schema_mutation"
+            && variant["properties"].get("from").is_some()
+    }));
     assert!(repo.get("acquired").is_some());
     assert!(repo.get("depends_on").is_some());
     assert!(repo.get("tasks").is_some());

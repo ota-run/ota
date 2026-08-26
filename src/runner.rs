@@ -4487,7 +4487,7 @@ pub(crate) fn ensure_task_adapter_inputs_ready(
     Ok(())
 }
 
-fn effective_task_execution_working_dir(
+pub(crate) fn effective_task_execution_working_dir(
     task: &TaskSpec,
     backend: Backend,
     working_dir: &Path,
@@ -11799,6 +11799,20 @@ fn execute_task_with_hooks(
     let target_os = target_os_for_execution_backend(&backend, current_os);
     let requested_relation = matches!(relation, TaskExecutionRelation::Requested);
 
+    if let Some(execution) = task.resolved_execution_for_backend(backend_kind, target_os)
+        && let Some(crate::schema::TaskActionSpec::DatabaseSchemaMutation(spec)) =
+            execution.action()
+    {
+        let action_working_dir =
+            effective_task_execution_working_dir(task, backend_kind, working_dir);
+        return Err(database_schema_mutation_refusal(
+            Some(contract),
+            task_name,
+            spec,
+            action_working_dir.as_path(),
+        ));
+    }
+
     if let Some(skip_note) = should_skip_task_for_conditions(contract, task_name, task, working_dir)
     {
         record_oci_local_selected_edge(
@@ -11927,6 +11941,19 @@ fn execute_task_with_hooks(
         return Ok(final_exit_code);
     }
 
+    let execution =
+        if let Some(execution) = task.resolved_execution_for_backend(backend_kind, target_os) {
+            execution
+        } else if task.variants.is_empty() {
+            return Err(RunError::InvalidTaskExecution {
+                task: task_name.to_string(),
+            });
+        } else {
+            return Err(RunError::NoMatchingTaskVariant {
+                task: task_name.to_string(),
+                os: target_os.to_string(),
+            });
+        };
     let mut input_resolution = resolve_task_inputs(
         contract,
         contract_path,
@@ -12081,19 +12108,6 @@ fn execute_task_with_hooks(
         state,
     )?;
 
-    let execution =
-        if let Some(execution) = task.resolved_execution_for_backend(backend_kind, target_os) {
-            execution
-        } else if task.variants.is_empty() {
-            return Err(RunError::InvalidTaskExecution {
-                task: task_name.to_string(),
-            });
-        } else {
-            return Err(RunError::NoMatchingTaskVariant {
-                task: task_name.to_string(),
-                os: target_os.to_string(),
-            });
-        };
     let initial_task_env = effective_task_env_for_backend(contract, task, &backend, working_dir);
     let initial_env_details = resolve_task_env_details_for_task_with_policy(
         contract,
@@ -13901,9 +13915,24 @@ fn execute_task_command_with_replay_baseline_mounts(
             host_port_override,
             mode,
         ),
-        (_, PreparedTaskExecution::FileAction { action }) => {
-            execute_native_file_action_task(contract, task_name, action, working_dir, env_overrides)
-        }
+        (_, PreparedTaskExecution::FileAction { action }) => match action {
+            crate::schema::TaskActionSpec::DatabaseSchemaMutation(_) => {
+                execute_native_file_action_task(
+                    contract,
+                    task_name,
+                    action,
+                    effective_working_dir.as_path(),
+                    env_overrides,
+                )
+            }
+            _ => execute_native_file_action_task(
+                contract,
+                task_name,
+                action,
+                working_dir,
+                env_overrides,
+            ),
+        },
         (_, PreparedTaskExecution::Preparation { prepare }) => execute_prepare_task(
             contract,
             task,
@@ -15409,6 +15438,78 @@ fn execute_native_file_action_task(
         crate::schema::TaskActionSpec::EnsureBundle(spec) => {
             execute_ensure_bundle_action(contract, task_name, spec, working_dir, env_overrides)
         }
+        crate::schema::TaskActionSpec::DatabaseSchemaMutation(spec) => {
+            execute_database_schema_mutation_action(contract, task_name, spec, working_dir)
+        }
+    }
+}
+
+fn execute_database_schema_mutation_action(
+    contract: Option<&Contract>,
+    task_name: &str,
+    spec: &crate::schema::TaskDatabaseSchemaMutationActionSpec,
+    working_dir: &Path,
+) -> Result<TaskCommandOutput, RunError> {
+    Err(database_schema_mutation_refusal(
+        contract,
+        task_name,
+        spec,
+        working_dir,
+    ))
+}
+
+fn database_schema_mutation_refusal(
+    contract: Option<&Contract>,
+    task_name: &str,
+    spec: &crate::schema::TaskDatabaseSchemaMutationActionSpec,
+    working_dir: &Path,
+) -> RunError {
+    let contract = match contract {
+        Some(contract) => contract,
+        None => {
+            return RunError::FileActionFailed {
+                task: task_name.to_string(),
+                message: String::from("typed database schema-mutation actions require a contract"),
+            };
+        }
+    };
+    let admission = match crate::effect_application_plan::admit_database_schema_mutation_action(
+        contract,
+        task_name,
+        spec.effect.as_str(),
+        working_dir,
+    ) {
+        Ok(admission) => admission,
+        Err(error) => {
+            return RunError::FileActionFailed {
+                task: task_name.to_string(),
+                message: format!(
+                    "typed database schema-mutation plan refused ({}): {}",
+                    error.code, error.message
+                ),
+            };
+        }
+    };
+    if let Err(error) = crate::effect_application_plan::verify_admitted_effect_application(
+        contract,
+        task_name,
+        working_dir,
+        &admission,
+    ) {
+        return RunError::FileActionFailed {
+            task: task_name.to_string(),
+            message: format!(
+                "typed database schema-mutation executor input refused ({}): {}",
+                error.code, error.message
+            ),
+        };
+    }
+    RunError::FileActionFailed {
+        task: task_name.to_string(),
+        message: format!(
+            "typed database schema-mutation plan `{}` and its exact materialized input were admitted, but provider execution is disabled in V12",
+            admission.plan.identity
+        ),
     }
 }
 

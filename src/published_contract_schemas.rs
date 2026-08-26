@@ -1393,6 +1393,15 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
               "items": { "$ref": "#/$defs/taskActionStep" }
             }
           }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "effect"],
+          "properties": {
+            "kind": { "const": "database_schema_mutation" },
+            "effect": { "type": "string" }
+          }
         }
       ]
     },

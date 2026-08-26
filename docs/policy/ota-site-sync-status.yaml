@@ -25,9 +25,9 @@
 version: 1
 repository: ota-run/ota-site
 mode: synced
-reviewed_ota_commit: "1b9a03d6dc147f48b4b4ab8fe3cf565a0f886373"
-consumer_commit: "e78b963a060a1ce039f174224ce03980aa51927c"
+reviewed_ota_commit: "bfcf3d6c00840891204b870d3dd5b1bca6e67670"
+consumer_commit: "93c5e2e39e67b5d94a56b67a72142e4a1e842f84"
 notes: >
-  Site reference and Learn surfaces explain the v1.6.27 typed-effect declaration shape and retain
-  its no-admission and no-positive-assurance boundary. The source-owned lesson-version correction
-  and semantic curriculum guard are committed in the pinned consumer revision.
+  Site contract, Learn, and CI-reference surfaces now carry the V12 typed-action continuity and
+  released bootstrap-floor boundaries. They also state that mode and OS-variant overlays cannot
+  replace the previewed typed action with another executable body.

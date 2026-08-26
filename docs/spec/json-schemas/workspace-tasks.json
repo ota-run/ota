@@ -197,6 +197,15 @@
           "properties": {
             "kind": { "const": "ensure_bundle" }
           }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "from"],
+          "properties": {
+            "kind": { "const": "database_schema_mutation" },
+            "from": { "type": "string" }
+          }
         }
       ]
     },
@@ -425,7 +434,7 @@
               "required": ["name", "kind", "depends_on"],
               "properties": {
                 "name": { "type": "string" },
-                "kind": { "enum": ["run", "script", "command", "container", "copy_if_missing", "ensure_env_file", "ensure_file", "ensure_directory", "ensure_virtualenv", "ensure_git_checkout", "ensure_git_template", "ensure_git_checkouts", "ensure_container_network", "build_container_image", "reset_compose_service_volume", "ensure_bundle", "sequence", "dependency_hydration", "tool_bootstrap", "aggregate"] },
+                "kind": { "enum": ["run", "script", "command", "container", "copy_if_missing", "ensure_env_file", "ensure_file", "ensure_directory", "ensure_virtualenv", "ensure_git_checkout", "ensure_git_template", "ensure_git_checkouts", "ensure_container_network", "build_container_image", "reset_compose_service_volume", "ensure_bundle", "database_schema_mutation", "sequence", "dependency_hydration", "tool_bootstrap", "aggregate"] },
                 "description": { "type": "string" },
                 "run": { "type": "string" },
                 "script": { "type": "string" },

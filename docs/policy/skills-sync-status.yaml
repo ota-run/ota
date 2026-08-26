@@ -25,9 +25,9 @@
 version: 1
 repository: ota-run/skills
 mode: synced
-reviewed_ota_commit: "1b9a03d6dc147f48b4b4ab8fe3cf565a0f886373"
-consumer_commit: "30c8dbd4758afaf269de9e42e518caa0692a7af9"
+reviewed_ota_commit: "bfcf3d6c00840891204b870d3dd5b1bca6e67670"
+consumer_commit: "a00d52510890516cb20d0209de59d8c1d43b72fd"
 notes: >
-  The canonical Skill and both installed mirrors document strict typed-effect authoring and review
-  without presenting declared-only effects as agent-safe or positively assured. The connected
-  canonical namespace and migration-path profile wording is committed in the pinned revision.
+  The canonical Skill and both installed mirrors now describe the bounded V12 migration-byte and
+  plan-to-executor continuity while preserving the provider-disabled boundary and refusing mode or
+  OS-variant executable-body substitution.

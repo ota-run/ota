@@ -22702,6 +22702,43 @@ fn render_run_preview_target(
             )),
         };
     };
+    let effect_application_plans = match task.action.as_ref() {
+        Some(crate::schema::TaskActionSpec::DatabaseSchemaMutation(spec)) => {
+            let effective =
+                effective_task_execution(&target.contract, task_name.as_str(), overrides);
+            let working_dir = crate::runner::effective_task_execution_working_dir(
+                task,
+                effective.backend,
+                contract_working_dir(&target.contract_path),
+            );
+            match crate::effect_application_plan::admit_database_schema_mutation_action(
+                &target.contract,
+                task_name.as_str(),
+                spec.effect.as_str(),
+                &working_dir,
+            ) {
+                Ok(admission) => vec![admission.plan],
+                Err(error) => {
+                    let error = format!(
+                        "typed database schema-mutation plan refused ({}): {}",
+                        error.code, error.message
+                    );
+                    return match format {
+                        OutputFormat::Text => {
+                            CommandOutput::failure(stylize_text_failure("ota run", &error))
+                        }
+                        OutputFormat::Json => CommandOutput::failure(run_preview_error_json(
+                            target.contract_path.display().to_string(),
+                            member,
+                            task_name.as_str(),
+                            error,
+                        )),
+                    };
+                }
+            }
+        }
+        _ => Vec::new(),
+    };
     let replay_input_preflight =
         task_replay_input_preflight(&target.contract, &target.contract_path, task_name.as_str());
     if let Some(error) = replay_input_preflight.policy_load_error.as_ref() {
@@ -22886,7 +22923,7 @@ fn render_run_preview_target(
                 current_requirement_platform(),
                 false,
             );
-            let plan = if execution_option_admission_finding(&error).is_some() {
+            let mut plan = if execution_option_admission_finding(&error).is_some() {
                 execution_option_refusal_run_preview_plan(task_name.as_str())
             } else {
                 build_run_preview_plan(
@@ -22899,6 +22936,7 @@ fn render_run_preview_target(
                     persist_logs,
                 )
             };
+            plan.effect_application_plans = effect_application_plans.clone();
             let summary = DoctorSummary {
                 verdict: DoctorVerdict::NotReady,
                 agent_verdict: DoctorVerdict::Ready,
@@ -23032,7 +23070,7 @@ fn render_run_preview_target(
         current_requirement_platform(),
         false,
     );
-    let plan = build_run_preview_plan(
+    let mut plan = build_run_preview_plan(
         &target.contract,
         &target.contract_path,
         task_name.as_str(),
@@ -23041,6 +23079,7 @@ fn render_run_preview_target(
         &execution_plan,
         persist_logs,
     );
+    plan.effect_application_plans = effect_application_plans;
     let preconditions_report = run_preview_preconditions_report(
         &target.contract,
         &target.contract_path,

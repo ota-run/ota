@@ -362,6 +362,10 @@ Current shape:
       "introduced_in": "1.6.17"
     },
     {
+      "id": "tasks.action.database_schema_mutation",
+      "introduced_in": "1.6.27"
+    },
+    {
       "id": "checks.changed_files",
       "introduced_in": "1.6.16"
     },
@@ -3309,6 +3313,16 @@ top-level `provisioning` and `provisioning_request` fields using the same machin
 `ota doctor --json`, so agents do not need to re-derive selected-path host fulfillment from
 free-form `requirement_lines`.
 
+For `action.kind: database_schema_mutation` on Unix, `plan.effect_application_plans` contains the exact
+non-secret schema-v1 plan admitted by the typed adapter. It binds the adapter profile, selected
+task, effect reference, attachment, consequence, resource binding, action, and ordered migration
+manifests. File entries expose only root-relative paths and SHA-256 identities, never migration
+bytes or credentials. The identity binds the selected task. Selected execution reuses the same
+effective working directory and admission logic, then verifies the retained materialized bytes at
+the executor boundary before task conditions, required services, dependencies, or provider contact. Non-Unix
+execution refuses because race-safe source capture is unavailable. The field is plan-continuity evidence, not mutation, policy, receipt, archive, or
+assurance evidence.
+
 The published schema for this surface is
 [json-schemas/run-preview.json](json-schemas/run-preview.json). It covers single-target ready or
 blocked previews, aggregate member previews, and the simpler pre-preview error envelope.
@@ -4328,7 +4342,13 @@ automation can see the same repo writes, connectivity needs, external-state muta
 requirements, and post-outcome task graph that `ota run` executes. Structured task launch is
 additive through `tasks[*].launch` when the repo task uses command or packaged-container launch.
 Structured task actions are additive through `tasks[*].action` when the repo task uses a
-first-class setup action such as `copy_if_missing`.
+first-class action such as `copy_if_missing` or the execution-disabled V12
+`database_schema_mutation` adapter. The latter reports no successful provider operation: current
+Ota captures bounded migration bytes, binds the plan across dry-run and selected execution, then
+refuses before provider contact.
+For this action, the task JSON summary uses `action.kind: database_schema_mutation` and
+`action.from` for the selected declared effect reference; the authored contract field remains
+`action.effect`.
 When the workspace contract pins `repos.<name>.workflow`, each repo item may also include additive
 `workflow`.
 

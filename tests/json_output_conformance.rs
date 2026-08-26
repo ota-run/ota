@@ -2114,6 +2114,139 @@ tasks:
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn typed_effect_preview_and_selected_executor_bind_the_same_application_plan() {
+    let fixture = tempfile::tempdir().expect("tempdir");
+    fs::create_dir_all(fixture.path().join("subdir/migrations")).expect("migration directory");
+    let migration_bytes = b"create table example ();\n";
+    fs::write(
+        fixture.path().join("subdir/migrations/001.sql"),
+        migration_bytes,
+    )
+    .expect("migration file");
+    let file_identity = format!("sha256:{:x}", Sha256::digest(migration_bytes));
+    let manifest = json!({
+        "schema_version": 1,
+        "root": "migrations",
+        "files": [{ "path": "001.sql", "identity": file_identity }]
+    });
+    let mut manifest_identity_bytes = b"ota.schema-migration-manifest.v1\0".to_vec();
+    manifest_identity_bytes
+        .extend(serde_jcs::to_vec(&manifest).expect("migration manifest canonicalizes"));
+    let manifest_identity = format!("sha256:{:x}", Sha256::digest(manifest_identity_bytes));
+    fs::write(
+        fixture.path().join("ota.yaml"),
+        format!(
+            r#"
+version: 1
+project: {{ name: typed-effect-preview }}
+resource_bindings:
+  primary:
+    kind: database
+    provider: postgresql
+    namespace: {{ authority: dns:example.org, environment: production }}
+effect_definitions:
+  migration:
+    kind: database_schema_mutation
+    action: apply_migration_set
+    resource: {{ engine: postgresql, target_ref: primary, schema: public }}
+    bounds:
+      migration_set: {{ root: migrations, content_identity: {manifest_identity} }}
+      start_state: any_within_set
+checks:
+  - name: condition-pass
+    kind: precondition
+    severity: error
+    run: "printf condition > condition-ran"
+  - name: condition-fail
+    kind: precondition
+    severity: error
+    run: "exit 1"
+tasks:
+  dependency:
+    action: {{ kind: ensure_file, path: dependency-ran, value: executed }}
+  migrate:
+    adapter_inputs:
+      compose: {{ cwd: subdir }}
+    action: {{ kind: database_schema_mutation, effect: migration }}
+    depends_on: [dependency]
+    when: {{ checks: [condition-pass] }}
+    effects:
+      declared: [migration]
+  migrate-failing-condition:
+    adapter_inputs:
+      compose: {{ cwd: subdir }}
+    action: {{ kind: database_schema_mutation, effect: migration }}
+    when: {{ checks: [condition-fail] }}
+    effects:
+      declared: [migration]
+"#
+        ),
+    )
+    .expect("contract");
+
+    let preview = run_ota_with_env(
+        &["run", "migrate", "--dry-run", "--json"],
+        fixture.path(),
+        &[],
+        true,
+    );
+    assert_matches_schema("run-preview.json", &preview);
+    let plans = preview["plan"]["effect_application_plans"]
+        .as_array()
+        .expect("typed effect plans");
+    assert_eq!(plans.len(), 1);
+    let plan_identity = plans[0]["identity"]
+        .as_str()
+        .expect("application plan identity");
+    assert_eq!(
+        plans[0]["migration_manifests"][0]["identity"],
+        manifest_identity
+    );
+
+    let execution = Command::new(env!("CARGO_BIN_EXE_ota"))
+        .args(["run", "migrate", "--plain"])
+        .current_dir(fixture.path())
+        .output()
+        .expect("typed effect execution selection");
+    assert!(!execution.status.success());
+    let output = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&execution.stdout),
+        String::from_utf8_lossy(&execution.stderr)
+    );
+    assert!(output.contains(plan_identity), "{output}");
+    assert!(
+        output.contains("provider execution is disabled"),
+        "{output}"
+    );
+    assert!(
+        !fixture.path().join("dependency-ran").exists(),
+        "execution-disabled typed action must refuse before dependencies mutate"
+    );
+    assert!(
+        !fixture.path().join("condition-ran").exists(),
+        "execution-disabled typed action must refuse before conditions mutate"
+    );
+
+    let failing_condition = Command::new(env!("CARGO_BIN_EXE_ota"))
+        .args(["run", "migrate-failing-condition", "--plain"])
+        .current_dir(fixture.path())
+        .output()
+        .expect("typed effect execution with failing condition");
+    assert!(!failing_condition.status.success());
+    let failing_output = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&failing_condition.stdout),
+        String::from_utf8_lossy(&failing_condition.stderr)
+    );
+    assert!(
+        failing_output.contains("provider execution is disabled"),
+        "{failing_output}"
+    );
+}
+
 #[test]
 fn crossing_grant_up_refusal_receipt_carries_typed_authority_evidence() {
     let fixture = tempfile::tempdir().expect("tempdir");
@@ -4139,8 +4272,9 @@ effect_definitions:
       start_state: any_within_set
 tasks:
   db-migrate:
-    command:
-      exe: true
+    action:
+      kind: database_schema_mutation
+      effect: production_schema_migration
     effects:
       declared: [production_schema_migration]
 "#,
@@ -4154,6 +4288,14 @@ tasks:
     assert_eq!(
         json["tasks"][0]["effects"]["declared"],
         json!(["production_schema_migration"])
+    );
+    assert_eq!(
+        json["tasks"][0]["action"]["kind"],
+        "database_schema_mutation"
+    );
+    assert_eq!(
+        json["tasks"][0]["action"]["from"],
+        "production_schema_migration"
     );
 }
 

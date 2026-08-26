@@ -295,6 +295,15 @@
           "properties": {
             "kind": { "const": "ensure_bundle" }
           }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "from"],
+          "properties": {
+            "kind": { "const": "database_schema_mutation" },
+            "from": { "type": "string" }
+          }
         }
       ]
     },
@@ -1038,7 +1047,7 @@
                 "type": "object",
                 "additionalProperties": { "$ref": "#/$defs/taskInput" }
               },
-              "kind": { "enum": ["run", "script", "command", "container", "compose_exec", "compose_run", "compose_attach", "compose_up", "compose_down", "compose_build", "compose_stop", "compose_restart", "compose_rm", "compose_logs", "compose_ps", "copy_if_missing", "ensure_env_file", "ensure_file", "ensure_directory", "ensure_virtualenv", "ensure_git_checkout", "ensure_git_template", "ensure_git_checkouts", "ensure_container_network", "build_container_image", "reset_compose_service_volume", "ensure_bundle", "sequence", "dependency_hydration", "tool_bootstrap", "aggregate"] },
+              "kind": { "enum": ["run", "script", "command", "container", "compose_exec", "compose_run", "compose_attach", "compose_up", "compose_down", "compose_build", "compose_stop", "compose_restart", "compose_rm", "compose_logs", "compose_ps", "copy_if_missing", "ensure_env_file", "ensure_file", "ensure_directory", "ensure_virtualenv", "ensure_git_checkout", "ensure_git_template", "ensure_git_checkouts", "ensure_container_network", "build_container_image", "reset_compose_service_volume", "ensure_bundle", "database_schema_mutation", "sequence", "dependency_hydration", "tool_bootstrap", "aggregate"] },
               "run": { "type": "string" },
               "script": { "type": "string" },
               "command": { "$ref": "#/$defs/taskCommand" },
@@ -1206,7 +1215,7 @@
                       "type": "object",
                       "additionalProperties": { "$ref": "#/$defs/taskInput" }
                     },
-                    "kind": { "enum": ["run", "script", "command", "container", "copy_if_missing", "ensure_env_file", "ensure_file", "ensure_directory", "ensure_virtualenv", "ensure_git_checkout", "ensure_git_template", "ensure_git_checkouts", "ensure_container_network", "build_container_image", "reset_compose_service_volume", "ensure_bundle", "sequence", "dependency_hydration", "tool_bootstrap", "aggregate"] },
+                    "kind": { "enum": ["run", "script", "command", "container", "copy_if_missing", "ensure_env_file", "ensure_file", "ensure_directory", "ensure_virtualenv", "ensure_git_checkout", "ensure_git_template", "ensure_git_checkouts", "ensure_container_network", "build_container_image", "reset_compose_service_volume", "ensure_bundle", "database_schema_mutation", "sequence", "dependency_hydration", "tool_bootstrap", "aggregate"] },
                     "run": { "type": "string" },
                     "script": { "type": "string" },
                     "command": { "$ref": "#/$defs/taskCommand" },

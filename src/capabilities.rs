@@ -67,6 +67,10 @@ const CONTRACT_CAPABILITY_SPECS: &[ContractCapabilitySpec] = &[
         introduced_in: "1.6.27",
     },
     ContractCapabilitySpec {
+        id: "tasks.action.database_schema_mutation",
+        introduced_in: "1.6.27",
+    },
+    ContractCapabilitySpec {
         id: "tasks.effects.writes",
         introduced_in: "1.6.15",
     },

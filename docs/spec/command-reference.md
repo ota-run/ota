@@ -1794,6 +1794,9 @@ ota doctor --member api --member web --json [PATH]
 - when `metadata.ota.minimum_version` rejects a contract, ota now reports the contract minimum,
   current binary identity, detected unsupported contract feature when one is known, and the next
   install/rebuild step instead of only saying the binary is too old
+- when that floor and a released `agent.bootstrap.ota.source.version` are both declared, validates
+  that the bootstrap release meets the floor; GitHub workflows should consume the checked source
+  through `source: contract` rather than hardcoding a second install version
 - validates the contract first when one is present
 - when a root contract declares `workspace.type: monorepo`, plain `ota doctor` diagnoses the root contract and grouped summaries for each declared member
 - when `--member` is set, diagnoses the merged member contract
