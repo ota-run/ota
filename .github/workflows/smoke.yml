@@ -40,6 +40,9 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
+  typed-effect-admission-pressure:
+    uses: ./.github/workflows/typed-effect-admission-pressure.yml
+
   repo-smoke:
     name: Repo Smoke (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

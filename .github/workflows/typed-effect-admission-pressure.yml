@@ -26,21 +26,8 @@
 name: typed-effect-admission-pressure
 
 on:
+  workflow_call:
   workflow_dispatch:
-  push:
-    branches:
-      - 1.6.27-implementation
-    paths:
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - "src/effect_application_plan.rs"
-      - "src/effect_domain.rs"
-      - "src/runner.rs"
-      - "src/cli/commands.rs"
-      - "src/published_contract_schemas.rs"
-      - "docs/spec/json-schemas/contract.json"
-      - "docs/spec/json-schemas/run-preview.json"
-      - ".github/workflows/typed-effect-admission-pressure.yml"
 
 permissions:
   contents: read
