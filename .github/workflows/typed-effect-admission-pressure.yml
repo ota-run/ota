@@ -183,15 +183,24 @@ jobs:
           proof_status=$?
           set -e
 
+          printf 'run_status=%s\nup_status=%s\nproof_status=%s\n' \
+            "$run_status" "$up_status" "$proof_status" > "$proof_root/terminal-status.txt"
           test "$run_status" -eq 1
           test "$up_status" -eq 1
           test "$proof_status" -eq 1
           rg -q 'provider execution is disabled' "$proof_root/run-refusal.txt"
           rg -q 'provider execution is disabled' "$proof_root/up-refusal.txt"
-          rg -q 'provider execution is disabled' "$proof_root/proof-refusal.txt"
+          rg -q 'Phase: preconditions' "$proof_root/proof-refusal.txt"
+          rg -q 'provider execution is disabled' "$fixture/.ota/proof/typed/up.log"
           test ! -e "$fixture/setup-sentinel"
           test ! -e "$fixture/.env.typed"
           test ! -e "$fixture/.ota/state/logs"
+          printf '%s\n' \
+            'run_refused_before_side_effects' \
+            'up_refused_before_side_effects' \
+            'proof_inherited_up_precondition_refusal' \
+            'setup_sentinel_absent' \
+            'workflow_env_artifact_absent' > "$proof_root/checkpoints.txt"
 
           "$ota" json validate \
             --schema up.json \
@@ -237,3 +246,4 @@ jobs:
           name: typed-effect-admission-pressure-${{ matrix.os }}
           path: ${{ runner.temp }}/ota-typed-effect-admission-pressure
           if-no-files-found: warn
+          include-hidden-files: true
