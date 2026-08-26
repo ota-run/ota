@@ -83,6 +83,145 @@ Observation and consumer extensions may eventually support third-party packaging
 enforcement, and authority profiles remain statically registered or installed through an equally
 protected reviewed mechanism; arbitrary repository-loaded code cannot enter those paths.
 
+## Effective Runtime Reconciliation
+
+Configuration projection is not proof of effective runtime posture. A runtime-facing profile must
+declare the exact dimensions it can observe after projection and immediately before consequential
+work, including applicable repository identity, working directory, selected scope, permission or
+approval posture, sandbox/network posture, delivered repository capabilities, and owned-resource
+lifecycle state. Dimensions outside that observation surface remain `unknown`; absence, successful
+parsing, successful projection, or runtime acknowledgement cannot be relabelled as effective.
+
+One versioned `RequiredRuntimePosture` derives `required_runtime_posture_identity` from the exact
+context transaction and work-unit identities, repository instance, selected invocation and scope,
+runtime target, consequential action/effect/application-plan identities, required posture
+dimensions, required observation-authority, completeness, and freshness postures, and the
+identities of every authoritative contract or independently administered policy snapshot used by
+the activating version slice. Repository files and callers cannot self-assign a stronger authority
+source.
+
+Observation context is separately identity-bound so conformance evidence does not depend on the
+registration identity it helps create. One versioned `RuntimeObservationContext` derives
+`runtime_observation_context_identity` through a discriminated posture:
+
+- `conformance` binds the exact `profile_semantic_identity`, `implementation_subject_identity`,
+  conformance-suite identity, harness transaction, test work unit, fixture, target, and observation
+  challenge/epoch. It requires those fields and forbids pressure-manifest, pressure-transaction,
+  pressure-work-unit, pressure-evidence, conformance-result, admission-transaction, admission-work-unit,
+  implementation-registration, lifecycle, and registry-snapshot fields;
+- `pressure` binds the exact `profile_semantic_identity`, `implementation_subject_identity`,
+  pre-evidence pressure-manifest identity, pressure transaction, pressure work unit, fixture,
+  target, and observation challenge/epoch. It requires those fields and forbids conformance-suite,
+  harness-transaction, test-work-unit, conformance-result, pressure-evidence,
+  admission-transaction, admission-work-unit, implementation-registration, lifecycle, and
+  registry-snapshot fields; or
+- `release_admission` binds the exact profile semantic, implementation subject, implementation
+  registration, accepted registry snapshot, admission transaction, work unit, target, and
+  observation challenge/epoch identities. It requires those fields and forbids conformance-suite,
+  harness-transaction, test-work-unit, conformance-result, fixture, pressure-manifest,
+  pressure-transaction, pressure-work-unit, and pressure-evidence fields.
+
+Every context variant rejects all fields owned by either other variant; mixed contexts cannot be
+normalized into one valid identity.
+
+The final registration reconciles conformance and pressure observations to the implementation
+subject before including their result identities. Release admission uses the resulting registration
+without creating an identity cycle.
+
+One versioned `EffectiveRuntimeObservation` derives
+`effective_runtime_observation_identity` from:
+
+- the exact `runtime_observation_context_identity`;
+- runtime instance and session identities, repository instance, worktree, canonical path, source
+  revision, selected invocation and scope, context transaction and work unit, consequential
+  action/effect/application plan, and observation challenge/epoch identities;
+- every observed dimension with its value, attributable source, observation method, observation
+  authority posture (`adapter_observed | runtime_attested | manager_observed`), observation time,
+  freshness posture, and completeness posture; and
+- every unavailable, unsupported, contradictory, or unobserved required dimension.
+
+One versioned `RuntimePostureReconciliation` binds both identities and emits exactly
+`match | mismatch | unknown`, plus the exact matched, mismatched, and unknown dimensions. `match`
+requires every material required dimension to satisfy the required observation-authority,
+completeness, and freshness postures through the registered profile. Any mismatch refuses. Any
+unavailable, stale, incomplete, acknowledgement-only, insufficiently authoritative, or otherwise
+unknown required dimension produces `unknown` and cannot support positive admission.
+
+Reconciliation remains transaction-local. The observation and required posture cannot be replayed
+for another work unit, action, effect, application plan, session, or challenge. A runtime-facing
+adapter retains an identity-bound live runtime/session handle through consequential use or performs
+an immediate challenge-bound revalidation before use. Where a claimed property can change during
+execution, the profile also requires post-use observation and binds both observations into terminal
+evidence; a changed, unavailable, or incomplete terminal observation cannot support a positive
+continuity claim.
+
+Repository capability delivery uses one versioned `CapabilityDeliveryEvidence` with a
+domain-separated `capability_delivery_evidence_identity`. It binds the capability's canonical
+semantic/content identity, projection identity, intended recipient runtime/session, repository and
+selected scope, exact `runtime_observation_context_identity`, observed effective value, source,
+freshness, completeness, and one posture:
+`projected | runtime_acknowledged | witnessed_effective | witnessed_absent | contradicted | unknown`.
+A Skill, instruction file, permission profile, hook, or other capability existing on disk proves
+only source presence. Projection proves only adapter delivery. Runtime acknowledgement proves only
+that the runtime reported receipt. Only `witnessed_effective`, produced by a registered observation
+profile that can inspect the exact effective runtime surface and capability identity, may satisfy a
+required capability. Witnessed absence and contradiction refuse rather than collapsing into
+`unknown`.
+
+These records are conformance evidence, not a second public verdict taxonomy. This inactive plan
+does not add commands, activate an adapter, or claim that Ota can currently observe Codex, Claude,
+or another third-party runtime's effective posture. Implementation waits for an active version
+slice and one real integration exposing pressure-testable effective-state evidence.
+
+### Session rebinding
+
+A resumed remote, agent, or provider session is a new admission boundary. Before reuse, Ota
+reconciles the current repository instance, worktree, canonical path, source revision, selected
+scope, runtime identity, and effective authority against a fresh observation. A material mismatch
+or unknown dimension refuses reuse. Historical session evidence remains historical and cannot
+transfer authority, freshness, capability delivery, or assurance to the resumed session.
+
+### Owned resources
+
+Any adapter-created background process, subscription, worktree, remote session, service, or other
+durable subordinate resource first requires a durable, identity-bound `OwnedResourceCreationIntent`
+before provider contact. The intent binds an idempotent creation-request identity, creating
+transaction/session, profile and implementation subject, resource kind, requested scope and bounds,
+provider target, cleanup obligation, and recovery posture. Its domain-separated
+`owned_resource_creation_intent_identity` excludes that self-identity. Duplicate requests recover
+the exact previous issuance outcome and cannot create another resource.
+
+Creation reconciles atomically to exactly one versioned `OwnedResourceHandle` or provider-proved
+absence. Timeout, crash, lost acknowledgement, or ambiguous provider response remains an unresolved
+issuance state and must recover by request identity before retry or terminal completion. The
+handle's domain-separated
+`owned_resource_handle_identity` excludes that self-identity and binds the creating
+intent and runtime-observation-context identities, provider issuance identity, resource kind,
+public-safe or protected locator posture, immutable issuance/initial-state truth, supported control
+operations, and cleanup obligation.
+Protected locators remain protected evidence rather than entering public receipts. Terminal
+state does not mutate the handle identity. Separately domain-identified
+`OwnedResourceLifecycleObservation`, `OwnedResourceControlResult`, `OwnedResourceTransfer`, and
+`OwnedResourceTerminalEvidence` records each bind the stable handle identity. Terminal evidence
+reconciles every created handle to an exact cleaned, retained-by-contract, transferred, or
+cleanup-uncertain outcome. A profile unable to return a handle cannot claim resource ownership or
+cleanup support and must refuse creation when terminal cleanup is required. A transfer binds the
+recipient identity, explicit acceptance evidence, and successor cleanup obligation; it cannot erase
+the original creation and ownership history.
+
+### Disclosure
+
+Core owns one versioned disclosure profile per effective-observation, reconciliation,
+capability-delivery, creation-intent, resource-handle, lifecycle-observation, control-result,
+transfer, and terminal-evidence kind. Protected raw evidence retains exact canonical paths,
+runtime/session identities, posture details, and protected locators only in an authorized store. A
+separately identified public-safe projection includes only fields explicitly classified public by
+that profile. Source identities or digests appear publicly
+only when independently classified public-safe. The domain-separated `disclosure_profile_identity`
+binds those field classifications, and `public_projection_identity` binds the disclosure profile,
+source evidence kind/version, disclosed fields, omissions, redactions, and bounded verification
+loss. A public projection cannot be presented as full independent re-verifiability.
+
 ## Canonical Semantic, Subject, And Registration Descriptors
 
 Profile behavior, the exact implementation claim being tested, and reviewed registration evidence
@@ -191,7 +330,23 @@ Core provides a versioned conformance harness that verifies:
 - dry-run non-mutation and fail-closed unsupported behavior;
 - cancellation, timeout, duplicate response, ambiguity, replay, recovery, and cleanup where the
   class can mutate or authorize;
+- projected-versus-effective posture substitution, omitted or stale observation dimensions,
+  false runtime acknowledgement, required/effective identity mismatch, and unknown-as-match
+  relabelling;
+- every pairwise conformance/pressure/release observation-context substitution, mixed-context field
+  injection, registration-cycle introduction, cross-transaction/work-unit/action/effect/plan replay,
+  challenge reuse, live-handle loss, and missing or changed post-use observation;
+- capability semantic/content, projection, recipient, runtime/session, scope, observation-profile,
+  effective-value, and delivery-posture substitution, including witnessed absence and
+  contradiction;
+- resumed-session repository, worktree, source, scope, runtime, and authority rebinding;
+- missing creation intent, duplicate or ambiguous issuance, substituted request identity,
+  unproved absence, missing or duplicated handle, transfer without recipient acceptance, leaked
+  resource, mutable-handle relabelling, cross-handle lifecycle/control/transfer evidence, and
+  cleanup-uncertain owned-resource outcomes;
 - secret and protected-material disclosure controls;
+- raw-versus-public projection substitution, unsafe source-identity disclosure, redaction-loss
+  omission, and claims of full verification from a bounded public projection;
 - archive/export re-verification and historical compatibility; and
 - human, plain, JSON, schema, and exit-code consistency.
 
@@ -211,6 +366,16 @@ Trust-sensitive profiles require immutable pressure against the real claimed bou
 - exact Core, Protocol, adapter/carrier, registry, provider/configuration, and fixture revisions;
 - at least one positive path where the profile supports one;
 - every material refusal, downgrade, replay, cleanup, and recovery path;
+- required-versus-effective mismatch, incomplete observation, unavailable observation, stale
+  runtime acknowledgement, and resumed-session rebinding controls where the profile claims runtime
+  reconciliation;
+- cross-transaction observation replay, challenge/epoch substitution, live session change, and
+  post-use reconciliation where the observed property can change during execution;
+- exact creation-intent persistence, idempotent issuance, ambiguous-issuance recovery,
+  ownership-handle creation, control, transfer acceptance, terminal cleanup, interruption, and
+  recovery evidence for every resource kind the profile may create;
+- protected raw evidence and independently verified public-safe projections with exact disclosure
+  profile and bounded-verification-loss identities;
 - registry snapshot substitution, sequence rollback, stale/expired freshness, unavailable refresh,
   and a revocation present only in a later not-yet-installed snapshot;
 - repository/provider/host sentinels proving bounded mutation or zero mutation as claimed;
@@ -288,9 +453,11 @@ revocation, or convert candidate pressure into OSS support.
 4. Register existing shipped implementations from current truth without upgrading their claims.
 5. Add pressure-manifest and immutable-evidence verification.
 6. Add deprecation/revocation and unknown-version behavior.
-7. Integrate registration into capability output, receipts, archives, and assurance.
-8. Publish contributor, provider, operator, Example, Skill, Site, and Learn guidance.
-9. Require the first new V12+ profile to pass the complete path before closure.
+7. Define required/effective posture, capability-delivery, session-rebinding, and owned-resource
+   schemas and deterministic reconciliation fixtures before registering a runtime-facing profile.
+8. Integrate registration into capability output, receipts, archives, and assurance.
+9. Publish contributor, provider, operator, Example, Skill, Site, and Learn guidance.
+10. Require the first new V12+ profile to pass the complete path before closure.
 
 ## Acceptance Bar
 
@@ -310,6 +477,27 @@ revocation, or convert candidate pressure into OSS support.
   subject identity; pressure or release-evidence substitution cannot retain one implementation
   registration identity; lifecycle substitution cannot retain one registry snapshot identity;
 - skipped mandatory controls prevent positive lifecycle promotion;
+- projected or runtime-acknowledged configuration cannot satisfy a required effective posture;
+  every material required dimension must satisfy its registered observation-authority,
+  completeness, and freshness requirements, and every required delivered capability must be
+  `witnessed_effective`; otherwise reconciliation is `mismatch` or `unknown` and positive admission
+  refuses;
+- conformance and pressure observations bind the implementation subject without depending on the
+  registration identity they help create; release admission binds the final registration and
+  accepted registry snapshot through a distinct observation-context identity;
+- required posture, effective observation, and reconciliation bind one exact transaction, work
+  unit, action/effect/application plan, runtime/session, and challenge/epoch; replay or continuity
+  uncertainty refuses, and mutable properties require terminal re-observation;
+- resumed sessions cannot inherit repository, scope, capability, runtime, or authority evidence
+  without fresh identity-bound reconciliation;
+- every adapter-created durable resource has a pre-contact creation intent, idempotent request
+  identity, exactly one recovered handle or provider-proved absence, and one terminal outcome;
+  ambiguous issuance, missing, substituted, duplicated, leaked, unaccepted transfer, or
+  cleanup-uncertain handles prevent a positive cleanup claim; the immutable handle retains issuance
+  truth while later lifecycle, control, transfer, and terminal records bind that stable identity;
+- protected effective-state and resource evidence cannot enter public receipts or exports without
+  a Core-owned disclosure profile and separately identified public-safe projection; omission or
+  redaction carries bounded verification loss;
 - historical evidence retains all three original identities and lifecycle-at-execution posture;
 - admission, receipts, and archives retain all three exact identities plus the exact registry
   snapshot identity and freshness posture used for lifecycle evaluation;
@@ -327,7 +515,10 @@ revocation, or convert candidate pressure into OSS support.
 - certifying provider security or application correctness;
 - allowing repositories or Enterprise to define trusted profile semantics;
 - replacing version-specific acceptance bars;
-- promising support for every third-party implementation; or
+- promising support for every third-party implementation;
+- scanning product-specific configuration as a substitute for effective runtime evidence;
+- claiming Codex, Claude, or another harness loaded or enforced repository capabilities without a
+  registered effective-state observation profile and target-specific pressure; or
 - planning specific effect families, secret providers, cloud providers, or platforms before demand.
 
 ## Definition Of Done
@@ -335,4 +526,7 @@ revocation, or convert candidate pressure into OSS support.
 This plan completes only when registry semantics, all three identity layers, capability vocabulary,
 implementation lifecycle, conformance harness, immutable pressure binding, historical verification,
 public contribution guidance, and one real V12+ profile pass independent review. It remains
-cross-cutting rather than a new Ota product version.
+cross-cutting rather than a new Ota product version. Effective-runtime reconciliation schemas and
+controls remain inactive until a runtime-facing version slice has one real pressure-testable
+integration; they must complete before that profile can register or claim support, but they do not
+widen or block an effect-only profile that makes no runtime-observation claim.
