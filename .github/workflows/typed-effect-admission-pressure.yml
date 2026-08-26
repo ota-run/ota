@@ -74,6 +74,7 @@ jobs:
           import json
           import pathlib
           import sys
+          import textwrap
 
           fixture = pathlib.Path(sys.argv[1])
           preview_fixture = pathlib.Path(sys.argv[2])
@@ -88,7 +89,8 @@ jobs:
           manifest_identity = "sha256:" + hashlib.sha256(
               b"ota.schema-migration-manifest.v1\0" + manifest_json.encode()
           ).hexdigest()
-          common = f"""version: 1
+          common = textwrap.dedent(f"""\
+          version: 1
           metadata:
             ota:
               minimum_version: \"1.6.27\"
@@ -107,8 +109,9 @@ jobs:
               bounds:
                 migration_set: {{ root: migrations, content_identity: {manifest_identity} }}
                 start_state: any_within_set
-          """.replace("          ", "")
-          (preview_fixture / "ota.yaml").write_text((common + """tasks:
+          """)
+          (preview_fixture / "ota.yaml").write_text(common + textwrap.dedent("""\
+          tasks:
             migrate:
               action: { kind: database_schema_mutation, effect: migration }
               effects:
@@ -118,8 +121,9 @@ jobs:
             typed:
               run:
                 task: migrate
-          """).replace("          ", ""))
-          (fixture / "ota.yaml").write_text((common + """env:
+          """))
+          (fixture / "ota.yaml").write_text(common + textwrap.dedent("""\
+          env:
             profiles:
               typed:
                 env:
@@ -148,7 +152,7 @@ jobs:
                 task: migrate
               proof:
                 claim: bounded
-          """).replace("          ", ""))
+          """))
           PY
 
           git -C "$GITHUB_WORKSPACE" rev-parse HEAD > "$proof_root/core-revision.txt"
