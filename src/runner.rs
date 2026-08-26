@@ -11809,6 +11809,7 @@ fn execute_task_with_hooks(
             Some(contract),
             task_name,
             spec,
+            working_dir,
             action_working_dir.as_path(),
         ));
     }
@@ -15455,62 +15456,85 @@ fn execute_database_schema_mutation_action(
         task_name,
         spec,
         working_dir,
+        working_dir,
     ))
 }
 
-fn database_schema_mutation_refusal(
+pub(crate) fn database_schema_mutation_refusal(
     contract: Option<&Contract>,
     task_name: &str,
     spec: &crate::schema::TaskDatabaseSchemaMutationActionSpec,
-    working_dir: &Path,
+    repository_root: &Path,
+    effective_working_dir: &Path,
 ) -> RunError {
+    let identity = match verify_database_schema_mutation_admission(
+        contract,
+        task_name,
+        spec,
+        repository_root,
+        effective_working_dir,
+    ) {
+        Ok(identity) => identity,
+        Err(error) => return error,
+    };
+    RunError::FileActionFailed {
+        task: task_name.to_string(),
+        message: format!(
+            "typed database schema-mutation plan `{identity}` and its exact materialized input were admitted, but provider execution is disabled in V12"
+        ),
+    }
+}
+
+pub(crate) fn verify_database_schema_mutation_admission(
+    contract: Option<&Contract>,
+    task_name: &str,
+    spec: &crate::schema::TaskDatabaseSchemaMutationActionSpec,
+    repository_root: &Path,
+    effective_working_dir: &Path,
+) -> Result<String, RunError> {
     let contract = match contract {
         Some(contract) => contract,
         None => {
-            return RunError::FileActionFailed {
+            return Err(RunError::FileActionFailed {
                 task: task_name.to_string(),
                 message: String::from("typed database schema-mutation actions require a contract"),
-            };
+            });
         }
     };
     let admission = match crate::effect_application_plan::admit_database_schema_mutation_action(
         contract,
         task_name,
         spec.effect.as_str(),
-        working_dir,
+        repository_root,
+        effective_working_dir,
     ) {
         Ok(admission) => admission,
         Err(error) => {
-            return RunError::FileActionFailed {
+            return Err(RunError::FileActionFailed {
                 task: task_name.to_string(),
                 message: format!(
                     "typed database schema-mutation plan refused ({}): {}",
                     error.code, error.message
                 ),
-            };
+            });
         }
     };
     if let Err(error) = crate::effect_application_plan::verify_admitted_effect_application(
         contract,
         task_name,
-        working_dir,
+        repository_root,
+        effective_working_dir,
         &admission,
     ) {
-        return RunError::FileActionFailed {
+        return Err(RunError::FileActionFailed {
             task: task_name.to_string(),
             message: format!(
                 "typed database schema-mutation executor input refused ({}): {}",
                 error.code, error.message
             ),
-        };
+        });
     }
-    RunError::FileActionFailed {
-        task: task_name.to_string(),
-        message: format!(
-            "typed database schema-mutation plan `{}` and its exact materialized input were admitted, but provider execution is disabled in V12",
-            admission.plan.identity
-        ),
-    }
+    Ok(admission.plan.identity)
 }
 
 pub(crate) fn execute_workflow_prepare_action(

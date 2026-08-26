@@ -2797,15 +2797,22 @@ Ota does not maintain an allowlist for `command.exe`. The examples above are ill
     identity to equal the effect's declared
     `migration_set.content_identity`.
   - Ota then derives one domain-separated `EffectApplicationPlan` from the adapter profile, exact
-    task attachment, canonical effect, resource binding, action, and observed migration manifest.
-    Dry-run publishes the non-secret selected-task-bound plan. Selected execution uses the same
-    effective working directory and admission path, re-observes source truth, and verifies the exact
-    retained migration bytes and plan identity at its typed executor boundary.
-  - provider execution is intentionally disabled in this slice. `ota run` refuses after the plan
-    is bound and before task conditions, required services, dependencies, PostgreSQL, or any other provider is
-    started. This is not a successful
-    migration, policy admission, agent-safe classification, receipt, archive, or positive
-    assurance claim.
+    task attachment, contract invocation origin, repository-relative effective working directory,
+    canonical effect, resource binding, action, and observed migration manifest.
+    Dry-run publishes the non-secret selected-task-bound plan. Repo-level `ota run` and non-dry-run
+    repo-level `ota up` perform one closure-wide typed preflight before command-scoped replay-input policy loading,
+    agent/crossing/sandbox admission, workflow-environment artifact rendering, or durable-log
+    preparation. That preflight opens every effective-cwd and migration-root component relative to
+    a retained repository descriptor without following symlinks, re-observes source truth, verifies
+    the exact retained migration bytes and plan identity, and returns the provider-disabled refusal.
+  - provider execution is intentionally disabled in this slice. `ota run` and non-dry-run `ota up`
+    refuse after every typed action in the selected closure is verified and the first admitted plan
+    is selected for the terminal refusal. They refuse after the plan is bound and before
+    workflow-environment artifact rendering, durable-log preparation, task
+    conditions, required services, dependencies, PostgreSQL, or any other provider is
+    started. Non-dry-run `ota up` preserves its generic blocked readiness receipt with
+    `execution_attempted: false`; that is not a successful migration, policy admission, agent-safe
+    classification, positive effect or execution receipt, archive, or positive assurance claim.
 
 Use `action.kind: copy_if_missing` for setup steps like creating `.env.local` from
 `.env.example` without depending on POSIX `test` / `cp` or PowerShell conditionals. The action is

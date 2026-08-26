@@ -1010,6 +1010,7 @@ fn up_schema_preview_execution_includes_optional_image() {
         &schema["oneOf"][0]["properties"]["members"]["items"]["properties"];
     let preview_member_execution = &preview_member_properties["execution"]["properties"];
     let preview_member_governance = &preview_member_properties["governance"]["properties"];
+    let execution_receipt = &schema["oneOf"][1]["properties"]["receipt"]["properties"];
 
     assert!(preview_properties.get("summary").is_some());
     assert!(
@@ -1043,6 +1044,7 @@ fn up_schema_preview_execution_includes_optional_image() {
         preview_member_governance["sandbox_policy"]["$ref"],
         serde_json::json!("./tasks.json#/$defs/harnessSandboxPolicy")
     );
+    assert!(execution_receipt.get("workflow_env_artifacts").is_some());
 }
 
 #[test]
@@ -1157,6 +1159,51 @@ fn run_preview_schema_includes_selected_task_env_and_plan_fields() {
         simple_failure["dry_run"],
         serde_json::json!({ "const": true })
     );
+}
+
+#[test]
+fn run_preview_schema_enforces_typed_effect_manifest_cardinality() {
+    let schema = load_schema("docs/spec/json-schemas/run-preview.json");
+    let plan_schema = serde_json::json!({
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$ref": "#/$defs/effectApplicationPlan",
+        "$defs": schema["$defs"].clone()
+    });
+    let compiled = JSONSchema::options()
+        .with_draft(Draft::Draft202012)
+        .compile(&plan_schema)
+        .expect("effect application plan schema should compile");
+    let identity = format!("sha256:{}", "a".repeat(64));
+    let manifest = serde_json::json!({
+        "schema_version": 1,
+        "root": "migrations",
+        "identity": identity,
+        "files": []
+    });
+    let mut plan = serde_json::json!({
+        "schema_version": 1,
+        "identity": identity,
+        "adapter_profile_identity": identity,
+        "task": "migrate",
+        "effective_working_directory": ".",
+        "invocation_origin_identity": identity,
+        "effect_ref": "migration",
+        "attachment_identity": identity,
+        "effect_identity": identity,
+        "resource_binding_identity": identity,
+        "action": "apply_migration_set",
+        "migration_manifests": [manifest]
+    });
+    assert!(compiled.is_valid(&plan));
+
+    plan["migration_manifests"] = serde_json::json!([]);
+    assert!(!compiled.is_valid(&plan));
+
+    plan["action"] = serde_json::json!("rollback_migration_set");
+    assert!(!compiled.is_valid(&plan));
+
+    plan["action"] = serde_json::json!("reset_schema");
+    assert!(compiled.is_valid(&plan));
 }
 
 #[test]

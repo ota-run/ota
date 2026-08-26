@@ -26,8 +26,8 @@ version: 1
 repository: ota-run/ota-site
 mode: synced
 reviewed_ota_commit: "bfcf3d6c00840891204b870d3dd5b1bca6e67670"
-consumer_commit: "93c5e2e39e67b5d94a56b67a72142e4a1e842f84"
+consumer_commit: "00a2f60729e264dc4806b1698b475576a3a58a93"
 notes: >
-  Site contract, Learn, and CI-reference surfaces now carry the V12 typed-action continuity and
-  released bootstrap-floor boundaries. They also state that mode and OS-variant overlays cannot
-  replace the previewed typed action with another executable body.
+  Site contract and Learn references bind descriptor-relative migration capture, complete typed
+  closure admission for repo-level run and non-dry-run up, and the distinction between blocked
+  readiness receipts and positive effect or execution evidence.

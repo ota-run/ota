@@ -34,11 +34,15 @@
 ## 1.6.27
 
 - Added the execution-disabled V12 `action.kind: database_schema_mutation` adapter. It requires
-  one matching declared effect, captures bounded migration input with retained no-follow handles on
-  Unix, refuses execution on non-Unix, and derives one exact selected-task-bound
-  domain-separated application-plan identity. `ota run --dry-run --json` publishes the non-secret
-  plan, while selected execution re-observes source truth and verifies the exact retained bytes at
-  the typed executor boundary before task conditions, required services, dependencies, or provider
+  one matching declared effect, captures bounded migration input by opening every effective-cwd and
+  migration-root component through retained no-follow handles on Unix, refuses execution on
+  non-Unix, and derives one exact selected-task-bound domain-separated application-plan identity
+  that also binds the contract invocation origin and repository-relative effective working
+  directory. `ota run --dry-run --json` publishes the non-secret
+  plan, while repo-level `ota run` and non-dry-run repo-level `ota up` admit and verify every typed
+  action in the selected closure before command-scoped
+  replay-input policy loading, agent/crossing/sandbox admission, workflow-environment artifact
+  rendering, durable-log preparation, task conditions, required services, dependencies, or provider
   execution. Validation rejects mode or OS-variant execution-body overrides that could replace the
   typed action after preview. It does not run a shell migration
   command, contact PostgreSQL, authorize execution, mark work agent-safe, or claim a successful

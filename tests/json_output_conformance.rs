@@ -2247,6 +2247,356 @@ tasks:
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn typed_effect_admission_precedes_workflow_env_and_log_mutation() {
+    let fixture = tempfile::tempdir().expect("tempdir");
+    fs::create_dir_all(fixture.path().join("migrations")).expect("migration directory");
+    let migration_bytes = b"create table example ();\n";
+    fs::write(fixture.path().join("migrations/001.sql"), migration_bytes).expect("migration file");
+    let file_identity = format!("sha256:{:x}", Sha256::digest(migration_bytes));
+    let manifest = json!({
+        "schema_version": 1,
+        "root": "migrations",
+        "files": [{ "path": "001.sql", "identity": file_identity }]
+    });
+    let mut manifest_identity_bytes = b"ota.schema-migration-manifest.v1\0".to_vec();
+    manifest_identity_bytes
+        .extend(serde_jcs::to_vec(&manifest).expect("migration manifest canonicalizes"));
+    let manifest_identity = format!("sha256:{:x}", Sha256::digest(manifest_identity_bytes));
+    fs::write(
+        fixture.path().join("ota.yaml"),
+        format!(
+            r#"
+version: 1
+project: {{ name: typed-effect-pre-mutation }}
+resource_bindings:
+  primary:
+    kind: database
+    provider: postgresql
+    namespace: {{ authority: dns:example.org, environment: production }}
+effect_definitions:
+  migration:
+    kind: database_schema_mutation
+    action: apply_migration_set
+    resource: {{ engine: postgresql, target_ref: primary, schema: public }}
+    bounds:
+      migration_set: {{ root: migrations, content_identity: {manifest_identity} }}
+      start_state: any_within_set
+env:
+  profiles:
+    typed:
+      env:
+        TYPED_SENTINEL: should-not-render
+      render:
+        dotenv:
+          path: .env.typed
+          include: [TYPED_SENTINEL]
+tasks:
+  migrate:
+    action: {{ kind: database_schema_mutation, effect: migration }}
+    effects:
+      declared: [migration]
+workflows:
+  default: typed
+  typed:
+    env:
+      profile: typed
+    run:
+      task: migrate
+"#
+        ),
+    )
+    .expect("contract");
+
+    let execution = Command::new(env!("CARGO_BIN_EXE_ota"))
+        .args(["run", "migrate", "--plain", "--log"])
+        .current_dir(fixture.path())
+        .output()
+        .expect("typed effect execution selection");
+    assert!(!execution.status.success());
+    let output = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&execution.stdout),
+        String::from_utf8_lossy(&execution.stderr)
+    );
+    assert!(
+        output.contains("provider execution is disabled"),
+        "{output}"
+    );
+    assert!(
+        !fixture.path().join(".env.typed").exists(),
+        "typed admission must refuse before workflow env artifacts mutate the repository"
+    );
+    assert!(
+        !fixture.path().join(".ota/state/logs").exists(),
+        "typed admission must refuse before durable log preparation"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn typed_effect_up_admission_precedes_workflow_setup_and_env_mutation() {
+    let fixture = tempfile::tempdir().expect("tempdir");
+    fs::create_dir_all(fixture.path().join("migrations")).expect("migration directory");
+    let migration_bytes = b"create table example ();\n";
+    fs::write(fixture.path().join("migrations/001.sql"), migration_bytes).expect("migration file");
+    let file_identity = format!("sha256:{:x}", Sha256::digest(migration_bytes));
+    let manifest = json!({
+        "schema_version": 1,
+        "root": "migrations",
+        "files": [{ "path": "001.sql", "identity": file_identity }]
+    });
+    let mut manifest_identity_bytes = b"ota.schema-migration-manifest.v1\0".to_vec();
+    manifest_identity_bytes
+        .extend(serde_jcs::to_vec(&manifest).expect("migration manifest canonicalizes"));
+    let manifest_identity = format!("sha256:{:x}", Sha256::digest(manifest_identity_bytes));
+    fs::write(
+        fixture.path().join("ota.yaml"),
+        format!(
+            r#"
+version: 1
+project: {{ name: typed-effect-up-pre-mutation }}
+resource_bindings:
+  primary:
+    kind: database
+    provider: postgresql
+    namespace: {{ authority: dns:example.org, environment: production }}
+effect_definitions:
+  migration:
+    kind: database_schema_mutation
+    action: apply_migration_set
+    resource: {{ engine: postgresql, target_ref: primary, schema: public }}
+    bounds:
+      migration_set: {{ root: migrations, content_identity: {manifest_identity} }}
+      start_state: any_within_set
+env:
+  profiles:
+    typed:
+      env:
+        TYPED_SENTINEL: should-not-render
+      render:
+        dotenv:
+          path: .env.typed
+          include: [TYPED_SENTINEL]
+tasks:
+  setup:
+    command:
+      exe: sh
+      args: [-c, "touch setup-sentinel"]
+  migrate:
+    action: {{ kind: database_schema_mutation, effect: migration }}
+    effects:
+      declared: [migration]
+workflows:
+  default: typed
+  typed:
+    env:
+      profile: typed
+    setup:
+      task: setup
+    run:
+      task: migrate
+"#
+        ),
+    )
+    .expect("contract");
+
+    let execution = Command::new(env!("CARGO_BIN_EXE_ota"))
+        .args(["up", "--plain"])
+        .current_dir(fixture.path())
+        .output()
+        .expect("typed effect up selection");
+    assert!(!execution.status.success());
+    let output = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&execution.stdout),
+        String::from_utf8_lossy(&execution.stderr)
+    );
+    assert!(
+        output.contains("provider execution is disabled"),
+        "{output}"
+    );
+    assert!(
+        !fixture.path().join("setup-sentinel").exists(),
+        "typed admission must refuse before workflow setup mutates the repository"
+    );
+    assert!(
+        !fixture.path().join(".env.typed").exists(),
+        "typed admission must refuse before workflow env artifacts mutate the repository"
+    );
+
+    let json = run_ota_failure_stdout_json(&["up", "--json"], fixture.path());
+    assert_matches_schema("up.json", &json);
+    assert_eq!(json["ok"], false);
+    assert!(
+        json.to_string().contains("provider execution is disabled"),
+        "{json}"
+    );
+    assert!(!fixture.path().join("setup-sentinel").exists());
+    assert!(!fixture.path().join(".env.typed").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn typed_effect_preflight_verifies_every_typed_action_before_refusal() {
+    let fixture = tempfile::tempdir().expect("tempdir");
+    fs::create_dir_all(fixture.path().join("migrations")).expect("migration directory");
+    let migration_bytes = b"create table example ();\n";
+    fs::write(fixture.path().join("migrations/001.sql"), migration_bytes).expect("migration file");
+    let file_identity = format!("sha256:{:x}", Sha256::digest(migration_bytes));
+    let manifest = json!({
+        "schema_version": 1,
+        "root": "migrations",
+        "files": [{ "path": "001.sql", "identity": file_identity }]
+    });
+    let mut manifest_identity_bytes = b"ota.schema-migration-manifest.v1\0".to_vec();
+    manifest_identity_bytes
+        .extend(serde_jcs::to_vec(&manifest).expect("migration manifest canonicalizes"));
+    let manifest_identity = format!("sha256:{:x}", Sha256::digest(manifest_identity_bytes));
+    fs::write(
+        fixture.path().join("ota.yaml"),
+        format!(
+            r#"
+version: 1
+project: {{ name: typed-effect-complete-preflight }}
+resource_bindings:
+  primary:
+    kind: database
+    provider: postgresql
+    namespace: {{ authority: dns:example.org, environment: production }}
+effect_definitions:
+  admitted:
+    kind: database_schema_mutation
+    action: apply_migration_set
+    resource: {{ engine: postgresql, target_ref: primary, schema: public }}
+    bounds:
+      migration_set: {{ root: migrations, content_identity: {manifest_identity} }}
+      start_state: any_within_set
+  stale:
+    kind: database_schema_mutation
+    action: apply_migration_set
+    resource: {{ engine: postgresql, target_ref: primary, schema: public }}
+    bounds:
+      migration_set: {{ root: migrations, content_identity: sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff }}
+      start_state: any_within_set
+tasks:
+  admitted:
+    action: {{ kind: database_schema_mutation, effect: admitted }}
+    effects:
+      declared: [admitted]
+  stale:
+    depends_on: [admitted]
+    action: {{ kind: database_schema_mutation, effect: stale }}
+    effects:
+      declared: [stale]
+"#
+        ),
+    )
+    .expect("contract");
+
+    let execution = Command::new(env!("CARGO_BIN_EXE_ota"))
+        .args(["run", "stale", "--plain"])
+        .current_dir(fixture.path())
+        .output()
+        .expect("complete typed effect preflight");
+    assert!(!execution.status.success());
+    let output = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&execution.stdout),
+        String::from_utf8_lossy(&execution.stderr)
+    );
+    assert!(
+        output.contains("effect_application_migration_set_drift"),
+        "the preflight must verify the later typed action instead of refusing after the first admitted action: {output}"
+    );
+    assert!(
+        !output.contains("provider execution is disabled"),
+        "{output}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn typed_effect_preview_refuses_final_and_intermediate_working_directory_aliases() {
+    use std::os::unix::fs::symlink;
+
+    let outside = tempfile::tempdir().expect("outside tempdir");
+    fs::create_dir_all(outside.path().join("nested/migrations")).expect("outside migrations");
+    let migration_bytes = b"create table example ();\n";
+    fs::write(
+        outside.path().join("nested/migrations/001.sql"),
+        migration_bytes,
+    )
+    .expect("outside migration");
+    let file_identity = format!("sha256:{:x}", Sha256::digest(migration_bytes));
+    let manifest = json!({
+        "schema_version": 1,
+        "root": "migrations",
+        "files": [{ "path": "001.sql", "identity": file_identity }]
+    });
+    let mut manifest_identity_bytes = b"ota.schema-migration-manifest.v1\0".to_vec();
+    manifest_identity_bytes
+        .extend(serde_jcs::to_vec(&manifest).expect("migration manifest canonicalizes"));
+    let manifest_identity = format!("sha256:{:x}", Sha256::digest(manifest_identity_bytes));
+
+    for (cwd, target) in [
+        ("cwd-link", outside.path().join("nested")),
+        ("redirect/nested", outside.path().to_path_buf()),
+    ] {
+        let fixture = tempfile::tempdir().expect("repository tempdir");
+        if cwd == "cwd-link" {
+            symlink(target, fixture.path().join("cwd-link")).expect("final cwd symlink");
+        } else {
+            symlink(target, fixture.path().join("redirect")).expect("intermediate cwd symlink");
+        }
+        fs::write(
+            fixture.path().join("ota.yaml"),
+            format!(
+                r#"
+version: 1
+project: {{ name: typed-effect-cwd-alias }}
+resource_bindings:
+  primary:
+    kind: database
+    provider: postgresql
+    namespace: {{ authority: dns:example.org, environment: production }}
+effect_definitions:
+  migration:
+    kind: database_schema_mutation
+    action: apply_migration_set
+    resource: {{ engine: postgresql, target_ref: primary, schema: public }}
+    bounds:
+      migration_set: {{ root: migrations, content_identity: {manifest_identity} }}
+      start_state: any_within_set
+tasks:
+  migrate:
+    adapter_inputs:
+      compose: {{ cwd: {cwd} }}
+    action: {{ kind: database_schema_mutation, effect: migration }}
+    effects:
+      declared: [migration]
+"#
+            ),
+        )
+        .expect("contract");
+
+        let preview = run_ota_with_env(
+            &["run", "migrate", "--dry-run", "--json"],
+            fixture.path(),
+            &[],
+            false,
+        );
+        assert_eq!(preview["ok"], false, "{preview}");
+        assert!(
+            preview
+                .to_string()
+                .contains("could not be retained without following aliases"),
+            "{preview}"
+        );
+    }
+}
+
 #[test]
 fn crossing_grant_up_refusal_receipt_carries_typed_authority_evidence() {
     let fixture = tempfile::tempdir().expect("tempdir");

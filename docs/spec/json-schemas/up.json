@@ -693,6 +693,32 @@
                 }
               }
             },
+            "workflow_env_artifacts": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["path", "kind", "exists"],
+                "properties": {
+                  "path": { "type": "string" },
+                  "kind": { "type": "string" },
+                  "includes": {
+                    "type": "array",
+                    "items": { "type": "string" }
+                  },
+                  "sources": {
+                    "type": "array",
+                    "items": { "type": "string" }
+                  },
+                  "exists": { "type": "boolean" },
+                  "profile": { "type": ["string", "null"] },
+                  "consumers": {
+                    "type": "array",
+                    "items": { "type": "string" }
+                  }
+                }
+              }
+            },
             "status": { "type": "string" },
             "native_prerequisites": {
               "$ref": "./receipt.json#/oneOf/0/properties/receipt/properties/native_prerequisites"

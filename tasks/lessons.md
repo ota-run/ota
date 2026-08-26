@@ -289,3 +289,10 @@
   activating provider-attested, macOS, or Windows carriers.
 - Rule: Technical pressure may select general OSS semantics; expensive optional carriers remain
   inactive and are formally deferred when exact provider/platform adoption demand is absent.
+- Pattern: A pre-side-effect refusal added only to `ota run` can leave `ota up` and proof-owned
+  `up` execution free to mutate setup state before reaching the same execution-disabled action.
+- Correction: Put one read-only closure verifier before every real repo execution entrypoint,
+  preserve dry-run as preview, and return the refusal through each command's canonical text and
+  JSON result envelope.
+- Rule: Trust-boundary ordering is an entrypoint matrix, not a single-call-site property; test
+  direct run, up orchestration, inherited proof paths, side-effect absence, and output-schema parity.

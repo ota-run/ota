@@ -25,7 +25,7 @@
 //! effect declaration. They do not contact a provider or claim a schema mutation occurred.
 
 use std::fmt;
-use std::path::Path;
+use std::path::{Component, Path};
 
 #[cfg(unix)]
 use std::fs::{File, OpenOptions};
@@ -45,9 +45,12 @@ use crate::effect_domain::{
     ResolvedEffectAttachment, ResolvedEffectDefinition, resolve_declared_effect_catalog,
 };
 use crate::schema::Contract;
+use crate::semantic_identity::semantic_contract_identity;
 
 const MIGRATION_MANIFEST_DOMAIN: &[u8] = b"ota.schema-migration-manifest.v1\0";
 const APPLICATION_PLAN_DOMAIN: &[u8] = b"ota.effect-application-plan.v1\0";
+const APPLICATION_INVOCATION_ORIGIN_DOMAIN: &[u8] =
+    b"ota.effect-application-invocation-origin.v1\0";
 const POSTGRESQL_SCHEMA_MUTATION_ADAPTER_DOMAIN: &[u8] =
     b"ota.adapter.postgresql-schema-mutation.v1\0";
 #[cfg(unix)]
@@ -100,6 +103,8 @@ pub struct EffectApplicationPlan {
     pub identity: String,
     pub adapter_profile_identity: String,
     pub task: String,
+    pub effective_working_directory: String,
+    pub invocation_origin_identity: String,
     pub effect_ref: String,
     pub attachment_identity: String,
     pub effect_identity: String,
@@ -157,12 +162,21 @@ struct ApplicationPlanIdentityPayload<'a> {
     schema_version: u32,
     adapter_profile_identity: &'a str,
     task: &'a str,
+    effective_working_directory: &'a str,
+    invocation_origin_identity: &'a str,
     effect_ref: &'a str,
     attachment_identity: &'a str,
     effect_identity: &'a str,
     resource_binding_identity: &'a str,
     action: &'a str,
     migration_manifests: &'a [MigrationSetManifest],
+}
+
+#[derive(Serialize)]
+struct ApplicationInvocationOriginIdentityPayload<'a> {
+    schema_version: u32,
+    contract_snapshot_identity: &'a str,
+    invocation_subject: &'a [String],
 }
 
 /// The immutable profile identity for the only V12 typed adapter currently implemented.
@@ -180,14 +194,18 @@ pub fn postgresql_schema_mutation_adapter_profile_identity() -> String {
 pub fn derive_effect_application_plans(
     contract: &Contract,
     task_name: &str,
-    working_dir: &Path,
+    repository_root: &Path,
+    effective_working_dir: &Path,
 ) -> Result<Vec<EffectApplicationPlan>, EffectApplicationPlanError> {
-    Ok(
-        derive_effect_application_admissions(contract, task_name, working_dir)?
-            .into_iter()
-            .map(|admission| admission.plan)
-            .collect(),
-    )
+    Ok(derive_effect_application_admissions(
+        contract,
+        task_name,
+        repository_root,
+        effective_working_dir,
+    )?
+    .into_iter()
+    .map(|admission| admission.plan)
+    .collect())
 }
 
 /// Captures and admits the exact input for one selected typed schema-mutation action.
@@ -195,27 +213,34 @@ pub fn admit_database_schema_mutation_action(
     contract: &Contract,
     task_name: &str,
     effect_ref: &str,
-    working_dir: &Path,
+    repository_root: &Path,
+    effective_working_dir: &Path,
 ) -> Result<AdmittedEffectApplication, EffectApplicationPlanError> {
     let effect_ref = effect_ref.trim();
-    derive_effect_application_admissions(contract, task_name, working_dir)?
-        .into_iter()
-        .find(|admission| admission.plan.effect_ref == effect_ref)
-        .ok_or_else(|| {
-            EffectApplicationPlanError::new(
-                "effect_application_plan_missing",
-                format!(
-                    "task `{task_name}` has no admitted application plan for effect `{effect_ref}`"
-                ),
-            )
-        })
+    derive_effect_application_admissions(
+        contract,
+        task_name,
+        repository_root,
+        effective_working_dir,
+    )?
+    .into_iter()
+    .find(|admission| admission.plan.effect_ref == effect_ref)
+    .ok_or_else(|| {
+        EffectApplicationPlanError::new(
+            "effect_application_plan_missing",
+            format!(
+                "task `{task_name}` has no admitted application plan for effect `{effect_ref}`"
+            ),
+        )
+    })
 }
 
 /// Re-observes source truth and proves the executor receives the exact admitted plan and bytes.
 pub fn verify_admitted_effect_application(
     contract: &Contract,
     task_name: &str,
-    working_dir: &Path,
+    repository_root: &Path,
+    effective_working_dir: &Path,
     admitted: &AdmittedEffectApplication,
 ) -> Result<(), EffectApplicationPlanError> {
     verify_materialized_input(admitted)?;
@@ -223,7 +248,8 @@ pub fn verify_admitted_effect_application(
         contract,
         task_name,
         admitted.plan.effect_ref.as_str(),
-        working_dir,
+        repository_root,
+        effective_working_dir,
     )?;
     if current != *admitted {
         return Err(EffectApplicationPlanError::new(
@@ -240,7 +266,8 @@ pub fn verify_admitted_effect_application(
 fn derive_effect_application_admissions(
     contract: &Contract,
     task_name: &str,
-    working_dir: &Path,
+    repository_root: &Path,
+    effective_working_dir: &Path,
 ) -> Result<Vec<AdmittedEffectApplication>, EffectApplicationPlanError> {
     let catalog = resolve_declared_effect_catalog(contract)
         .map_err(|error| EffectApplicationPlanError::new(error.code, error.message))?;
@@ -251,6 +278,11 @@ fn derive_effect_application_admissions(
         )
     })?;
 
+    let effective_working_directory =
+        repository_relative_effective_working_directory(repository_root, effective_working_dir)?;
+    let contract_snapshot_identity = semantic_contract_identity(contract).map_err(|error| {
+        EffectApplicationPlanError::new("effect_application_contract_identity_failed", error)
+    })?;
     let mut admissions = Vec::new();
     for attachment in catalog
         .attachments
@@ -261,7 +293,11 @@ fn derive_effect_application_admissions(
             .effect_definitions
             .get(&attachment.definition_ref)
             .expect("effect attachments are resolved from the catalog");
-        let captures = capture_effect_migration_sets(effect, working_dir)?;
+        let captures = capture_effect_migration_sets(
+            effect,
+            repository_root,
+            effective_working_directory.as_str(),
+        )?;
         let manifests = captures
             .iter()
             .map(|capture| capture.0.clone())
@@ -271,9 +307,15 @@ fn derive_effect_application_admissions(
             .map(|capture| capture.1)
             .collect::<Vec<_>>();
         let adapter_profile_identity = postgresql_schema_mutation_adapter_profile_identity();
+        let invocation_origin_identity = application_invocation_origin_identity(
+            contract_snapshot_identity.as_str(),
+            attachment.subject.as_slice(),
+        )?;
         let identity = application_plan_identity(
             &adapter_profile_identity,
             task_name,
+            effective_working_directory.as_str(),
+            invocation_origin_identity.as_str(),
             attachment,
             effect,
             manifests.as_slice(),
@@ -284,6 +326,8 @@ fn derive_effect_application_admissions(
                 identity,
                 adapter_profile_identity,
                 task: task_name.to_string(),
+                effective_working_directory: effective_working_directory.clone(),
+                invocation_origin_identity,
                 effect_ref: attachment.definition_ref.clone(),
                 attachment_identity: attachment.identity.clone(),
                 effect_identity: effect.identity.clone(),
@@ -310,7 +354,8 @@ fn derive_effect_application_admissions(
 
 fn capture_effect_migration_sets(
     effect: &ResolvedEffectDefinition,
-    working_dir: &Path,
+    repository_root: &Path,
+    effective_working_directory: &str,
 ) -> Result<Vec<(MigrationSetManifest, MigrationSetInput)>, EffectApplicationPlanError> {
     let migration_sets = match &effect.bounds {
         CanonicalDatabaseSchemaMutationBounds::ApplyMigrationSet { migration_set, .. }
@@ -324,21 +369,28 @@ fn capture_effect_migration_sets(
     };
     migration_sets
         .into_iter()
-        .map(|migration_set| capture_migration_set(migration_set, working_dir))
+        .map(|migration_set| {
+            capture_migration_set(migration_set, repository_root, effective_working_directory)
+        })
         .collect()
 }
 
 fn capture_migration_set(
     migration_set: &CanonicalMigrationSet,
-    working_dir: &Path,
+    repository_root: &Path,
+    effective_working_directory: &str,
 ) -> Result<(MigrationSetManifest, MigrationSetInput), EffectApplicationPlanError> {
     #[cfg(unix)]
     {
-        return capture_migration_set_unix(migration_set, working_dir);
+        return capture_migration_set_unix(
+            migration_set,
+            repository_root,
+            effective_working_directory,
+        );
     }
     #[cfg(not(unix))]
     {
-        let _ = (migration_set, working_dir);
+        let _ = (migration_set, repository_root, effective_working_directory);
         Err(EffectApplicationPlanError::new(
             "effect_application_platform_unsupported",
             "typed database schema-mutation input capture requires Unix no-follow descriptor support",
@@ -349,11 +401,16 @@ fn capture_migration_set(
 #[cfg(unix)]
 fn capture_migration_set_unix(
     migration_set: &CanonicalMigrationSet,
-    working_dir: &Path,
+    repository_root: &Path,
+    effective_working_directory: &str,
 ) -> Result<(MigrationSetManifest, MigrationSetInput), EffectApplicationPlanError> {
     let mut limits = CaptureLimits::default();
     let mut inputs = Vec::new();
-    let root_directory = open_migration_root(working_dir, &migration_set.root)?;
+    let root_directory = open_migration_root(
+        repository_root,
+        effective_working_directory,
+        &migration_set.root,
+    )?;
     capture_regular_files_unix(&root_directory, "", &mut inputs, &mut limits)?;
     inputs.sort_by(|left, right| left.path.cmp(&right.path));
     let files = inputs
@@ -393,22 +450,41 @@ fn capture_migration_set_unix(
 }
 
 #[cfg(unix)]
-fn open_migration_root(working_dir: &Path, root: &str) -> Result<File, EffectApplicationPlanError> {
+fn open_migration_root(
+    repository_root: &Path,
+    effective_working_directory: &str,
+    root: &str,
+) -> Result<File, EffectApplicationPlanError> {
     use std::os::unix::fs::OpenOptionsExt as _;
 
     let mut options = OpenOptions::new();
     options
         .read(true)
         .custom_flags(libc::O_CLOEXEC | libc::O_DIRECTORY | libc::O_NOFOLLOW);
-    let mut directory = options.open(working_dir).map_err(|error| {
+    let repository = options.open(repository_root).map_err(|error| {
         EffectApplicationPlanError::new(
             "effect_application_migration_set_invalid",
-            format!(
-                "could not retain the selected working directory without following aliases: {error}"
-            ),
+            format!("could not retain the repository root without following aliases: {error}"),
         )
     })?;
-    for component in root.split('/') {
+    let directory = open_relative_directory_components(
+        repository,
+        effective_working_directory,
+        "selected working directory",
+    )?;
+    open_relative_directory_components(directory, root, "migration set")
+}
+
+#[cfg(unix)]
+fn open_relative_directory_components(
+    mut directory: File,
+    relative_path: &str,
+    label: &str,
+) -> Result<File, EffectApplicationPlanError> {
+    for component in relative_path
+        .split('/')
+        .filter(|component| *component != ".")
+    {
         let component = CString::new(component.as_bytes()).expect("validated migration component");
         let fd = unsafe {
             libc::openat(
@@ -421,7 +497,7 @@ fn open_migration_root(working_dir: &Path, root: &str) -> Result<File, EffectApp
             return Err(EffectApplicationPlanError::new(
                 "effect_application_migration_set_invalid",
                 format!(
-                    "migration set `{root}` could not be retained without following aliases: {}",
+                    "{label} `{relative_path}` could not be retained without following aliases: {}",
                     std::io::Error::last_os_error()
                 ),
             ));
@@ -429,6 +505,46 @@ fn open_migration_root(working_dir: &Path, root: &str) -> Result<File, EffectApp
         directory = unsafe { File::from_raw_fd(fd) };
     }
     Ok(directory)
+}
+
+fn repository_relative_effective_working_directory(
+    repository_root: &Path,
+    effective_working_dir: &Path,
+) -> Result<String, EffectApplicationPlanError> {
+    let relative = effective_working_dir
+        .strip_prefix(repository_root)
+        .map_err(|_| {
+            EffectApplicationPlanError::new(
+                "effect_application_working_directory_invalid",
+                "the effective working directory must remain beneath the repository root",
+            )
+        })?;
+    let mut components = Vec::new();
+    for component in relative.components() {
+        match component {
+            Component::Normal(component) => {
+                let component = component.to_str().ok_or_else(|| {
+                    EffectApplicationPlanError::new(
+                        "effect_application_working_directory_invalid",
+                        "the effective working directory must use UTF-8 path components",
+                    )
+                })?;
+                components.push(component);
+            }
+            Component::CurDir => {}
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
+                return Err(EffectApplicationPlanError::new(
+                    "effect_application_working_directory_invalid",
+                    "the effective working directory must be canonical and repository-relative",
+                ));
+            }
+        }
+    }
+    Ok(if components.is_empty() {
+        ".".to_string()
+    } else {
+        components.join("/")
+    })
 }
 
 #[cfg(unix)]
@@ -636,6 +752,8 @@ fn capture_open_migration_file(
 fn application_plan_identity(
     adapter_profile_identity: &str,
     task_name: &str,
+    effective_working_directory: &str,
+    invocation_origin_identity: &str,
     attachment: &ResolvedEffectAttachment,
     effect: &ResolvedEffectDefinition,
     migration_manifests: &[MigrationSetManifest],
@@ -644,6 +762,8 @@ fn application_plan_identity(
         schema_version: 1,
         adapter_profile_identity,
         task: task_name,
+        effective_working_directory,
+        invocation_origin_identity,
         effect_ref: &attachment.definition_ref,
         attachment_identity: &attachment.identity,
         effect_identity: &effect.identity,
@@ -652,6 +772,20 @@ fn application_plan_identity(
         migration_manifests,
     };
     domain_identity(APPLICATION_PLAN_DOMAIN, &payload)
+}
+
+fn application_invocation_origin_identity(
+    contract_snapshot_identity: &str,
+    invocation_subject: &[String],
+) -> Result<String, EffectApplicationPlanError> {
+    domain_identity(
+        APPLICATION_INVOCATION_ORIGIN_DOMAIN,
+        &ApplicationInvocationOriginIdentityPayload {
+            schema_version: 1,
+            contract_snapshot_identity,
+            invocation_subject,
+        },
+    )
 }
 
 fn verify_materialized_input(
@@ -697,6 +831,8 @@ fn verify_materialized_input(
             schema_version: admitted.plan.schema_version,
             adapter_profile_identity: admitted.plan.adapter_profile_identity.as_str(),
             task: admitted.plan.task.as_str(),
+            effective_working_directory: admitted.plan.effective_working_directory.as_str(),
+            invocation_origin_identity: admitted.plan.invocation_origin_identity.as_str(),
             effect_ref: admitted.plan.effect_ref.as_str(),
             attachment_identity: admitted.plan.attachment_identity.as_str(),
             effect_identity: admitted.plan.effect_identity.as_str(),
@@ -779,9 +915,13 @@ tasks:
         fs::write(migrations.join("001.sql"), "create table example ();\n").unwrap();
 
         let placeholder = "sha256:0000000000000000000000000000000000000000000000000000000000000000";
-        let provisional =
-            derive_effect_application_plans(&contract(placeholder), "migrate", directory.path())
-                .unwrap_err();
+        let provisional = derive_effect_application_plans(
+            &contract(placeholder),
+            "migrate",
+            directory.path(),
+            directory.path(),
+        )
+        .unwrap_err();
         assert_eq!(provisional.code, "effect_application_migration_set_drift");
 
         let identity = {
@@ -806,10 +946,20 @@ tasks:
             .unwrap()
         };
         let contract = contract(&identity);
-        let first =
-            derive_effect_application_plans(&contract, "migrate", directory.path()).unwrap();
-        let second =
-            derive_effect_application_plans(&contract, "migrate", directory.path()).unwrap();
+        let first = derive_effect_application_plans(
+            &contract,
+            "migrate",
+            directory.path(),
+            directory.path(),
+        )
+        .unwrap();
+        let second = derive_effect_application_plans(
+            &contract,
+            "migrate",
+            directory.path(),
+            directory.path(),
+        )
+        .unwrap();
         assert_eq!(first, second);
         assert_eq!(first.len(), 1);
         assert_eq!(first[0].migration_manifests[0].identity, identity);
@@ -820,9 +970,14 @@ tasks:
         )
         .unwrap();
         assert_eq!(
-            derive_effect_application_plans(&contract, "migrate", directory.path())
-                .unwrap_err()
-                .code,
+            derive_effect_application_plans(
+                &contract,
+                "migrate",
+                directory.path(),
+                directory.path(),
+            )
+            .unwrap_err()
+            .code,
             "effect_application_migration_set_drift"
         );
     }
@@ -853,10 +1008,17 @@ tasks:
             "migrate",
             "migration",
             directory.path(),
+            directory.path(),
         )
         .unwrap();
-        verify_admitted_effect_application(&contract, "migrate", directory.path(), &admitted)
-            .unwrap();
+        verify_admitted_effect_application(
+            &contract,
+            "migrate",
+            directory.path(),
+            directory.path(),
+            &admitted,
+        )
+        .unwrap();
 
         let mut changed_input = admitted.clone();
         changed_input.migration_inputs[0].files[0].bytes.push(b' ');
@@ -886,9 +1048,15 @@ tasks:
         )
         .unwrap();
         assert_eq!(
-            verify_admitted_effect_application(&contract, "migrate", directory.path(), &admitted)
-                .unwrap_err()
-                .code,
+            verify_admitted_effect_application(
+                &contract,
+                "migrate",
+                directory.path(),
+                directory.path(),
+                &admitted,
+            )
+            .unwrap_err()
+            .code,
             "effect_application_migration_set_drift"
         );
     }
@@ -904,6 +1072,7 @@ tasks:
         let error = derive_effect_application_plans(
             &contract("sha256:0000000000000000000000000000000000000000000000000000000000000000"),
             "migrate",
+            directory.path(),
             directory.path(),
         )
         .unwrap_err();
@@ -946,6 +1115,7 @@ tasks:
             "migrate",
             "migration",
             directory.path(),
+            directory.path(),
         )
         .unwrap();
         let error = run_task(&contract, &contract_path, "migrate").unwrap_err();
@@ -965,6 +1135,109 @@ tasks:
 
     #[cfg(unix)]
     #[test]
+    fn plan_identity_binds_effective_working_directory_and_invocation_origin() {
+        let directory = tempdir().unwrap();
+        let migration_bytes = b"create table example ();\n";
+        for working_directory in ["a", "b"] {
+            let migrations = directory.path().join(working_directory).join("migrations");
+            fs::create_dir_all(&migrations).unwrap();
+            fs::write(migrations.join("001.sql"), migration_bytes).unwrap();
+        }
+        let files = vec![MigrationSetManifestFile {
+            path: "001.sql".to_string(),
+            identity: format!("sha256:{:x}", Sha256::digest(migration_bytes)),
+        }];
+        let identity = domain_identity(
+            MIGRATION_MANIFEST_DOMAIN,
+            &MigrationManifestIdentityPayload {
+                schema_version: 1,
+                root: "migrations",
+                files: &files,
+            },
+        )
+        .unwrap();
+        let contract = contract(&identity);
+
+        let a = derive_effect_application_plans(
+            &contract,
+            "migrate",
+            directory.path(),
+            &directory.path().join("a"),
+        )
+        .unwrap();
+        let b = derive_effect_application_plans(
+            &contract,
+            "migrate",
+            directory.path(),
+            &directory.path().join("b"),
+        )
+        .unwrap();
+        assert_eq!(a[0].effective_working_directory, "a");
+        assert_eq!(b[0].effective_working_directory, "b");
+        assert_ne!(a[0].identity, b[0].identity);
+
+        let mut changed_origin = contract.clone();
+        changed_origin.project.name = "another-project".to_string();
+        let changed = derive_effect_application_plans(
+            &changed_origin,
+            "migrate",
+            directory.path(),
+            &directory.path().join("a"),
+        )
+        .unwrap();
+        assert_ne!(
+            a[0].invocation_origin_identity,
+            changed[0].invocation_origin_identity
+        );
+        assert_ne!(a[0].identity, changed[0].identity);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn refuses_final_and_intermediate_working_directory_symlinks() {
+        use std::os::unix::fs::symlink;
+
+        let repository = tempdir().unwrap();
+        let outside = tempdir().unwrap();
+        fs::create_dir_all(outside.path().join("nested/migrations")).unwrap();
+        fs::write(
+            outside.path().join("nested/migrations/001.sql"),
+            "select 1;\n",
+        )
+        .unwrap();
+        let contract =
+            contract("sha256:0000000000000000000000000000000000000000000000000000000000000000");
+
+        symlink(
+            outside.path().join("nested"),
+            repository.path().join("cwd-link"),
+        )
+        .unwrap();
+        let final_alias = derive_effect_application_plans(
+            &contract,
+            "migrate",
+            repository.path(),
+            &repository.path().join("cwd-link"),
+        )
+        .unwrap_err();
+        assert_eq!(final_alias.code, "effect_application_migration_set_invalid");
+
+        symlink(outside.path(), repository.path().join("redirect")).unwrap();
+        let intermediate_alias = derive_effect_application_plans(
+            &contract,
+            "migrate",
+            repository.path(),
+            &repository.path().join("redirect/nested"),
+        )
+        .unwrap_err();
+        assert_eq!(
+            intermediate_alias.code,
+            "effect_application_migration_set_invalid"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn refuses_symlinked_migration_inputs() {
         use std::os::unix::fs::symlink;
 
@@ -978,6 +1251,7 @@ tasks:
         let error = derive_effect_application_plans(
             &contract("sha256:0000000000000000000000000000000000000000000000000000000000000000"),
             "migrate",
+            directory.path(),
             directory.path(),
         )
         .unwrap_err();
@@ -996,6 +1270,7 @@ tasks:
             &contract("sha256:0000000000000000000000000000000000000000000000000000000000000000"),
             "migrate",
             nested.path(),
+            nested.path(),
         )
         .unwrap_err();
         assert_eq!(error.code, "effect_application_migration_set_invalid");
@@ -1008,6 +1283,7 @@ tasks:
         let error = derive_effect_application_plans(
             &contract("sha256:0000000000000000000000000000000000000000000000000000000000000000"),
             "migrate",
+            directory.path(),
             directory.path(),
         )
         .unwrap_err();

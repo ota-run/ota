@@ -22706,15 +22706,17 @@ fn render_run_preview_target(
         Some(crate::schema::TaskActionSpec::DatabaseSchemaMutation(spec)) => {
             let effective =
                 effective_task_execution(&target.contract, task_name.as_str(), overrides);
+            let repository_root = contract_working_dir(&target.contract_path);
             let working_dir = crate::runner::effective_task_execution_working_dir(
                 task,
                 effective.backend,
-                contract_working_dir(&target.contract_path),
+                repository_root,
             );
             match crate::effect_application_plan::admit_database_schema_mutation_action(
                 &target.contract,
                 task_name.as_str(),
                 spec.effect.as_str(),
+                repository_root,
                 &working_dir,
             ) {
                 Ok(admission) => vec![admission.plan],
@@ -108237,6 +108239,12 @@ fn run_single_contract_target(
 ) -> Result<String, RunCommandFailure> {
     let details_footer = task_use_details_footer(Some(&target.contract_path), member);
     let selected_task_name = canonical_declared_task_name(&target.contract, task_name);
+    enforce_typed_effect_pre_execution_boundary(
+        &target.contract,
+        &target.contract_path,
+        selected_task_name.as_str(),
+        overrides,
+    )?;
     let replay_input_preflight = task_replay_input_preflight(
         &target.contract,
         &target.contract_path,
@@ -108528,6 +108536,87 @@ fn run_single_contract_target(
             reason,
         )
     })
+}
+
+fn enforce_typed_effect_pre_execution_boundary(
+    contract: &Contract,
+    contract_path: &Path,
+    task_name: &str,
+    overrides: ExecutionOverrides,
+) -> Result<(), RunCommandFailure> {
+    let task_names = [task_name.to_string()];
+    let error = typed_effect_closure_refusal(contract, contract_path, None, &task_names, overrides)
+        .map_err(|error| RunCommandFailure {
+            message: stylize_text_failure("ota run", &render_run_error(error)),
+            summary: None,
+            exit_code: 1,
+            receipt: None,
+        })?;
+    if let Some(error) = error {
+        return Err(RunCommandFailure {
+            message: stylize_text_failure("ota run", &render_run_error(error)),
+            summary: None,
+            exit_code: 1,
+            receipt: None,
+        });
+    }
+    Ok(())
+}
+
+fn typed_effect_closure_refusal(
+    contract: &Contract,
+    contract_path: &Path,
+    workflow_name: Option<&str>,
+    task_names: &[String],
+    overrides: ExecutionOverrides,
+) -> Result<Option<RunError>, RunError> {
+    let adjusted_contract =
+        contract_adjusted_for_selected_workflow_env_profile(contract, workflow_name);
+    let contract = adjusted_contract.as_ref().unwrap_or(contract);
+    let repository_root = contract_working_dir(contract_path);
+    let mut first_admitted = None;
+
+    for task_name in task_names {
+        let plan = plan_task_execution_with_overrides(contract, task_name, overrides)?;
+        for step in &plan.steps {
+            let Some(task) = contract.tasks.get(step.task.as_str()) else {
+                continue;
+            };
+            let target_os = target_os_for_run_plan_step(contract, step, overrides);
+            let Some(execution) =
+                task.resolved_execution_for_backend(step.backend, target_os.as_str())
+            else {
+                continue;
+            };
+            let Some(crate::schema::TaskActionSpec::DatabaseSchemaMutation(spec)) =
+                execution.action()
+            else {
+                continue;
+            };
+            let effective_working_dir = crate::runner::effective_task_execution_working_dir(
+                task,
+                step.backend,
+                repository_root,
+            );
+            let identity = crate::runner::verify_database_schema_mutation_admission(
+                Some(contract),
+                step.task.as_str(),
+                spec,
+                repository_root,
+                effective_working_dir.as_path(),
+            )?;
+            if first_admitted.is_none() {
+                first_admitted = Some((step.task.clone(), identity));
+            }
+        }
+    }
+
+    Ok(first_admitted.map(|(task, identity)| RunError::FileActionFailed {
+        task,
+        message: format!(
+            "typed database schema-mutation plan `{identity}` and every typed action in the selected closure were admitted with their exact materialized inputs, but provider execution is disabled in V12"
+        ),
+    }))
 }
 
 #[derive(Debug, Clone)]
@@ -135175,6 +135264,16 @@ fn execute_repo_up_with_behavior_with_agent_and_grant(
     run_behavior_preference: UpRunBehaviorPreference,
     ready_timeout: Option<Duration>,
 ) -> Result<RepoUpResult, String> {
+    if let Some(result) = typed_effect_up_pre_execution_result(
+        contract,
+        resolved_path,
+        overrides,
+        workflow_name,
+        agent,
+        dry_run,
+    ) {
+        return Ok(result);
+    }
     let grant_admission = match evaluate_workflow_crossing_grant(
         contract,
         resolved_path,
@@ -135311,6 +135410,16 @@ fn execute_repo_up_with_behavior_with_agent(
     run_behavior_preference: UpRunBehaviorPreference,
     ready_timeout: Option<Duration>,
 ) -> Result<RepoUpResult, String> {
+    if let Some(result) = typed_effect_up_pre_execution_result(
+        contract,
+        resolved_path,
+        overrides,
+        workflow_name,
+        agent,
+        dry_run,
+    ) {
+        return Ok(result);
+    }
     let mut activate_authority = || Ok(());
     execute_repo_up_with_behavior_with_agent_and_authority_activation(
         contract,
@@ -135327,6 +135436,127 @@ fn execute_repo_up_with_behavior_with_agent(
         true,
         &mut activate_authority,
     )
+}
+
+fn typed_effect_up_pre_execution_result(
+    contract: &Contract,
+    resolved_path: &Path,
+    overrides: ExecutionOverrides,
+    workflow_name: Option<&str>,
+    agent: bool,
+    dry_run: bool,
+) -> Option<RepoUpResult> {
+    if dry_run {
+        return None;
+    }
+    if let Some(workflow_name) = workflow_name
+        && !selected_workflow_selector_is_valid(contract, workflow_name)
+    {
+        return None;
+    }
+    let task_names = contract.selected_workflow_task_closure_names(workflow_name);
+    let error = match typed_effect_closure_refusal(
+        contract,
+        resolved_path,
+        workflow_name,
+        task_names.as_slice(),
+        overrides,
+    ) {
+        Ok(error) => error?,
+        Err(error) => error,
+    };
+    Some(typed_effect_up_refusal_result(
+        contract,
+        resolved_path,
+        workflow_name,
+        overrides,
+        agent,
+        error,
+    ))
+}
+
+fn typed_effect_up_refusal_result(
+    contract: &Contract,
+    resolved_path: &Path,
+    workflow_name: Option<&str>,
+    overrides: ExecutionOverrides,
+    agent: bool,
+    error: RunError,
+) -> RepoUpResult {
+    let task_name = match &error {
+        RunError::FileActionFailed { task, .. } => Some(task.clone()),
+        _ => contract
+            .selected_run_task_name_for(workflow_name)
+            .map(str::to_string),
+    };
+    let finding = Finding {
+        identity: Some(FindingIdentity {
+            code: String::from("OTA_TYPED_EFFECT_ADMISSION_REFUSED"),
+            category: String::from("execution"),
+            owner: String::from("repo_contract"),
+        }),
+        severity: FindingSeverity::Error,
+        summary: String::from("Typed effect execution is unavailable"),
+        why: error.to_string(),
+        next: String::from(
+            "inspect the typed application plan with `ota run <task> --dry-run --json`; provider execution remains disabled in V12",
+        ),
+    };
+    let report = DoctorReport {
+        ok: false,
+        provisioning: None,
+        adapter_bootstrap: None,
+        execution_target: None,
+        findings: vec![finding.clone()],
+    };
+    let context = task_name
+        .as_deref()
+        .map(|task_name| {
+            task_phase_execution_context(contract, resolved_path, task_name, overrides, None)
+        })
+        .unwrap_or_else(native_phase_execution_context);
+    let mut receipt = repo_execution_receipt_with_overrides(
+        resolved_path,
+        contract,
+        context,
+        "BLOCKED",
+        "preconditions",
+        workflow_name,
+        None,
+        task_name.as_deref(),
+        &report.findings,
+        None,
+        Some(finding.next.clone()),
+        Some(overrides),
+    );
+    receipt
+        .blocked
+        .push(String::from("OTA_TYPED_EFFECT_ADMISSION_REFUSED"));
+    refresh_execution_receipt_status(&mut receipt);
+    RepoUpResult {
+        ok: false,
+        status: "BLOCKED",
+        phase: "preconditions",
+        governance_preflight: Some(up_result_preflight_evaluation(
+            contract,
+            workflow_name,
+            overrides,
+            UpRunBehaviorPreference::Auto,
+            &report,
+            agent,
+            None,
+        )),
+        report,
+        preview: None,
+        receipt,
+        service: None,
+        service_command: None,
+        task: task_name,
+        task_command: None,
+        exit_code: None,
+        stdout: String::new(),
+        stderr: String::new(),
+    }
 }
 
 #[allow(clippy::too_many_arguments)]

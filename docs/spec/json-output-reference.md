@@ -3315,11 +3315,18 @@ free-form `requirement_lines`.
 
 For `action.kind: database_schema_mutation` on Unix, `plan.effect_application_plans` contains the exact
 non-secret schema-v1 plan admitted by the typed adapter. It binds the adapter profile, selected
-task, effect reference, attachment, consequence, resource binding, action, and ordered migration
-manifests. File entries expose only root-relative paths and SHA-256 identities, never migration
-bytes or credentials. The identity binds the selected task. Selected execution reuses the same
-effective working directory and admission logic, then verifies the retained materialized bytes at
-the executor boundary before task conditions, required services, dependencies, or provider contact. Non-Unix
+task, contract invocation origin, repository-relative effective working directory, effect reference,
+attachment, consequence, resource binding, action, and ordered migration manifests. Apply and
+rollback plans carry exactly one manifest; reset plans carry zero or one according to their declared
+post-reset posture. File entries expose only root-relative paths and SHA-256 identities, never
+migration bytes or credentials. Repo-level `ota run` and non-dry-run repo-level `ota up` perform one
+closure-wide typed preflight before
+command-scoped replay-input policy loading, agent/crossing/sandbox admission,
+workflow-environment artifact rendering, or durable-log preparation. It opens every effective-cwd
+and migration-root component relative to a retained repository descriptor without following
+symlinks, verifies the retained materialized bytes, and returns the provider-disabled refusal before
+task conditions, required services, dependencies, or provider contact. Proof paths that invoke
+repo-level `ota up` inherit the same boundary. Non-Unix
 execution refuses because race-safe source capture is unavailable. The field is plan-continuity evidence, not mutation, policy, receipt, archive, or
 assurance evidence.
 

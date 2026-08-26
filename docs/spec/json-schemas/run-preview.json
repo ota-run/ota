@@ -113,6 +113,8 @@
         "identity",
         "adapter_profile_identity",
         "task",
+        "effective_working_directory",
+        "invocation_origin_identity",
         "effect_ref",
         "attachment_identity",
         "effect_identity",
@@ -125,6 +127,16 @@
         "identity": { "$ref": "#/$defs/sha256Identity" },
         "adapter_profile_identity": { "$ref": "#/$defs/sha256Identity" },
         "task": { "type": "string", "minLength": 1 },
+        "effective_working_directory": {
+          "oneOf": [
+            { "const": "." },
+            {
+              "type": "string",
+              "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)[^\\u0000-\\u001F\\u007F\\u2028\\u2029/]+(?:/[^\\u0000-\\u001F\\u007F\\u2028\\u2029/]+)*$"
+            }
+          ]
+        },
+        "invocation_origin_identity": { "$ref": "#/$defs/sha256Identity" },
         "effect_ref": { "type": "string", "minLength": 1 },
         "attachment_identity": { "$ref": "#/$defs/sha256Identity" },
         "effect_identity": { "$ref": "#/$defs/sha256Identity" },
@@ -134,9 +146,27 @@
         },
         "migration_manifests": {
           "type": "array",
+          "maxItems": 1,
           "items": { "$ref": "#/$defs/effectApplicationManifest" }
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "enum": ["apply_migration_set", "rollback_migration_set"]
+              }
+            },
+            "required": ["action"]
+          },
+          "then": {
+            "properties": {
+              "migration_manifests": { "minItems": 1, "maxItems": 1 }
+            }
+          }
+        }
+      ]
     },
     "sandboxRestrictionOverlay": {
       "type": "object",

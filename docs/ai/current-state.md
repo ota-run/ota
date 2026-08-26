@@ -48,13 +48,22 @@ durable agent workflow belongs in the canonical Ota skill.
   Unix capture retains no-follow directory/file handles; non-Unix execution refuses because an
   equivalent race-safe traversal is not implemented. The adapter requires its manifest identity to equal
   `migration_set.content_identity`, and derives a domain-separated application plan bound to the
-  exact task attachment and effect realization. Dry-run publishes that non-secret plan. Selected
-  execution uses the same effective working directory and admission path, re-observes source truth,
-  verifies the selected-task-bound plan and retained materialized bytes, and refuses before task
-  conditions, required services, dependencies, shell dispatch, provider contact, policy evaluation,
-  or mutation. Validation refuses mode or OS-variant execution-body overrides so runtime selection
-  cannot replace the previewed typed action. It emits no success claim, agent-safe
-  authority, canary, receipt, archive, or positive assurance. Provider execution, independently
+  exact task attachment, contract invocation origin, repository-relative effective working directory,
+  and effect realization. Dry-run publishes that non-secret plan. For repo-level `ota run` and
+  non-dry-run repo-level `ota up`, one command-level typed preflight admits and verifies every typed
+  action in the selected closure before
+  command-scoped replay-input policy loading, agent/crossing/sandbox admission, workflow-environment
+  artifact rendering, or durable-log preparation. It re-observes source truth through retained
+  no-follow descriptors and returns the provider-disabled refusal before task conditions, required
+  services, dependencies, shell dispatch, provider contact, or repository mutation. The runner
+  repeats the same check as defense in depth for direct/internal callers. Proof paths that invoke
+  repo-level `ota up` inherit this boundary. Dry-run, other read-only command diagnosis, and policy
+  discovery are not claimed to occur after this boundary. Validation refuses mode
+  or OS-variant execution-body overrides so runtime selection
+  cannot replace the previewed typed action. Non-dry-run `ota up` emits its ordinary blocked
+  readiness receipt with `execution_attempted: false`; the typed adapter emits no positive effect
+  or execution receipt, archive, success claim, agent-safe authority, canary, or positive assurance.
+  Provider execution, independently
   administered policy admission, provider-side mutation semantics, and independent pressure remain
   unproved. The
   foundation is committed at Core `f3d4b8e1`, Site `5926f69`, Skills `d05b1d1`, and Examples
@@ -67,9 +76,9 @@ durable agent workflow belongs in the canonical Ota skill.
   below `metadata.ota.minimum_version`; `source: contract` is the canonical CI consumer so a
   workflow cannot maintain a divergent released bootstrap version. Git revisions and pressure
   branches remain intentionally incomparable to a release floor. The connected typed-adapter
-  propagation is committed at Site `93c5e2e39e67b5d94a56b67a72142e4a1e842f84`, Skills
-  `a00d52510890516cb20d0209de59d8c1d43b72fd`, and Examples
-  `c798640e8f5efa3d31d270a6a61a1f97ff55c547`; the unrelated generated Site pressure note remains
+  propagation is committed at Site `00a2f60729e264dc4806b1698b475576a3a58a93`, Skills
+  `8ef5d9e2fe3a31010c9bb0af534114d390c52a3d`, and Examples
+  `6634e1509ebcbbfef652e084b8f3982fc5fa0dda`; the unrelated generated Site pressure note remains
   outside this batch.
 - completed V11.21 enforced sandbox policy application. Core now derives one
   provider-neutral, target-platform-bound segment graph from the selected task/workflow closure,
