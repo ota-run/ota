@@ -296,3 +296,9 @@
   JSON result envelope.
 - Rule: Trust-boundary ordering is an entrypoint matrix, not a single-call-site property; test
   direct run, up orchestration, inherited proof paths, side-effect absence, and output-schema parity.
+- Pattern: A large inline pressure-workflow shell block can repeatedly fail on fixture and assertion
+  defects while exposing only one undifferentiated step, even when the product boundary is sound.
+- Correction: Keep the exact pressure carrier in a locally runnable checked-in script, derive
+  adversarial fixtures from pristine inputs, and persist the last completed and failed named stage.
+- Rule: Hosted pressure must use the same stage-reporting carrier exercised locally; workflow YAML
+  should orchestrate the carrier and retain evidence rather than contain the trust test itself.
