@@ -34,6 +34,11 @@
   unknown IDs, caller overrides, missing origins, and non-denial retain distinct non-passing
   statuses. The result is negative-control evidence only, not provider mutation, a positive
   receipt/archive, or positive assurance.
+  The bounded internal Linux/x64 and macOS carrier is green in
+  [run 33098093213](https://github.com/ota-run/ota/actions/runs/33098093213) against exact Core
+  `dc368fbb2fc298490bfce6de86ea4ed79b493beb`: it proves task/workflow canary passes, strict
+  fallback and unknown-ID non-passing results, icon-free plain output, and no setup, environment,
+  or durable-log side effect. It does not substitute for independent real-repository pressure.
 
 - Added the shared V12 typed effect-policy evaluator. Policy packs can declare canonical
   `policies.effects.typed.rules` with exact, namespace-pattern, or provider-wide PostgreSQL

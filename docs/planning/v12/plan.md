@@ -731,10 +731,13 @@ the incident ratchet.
 Current implementation boundary: steps 1-3 and the local task/workflow branch of step 5 are
 implemented. The shared evaluator can produce an effect-caused refusal for repo-level `run` and
 non-dry-run `up`; a predeclared effect-refusal canary can independently prove one exact explicit
-typed denial without starting execution. Provider mutation, CI projection, receipts, archives, and
-positive assurance remain disabled. Step 4 is not complete across hooks, services, proof closure
-diagnostics, sandbox compilation, or provider-side re-evaluation, and step 5 still requires
-immutable pressure before closure.
+typed denial without starting execution. The bounded internal Linux/x64 and macOS carrier is green
+in [run 33098093213](https://github.com/ota-run/ota/actions/runs/33098093213) against Core
+`dc368fbb2fc298490bfce6de86ea4ed79b493beb`; it proves the exact task/workflow canary, strict
+fallback and unknown-ID refusal, and absence of local setup/environment/log side effects. Provider
+mutation, CI projection, receipts, archives, and positive assurance remain disabled. Step 4 is not
+complete across hooks, services, proof closure diagnostics, sandbox compilation, or provider-side
+re-evaluation, and V12 still requires its independent real-repository pressure bar before closure.
 
 1. Add the provider-neutral effect domain, canonical identities, origins, and derivation posture
    plus strict resource-binding branches without changing execution admission.

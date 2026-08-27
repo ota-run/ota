@@ -136,10 +136,17 @@ durable agent workflow belongs in the canonical Ota skill.
   cannot false-green it. The semantic canary identity excludes the local locator while binding the
   effect, attachment, realization, selected invocation, invocation origin, and expected typed-deny
   posture. It emits
-  `passed | not_evaluated | assurance_gap | failed` with `execution_started: false`. This local
-  implementation is not yet immutable-pressure evidence and does not enable provider execution,
-  positive receipts, archives, or assurance. Connected Site, Skills, Examples, Learn, schema, and
-  command propagation remains part of the current uncommitted batch.
+  `passed | not_evaluated | assurance_gap | failed` with `execution_started: false`. The bounded
+  carrier is immutable-hosted on Linux/x64 and macOS in
+  [run 33098093213](https://github.com/ota-run/ota/actions/runs/33098093213) against exact Core
+  `dc368fbb2fc298490bfce6de86ea4ed79b493beb`. Both retained artifacts prove task and workflow
+  canary passes only for the exact eligible explicit typed denial, strict-fallback and unknown-ID
+  non-passing outcomes, icon-free plain output, and no setup, workflow-environment, or durable-log
+  side effect. This internal fixture does not enable or prove provider execution or mutation,
+  positive receipts, archives, assurance, independently administered policy authority, or the
+  required independent real-repository effect-pressure bar. Connected Site, Skills, Examples,
+  Learn, schema, and command propagation is committed at Site `f1ef9c9`, Skills `7298340`, and
+  Examples `f209c31`; Core implementation and pressure harness are committed at `dc368fbb`.
 - completed V11.21 enforced sandbox policy application. Core now derives one
   provider-neutral, target-platform-bound segment graph from the selected task/workflow closure,
   applies only identified monotonic policy restrictions, and fails closed before preparation when
