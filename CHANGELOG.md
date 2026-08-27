@@ -49,8 +49,6 @@
   `ota-run/setup@v1` or `ota-run/action@v1` with `source: contract`, instead of maintaining a
   separate workflow-owned version declaration.
 
-## 1.6.27
-
 - Added the execution-disabled V12 `action.kind: database_schema_mutation` adapter. It requires
   one matching declared effect, captures bounded migration input by opening every effective-cwd and
   migration-root component through retained no-follow handles on Unix, refuses execution on
