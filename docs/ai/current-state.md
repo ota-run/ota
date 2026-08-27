@@ -115,7 +115,18 @@ durable agent workflow belongs in the canonical Ota skill.
   `6634e1509ebcbbfef652e084b8f3982fc5fa0dda`; the unrelated generated Site pressure note remains
   outside this batch. The plan-to-executor reference propagation is committed at Site
   `cb1f21463abcc5b1e866ea87aafc1c31bdfc7729` and the reviewed implementation foundation at Core
-  `32e3395f92e1114ce209dc620d14ecc82330856f`.
+  `32e3395f92e1114ce209dc620d14ecc82330856f`. Typed effect-policy refusal is committed at Core
+  `d72c6c85`, with immutable admission-pressure harness `212446c000b55d68bad5906a4b532ce5055c1477`.
+  [Run 33067741989](https://github.com/ota-run/ota/actions/runs/33067741989) is green on Linux/x64
+  and macOS and retains artifacts bound to that exact Core revision. Both carriers publish an
+  explicit `deny` decision for the eligible schema-mutation effect, return
+  `OTA_EFFECT_POLICY_DENIED` from `run`, and block `up` and inherited runtime proof at
+  `preconditions` with `execution_attempted: false`. Setup, rendered workflow environment, durable
+  execution logs, stale migration input, and an intermediate-symlink escape are respectively
+  absent or refused. This is bounded internal-fixture evidence of pre-side-effect policy refusal;
+  it does not prove provider contact or mutation, canary assurance, positive receipts or archives,
+  independently administered policy authority, or the required independent real-repository
+  effect-pressure bar.
 - completed V11.21 enforced sandbox policy application. Core now derives one
   provider-neutral, target-platform-bound segment graph from the selected task/workflow closure,
   applies only identified monotonic policy restrictions, and fails closed before preparation when

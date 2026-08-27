@@ -30,7 +30,14 @@ ordered-delivery continuity foundations are committed through Core
 `32e3395f92e1114ce209dc620d14ecc82330856f`. Immutable internal-fixture pressure is green on
 Linux/x64 and macOS in [run 33032683375](https://github.com/ota-run/ota/actions/runs/33032683375).
 This evidence does not enable provider mutation, establish callback behavior after delivery, or
-replace the required independent real-repository pressure.
+replace the required independent real-repository pressure. The shared typed effect-policy evaluator
+and pre-side-effect denial boundary are committed at Core `d72c6c85`; immutable internal-fixture
+admission pressure is green on Linux/x64 and macOS in
+[run 33067741989](https://github.com/ota-run/ota/actions/runs/33067741989) against exact Core
+`212446c000b55d68bad5906a4b532ce5055c1477`. It proves only canonical policy-decision publication
+and typed `run`/`up`/inherited-proof refusal before the selected fixture's setup or environment
+rendering. It does not establish provider mutation, canary assurance, positive evidence, an
+independently administered policy authority, or independent real-repository pressure.
 
 ## Activation Gates
 
