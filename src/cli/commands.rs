@@ -96,6 +96,9 @@ use crate::doctor::{
     diagnose_service, diagnose_services_only_for_workflow, finding_targets_container_image,
     finding_targets_remote_backend, provisioning_installability_finding, resolve_command_path,
 };
+use crate::effect_orchestration::{
+    build_typed_effect_closure_admission, typed_effect_policy_decision,
+};
 use crate::execution::{
     container_backend_probe_failure, container_engine_candidates,
     container_engine_candidates_from_backend, ephemeral_container_target, execution_image,
@@ -22710,7 +22713,7 @@ fn render_run_preview_target(
     ) {
         Ok(closure) => closure,
         Err(error) => {
-            let error = render_run_error(error);
+            let error = render_run_error(*error);
             return match format {
                 OutputFormat::Text => {
                     CommandOutput::failure(stylize_text_failure("ota run", &error))
@@ -22729,12 +22732,12 @@ fn render_run_preview_target(
         &target.contract_path,
         None,
         task_name.as_str(),
-        &typed_effect_closure.task_names,
-        &typed_effect_closure.application_plans,
+        &typed_effect_closure,
+        Some(&current_effect_governance_overrides()),
     ) {
         Ok(decision) => decision,
         Err(error) => {
-            let error = render_run_error(error);
+            let error = render_run_error(*error);
             return match format {
                 OutputFormat::Text => {
                     CommandOutput::failure(stylize_text_failure("ota run", &error))
@@ -108572,73 +108575,6 @@ fn enforce_typed_effect_pre_execution_boundary(
     Ok(())
 }
 
-#[derive(Debug, Clone)]
-struct TypedEffectClosureAdmission {
-    task_names: Vec<String>,
-    application_plans: Vec<crate::effect_application_plan::EffectApplicationPlan>,
-}
-
-fn build_typed_effect_closure_admission(
-    contract: &Contract,
-    contract_path: &Path,
-    root_task_names: &[String],
-    overrides: ExecutionOverrides,
-) -> Result<TypedEffectClosureAdmission, RunError> {
-    let repository_root = contract_working_dir(contract_path);
-    let mut task_names = Vec::new();
-    let mut seen_tasks = BTreeSet::new();
-    let mut application_plans = Vec::new();
-
-    for root_task_name in root_task_names {
-        let plan = plan_task_execution_with_overrides(contract, root_task_name, overrides)?;
-        for step in &plan.steps {
-            if !seen_tasks.insert(step.task.clone()) {
-                continue;
-            }
-            task_names.push(step.task.clone());
-            let Some(task) = contract.tasks.get(step.task.as_str()) else {
-                continue;
-            };
-            let target_os = target_os_for_run_plan_step(contract, step, overrides);
-            let Some(execution) =
-                task.resolved_execution_for_backend(step.backend, target_os.as_str())
-            else {
-                continue;
-            };
-            let Some(crate::schema::TaskActionSpec::DatabaseSchemaMutation(spec)) =
-                execution.action()
-            else {
-                continue;
-            };
-            let effective_working_dir = crate::runner::effective_task_execution_working_dir(
-                task,
-                step.backend,
-                repository_root,
-            );
-            let admission = crate::effect_application_plan::admit_database_schema_mutation_action(
-                contract,
-                step.task.as_str(),
-                spec.effect.as_str(),
-                repository_root,
-                effective_working_dir.as_path(),
-            )
-            .map_err(|error| RunError::FileActionFailed {
-                task: step.task.clone(),
-                message: format!(
-                    "typed database schema-mutation plan refused ({}): {}",
-                    error.code, error.message
-                ),
-            })?;
-            application_plans.push(admission.plan);
-        }
-    }
-
-    Ok(TypedEffectClosureAdmission {
-        task_names,
-        application_plans,
-    })
-}
-
 fn typed_effect_closure_refusal(
     contract: &Contract,
     contract_path: &Path,
@@ -108649,114 +108585,15 @@ fn typed_effect_closure_refusal(
     let adjusted_contract =
         contract_adjusted_for_selected_workflow_env_profile(contract, workflow_name);
     let contract = adjusted_contract.as_ref().unwrap_or(contract);
-    let closure =
-        build_typed_effect_closure_admission(contract, contract_path, task_names, overrides)?;
-    let Some(first_plan) = closure.application_plans.first() else {
-        return Ok(None);
-    };
-    let policy_decision = typed_effect_policy_decision(
+    crate::effect_orchestration::typed_effect_closure_refusal(
         contract,
         contract_path,
         workflow_name,
-        task_names.first().map(String::as_str).unwrap_or_default(),
-        &closure.task_names,
-        &closure.application_plans,
-    )?;
-    if let Some(decision) = policy_decision
-        && decision.aggregate_decision == PolicyEffectDecision::Deny
-    {
-        let rule_ids = decision
-            .effects
-            .iter()
-            .flat_map(|effect| effect.applicable_rules.iter())
-            .filter(|rule| rule.decision == PolicyEffectDecision::Deny)
-            .map(|rule| rule.id.as_str())
-            .collect::<BTreeSet<_>>()
-            .into_iter()
-            .collect::<Vec<_>>()
-            .join(", ");
-        let basis = if rule_ids.is_empty() {
-            decision
-                .coarse_decisions
-                .iter()
-                .filter(|component| component.decision == PolicyEffectDecision::Deny)
-                .map(|component| component.source.as_str())
-                .chain(
-                    decision
-                        .effects
-                        .iter()
-                        .filter(|effect| effect.decision == PolicyEffectDecision::Deny)
-                        .map(|effect| effect.decision_basis.as_str()),
-                )
-                .collect::<Vec<_>>()
-                .join(", ")
-        } else {
-            format!("typed rule(s) `{rule_ids}`")
-        };
-        return Ok(Some(RunError::EffectPolicyDenied {
-            task: first_plan.task.clone(),
-            message: format!(
-                "decision `{}` denied effect set `{}` through {} with policy source posture `{}` before provider contact or repository mutation",
-                decision.identity,
-                decision.effect_set_identity,
-                basis,
-                decision.policy_source_evidence.authority_posture,
-            ),
-        }));
-    }
-
-    Ok(Some(RunError::FileActionFailed {
-        task: first_plan.task.clone(),
-        message: format!(
-            "typed database schema-mutation plan `{}` and every typed action in the selected closure were admitted with their exact materialized inputs, but provider execution is disabled in V12",
-            first_plan.identity,
-        ),
-    }))
-}
-
-fn typed_effect_policy_decision(
-    contract: &Contract,
-    contract_path: &Path,
-    workflow_name: Option<&str>,
-    selected_task_name: &str,
-    task_names: &[String],
-    application_plans: &[crate::effect_application_plan::EffectApplicationPlan],
-) -> Result<Option<crate::effect_policy::EffectPolicyDecision>, RunError> {
-    if application_plans.is_empty() {
-        return Ok(None);
-    }
-    let loaded = load_org_policy_pack_auto_details(contract_path).map_err(|error| {
-        RunError::FileActionFailed {
-            task: task_names.first().cloned().unwrap_or_default(),
-            message: format!("typed effect policy could not be loaded before admission: {error}"),
-        }
-    })?;
-    let Some(loaded) = loaded else {
-        return Ok(None);
-    };
-    let selected_subject = workflow_name.map_or_else(
-        || vec![String::from("tasks"), selected_task_name.to_string()],
-        |workflow| vec![String::from("workflows"), workflow.to_string()],
-    );
-    crate::effect_policy::evaluate_typed_effect_policy(
-        contract,
-        crate::effect_policy::EffectPolicyEvaluationScope {
-            selected_subject: &selected_subject,
-            workflow_name,
-            ordered_tasks: task_names,
-            plans: application_plans,
-        },
-        &loaded,
+        task_names,
+        overrides,
         Some(&current_effect_governance_overrides()),
     )
-    .map(Some)
-    .map_err(|error| RunError::FileActionFailed {
-        task: task_names.first().cloned().unwrap_or_default(),
-        message: format!(
-            "typed effect policy evaluation refused ({}): {}",
-            error.code, error.message
-        ),
-    })
+    .map_err(|error| *error)
 }
 
 #[derive(Debug, Clone)]

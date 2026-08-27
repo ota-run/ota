@@ -126,7 +126,11 @@ durable agent workflow belongs in the canonical Ota skill.
   absent or refused. This is bounded internal-fixture evidence of pre-side-effect policy refusal;
   it does not prove provider contact or mutation, canary assurance, positive receipts or archives,
   independently administered policy authority, or the required independent real-repository
-  effect-pressure bar.
+  effect-pressure bar. Between V12 feature batches, typed-effect ownership was extracted without
+  behavior changes: `effect_admission` owns runner-independent domain verification,
+  `effect_orchestration` adapts selected runner closures for CLI admission, and `runner` translates
+  domain failures without a reverse dependency. Site, Skills, Examples, Learn, schemas, and public
+  command behavior are unaffected. The next V12 feature gate remains effect-caused refusal canaries.
 - completed V11.21 enforced sandbox policy application. Core now derives one
   provider-neutral, target-platform-bound segment graph from the selected task/workflow closure,
   applies only identified monotonic policy restrictions, and fails closed before preparation when
