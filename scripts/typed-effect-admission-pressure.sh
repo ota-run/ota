@@ -63,7 +63,7 @@ mkdir -p "$proof_root"
 test -z "$(find "$proof_root" -mindepth 1 -maxdepth 1 -print -quit)" \
   || fail "Evidence root must be empty: $proof_root"
 stage=fixture_creation
-mkdir -p "$fixture/migrations" "$preview_fixture/migrations"
+mkdir -p "$fixture/migrations" "$fixture/.ota" "$preview_fixture/migrations" "$preview_fixture/.ota"
 printf 'create table example ();\n' > "$fixture/migrations/001.sql"
 cp "$fixture/migrations/001.sql" "$preview_fixture/migrations/001.sql"
 
@@ -151,6 +151,23 @@ workflows:
     proof:
       claim: bounded
 """))
+policy = textwrap.dedent("""\
+policies:
+  effects:
+    mode: compatibility
+    typed:
+      rules:
+        - id: deny_pressure_schema_mutation
+          selector:
+            kind: database_schema_mutation
+            actions: [apply_migration_set]
+            resource:
+              match: any
+              engine: postgresql
+          decision: deny
+""")
+(fixture / ".ota/org-policy.yaml").write_text(policy)
+(preview_fixture / ".ota/org-policy.yaml").write_text(policy)
 PY
 record_stage fixture_created
 
@@ -163,6 +180,8 @@ record_stage contracts_validated
 stage=preview_validation
 "$ota" json validate --schema run-preview.json --assert-eq dry_run=true \
   --assert-eq task=migrate --assert-non-empty-string plan.effect_application_plans.0.identity \
+  --assert-eq plan.effect_policy_decision.aggregate_decision=deny \
+  --assert-eq plan.effect_policy_decision.explicit_typed_deny=true \
   --write-payload "$proof_root/run-dry-run.json" \
   -- "$ota" run migrate --dry-run --json "$preview_fixture"
 "$ota" json validate --schema up.json --assert-eq dry_run=true \
@@ -191,14 +210,14 @@ printf 'run_status=%s\nup_status=%s\nproof_status=%s\n' \
 [ "$run_status" -eq 1 ] || fail "ota run returned $run_status, expected 1"
 [ "$up_status" -eq 1 ] || fail "ota up returned $up_status, expected 1"
 [ "$proof_status" -eq 1 ] || fail "ota proof runtime returned $proof_status, expected 1"
-grep -Fq 'provider execution is disabled' "$proof_root/run-refusal.txt" \
-  || fail "ota run did not report provider-disabled refusal"
-grep -Fq 'provider execution is disabled' "$proof_root/up-refusal.txt" \
-  || fail "ota up did not report provider-disabled refusal"
+grep -Fq 'OTA_EFFECT_POLICY_DENIED' "$proof_root/run-refusal.txt" \
+  || fail "ota run did not report the typed effect-policy denial code"
+grep -Fq 'Typed effect denied by policy' "$proof_root/up-refusal.txt" \
+  || fail "ota up did not report typed effect-policy denial"
 grep -Fq 'Phase: preconditions' "$proof_root/proof-refusal.txt" \
   || fail "ota proof runtime did not preserve the preconditions stage"
-grep -Fq 'provider execution is disabled' "$fixture/.ota/proof/typed/up.log" \
-  || fail "proof up.log did not retain the provider-disabled refusal"
+grep -Fq 'effect policy denied' "$fixture/.ota/proof/typed/up.log" \
+  || fail "proof up.log did not retain the typed effect-policy refusal"
 test ! -e "$fixture/setup-sentinel" || fail "workflow setup executed before refusal"
 test ! -e "$fixture/.env.typed" || fail "workflow environment rendered before refusal"
 test ! -e "$fixture/.ota/state/logs" || fail "durable execution logs were created before refusal"
@@ -257,6 +276,8 @@ printf '%s\n' \
   'run_refused_before_side_effects' \
   'up_refused_before_side_effects' \
   'proof_inherited_up_precondition_refusal' \
+  'policy_decision_published' \
+  'policy_denial_code_published' \
   'setup_sentinel_absent' \
   'workflow_env_artifact_absent' \
   'stale_input_refused' \
