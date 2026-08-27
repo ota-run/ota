@@ -26,6 +26,15 @@
 
 ## Unreleased
 
+- Added the shared V12 typed effect-policy evaluator. Policy packs can declare canonical
+  `policies.effects.typed.rules` with exact, namespace-pattern, or provider-wide PostgreSQL
+  resource selectors. One command-scoped decision binds policy/source authority, selected
+  invocation and execution graph, effect and realization sets, every matching rule, coarse effect
+  components, and `deny > warn > allow` precedence. Explicit typed denial, strict fallback, or a
+  coarser deny now causes a distinct pre-side-effect refusal in repo-level `ota run` and non-dry-run
+  `ota up`; dry-run exposes the non-secret decision. Provider mutation, canaries, positive effect
+  receipts, archives, and assurance remain disabled.
+
 - Include canonical discriminated action bounds in V12 effect application plans so an executor can
   receive apply, rollback, reset-empty, or reset-with-migrations semantics without rereading the
   contract. Preview schemas enforce the same canonical migration-root and action-specific manifest

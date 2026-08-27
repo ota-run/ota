@@ -1213,6 +1213,8 @@ pub struct RunPreviewPlan {
     pub staged_actions: Vec<PreviewStageAction>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub effect_application_plans: Vec<crate::effect_application_plan::EffectApplicationPlan>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub effect_policy_decision: Option<crate::effect_policy::EffectPolicyDecision>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub notes: Vec<String>,
 }

@@ -2907,9 +2907,11 @@ Use `action.kind: database_schema_mutation` only when the selected task is the e
 schema-mutation effect you have declared. It replaces neither an arbitrary migration script nor a
 database provider integration. Keep the action outside `agent.safe_tasks`; declare the real
 PostgreSQL resource binding and migration-set identity without credentials; and expect current Ota
-to refuse before provider contact after verifying the migration bytes. Do not use this action as a
-successful migration signal until a later V12 policy and provider-continuity slice is shipped and
-independently pressure-proven. Mode and OS-variant overlays may refine non-execution inputs, but
+to refuse before provider contact after verifying the migration bytes. An active org policy can now
+produce a canonical typed effect decision and cause `OTA_EFFECT_POLICY_DENIED`; policy belongs in
+`.ota/org-policy.yaml`, never in the repository contract. Do not use this action as a successful
+migration signal until provider execution is shipped and independently pressure-proven. Mode and
+OS-variant overlays may refine non-execution inputs, but
 must not replace the typed action with `run`, `script`, `command`, `compose`, `prepare`, or `launch`.
 
 `requirements` fields:

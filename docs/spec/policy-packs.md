@@ -253,6 +253,19 @@ That makes the value visible immediately:
   ambient local or remote policy.
 - `effects.mode` controls the fallback decision when no explicit rule matches:
   `compatibility` falls back to `warn`, `strict` falls back to `deny`.
+- `effects.typed.rules` selects canonical typed effects by kind, action, resolved resource, optional
+  canonical bounds, derivation posture, task, and workflow. Rule IDs are unique canonical lowercase
+  tokens. Every match accumulates; specificity and document order cannot discard a broader deny.
+- typed resource selectors use one explicit branch: `match: exact` binds a complete canonical
+  namespace, resource ID posture, and PostgreSQL schema; `match: namespace_pattern` uses `*` only at
+  explicitly wildcarded namespace positions; `match: any` matches any resolved PostgreSQL resource.
+  Omitted pattern dimensions match absence, not any value.
+- the shared evaluator composes typed rules, typed mode fallback, and existing coarse effect
+  decisions through `deny > warn > allow`. `--effect-override` remains limited to coarse selectors
+  and cannot target or weaken a typed rule.
+- the decision records whether policy came from `OTA_POLICY`, repository policy, or workspace policy
+  as `caller_selected`, `repository_controlled`, or `workspace_controlled`. Matching content does
+  not upgrade source authority. Independently administered policy is not implemented.
 - `effects.tasks` governs declared `effects.network` / `effects.network_kind` /
   `effects.external_state` on any selected task closure.
 - `effects.tasks.network` controls broad network lanes for selected task paths.
@@ -287,6 +300,43 @@ That makes the value visible immediately:
   (for example `docker`, `postgres`).
 - valid effect decisions are `allow`, `warn`, and `deny`.
 - `exports.require_agents_md` requires repo-side agent guidance to be present when the policy pack says so.
+
+### Typed effect refusal
+
+This policy denies one exact production PostgreSQL schema-mutation resource:
+
+```yaml
+policies:
+  effects:
+    mode: compatibility
+    typed:
+      rules:
+        - id: deny_production_schema_mutation
+          selector:
+            kind: database_schema_mutation
+            actions: [apply_migration_set, reset_schema, rollback_migration_set]
+            resource:
+              match: exact
+              engine: postgresql
+              namespace:
+                authority: dns:example.org
+                environment: production
+                tenant: platform
+                account: primary
+              schema: public
+          decision: deny
+```
+
+Typed selector collections are canonical semantic sets: list every value once in ascending lexical
+order. In a `namespace_pattern`, an omitted optional dimension matches only an absent resource
+dimension, while `"*"` matches any present value; it never turns a missing identity dimension into
+a match.
+
+`ota run <task> --dry-run --json` exposes the exact non-secret `effect_policy_decision`. A denied
+real execution returns `OTA_EFFECT_POLICY_DENIED` before setup, environment rendering, services,
+dependencies, provider contact, or repository mutation. This proves only that Ota's selected lane
+was refused by the recorded policy decision. Provider mutation, effect-refusal canaries, positive
+effect receipts, archives, and assurance remain disabled.
 
 ## Enforcement Model
 

@@ -2445,6 +2445,368 @@ workflows:
 
 #[cfg(unix)]
 #[test]
+fn typed_effect_policy_decision_causes_exact_pre_side_effect_refusal() {
+    let fixture = tempfile::tempdir().expect("tempdir");
+    fs::create_dir_all(fixture.path().join("migrations")).expect("migration directory");
+    fs::create_dir_all(fixture.path().join(".ota")).expect("policy directory");
+    let migration_bytes = b"create table policy_example ();\n";
+    fs::write(fixture.path().join("migrations/001.sql"), migration_bytes).expect("migration file");
+    let file_identity = format!("sha256:{:x}", Sha256::digest(migration_bytes));
+    let manifest = json!({
+        "schema_version": 1,
+        "root": "migrations",
+        "files": [{ "path": "001.sql", "identity": file_identity }]
+    });
+    let mut manifest_identity_bytes = b"ota.schema-migration-manifest.v1\0".to_vec();
+    manifest_identity_bytes
+        .extend(serde_jcs::to_vec(&manifest).expect("migration manifest canonicalizes"));
+    let manifest_identity = format!("sha256:{:x}", Sha256::digest(manifest_identity_bytes));
+    fs::write(
+        fixture.path().join("ota.yaml"),
+        format!(
+            r#"
+version: 1
+project: {{ name: typed-effect-policy-refusal }}
+resource_bindings:
+  primary:
+    kind: database
+    provider: postgresql
+    namespace: {{ authority: dns:example.org, environment: production }}
+effect_definitions:
+  migration:
+    kind: database_schema_mutation
+    action: apply_migration_set
+    resource: {{ engine: postgresql, target_ref: primary, schema: public }}
+    bounds:
+      migration_set: {{ root: migrations, content_identity: {manifest_identity} }}
+      start_state: any_within_set
+tasks:
+  setup:
+    command: {{ exe: sh, args: [-c, "touch setup-sentinel"] }}
+  migrate:
+    action: {{ kind: database_schema_mutation, effect: migration }}
+    effects:
+      declared: [migration]
+  parent:
+    depends_on: [migrate]
+    command: {{ exe: sh, args: [-c, "touch parent-sentinel"] }}
+workflows:
+  default: release
+  release:
+    setup: {{ task: setup }}
+    run: {{ task: parent }}
+"#
+        ),
+    )
+    .expect("contract");
+    let matching_policy = r#"
+policies:
+  effects:
+    mode: compatibility
+    typed:
+      rules:
+        - id: allow_postgresql
+          selector:
+            kind: database_schema_mutation
+            actions: [apply_migration_set]
+            resource:
+              match: any
+              engine: postgresql
+          decision: allow
+        - id: deny_production_schema_mutation
+          selector:
+            kind: database_schema_mutation
+            actions: [apply_migration_set]
+            resource:
+              match: exact
+              engine: postgresql
+              namespace: { authority: dns:example.org, environment: production }
+              schema: public
+          decision: deny
+"#;
+    fs::write(fixture.path().join(".ota/org-policy.yaml"), matching_policy).expect("policy");
+
+    let preview = run_ota(&["run", "parent", "--dry-run", "--json"], fixture.path());
+    assert_matches_schema("run-preview.json", &preview);
+    assert_eq!(
+        preview["plan"]["effect_application_plans"]
+            .as_array()
+            .expect("typed dependency plan")
+            .len(),
+        1
+    );
+    let decision = &preview["plan"]["effect_policy_decision"];
+    assert_eq!(decision["aggregate_decision"], "deny");
+    assert_eq!(decision["explicit_typed_deny"], true);
+    assert_eq!(
+        decision["policy_source_evidence"]["source_kind"],
+        "repository_policy"
+    );
+    assert_eq!(
+        decision["policy_source_evidence"]["authority_posture"],
+        "repository_controlled"
+    );
+    assert!(
+        decision["identity"]
+            .as_str()
+            .is_some_and(|identity| identity.starts_with("sha256:"))
+    );
+    let rules = decision["effects"][0]["applicable_rules"]
+        .as_array()
+        .expect("applicable rules");
+    assert_eq!(rules.len(), 2);
+    let loaded_policy =
+        ota::policy_pack::load_org_policy_pack_auto_details(&fixture.path().join("ota.yaml"))
+            .expect("policy loads")
+            .expect("policy is present");
+    let contract = ota::parser::load_contract(&fixture.path().join("ota.yaml"))
+        .expect("contract loads for independent policy verification");
+    let plans = vec![
+        ota::effect_application_plan::admit_database_schema_mutation_action(
+            &contract,
+            "migrate",
+            "migration",
+            fixture.path(),
+            fixture.path(),
+        )
+        .expect("application plan independently re-derives")
+        .plan,
+    ];
+    let selected_subject = vec![String::from("tasks"), String::from("parent")];
+    let ordered_tasks = ota::runner::plan_task_execution(&contract, "parent")
+        .expect("closure re-derives")
+        .steps
+        .into_iter()
+        .map(|step| step.task)
+        .collect::<Vec<_>>();
+    let verify = |decision| {
+        ota::effect_policy::verify_effect_policy_decision(
+            decision,
+            &contract,
+            ota::effect_policy::EffectPolicyEvaluationScope {
+                selected_subject: &selected_subject,
+                workflow_name: None,
+                ordered_tasks: &ordered_tasks,
+                plans: &plans,
+            },
+            &loaded_policy,
+            None,
+        )
+    };
+    let decoded: ota::effect_policy::EffectPolicyDecision =
+        serde_json::from_value(decision.clone()).expect("decision decodes");
+    let independently_derived = ota::effect_policy::evaluate_typed_effect_policy(
+        &contract,
+        ota::effect_policy::EffectPolicyEvaluationScope {
+            selected_subject: &selected_subject,
+            workflow_name: None,
+            ordered_tasks: &ordered_tasks,
+            plans: &plans,
+        },
+        &loaded_policy,
+        None,
+    )
+    .expect("decision independently derives");
+    assert_eq!(decoded, independently_derived);
+    verify(&decoded).expect("emitted decision verifies");
+
+    let relative_policy = run_ota_with_env(
+        &["run", "parent", "--dry-run", "--json"],
+        fixture.path(),
+        &[("OTA_POLICY", "./.ota/org-policy.yaml")],
+        true,
+    );
+    let absolute_policy_path = fixture.path().join(".ota/org-policy.yaml");
+    let absolute_policy_path = absolute_policy_path.to_string_lossy().to_string();
+    let absolute_policy = run_ota_with_env(
+        &["run", "parent", "--dry-run", "--json"],
+        fixture.path(),
+        &[("OTA_POLICY", absolute_policy_path.as_str())],
+        true,
+    );
+    assert_eq!(
+        relative_policy["plan"]["effect_policy_decision"],
+        absolute_policy["plan"]["effect_policy_decision"],
+        "policy decisions must bind one canonical local source locator"
+    );
+    let mut changed_aggregate = decoded.clone();
+    changed_aggregate.aggregate_decision = ota::policy_pack::PolicyEffectDecision::Allow;
+    assert!(verify(&changed_aggregate).is_err());
+    let mut changed_source = decoded.clone();
+    changed_source.policy_source_evidence.authority_posture = String::from("caller_selected");
+    assert!(verify(&changed_source).is_err());
+    let mut changed_rule = decoded.clone();
+    changed_rule.effects[0].applicable_rules[0].identity =
+        String::from("sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
+    assert!(verify(&changed_rule).is_err());
+    let mut omitted_rule = decoded.clone();
+    omitted_rule.effects[0]
+        .applicable_rules
+        .retain(|rule| rule.id != "deny_production_schema_mutation");
+    omitted_rule.effects[0].decision = ota::policy_pack::PolicyEffectDecision::Allow;
+    assert!(verify(&omitted_rule).is_err());
+    let mut changed_effect = decoded.clone();
+    changed_effect.effects[0].effect_identity =
+        String::from("sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee");
+    assert!(verify(&changed_effect).is_err());
+    let mut contradictory_preview = preview.clone();
+    contradictory_preview["plan"]["effect_policy_decision"]["aggregate_decision"] = json!("allow");
+    assert_rejected_by_schema("run-preview.json", &contradictory_preview);
+    let mut ineligible_preview = preview.clone();
+    ineligible_preview["plan"]["effect_policy_decision"]["effects"][0]["eligible"] = json!(false);
+    assert_rejected_by_schema("run-preview.json", &ineligible_preview);
+    let mut deny_rule_allowing_effect = preview.clone();
+    deny_rule_allowing_effect["plan"]["effect_policy_decision"]["effects"][0]["decision"] =
+        json!("allow");
+    assert_rejected_by_schema("run-preview.json", &deny_rule_allowing_effect);
+    let mut unbacked_deny = preview.clone();
+    unbacked_deny["plan"]["effect_policy_decision"]["explicit_typed_deny"] = json!(false);
+    unbacked_deny["plan"]["effect_policy_decision"]["effects"][0]["applicable_rules"] = json!([]);
+    unbacked_deny["plan"]["effect_policy_decision"]["effects"][0]["decision"] = json!("allow");
+    assert_rejected_by_schema("run-preview.json", &unbacked_deny);
+    let mut contradictory_source = preview.clone();
+    contradictory_source["plan"]["effect_policy_decision"]["policy_source_evidence"]["authority_posture"] =
+        json!("caller_selected");
+    assert_rejected_by_schema("run-preview.json", &contradictory_source);
+
+    for (args, requires_run_code) in [
+        (&["run", "parent", "--plain"][..], true),
+        (&["up", "--plain"][..], false),
+    ] {
+        let execution = Command::new(env!("CARGO_BIN_EXE_ota"))
+            .args(args)
+            .current_dir(fixture.path())
+            .output()
+            .expect("effect policy refusal");
+        assert!(!execution.status.success());
+        let output = format!(
+            "{}\n{}",
+            String::from_utf8_lossy(&execution.stdout),
+            String::from_utf8_lossy(&execution.stderr)
+        );
+        if requires_run_code {
+            assert!(output.contains("OTA_EFFECT_POLICY_DENIED"), "{output}");
+        }
+        assert!(output.contains("effect policy denied"), "{output}");
+        assert!(
+            output.contains("deny_production_schema_mutation"),
+            "{output}"
+        );
+        assert!(
+            !output.contains("provider execution is disabled"),
+            "{output}"
+        );
+        assert!(!fixture.path().join("setup-sentinel").exists());
+        assert!(!fixture.path().join("parent-sentinel").exists());
+    }
+
+    let nonmatching_policy = matching_policy.replace("production }", "staging }");
+    let override_path = fixture.path().join("nonmatching-policy.yaml");
+    fs::write(&override_path, nonmatching_policy).expect("nonmatching policy");
+    let override_path = override_path.to_string_lossy().to_string();
+    let nonmatching = run_ota_with_env(
+        &["run", "migrate", "--dry-run", "--json"],
+        fixture.path(),
+        &[("OTA_POLICY", override_path.as_str())],
+        true,
+    );
+    assert_matches_schema("run-preview.json", &nonmatching);
+    assert_eq!(
+        nonmatching["plan"]["effect_policy_decision"]["aggregate_decision"],
+        "allow"
+    );
+    assert_eq!(
+        nonmatching["plan"]["effect_policy_decision"]["explicit_typed_deny"],
+        false
+    );
+    assert_eq!(
+        nonmatching["plan"]["effect_policy_decision"]["policy_source_evidence"]["authority_posture"],
+        "caller_selected"
+    );
+
+    let strict_path = fixture.path().join("strict-policy.yaml");
+    fs::write(&strict_path, "policies:\n  effects:\n    mode: strict\n").expect("strict policy");
+    let strict_path = strict_path.to_string_lossy().to_string();
+    let strict = run_ota_with_env(
+        &["run", "migrate", "--dry-run", "--json"],
+        fixture.path(),
+        &[("OTA_POLICY", strict_path.as_str())],
+        true,
+    );
+    assert_matches_schema("run-preview.json", &strict);
+    assert_eq!(
+        strict["plan"]["effect_policy_decision"]["aggregate_decision"],
+        "deny"
+    );
+    assert_eq!(
+        strict["plan"]["effect_policy_decision"]["explicit_typed_deny"],
+        false
+    );
+    let strict_execution = Command::new(env!("CARGO_BIN_EXE_ota"))
+        .args(["run", "migrate", "--plain"])
+        .current_dir(fixture.path())
+        .env("OTA_POLICY", strict_path)
+        .output()
+        .expect("strict fallback refusal");
+    assert!(!strict_execution.status.success());
+    let strict_output = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&strict_execution.stdout),
+        String::from_utf8_lossy(&strict_execution.stderr)
+    );
+    assert!(
+        strict_output.contains("effect policy denied"),
+        "{strict_output}"
+    );
+    assert!(
+        strict_output.contains("policies.effects.mode fallback `deny`"),
+        "{strict_output}"
+    );
+
+    let missing_account_policy = r#"
+policies:
+  effects:
+    mode: strict
+    typed:
+      rules:
+        - id: account_wildcard
+          selector:
+            kind: database_schema_mutation
+            actions: [apply_migration_set]
+            resource:
+              match: namespace_pattern
+              engine: postgresql
+              namespace:
+                authority: dns:example.org
+                environment: production
+                account: "*"
+              schema: public
+          decision: allow
+"#;
+    let missing_account_path = fixture.path().join("missing-account-policy.yaml");
+    fs::write(&missing_account_path, missing_account_policy).expect("missing-account policy");
+    let missing_account_path = missing_account_path.to_string_lossy().to_string();
+    let missing_account = run_ota_with_env(
+        &["run", "migrate", "--dry-run", "--json"],
+        fixture.path(),
+        &[("OTA_POLICY", missing_account_path.as_str())],
+        true,
+    );
+    assert_eq!(
+        missing_account["plan"]["effect_policy_decision"]["aggregate_decision"],
+        "deny"
+    );
+    assert_eq!(
+        missing_account["plan"]["effect_policy_decision"]["effects"][0]["applicable_rules"]
+            .as_array()
+            .expect("rules")
+            .len(),
+        0
+    );
+}
+
+#[cfg(unix)]
+#[test]
 fn typed_effect_preflight_verifies_every_typed_action_before_refusal() {
     let fixture = tempfile::tempdir().expect("tempdir");
     fs::create_dir_all(fixture.path().join("migrations")).expect("migration directory");

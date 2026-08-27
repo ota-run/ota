@@ -25,8 +25,8 @@
 version: 1
 repository: ota-run/ota-site
 mode: synced
-reviewed_ota_commit: "b9a97a52b6720d665b54356feb584b67317eb1d7"
-consumer_commit: "cb1f21463abcc5b1e866ea87aafc1c31bdfc7729"
+reviewed_ota_commit: ede4a83920ffc0abad451f6b167aa84246eb6888
+consumer_commit: 32d707f9a41d2bf10f4705c71949e356e0049684
 notes: >
-  Site reference documentation publishes canonical action-specific bounds and ordered migration
-  manifests while preserving the boundary that byte delivery does not prove provider mutation.
+  The Site policy reference documents the shared typed effect evaluator, canonical local source
+  posture, selector branches, and refusal boundary.

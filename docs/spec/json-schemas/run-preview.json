@@ -699,10 +699,331 @@
           "type": "array",
           "items": { "$ref": "#/$defs/effectApplicationPlan" }
         },
+        "effect_policy_decision": { "$ref": "#/$defs/effectPolicyDecision" },
         "notes": {
           "type": "array",
           "items": { "type": "string" }
         }
+      }
+    },
+    "effectPolicyDecision": {
+      "type": "object",
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": { "explicit_typed_deny": { "const": true } },
+            "required": ["explicit_typed_deny"]
+          },
+          "then": {
+            "properties": {
+              "aggregate_decision": { "const": "deny" },
+              "effects": {
+                "contains": {
+                  "properties": {
+                    "applicable_rules": {
+                      "contains": {
+                        "properties": { "decision": { "const": "deny" } },
+                        "required": ["decision"]
+                      }
+                    }
+                  },
+                  "required": ["applicable_rules"]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "explicit_typed_deny": { "const": false } },
+            "required": ["explicit_typed_deny"]
+          },
+          "then": {
+            "properties": {
+              "effects": {
+                "not": {
+                  "contains": {
+                    "properties": {
+                      "applicable_rules": {
+                        "contains": {
+                          "properties": { "decision": { "const": "deny" } },
+                          "required": ["decision"]
+                        }
+                      }
+                    },
+                    "required": ["applicable_rules"]
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "aggregate_decision": { "const": "allow" } },
+            "required": ["aggregate_decision"]
+          },
+          "then": {
+            "properties": {
+              "explicit_typed_deny": { "const": false },
+              "effects": {
+                "not": {
+                  "contains": {
+                    "properties": { "decision": { "enum": ["warn", "deny"] } },
+                    "required": ["decision"]
+                  }
+                }
+              },
+              "coarse_decisions": {
+                "not": {
+                  "contains": {
+                    "properties": { "decision": { "enum": ["warn", "deny"] } },
+                    "required": ["decision"]
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "aggregate_decision": { "const": "warn" } },
+            "required": ["aggregate_decision"]
+          },
+          "then": {
+            "properties": {
+              "explicit_typed_deny": { "const": false },
+              "effects": {
+                "not": {
+                  "contains": {
+                    "properties": { "decision": { "const": "deny" } },
+                    "required": ["decision"]
+                  }
+                }
+              },
+              "coarse_decisions": {
+                "not": {
+                  "contains": {
+                    "properties": { "decision": { "const": "deny" } },
+                    "required": ["decision"]
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "aggregate_decision": { "const": "deny" } },
+            "required": ["aggregate_decision"]
+          },
+          "then": {
+            "anyOf": [
+              {
+                "properties": {
+                  "effects": {
+                    "contains": {
+                      "properties": { "decision": { "const": "deny" } },
+                      "required": ["decision"]
+                    }
+                  }
+                },
+                "required": ["effects"]
+              },
+              {
+                "properties": {
+                  "coarse_decisions": {
+                    "contains": {
+                      "properties": { "decision": { "const": "deny" } },
+                      "required": ["decision"]
+                    }
+                  }
+                },
+                "required": ["coarse_decisions"]
+              }
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": { "aggregate_decision": { "const": "warn" } },
+            "required": ["aggregate_decision"]
+          },
+          "then": {
+            "anyOf": [
+              {
+                "properties": {
+                  "effects": {
+                    "contains": {
+                      "properties": { "decision": { "const": "warn" } },
+                      "required": ["decision"]
+                    }
+                  }
+                },
+                "required": ["effects"]
+              },
+              {
+                "properties": {
+                  "coarse_decisions": {
+                    "contains": {
+                      "properties": { "decision": { "const": "warn" } },
+                      "required": ["decision"]
+                    }
+                  }
+                },
+                "required": ["coarse_decisions"]
+              }
+            ]
+          }
+        }
+      ],
+      "required": [
+        "schema_version", "identity", "evaluation_version", "policy_snapshot_identity",
+        "policy_source_evidence", "selected_invocation_identity", "execution_graph_identity",
+        "effect_set_identity", "realization_set_identity", "effects", "aggregate_decision",
+        "precedence", "explicit_typed_deny"
+      ],
+      "properties": {
+        "schema_version": { "const": 1 },
+        "identity": { "$ref": "#/$defs/sha256Identity" },
+        "evaluation_version": { "const": "effect_policy_v1" },
+        "policy_snapshot_identity": { "$ref": "#/$defs/sha256Identity" },
+        "policy_source_evidence": { "$ref": "#/$defs/policySourceEvidence" },
+        "selected_invocation_identity": { "$ref": "#/$defs/sha256Identity" },
+        "execution_graph_identity": { "$ref": "#/$defs/sha256Identity" },
+        "effect_set_identity": { "$ref": "#/$defs/sha256Identity" },
+        "realization_set_identity": { "$ref": "#/$defs/sha256Identity" },
+        "effects": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/effectPolicyEffectEvaluation" }
+        },
+        "coarse_decisions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["scope", "effect", "decision", "source", "overridden", "reason"],
+            "properties": {
+              "scope": { "enum": ["task", "safe_task"] },
+              "effect": { "type": "string", "minLength": 1 },
+              "decision": { "enum": ["allow", "warn", "deny"] },
+              "source": { "type": "string", "minLength": 1 },
+              "overridden": { "type": "boolean" },
+              "reason": { "type": "string", "minLength": 1 }
+            }
+          }
+        },
+        "aggregate_decision": { "enum": ["allow", "warn", "deny"] },
+        "precedence": { "const": "deny > warn > allow" },
+        "explicit_typed_deny": { "type": "boolean" }
+      }
+    },
+    "policySourceEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": { "properties": { "source_kind": { "const": "env_override" } }, "required": ["source_kind"] },
+          "then": { "properties": { "authority_posture": { "const": "caller_selected" } } }
+        },
+        {
+          "if": { "properties": { "source_kind": { "const": "repository_policy" } }, "required": ["source_kind"] },
+          "then": { "properties": { "authority_posture": { "const": "repository_controlled" } } }
+        },
+        {
+          "if": { "properties": { "source_kind": { "const": "workspace_policy" } }, "required": ["source_kind"] },
+          "then": { "properties": { "authority_posture": { "const": "workspace_controlled" } } }
+        },
+        {
+          "if": { "properties": { "source_kind": { "const": "independently_prebound" } }, "required": ["source_kind"] },
+          "then": {
+            "required": ["source_verification_evidence"],
+            "properties": {
+              "authority_posture": { "const": "independently_administered" },
+              "source_verification_evidence": { "minItems": 1 }
+            }
+          }
+        }
+      ],
+      "required": [
+        "schema_version", "identity", "policy_snapshot_identity", "source_kind",
+        "redacted_source_location_identity", "authority_posture"
+      ],
+      "properties": {
+        "schema_version": { "const": 1 },
+        "identity": { "$ref": "#/$defs/sha256Identity" },
+        "policy_snapshot_identity": { "$ref": "#/$defs/sha256Identity" },
+        "source_kind": { "enum": ["env_override", "repository_policy", "workspace_policy", "independently_prebound"] },
+        "redacted_source_location_identity": { "$ref": "#/$defs/sha256Identity" },
+        "authority_posture": { "enum": ["caller_selected", "repository_controlled", "workspace_controlled", "independently_administered"] },
+        "source_verification_evidence": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/sha256Identity" }
+        }
+      }
+    },
+    "effectPolicyEffectEvaluation": {
+      "type": "object",
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "applicable_rules": {
+                "contains": {
+                  "properties": { "decision": { "const": "deny" } },
+                  "required": ["decision"]
+                }
+              }
+            },
+            "required": ["applicable_rules"]
+          },
+          "then": { "properties": { "decision": { "const": "deny" } } }
+        },
+        {
+          "if": {
+            "properties": {
+              "applicable_rules": {
+                "contains": {
+                  "properties": { "decision": { "const": "warn" } },
+                  "required": ["decision"]
+                }
+              }
+            },
+            "required": ["applicable_rules"]
+          },
+          "then": { "properties": { "decision": { "enum": ["warn", "deny"] } } }
+        }
+      ],
+      "required": [
+        "effect_identity", "realization_identity", "attachment_identity", "origin_path",
+        "eligible", "applicable_rules", "decision", "decision_basis"
+      ],
+      "properties": {
+        "effect_identity": { "$ref": "#/$defs/sha256Identity" },
+        "realization_identity": { "$ref": "#/$defs/sha256Identity" },
+        "attachment_identity": { "$ref": "#/$defs/sha256Identity" },
+        "origin_path": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+        "eligible": { "const": true },
+        "applicable_rules": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/applicableEffectPolicyRule" }
+        },
+        "decision": { "enum": ["allow", "warn", "deny"] },
+        "decision_basis": { "type": "string", "minLength": 1 }
+      }
+    },
+    "applicableEffectPolicyRule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["identity", "id", "decision", "basis"],
+      "properties": {
+        "identity": { "$ref": "#/$defs/sha256Identity" },
+        "id": { "type": "string", "pattern": "^[a-z0-9_-]+$" },
+        "decision": { "enum": ["allow", "warn", "deny"] },
+        "basis": { "type": "string", "minLength": 1 }
       }
     },
     "governanceRunnableMode": {

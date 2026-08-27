@@ -389,7 +389,7 @@ effects:
       - id: deny_production_schema_mutation
         selector:
           kind: database_schema_mutation
-          actions: [apply_migration_set, rollback_migration_set, reset_schema]
+          actions: [apply_migration_set, reset_schema, rollback_migration_set]
           resource:
             match: exact
             engine: postgresql
@@ -409,6 +409,8 @@ retains every applicable rule identity.
 Resource selection is a strict tagged branch: `match: exact` carries one complete canonical
 binding, `match: namespace_pattern` carries explicit typed wildcard positions, and `match: any`
 matches every resolved resource of the selected kind. Omitted fields are never implicit wildcards,
+and `"*"` matches only a present dimension. Typed selector lists are unique ascending semantic sets
+so their authored form and policy-rule identity cannot diverge.
 and no selector can match an unresolved resource identity for positive assurance.
 
 The evaluator loads one command-scoped policy snapshot and computes one immutable decision before
@@ -717,6 +719,11 @@ weakening requires a separately reviewed semantic migration or maintainer-author
 the incident ratchet.
 
 ## Implementation Order
+
+Current implementation boundary: steps 1-3 are locally implemented. The shared evaluator can
+produce an effect-caused refusal for repo-level `run` and non-dry-run `up`, while provider mutation,
+canaries, receipts, archives, and positive assurance remain disabled. Step 4 is not complete across
+hooks, services, proof closure diagnostics, sandbox compilation, or provider-side re-evaluation.
 
 1. Add the provider-neutral effect domain, canonical identities, origins, and derivation posture
    plus strict resource-binding branches without changing execution admission.

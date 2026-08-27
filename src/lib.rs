@@ -38,6 +38,7 @@ pub mod detector;
 pub mod doctor;
 pub mod effect_application_plan;
 pub mod effect_domain;
+pub mod effect_policy;
 pub(crate) mod execution;
 pub(crate) mod execution_boundary;
 pub(crate) mod github_projection;

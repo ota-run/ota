@@ -3330,6 +3330,17 @@ repo-level `ota up` inherit the same boundary. Non-Unix
 execution refuses because race-safe source capture is unavailable. The field is plan-continuity evidence, not mutation, policy, receipt, archive, or
 assurance evidence.
 
+When one policy pack is active, `plan.effect_policy_decision` carries the shared schema-v1 typed
+effect decision. It binds the policy snapshot and redacted source-location identities, source kind
+and authority posture, selected invocation and execution graph, canonical effect and realization
+sets, each applicable typed rule, current coarse-effect decisions, aggregate result, and fixed
+`deny > warn > allow` precedence. `OTA_POLICY` is reported as `caller_selected`, nearest-ancestor
+repository policy as `repository_controlled`, and workspace policy as `workspace_controlled`.
+Matching policy bytes never upgrade that posture. An aggregate deny causes
+`OTA_EFFECT_POLICY_DENIED` before side effects; allow and warn do not enable provider execution,
+which remains disabled. The decision is not a canary, receipt, archive, provider attestation, or
+positive assurance record.
+
 The published schema for this surface is
 [json-schemas/run-preview.json](json-schemas/run-preview.json). It covers single-target ready or
 blocked previews, aggregate member previews, and the simpler pre-preview error envelope.

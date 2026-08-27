@@ -299,6 +299,82 @@ pub struct PolicyEffectsRules {
     pub tasks: PolicyTaskEffectsRules,
     #[serde(default)]
     pub safe_tasks: PolicyTaskEffectsRules,
+    #[serde(default)]
+    pub typed: PolicyTypedEffectsRules,
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PolicyTypedEffectsRules {
+    #[serde(default)]
+    pub rules: Vec<PolicyTypedEffectRule>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PolicyTypedEffectRule {
+    pub id: String,
+    pub selector: PolicyTypedEffectSelector,
+    pub decision: PolicyEffectDecision,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PolicyTypedEffectSelector {
+    pub kind: String,
+    #[serde(default)]
+    pub actions: Vec<String>,
+    pub resource: PolicyTypedEffectResourceSelector,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bounds: Option<crate::effect_domain::CanonicalDatabaseSchemaMutationBounds>,
+    #[serde(default)]
+    pub derivation_postures: Vec<crate::effect_domain::EffectDerivationPosture>,
+    #[serde(default)]
+    pub tasks: Vec<String>,
+    #[serde(default)]
+    pub workflows: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "match", rename_all = "snake_case", deny_unknown_fields)]
+pub enum PolicyTypedEffectResourceSelector {
+    Exact {
+        engine: String,
+        namespace: crate::schema::ResourceNamespaceSpec,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        resource_id: Option<String>,
+        schema: String,
+    },
+    NamespacePattern {
+        engine: String,
+        namespace: PolicyTypedResourceNamespacePattern,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        resource_id: Option<String>,
+        schema: String,
+    },
+    Any {
+        engine: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PolicyTypedResourceNamespacePattern {
+    pub authority: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub organization: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tenant: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub environment: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub region: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cluster: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repository: Option<String>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -379,7 +455,7 @@ pub struct EffectGovernanceOverrides {
     pub decisions: BTreeMap<String, PolicyEffectDecision>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SafeTaskEffectGovernanceDecision {
     pub scope: String,
     pub effect: String,
@@ -2087,6 +2163,186 @@ fn validate_effect_rules(effect_rules: Option<&PolicyEffectsRules>) -> Result<()
     validate_policy_effect_adapter_state_tokens("task", &rules.tasks.adapter_state)?;
     validate_policy_effect_external_state_tokens("safe-task", &rules.safe_tasks.external_state)?;
     validate_policy_effect_external_state_tokens("task", &rules.tasks.external_state)?;
+    validate_typed_effect_rules(&rules.typed)?;
+    Ok(())
+}
+
+fn validate_typed_effect_rules(rules: &PolicyTypedEffectsRules) -> Result<(), String> {
+    let mut ids = BTreeSet::new();
+    for rule in &rules.rules {
+        if rule.id.trim() != rule.id
+            || rule.id.is_empty()
+            || !rule.id.bytes().all(|byte| {
+                byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'_' | b'-')
+            })
+        {
+            return Err(format!(
+                "typed effect policy rule id `{}` must be a canonical lowercase token",
+                rule.id
+            ));
+        }
+        if !ids.insert(rule.id.as_str()) {
+            return Err(format!(
+                "typed effect policy rule id `{}` is duplicated",
+                rule.id
+            ));
+        }
+        if rule.selector.kind != "database_schema_mutation" {
+            return Err(format!(
+                "typed effect policy rule `{}` uses unsupported kind `{}`",
+                rule.id, rule.selector.kind
+            ));
+        }
+        if rule.selector.actions.is_empty()
+            || rule.selector.actions.iter().any(|action| {
+                !matches!(
+                    action.as_str(),
+                    "apply_migration_set" | "rollback_migration_set" | "reset_schema"
+                )
+            })
+        {
+            return Err(format!(
+                "typed effect policy rule `{}` must select one or more supported database schema-mutation actions",
+                rule.id
+            ));
+        }
+        validate_canonical_selector_set(&rule.id, "action", &rule.selector.actions)?;
+        let derivation_postures = rule
+            .selector
+            .derivation_postures
+            .iter()
+            .map(|posture| serde_json::to_string(posture).map_err(|error| error.to_string()))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| {
+                format!(
+                    "typed effect policy rule `{}` has an invalid derivation-posture selector: {error}",
+                    rule.id
+                )
+            })?;
+        validate_canonical_selector_set(&rule.id, "derivation posture", &derivation_postures)?;
+        validate_typed_effect_resource_selector(&rule.id, &rule.selector.resource)?;
+        validate_selector_tokens(&rule.id, "task", &rule.selector.tasks)?;
+        validate_selector_tokens(&rule.id, "workflow", &rule.selector.workflows)?;
+        validate_canonical_selector_set(&rule.id, "task", &rule.selector.tasks)?;
+        validate_canonical_selector_set(&rule.id, "workflow", &rule.selector.workflows)?;
+    }
+    Ok(())
+}
+
+fn validate_selector_tokens(rule_id: &str, label: &str, values: &[String]) -> Result<(), String> {
+    if values
+        .iter()
+        .any(|value| value.trim() != value || value.is_empty())
+    {
+        return Err(format!(
+            "typed effect policy rule `{rule_id}` has a noncanonical {label} selector"
+        ));
+    }
+    Ok(())
+}
+
+fn validate_canonical_selector_set(
+    rule_id: &str,
+    label: &str,
+    values: &[String],
+) -> Result<(), String> {
+    if values.windows(2).any(|pair| pair[0] >= pair[1]) {
+        return Err(format!(
+            "typed effect policy rule `{rule_id}` {label} selectors must be unique and sorted canonically"
+        ));
+    }
+    Ok(())
+}
+
+fn validate_typed_effect_resource_selector(
+    rule_id: &str,
+    selector: &PolicyTypedEffectResourceSelector,
+) -> Result<(), String> {
+    match selector {
+        PolicyTypedEffectResourceSelector::Exact {
+            engine,
+            namespace,
+            resource_id,
+            schema,
+        } => {
+            validate_typed_effect_engine(rule_id, engine)?;
+            let binding = crate::schema::ResourceBindingSpec::Database {
+                provider: crate::schema::DatabaseEffectProvider::Postgresql,
+                namespace: namespace.clone(),
+                resource_id: resource_id.clone(),
+            };
+            crate::effect_domain::resolve_resource_binding(&binding).map_err(|error| {
+                format!(
+                    "typed effect policy rule `{rule_id}` has an invalid exact resource selector: {error}"
+                )
+            })?;
+            crate::effect_domain::validate_postgresql_schema_selector(schema).map_err(|error| {
+                format!(
+                    "typed effect policy rule `{rule_id}` has an invalid schema selector: {error}"
+                )
+            })?;
+        }
+        PolicyTypedEffectResourceSelector::NamespacePattern {
+            engine,
+            namespace,
+            resource_id,
+            schema,
+        } => {
+            validate_typed_effect_engine(rule_id, engine)?;
+            validate_pattern_component(rule_id, "namespace.authority", Some(&namespace.authority))?;
+            for (label, value) in [
+                ("namespace.organization", namespace.organization.as_ref()),
+                ("namespace.tenant", namespace.tenant.as_ref()),
+                ("namespace.environment", namespace.environment.as_ref()),
+                ("namespace.account", namespace.account.as_ref()),
+                ("namespace.region", namespace.region.as_ref()),
+                ("namespace.cluster", namespace.cluster.as_ref()),
+                ("namespace.repository", namespace.repository.as_ref()),
+                ("resource_id", resource_id.as_ref()),
+            ] {
+                validate_pattern_component(rule_id, label, value)?;
+            }
+            validate_pattern_component(rule_id, "schema", Some(schema))?;
+        }
+        PolicyTypedEffectResourceSelector::Any { engine } => {
+            validate_typed_effect_engine(rule_id, engine)?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_typed_effect_engine(rule_id: &str, engine: &str) -> Result<(), String> {
+    if engine != "postgresql" {
+        return Err(format!(
+            "typed effect policy rule `{rule_id}` uses unsupported engine `{engine}`"
+        ));
+    }
+    Ok(())
+}
+
+fn validate_pattern_component(
+    rule_id: &str,
+    label: &str,
+    value: Option<&String>,
+) -> Result<(), String> {
+    let Some(value) = value else {
+        return Ok(());
+    };
+    if value == "*" {
+        return Ok(());
+    }
+    if value.trim() != value
+        || value.is_empty()
+        || !value.bytes().all(|byte| {
+            byte.is_ascii_lowercase()
+                || byte.is_ascii_digit()
+                || matches!(byte, b'.' | b':' | b'_' | b'-')
+        })
+    {
+        return Err(format!(
+            "typed effect policy rule `{rule_id}` has invalid pattern component `{label}`"
+        ));
+    }
     Ok(())
 }
 
@@ -2900,6 +3156,11 @@ pub fn load_org_policy_pack_auto_details(
 fn load_org_policy_pack_from_path(
     policy_path: PathBuf,
 ) -> Result<Option<(OrgPolicyPack, PathBuf)>, LoadPolicyPackError> {
+    let policy_path =
+        fs::canonicalize(&policy_path).map_err(|source| LoadPolicyPackError::Read {
+            path: policy_path.display().to_string(),
+            source,
+        })?;
     let contents =
         fs::read_to_string(&policy_path).map_err(|source| LoadPolicyPackError::Read {
             path: policy_path.display().to_string(),
@@ -4910,6 +5171,113 @@ policies:
 
         let error = policy.validate().expect_err("invalid token should fail");
         assert!(error.contains("safe-task external_state entry `Docker`"));
+    }
+
+    #[test]
+    fn validates_typed_effect_rule_identity_and_selector_shape() {
+        let duplicate: OrgPolicyPack = serde_yaml::from_str(
+            r#"
+policies:
+  effects:
+    typed:
+      rules:
+        - id: deny_prod
+          selector:
+            kind: database_schema_mutation
+            actions: [apply_migration_set]
+            resource: { match: any, engine: postgresql }
+          decision: deny
+        - id: deny_prod
+          selector:
+            kind: database_schema_mutation
+            actions: [reset_schema]
+            resource: { match: any, engine: postgresql }
+          decision: deny
+"#,
+        )
+        .unwrap();
+        assert!(
+            duplicate
+                .validate()
+                .unwrap_err()
+                .contains("rule id `deny_prod` is duplicated")
+        );
+
+        let unknown_kind: OrgPolicyPack = serde_yaml::from_str(
+            r#"
+policies:
+  effects:
+    typed:
+      rules:
+        - id: deny_unknown
+          selector:
+            kind: shell_mutation
+            actions: [apply_migration_set]
+            resource: { match: any, engine: postgresql }
+          decision: deny
+"#,
+        )
+        .unwrap();
+        assert!(
+            unknown_kind
+                .validate()
+                .unwrap_err()
+                .contains("unsupported kind `shell_mutation`")
+        );
+
+        let policy_with =
+            |actions: &str, derivation_postures: &str, tasks: &str, workflows: &str| {
+                serde_yaml::from_str::<OrgPolicyPack>(&format!(
+                    r#"
+policies:
+  effects:
+    typed:
+      rules:
+        - id: canonical_selectors
+          selector:
+            kind: database_schema_mutation
+            actions: {actions}
+            derivation_postures: {derivation_postures}
+            tasks: {tasks}
+            workflows: {workflows}
+            resource: {{ match: any, engine: postgresql }}
+          decision: deny
+"#
+                ))
+                .expect("policy parses")
+            };
+        for (policy, selector) in [
+            (
+                policy_with(
+                    "[rollback_migration_set, apply_migration_set]",
+                    "[]",
+                    "[]",
+                    "[]",
+                ),
+                "action",
+            ),
+            (
+                policy_with(
+                    "[apply_migration_set]",
+                    "[typed_derived, declared_and_typed]",
+                    "[]",
+                    "[]",
+                ),
+                "derivation posture",
+            ),
+            (
+                policy_with("[apply_migration_set]", "[]", "[migrate, migrate]", "[]"),
+                "task",
+            ),
+            (
+                policy_with("[apply_migration_set]", "[]", "[]", "[release, release]"),
+                "workflow",
+            ),
+        ] {
+            assert!(policy.validate().unwrap_err().contains(&format!(
+                "{selector} selectors must be unique and sorted canonically"
+            )));
+        }
     }
 
     #[test]

@@ -86,7 +86,18 @@ durable agent workflow belongs in the canonical Ota skill.
   delivers every ordered file to the selected callback before Core records a delivery
   acknowledgement. Substituted source or plan and disconnected or failing callbacks refuse. The
   callback remains trusted for its behavior after delivery, so this does not enable provider contact,
-  mutation, execution evidence, or positive assurance. Plan-to-executor continuity is now
+  mutation, execution evidence, or positive assurance. The next local V12 batch extends the existing
+  command-scoped policy-pack loader with canonical typed effect rules and one shared evaluator below
+  CLI orchestration. Its content-addressed decision binds the policy snapshot, redacted source
+  location, source kind and authority posture, selected invocation and execution graph, effect and
+  realization sets, every matching typed rule, current coarse-effect components, and aggregate
+  `deny > warn > allow` precedence. Repo-level `ota run` and non-dry-run `ota up` consume that same
+  decision before replay, authority, sandbox, setup, environment rendering, services, dependencies,
+  provider contact, or repository mutation. A typed rule, strict fallback, or coarse component whose
+  aggregate is `deny` causes `OTA_EFFECT_POLICY_DENIED`; dry-run publishes the non-secret decision.
+  Caller overrides remain limited to shipped coarse selectors and cannot target typed rules. This is
+  operational refusal only: provider execution, canaries, positive effect/execution receipts,
+  archives, and positive assurance remain disabled. Plan-to-executor continuity is now
   immutable-hosted on Linux/x64 and macOS in
   [run 33032683375](https://github.com/ota-run/ota/actions/runs/33032683375) against exact Core
   `32e3395f92e1114ce209dc620d14ecc82330856f`. Both retained artifacts bind that revision, record all

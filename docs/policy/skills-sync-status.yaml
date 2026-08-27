@@ -25,9 +25,8 @@
 version: 1
 repository: ota-run/skills
 mode: synced
-reviewed_ota_commit: "bfcf3d6c00840891204b870d3dd5b1bca6e67670"
-consumer_commit: "8ef5d9e2fe3a31010c9bb0af534114d390c52a3d"
+reviewed_ota_commit: ede4a83920ffc0abad451f6b167aa84246eb6888
+consumer_commit: 83c01d858a2a41c7c8624ca3858505f1a3900046
 notes: >
-  The canonical Skill and both installed mirrors bind descriptor-relative migration capture,
-  complete typed closure admission for repo-level run and non-dry-run up, and the distinction
-  between blocked readiness receipts and positive effect or execution evidence.
+  The canonical Skill and both installed mirrors explain typed effect-policy decisions and preserve
+  the provider/canary/receipt/archive/assurance boundary.

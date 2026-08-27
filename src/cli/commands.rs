@@ -22702,44 +22702,51 @@ fn render_run_preview_target(
             )),
         };
     };
-    let effect_application_plans = match task.action.as_ref() {
-        Some(crate::schema::TaskActionSpec::DatabaseSchemaMutation(spec)) => {
-            let effective =
-                effective_task_execution(&target.contract, task_name.as_str(), overrides);
-            let repository_root = contract_working_dir(&target.contract_path);
-            let working_dir = crate::runner::effective_task_execution_working_dir(
-                task,
-                effective.backend,
-                repository_root,
-            );
-            match crate::effect_application_plan::admit_database_schema_mutation_action(
-                &target.contract,
-                task_name.as_str(),
-                spec.effect.as_str(),
-                repository_root,
-                &working_dir,
-            ) {
-                Ok(admission) => vec![admission.plan],
-                Err(error) => {
-                    let error = format!(
-                        "typed database schema-mutation plan refused ({}): {}",
-                        error.code, error.message
-                    );
-                    return match format {
-                        OutputFormat::Text => {
-                            CommandOutput::failure(stylize_text_failure("ota run", &error))
-                        }
-                        OutputFormat::Json => CommandOutput::failure(run_preview_error_json(
-                            target.contract_path.display().to_string(),
-                            member,
-                            task_name.as_str(),
-                            error,
-                        )),
-                    };
+    let typed_effect_closure = match build_typed_effect_closure_admission(
+        &target.contract,
+        &target.contract_path,
+        std::slice::from_ref(&task_name),
+        overrides,
+    ) {
+        Ok(closure) => closure,
+        Err(error) => {
+            let error = render_run_error(error);
+            return match format {
+                OutputFormat::Text => {
+                    CommandOutput::failure(stylize_text_failure("ota run", &error))
                 }
-            }
+                OutputFormat::Json => CommandOutput::failure(run_preview_error_json(
+                    target.contract_path.display().to_string(),
+                    member,
+                    task_name.as_str(),
+                    error,
+                )),
+            };
         }
-        _ => Vec::new(),
+    };
+    let effect_policy_decision = match typed_effect_policy_decision(
+        &target.contract,
+        &target.contract_path,
+        None,
+        task_name.as_str(),
+        &typed_effect_closure.task_names,
+        &typed_effect_closure.application_plans,
+    ) {
+        Ok(decision) => decision,
+        Err(error) => {
+            let error = render_run_error(error);
+            return match format {
+                OutputFormat::Text => {
+                    CommandOutput::failure(stylize_text_failure("ota run", &error))
+                }
+                OutputFormat::Json => CommandOutput::failure(run_preview_error_json(
+                    target.contract_path.display().to_string(),
+                    member,
+                    task_name.as_str(),
+                    error,
+                )),
+            };
+        }
     };
     let replay_input_preflight =
         task_replay_input_preflight(&target.contract, &target.contract_path, task_name.as_str());
@@ -22938,7 +22945,8 @@ fn render_run_preview_target(
                     persist_logs,
                 )
             };
-            plan.effect_application_plans = effect_application_plans.clone();
+            plan.effect_application_plans = typed_effect_closure.application_plans.clone();
+            plan.effect_policy_decision = effect_policy_decision.clone();
             let summary = DoctorSummary {
                 verdict: DoctorVerdict::NotReady,
                 agent_verdict: DoctorVerdict::Ready,
@@ -23081,7 +23089,8 @@ fn render_run_preview_target(
         &execution_plan,
         persist_logs,
     );
-    plan.effect_application_plans = effect_application_plans;
+    plan.effect_application_plans = typed_effect_closure.application_plans;
+    plan.effect_policy_decision = effect_policy_decision;
     let preconditions_report = run_preview_preconditions_report(
         &target.contract,
         &target.contract_path,
@@ -108563,22 +108572,30 @@ fn enforce_typed_effect_pre_execution_boundary(
     Ok(())
 }
 
-fn typed_effect_closure_refusal(
+#[derive(Debug, Clone)]
+struct TypedEffectClosureAdmission {
+    task_names: Vec<String>,
+    application_plans: Vec<crate::effect_application_plan::EffectApplicationPlan>,
+}
+
+fn build_typed_effect_closure_admission(
     contract: &Contract,
     contract_path: &Path,
-    workflow_name: Option<&str>,
-    task_names: &[String],
+    root_task_names: &[String],
     overrides: ExecutionOverrides,
-) -> Result<Option<RunError>, RunError> {
-    let adjusted_contract =
-        contract_adjusted_for_selected_workflow_env_profile(contract, workflow_name);
-    let contract = adjusted_contract.as_ref().unwrap_or(contract);
+) -> Result<TypedEffectClosureAdmission, RunError> {
     let repository_root = contract_working_dir(contract_path);
-    let mut first_admitted = None;
+    let mut task_names = Vec::new();
+    let mut seen_tasks = BTreeSet::new();
+    let mut application_plans = Vec::new();
 
-    for task_name in task_names {
-        let plan = plan_task_execution_with_overrides(contract, task_name, overrides)?;
+    for root_task_name in root_task_names {
+        let plan = plan_task_execution_with_overrides(contract, root_task_name, overrides)?;
         for step in &plan.steps {
+            if !seen_tasks.insert(step.task.clone()) {
+                continue;
+            }
+            task_names.push(step.task.clone());
             let Some(task) = contract.tasks.get(step.task.as_str()) else {
                 continue;
             };
@@ -108598,25 +108615,148 @@ fn typed_effect_closure_refusal(
                 step.backend,
                 repository_root,
             );
-            let identity = crate::runner::verify_database_schema_mutation_admission(
-                Some(contract),
+            let admission = crate::effect_application_plan::admit_database_schema_mutation_action(
+                contract,
                 step.task.as_str(),
-                spec,
+                spec.effect.as_str(),
                 repository_root,
                 effective_working_dir.as_path(),
-            )?;
-            if first_admitted.is_none() {
-                first_admitted = Some((step.task.clone(), identity));
-            }
+            )
+            .map_err(|error| RunError::FileActionFailed {
+                task: step.task.clone(),
+                message: format!(
+                    "typed database schema-mutation plan refused ({}): {}",
+                    error.code, error.message
+                ),
+            })?;
+            application_plans.push(admission.plan);
         }
     }
 
-    Ok(first_admitted.map(|(task, identity)| RunError::FileActionFailed {
-        task,
+    Ok(TypedEffectClosureAdmission {
+        task_names,
+        application_plans,
+    })
+}
+
+fn typed_effect_closure_refusal(
+    contract: &Contract,
+    contract_path: &Path,
+    workflow_name: Option<&str>,
+    task_names: &[String],
+    overrides: ExecutionOverrides,
+) -> Result<Option<RunError>, RunError> {
+    let adjusted_contract =
+        contract_adjusted_for_selected_workflow_env_profile(contract, workflow_name);
+    let contract = adjusted_contract.as_ref().unwrap_or(contract);
+    let closure =
+        build_typed_effect_closure_admission(contract, contract_path, task_names, overrides)?;
+    let Some(first_plan) = closure.application_plans.first() else {
+        return Ok(None);
+    };
+    let policy_decision = typed_effect_policy_decision(
+        contract,
+        contract_path,
+        workflow_name,
+        task_names.first().map(String::as_str).unwrap_or_default(),
+        &closure.task_names,
+        &closure.application_plans,
+    )?;
+    if let Some(decision) = policy_decision
+        && decision.aggregate_decision == PolicyEffectDecision::Deny
+    {
+        let rule_ids = decision
+            .effects
+            .iter()
+            .flat_map(|effect| effect.applicable_rules.iter())
+            .filter(|rule| rule.decision == PolicyEffectDecision::Deny)
+            .map(|rule| rule.id.as_str())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>()
+            .join(", ");
+        let basis = if rule_ids.is_empty() {
+            decision
+                .coarse_decisions
+                .iter()
+                .filter(|component| component.decision == PolicyEffectDecision::Deny)
+                .map(|component| component.source.as_str())
+                .chain(
+                    decision
+                        .effects
+                        .iter()
+                        .filter(|effect| effect.decision == PolicyEffectDecision::Deny)
+                        .map(|effect| effect.decision_basis.as_str()),
+                )
+                .collect::<Vec<_>>()
+                .join(", ")
+        } else {
+            format!("typed rule(s) `{rule_ids}`")
+        };
+        return Ok(Some(RunError::EffectPolicyDenied {
+            task: first_plan.task.clone(),
+            message: format!(
+                "decision `{}` denied effect set `{}` through {} with policy source posture `{}` before provider contact or repository mutation",
+                decision.identity,
+                decision.effect_set_identity,
+                basis,
+                decision.policy_source_evidence.authority_posture,
+            ),
+        }));
+    }
+
+    Ok(Some(RunError::FileActionFailed {
+        task: first_plan.task.clone(),
         message: format!(
-            "typed database schema-mutation plan `{identity}` and every typed action in the selected closure were admitted with their exact materialized inputs, but provider execution is disabled in V12"
+            "typed database schema-mutation plan `{}` and every typed action in the selected closure were admitted with their exact materialized inputs, but provider execution is disabled in V12",
+            first_plan.identity,
         ),
     }))
+}
+
+fn typed_effect_policy_decision(
+    contract: &Contract,
+    contract_path: &Path,
+    workflow_name: Option<&str>,
+    selected_task_name: &str,
+    task_names: &[String],
+    application_plans: &[crate::effect_application_plan::EffectApplicationPlan],
+) -> Result<Option<crate::effect_policy::EffectPolicyDecision>, RunError> {
+    if application_plans.is_empty() {
+        return Ok(None);
+    }
+    let loaded = load_org_policy_pack_auto_details(contract_path).map_err(|error| {
+        RunError::FileActionFailed {
+            task: task_names.first().cloned().unwrap_or_default(),
+            message: format!("typed effect policy could not be loaded before admission: {error}"),
+        }
+    })?;
+    let Some(loaded) = loaded else {
+        return Ok(None);
+    };
+    let selected_subject = workflow_name.map_or_else(
+        || vec![String::from("tasks"), selected_task_name.to_string()],
+        |workflow| vec![String::from("workflows"), workflow.to_string()],
+    );
+    crate::effect_policy::evaluate_typed_effect_policy(
+        contract,
+        crate::effect_policy::EffectPolicyEvaluationScope {
+            selected_subject: &selected_subject,
+            workflow_name,
+            ordered_tasks: task_names,
+            plans: application_plans,
+        },
+        &loaded,
+        Some(&current_effect_governance_overrides()),
+    )
+    .map(Some)
+    .map_err(|error| RunError::FileActionFailed {
+        task: task_names.first().cloned().unwrap_or_default(),
+        message: format!(
+            "typed effect policy evaluation refused ({}): {}",
+            error.code, error.message
+        ),
+    })
 }
 
 #[derive(Debug, Clone)]
@@ -135454,11 +135594,14 @@ fn typed_effect_up_pre_execution_result(
     {
         return None;
     }
-    let task_names = contract.selected_workflow_task_closure_names(workflow_name);
+    let effective_workflow_name = contract
+        .selected_workflow(workflow_name)
+        .map(|(name, _)| name);
+    let task_names = contract.selected_workflow_task_closure_names(effective_workflow_name);
     let error = match typed_effect_closure_refusal(
         contract,
         resolved_path,
-        workflow_name,
+        effective_workflow_name,
         task_names.as_slice(),
         overrides,
     ) {
@@ -135484,23 +135627,41 @@ fn typed_effect_up_refusal_result(
     error: RunError,
 ) -> RepoUpResult {
     let task_name = match &error {
-        RunError::FileActionFailed { task, .. } => Some(task.clone()),
+        RunError::FileActionFailed { task, .. } | RunError::EffectPolicyDenied { task, .. } => {
+            Some(task.clone())
+        }
         _ => contract
             .selected_run_task_name_for(workflow_name)
             .map(str::to_string),
     };
+    let effect_policy_denied = matches!(&error, RunError::EffectPolicyDenied { .. });
+    let finding_code = if effect_policy_denied {
+        "OTA_EFFECT_POLICY_DENIED"
+    } else {
+        "OTA_TYPED_EFFECT_ADMISSION_REFUSED"
+    };
     let finding = Finding {
         identity: Some(FindingIdentity {
-            code: String::from("OTA_TYPED_EFFECT_ADMISSION_REFUSED"),
+            code: String::from(finding_code),
             category: String::from("execution"),
             owner: String::from("repo_contract"),
         }),
         severity: FindingSeverity::Error,
-        summary: String::from("Typed effect execution is unavailable"),
+        summary: if effect_policy_denied {
+            String::from("Typed effect denied by policy")
+        } else {
+            String::from("Typed effect execution is unavailable")
+        },
         why: error.to_string(),
-        next: String::from(
-            "inspect the typed application plan with `ota run <task> --dry-run --json`; provider execution remains disabled in V12",
-        ),
+        next: if effect_policy_denied {
+            String::from(
+                "inspect the effect-policy decision with `ota run <task> --dry-run --json`; policy denial cannot be weakened by a crossing grant or effect override",
+            )
+        } else {
+            String::from(
+                "inspect the typed application plan with `ota run <task> --dry-run --json`; provider execution remains disabled in V12",
+            )
+        },
     };
     let report = DoctorReport {
         ok: false,
@@ -135529,9 +135690,7 @@ fn typed_effect_up_refusal_result(
         Some(finding.next.clone()),
         Some(overrides),
     );
-    receipt
-        .blocked
-        .push(String::from("OTA_TYPED_EFFECT_ADMISSION_REFUSED"));
+    receipt.blocked.push(String::from(finding_code));
     refresh_execution_receipt_status(&mut receipt);
     RepoUpResult {
         ok: false,
@@ -142088,7 +142247,12 @@ fn load_and_diagnose_workspace_streaming(
 }
 
 fn render_run_error(error: RunError) -> String {
-    error.to_string()
+    match error {
+        RunError::EffectPolicyDenied { task, message } => {
+            format!("OTA_EFFECT_POLICY_DENIED: effect policy denied for task `{task}`: {message}")
+        }
+        error => error.to_string(),
+    }
 }
 
 const NO_ACTIVE_POLICY_PROVISIONING_DETAILS: &str =

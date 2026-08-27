@@ -870,6 +870,8 @@ pub enum RunError {
     },
     #[error("file action for task `{task}` failed: {message}")]
     FileActionFailed { task: String, message: String },
+    #[error("effect policy denied task `{task}`: {message}")]
+    EffectPolicyDenied { task: String, message: String },
     #[error("task `{task}` requires `execution.backends.container.image` for container execution")]
     MissingContainerImage { task: String },
     #[error("task `{task}` requires an explicit `execution.lifecycle` for container execution")]

@@ -856,6 +856,10 @@ fn canonical_postgresql_identifier(value: &str, label: &str) -> Result<String, E
     Ok(value.to_string())
 }
 
+pub fn validate_postgresql_schema_selector(value: &str) -> Result<(), EffectDomainError> {
+    canonical_postgresql_identifier(value, "schema").map(|_| ())
+}
+
 fn validate_catalog_label(value: &str, label: &str) -> Result<(), EffectDomainError> {
     if value.is_empty()
         || value.len() > 128
