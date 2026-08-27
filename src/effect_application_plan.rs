@@ -51,6 +51,8 @@ const MIGRATION_MANIFEST_DOMAIN: &[u8] = b"ota.schema-migration-manifest.v1\0";
 const APPLICATION_PLAN_DOMAIN: &[u8] = b"ota.effect-application-plan.v1\0";
 const APPLICATION_INVOCATION_ORIGIN_DOMAIN: &[u8] =
     b"ota.effect-application-invocation-origin.v1\0";
+#[cfg(test)]
+const APPLICATION_EXECUTOR_INPUT_DOMAIN: &[u8] = b"ota.effect-application-executor-input.v1\0";
 const POSTGRESQL_SCHEMA_MUTATION_ADAPTER_DOMAIN: &[u8] =
     b"ota.adapter.postgresql-schema-mutation.v1\0";
 #[cfg(unix)]
@@ -110,6 +112,7 @@ pub struct EffectApplicationPlan {
     pub effect_identity: String,
     pub resource_binding_identity: String,
     pub action: String,
+    pub bounds: CanonicalDatabaseSchemaMutationBounds,
     pub migration_manifests: Vec<MigrationSetManifest>,
 }
 
@@ -119,16 +122,41 @@ pub struct AdmittedEffectApplication {
     migration_inputs: Vec<MigrationSetInput>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 struct MigrationSetInput {
     root: String,
     files: Vec<MigrationInputFile>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 struct MigrationInputFile {
     path: String,
     bytes: Vec<u8>,
+}
+
+/// Test-only callback used to prove exact ordered delivery at the Core/executor seam.
+///
+/// Core owns iteration and acknowledgement. The callback remains trusted for what it does after
+/// delivery; this control does not prove provider mutation or database correctness.
+#[cfg(test)]
+pub(crate) trait DatabaseSchemaMutationExecutor {
+    fn begin(&mut self, plan: &EffectApplicationPlan) -> Result<(), EffectApplicationPlanError>;
+
+    fn deliver_migration_file(
+        &mut self,
+        root: &str,
+        path: &str,
+        bytes: &[u8],
+    ) -> Result<(), EffectApplicationPlanError>;
+
+    fn finish(&mut self) -> Result<(), EffectApplicationPlanError>;
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg(test)]
+pub(crate) struct DatabaseSchemaMutationExecutionAcknowledgement {
+    plan_identity: String,
+    executor_input_identity: String,
 }
 
 #[cfg(unix)]
@@ -169,6 +197,7 @@ struct ApplicationPlanIdentityPayload<'a> {
     effect_identity: &'a str,
     resource_binding_identity: &'a str,
     action: &'a str,
+    bounds: &'a CanonicalDatabaseSchemaMutationBounds,
     migration_manifests: &'a [MigrationSetManifest],
 }
 
@@ -177,6 +206,54 @@ struct ApplicationInvocationOriginIdentityPayload<'a> {
     schema_version: u32,
     contract_snapshot_identity: &'a str,
     invocation_subject: &'a [String],
+}
+
+#[derive(Serialize)]
+#[cfg(test)]
+struct ApplicationExecutorInputIdentityPayload<'a> {
+    schema_version: u32,
+    plan_identity: &'a str,
+    migration_inputs: &'a [MigrationSetInput],
+}
+
+/// Re-verifies an admitted plan immediately before Core delivers it to the test executor.
+///
+/// This proves exact ordered delivery only. Callback behavior after delivery remains trusted.
+#[cfg(test)]
+pub(crate) fn execute_admitted_database_schema_mutation_action<E>(
+    contract: &Contract,
+    task_name: &str,
+    repository_root: &Path,
+    effective_working_dir: &Path,
+    admitted: &AdmittedEffectApplication,
+    executor: &mut E,
+) -> Result<DatabaseSchemaMutationExecutionAcknowledgement, EffectApplicationPlanError>
+where
+    E: DatabaseSchemaMutationExecutor,
+{
+    verify_admitted_effect_application(
+        contract,
+        task_name,
+        repository_root,
+        effective_working_dir,
+        admitted,
+    )?;
+    let executor_input_identity = executor_input_identity(admitted)?;
+    executor.begin(&admitted.plan)?;
+    for migration_set in &admitted.migration_inputs {
+        for file in &migration_set.files {
+            executor.deliver_migration_file(
+                migration_set.root.as_str(),
+                file.path.as_str(),
+                file.bytes.as_slice(),
+            )?;
+        }
+    }
+    executor.finish()?;
+    Ok(DatabaseSchemaMutationExecutionAcknowledgement {
+        plan_identity: admitted.plan.identity.clone(),
+        executor_input_identity,
+    })
 }
 
 /// The immutable profile identity for the only V12 typed adapter currently implemented.
@@ -333,6 +410,7 @@ fn derive_effect_application_admissions(
                 effect_identity: effect.identity.clone(),
                 resource_binding_identity: effect.resource.binding_identity.clone(),
                 action: effect.action.clone(),
+                bounds: effect.bounds.clone(),
                 migration_manifests: manifests,
             },
             migration_inputs,
@@ -769,6 +847,7 @@ fn application_plan_identity(
         effect_identity: &effect.identity,
         resource_binding_identity: &effect.resource.binding_identity,
         action: &effect.action,
+        bounds: &effect.bounds,
         migration_manifests,
     };
     domain_identity(APPLICATION_PLAN_DOMAIN, &payload)
@@ -838,6 +917,7 @@ fn verify_materialized_input(
             effect_identity: admitted.plan.effect_identity.as_str(),
             resource_binding_identity: admitted.plan.resource_binding_identity.as_str(),
             action: admitted.plan.action.as_str(),
+            bounds: &admitted.plan.bounds,
             migration_manifests: manifests.as_slice(),
         },
     )?;
@@ -848,6 +928,20 @@ fn verify_materialized_input(
         ));
     }
     Ok(())
+}
+
+#[cfg(test)]
+fn executor_input_identity(
+    admitted: &AdmittedEffectApplication,
+) -> Result<String, EffectApplicationPlanError> {
+    domain_identity(
+        APPLICATION_EXECUTOR_INPUT_DOMAIN,
+        &ApplicationExecutorInputIdentityPayload {
+            schema_version: 1,
+            plan_identity: admitted.plan.identity.as_str(),
+            migration_inputs: admitted.migration_inputs.as_slice(),
+        },
+    )
 }
 
 fn domain_identity<T: Serialize>(
@@ -876,7 +970,136 @@ mod tests {
     use std::fs;
     use tempfile::tempdir;
 
+    #[derive(Default)]
+    struct RecordingExecutor {
+        admitted_plan_identity: Option<String>,
+        admitted_bounds: Option<CanonicalDatabaseSchemaMutationBounds>,
+        migration_files: Vec<(String, String, Vec<u8>)>,
+        finished: bool,
+    }
+
+    impl DatabaseSchemaMutationExecutor for RecordingExecutor {
+        fn begin(
+            &mut self,
+            plan: &EffectApplicationPlan,
+        ) -> Result<(), EffectApplicationPlanError> {
+            self.admitted_plan_identity = Some(plan.identity.clone());
+            self.admitted_bounds = Some(plan.bounds.clone());
+            Ok(())
+        }
+
+        fn deliver_migration_file(
+            &mut self,
+            root: &str,
+            path: &str,
+            bytes: &[u8],
+        ) -> Result<(), EffectApplicationPlanError> {
+            self.migration_files
+                .push((root.to_string(), path.to_string(), bytes.to_vec()));
+            Ok(())
+        }
+
+        fn finish(&mut self) -> Result<(), EffectApplicationPlanError> {
+            self.finished = true;
+            Ok(())
+        }
+    }
+
+    struct DisconnectedExecutor;
+
+    impl DatabaseSchemaMutationExecutor for DisconnectedExecutor {
+        fn begin(
+            &mut self,
+            _plan: &EffectApplicationPlan,
+        ) -> Result<(), EffectApplicationPlanError> {
+            Err(EffectApplicationPlanError::new(
+                "effect_application_executor_disconnected",
+                "test executor is disconnected",
+            ))
+        }
+
+        fn deliver_migration_file(
+            &mut self,
+            _root: &str,
+            _path: &str,
+            _bytes: &[u8],
+        ) -> Result<(), EffectApplicationPlanError> {
+            unreachable!("disconnected executor refuses before delivery")
+        }
+
+        fn finish(&mut self) -> Result<(), EffectApplicationPlanError> {
+            unreachable!("disconnected executor refuses before finish")
+        }
+    }
+
+    #[derive(Default)]
+    struct FailingDeliveryExecutor {
+        delivered: usize,
+    }
+
+    impl DatabaseSchemaMutationExecutor for FailingDeliveryExecutor {
+        fn begin(
+            &mut self,
+            _plan: &EffectApplicationPlan,
+        ) -> Result<(), EffectApplicationPlanError> {
+            Ok(())
+        }
+
+        fn deliver_migration_file(
+            &mut self,
+            _root: &str,
+            _path: &str,
+            _bytes: &[u8],
+        ) -> Result<(), EffectApplicationPlanError> {
+            self.delivered += 1;
+            if self.delivered == 2 {
+                return Err(EffectApplicationPlanError::new(
+                    "effect_application_executor_delivery_failed",
+                    "test executor refused delivered bytes",
+                ));
+            }
+            Ok(())
+        }
+
+        fn finish(&mut self) -> Result<(), EffectApplicationPlanError> {
+            unreachable!("failed delivery must not reach finish")
+        }
+    }
+
+    struct NoOpExecutor;
+
+    impl DatabaseSchemaMutationExecutor for NoOpExecutor {
+        fn begin(
+            &mut self,
+            _plan: &EffectApplicationPlan,
+        ) -> Result<(), EffectApplicationPlanError> {
+            Ok(())
+        }
+
+        fn deliver_migration_file(
+            &mut self,
+            _root: &str,
+            _path: &str,
+            _bytes: &[u8],
+        ) -> Result<(), EffectApplicationPlanError> {
+            Ok(())
+        }
+
+        fn finish(&mut self) -> Result<(), EffectApplicationPlanError> {
+            Ok(())
+        }
+    }
+
     fn contract(content_identity: &str) -> Contract {
+        contract_for_action(
+            "apply_migration_set",
+            &format!(
+                "      migration_set: {{ root: migrations, content_identity: {content_identity} }}\n      start_state: any_within_set"
+            ),
+        )
+    }
+
+    fn contract_for_action(action: &str, bounds: &str) -> Contract {
         parse_contract_str(
             Path::new("ota.yaml"),
             &format!(
@@ -891,11 +1114,10 @@ resource_bindings:
 effect_definitions:
   migration:
     kind: database_schema_mutation
-    action: apply_migration_set
+    action: {action}
     resource: {{ engine: postgresql, target_ref: primary, schema: public }}
     bounds:
-      migration_set: {{ root: migrations, content_identity: {content_identity} }}
-      start_state: any_within_set
+{bounds}
 tasks:
   migrate:
     run: "true"
@@ -983,7 +1205,7 @@ tasks:
     }
 
     #[test]
-    fn admitted_plan_refuses_source_plan_and_materialized_input_substitution() {
+    fn plans_carry_complete_discriminated_action_bounds() {
         let directory = tempdir().unwrap();
         let migrations = directory.path().join("migrations");
         fs::create_dir_all(&migrations).unwrap();
@@ -993,6 +1215,109 @@ tasks:
             path: "001.sql".to_string(),
             identity: format!("sha256:{:x}", Sha256::digest(migration_bytes)),
         }];
+        let migration_identity = domain_identity(
+            MIGRATION_MANIFEST_DOMAIN,
+            &MigrationManifestIdentityPayload {
+                schema_version: 1,
+                root: "migrations",
+                files: &files,
+            },
+        )
+        .unwrap();
+
+        let apply = derive_effect_application_plans(
+            &contract(&migration_identity),
+            "migrate",
+            directory.path(),
+            directory.path(),
+        )
+        .unwrap();
+        assert!(matches!(
+            apply[0].bounds,
+            CanonicalDatabaseSchemaMutationBounds::ApplyMigrationSet { .. }
+        ));
+
+        let rollback_contract = contract_for_action(
+            "rollback_migration_set",
+            &format!(
+                "      migration_set: {{ root: migrations, content_identity: {migration_identity} }}\n      target_migration_identity: sha256:{}\n      start_state: any_within_set",
+                "b".repeat(64)
+            ),
+        );
+        let rollback = derive_effect_application_plans(
+            &rollback_contract,
+            "migrate",
+            directory.path(),
+            directory.path(),
+        )
+        .unwrap();
+        assert!(matches!(
+            rollback[0].bounds,
+            CanonicalDatabaseSchemaMutationBounds::RollbackMigrationSet { .. }
+        ));
+
+        let reset_empty_contract = contract_for_action(
+            "reset_schema",
+            "      reset_scope: schema\n      post_reset: empty",
+        );
+        let reset_empty = derive_effect_application_plans(
+            &reset_empty_contract,
+            "migrate",
+            directory.path(),
+            directory.path(),
+        )
+        .unwrap();
+        assert!(matches!(
+            reset_empty[0].bounds,
+            CanonicalDatabaseSchemaMutationBounds::ResetSchema {
+                post_reset: CanonicalResetPosture::Empty,
+                ..
+            }
+        ));
+        assert!(reset_empty[0].migration_manifests.is_empty());
+
+        let reset_apply_contract = contract_for_action(
+            "reset_schema",
+            &format!(
+                "      reset_scope: schema\n      post_reset:\n        apply_migration_set:\n          root: migrations\n          content_identity: {migration_identity}"
+            ),
+        );
+        let reset_apply = derive_effect_application_plans(
+            &reset_apply_contract,
+            "migrate",
+            directory.path(),
+            directory.path(),
+        )
+        .unwrap();
+        assert!(matches!(
+            reset_apply[0].bounds,
+            CanonicalDatabaseSchemaMutationBounds::ResetSchema {
+                post_reset: CanonicalResetPosture::ApplyMigrationSet { .. },
+                ..
+            }
+        ));
+        assert_eq!(reset_apply[0].migration_manifests.len(), 1);
+    }
+
+    #[test]
+    fn admitted_plan_refuses_source_plan_and_materialized_input_substitution() {
+        let directory = tempdir().unwrap();
+        let migrations = directory.path().join("migrations");
+        fs::create_dir_all(&migrations).unwrap();
+        let first_migration_bytes = b"create table example ();\n";
+        let second_migration_bytes = b"alter table example add column value integer;\n";
+        fs::write(migrations.join("001.sql"), first_migration_bytes).unwrap();
+        fs::write(migrations.join("002.sql"), second_migration_bytes).unwrap();
+        let files = vec![
+            MigrationSetManifestFile {
+                path: "001.sql".to_string(),
+                identity: format!("sha256:{:x}", Sha256::digest(first_migration_bytes)),
+            },
+            MigrationSetManifestFile {
+                path: "002.sql".to_string(),
+                identity: format!("sha256:{:x}", Sha256::digest(second_migration_bytes)),
+            },
+        ];
         let identity = domain_identity(
             MIGRATION_MANIFEST_DOMAIN,
             &MigrationManifestIdentityPayload {
@@ -1020,10 +1345,128 @@ tasks:
         )
         .unwrap();
 
+        let mut executor = RecordingExecutor::default();
+        let expected_executor_input_identity = executor_input_identity(&admitted).unwrap();
+        let acknowledgement = execute_admitted_database_schema_mutation_action(
+            &contract,
+            "migrate",
+            directory.path(),
+            directory.path(),
+            &admitted,
+            &mut executor,
+        )
+        .unwrap();
+        assert_eq!(acknowledgement.plan_identity, admitted.plan.identity);
+        assert_eq!(
+            acknowledgement.executor_input_identity,
+            expected_executor_input_identity
+        );
+        assert_eq!(
+            executor.admitted_plan_identity.as_deref(),
+            Some(admitted.plan.identity.as_str())
+        );
+        assert_eq!(
+            executor.admitted_bounds.as_ref(),
+            Some(&admitted.plan.bounds)
+        );
+        assert!(executor.finished);
+        assert_eq!(
+            executor.migration_files,
+            vec![
+                (
+                    String::from("migrations"),
+                    String::from("001.sql"),
+                    first_migration_bytes.to_vec(),
+                ),
+                (
+                    String::from("migrations"),
+                    String::from("002.sql"),
+                    second_migration_bytes.to_vec(),
+                ),
+            ]
+        );
+
+        let mut failing_executor = FailingDeliveryExecutor::default();
+        let error = execute_admitted_database_schema_mutation_action(
+            &contract,
+            "migrate",
+            directory.path(),
+            directory.path(),
+            &admitted,
+            &mut DisconnectedExecutor,
+        )
+        .unwrap_err();
+        assert_eq!(error.code, "effect_application_executor_disconnected");
+
+        let error = execute_admitted_database_schema_mutation_action(
+            &contract,
+            "migrate",
+            directory.path(),
+            directory.path(),
+            &admitted,
+            &mut failing_executor,
+        )
+        .unwrap_err();
+        assert_eq!(error.code, "effect_application_executor_delivery_failed");
+        assert_eq!(failing_executor.delivered, 2);
+
+        // Core proves delivery continuity, not what a trusted in-process callback does afterward.
+        let no_op_acknowledgement = execute_admitted_database_schema_mutation_action(
+            &contract,
+            "migrate",
+            directory.path(),
+            directory.path(),
+            &admitted,
+            &mut NoOpExecutor,
+        )
+        .unwrap();
+        assert_eq!(no_op_acknowledgement, acknowledgement);
+
         let mut changed_input = admitted.clone();
         changed_input.migration_inputs[0].files[0].bytes.push(b' ');
         assert_eq!(
             verify_materialized_input(&changed_input).unwrap_err().code,
+            "effect_application_input_substituted"
+        );
+        let mut changed_input_executor = RecordingExecutor::default();
+        assert_eq!(
+            execute_admitted_database_schema_mutation_action(
+                &contract,
+                "migrate",
+                directory.path(),
+                directory.path(),
+                &changed_input,
+                &mut changed_input_executor,
+            )
+            .unwrap_err()
+            .code,
+            "effect_application_input_substituted"
+        );
+        assert!(changed_input_executor.admitted_plan_identity.is_none());
+
+        let mut omitted_input = admitted.clone();
+        omitted_input.migration_inputs[0].files.pop();
+        assert_eq!(
+            verify_materialized_input(&omitted_input).unwrap_err().code,
+            "effect_application_input_substituted"
+        );
+
+        let mut reordered_input = admitted.clone();
+        reordered_input.migration_inputs[0].files.swap(0, 1);
+        assert_eq!(
+            verify_materialized_input(&reordered_input)
+                .unwrap_err()
+                .code,
+            "effect_application_input_substituted"
+        );
+
+        let mut duplicated_input = admitted.clone();
+        let duplicate = duplicated_input.migration_inputs[0].files[0].clone();
+        duplicated_input.migration_inputs[0].files.push(duplicate);
+        assert_eq!(
+            verify_materialized_input(&duplicated_input)
+                .unwrap_err()
+                .code,
             "effect_application_input_substituted"
         );
 
@@ -1042,6 +1485,34 @@ tasks:
             "effect_application_plan_substituted"
         );
 
+        let mut changed_bounds = admitted.clone();
+        let CanonicalDatabaseSchemaMutationBounds::ApplyMigrationSet { start_state, .. } =
+            &mut changed_bounds.plan.bounds
+        else {
+            panic!("expected apply bounds");
+        };
+        *start_state = format!("sha256:{}", "c".repeat(64));
+        assert_eq!(
+            verify_materialized_input(&changed_bounds).unwrap_err().code,
+            "effect_application_plan_substituted"
+        );
+
+        let mut executor = RecordingExecutor::default();
+        assert_eq!(
+            execute_admitted_database_schema_mutation_action(
+                &contract,
+                "migrate",
+                directory.path(),
+                directory.path(),
+                &changed_plan,
+                &mut executor,
+            )
+            .unwrap_err()
+            .code,
+            "effect_application_plan_substituted"
+        );
+        assert!(executor.admitted_plan_identity.is_none());
+
         fs::write(
             migrations.join("001.sql"),
             "alter table example add column id int;\n",
@@ -1059,6 +1530,22 @@ tasks:
             .code,
             "effect_application_migration_set_drift"
         );
+
+        let mut executor = RecordingExecutor::default();
+        assert_eq!(
+            execute_admitted_database_schema_mutation_action(
+                &contract,
+                "migrate",
+                directory.path(),
+                directory.path(),
+                &admitted,
+                &mut executor,
+            )
+            .unwrap_err()
+            .code,
+            "effect_application_migration_set_drift"
+        );
+        assert!(executor.admitted_plan_identity.is_none());
     }
 
     #[cfg(unix)]

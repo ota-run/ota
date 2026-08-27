@@ -26,6 +26,13 @@
 
 ## Unreleased
 
+- Include canonical discriminated action bounds in V12 effect application plans so an executor can
+  receive apply, rollback, reset-empty, or reset-with-migrations semantics without rereading the
+  contract. Preview schemas enforce the same canonical migration-root and action-specific manifest
+  cardinality rules. The internal continuity control proves exact ordered delivery and binds its
+  acknowledgement to the plan and executor input; callback behavior and provider mutation remain
+  unproved.
+
 - Validate that a released `agent.bootstrap.ota.source.version` is not below
   `metadata.ota.minimum_version`. CI can consume that single checked source through
   `ota-run/setup@v1` or `ota-run/action@v1` with `source: contract`, instead of maintaining a

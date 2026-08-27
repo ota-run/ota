@@ -80,8 +80,15 @@ durable agent workflow belongs in the canonical Ota skill.
   replace the exhaustive local identity-domain regression matrix. V12.1 onward and both cross-cutting plans remain
   planned and inactive. The reference Example correctly requires Ota `1.6.27`; the source-built
   `v1.6.27` development binary validated that exact contract locally on 2026-08-25. This closes
-  only the local minimum-version gate. Plan-to-executor continuity now has the bounded hosted internal
-  fixture evidence above but no independent real-repository effect pressure. Contract validation now
+  only the local minimum-version gate. Application plans now carry the canonical discriminated
+  action bounds needed by an executor, rather than requiring contract reconstruction. A Core-owned,
+  test-only continuity control re-verifies the admitted plan and retained migration bytes, then
+  delivers every ordered file to the selected callback before Core records a delivery
+  acknowledgement. Substituted source or plan and disconnected or failing callbacks refuse. The
+  callback remains trusted for its behavior after delivery, so this does not enable provider contact,
+  mutation, execution evidence, or positive assurance. Plan-to-executor continuity is locally
+  covered and included in the next immutable hosted internal-fixture run; no independent
+  real-repository effect pressure exists yet. Contract validation now
   also rejects a released `agent.bootstrap.ota.source.version`
   below `metadata.ota.minimum_version`; `source: contract` is the canonical CI consumer so a
   workflow cannot maintain a divergent released bootstrap version. Git revisions and pressure

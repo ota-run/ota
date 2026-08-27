@@ -302,3 +302,11 @@
   adversarial fixtures from pristine inputs, and persist the last completed and failed named stage.
 - Rule: Hosted pressure must use the same stage-reporting carrier exercised locally; workflow YAML
   should orchestrate the carrier and retain evidence rather than contain the trust test itself.
+- Pattern: A producer regression can pass while its published schema accepts action-specific
+  contradictions or its returned acknowledgement identities remain unasserted.
+- Correction: For identity-bearing output, enumerate each discriminated branch in both producer and
+  schema tests, mirror runtime normalization rules including Unicode boundary whitespace, add
+  isolated contradictory fixtures, and assert every returned identity against its independently
+  derived subject.
+- Rule: Trust-sensitive output is complete only when producer behavior, local schema constraints,
+  and returned identity bindings are independently locked.

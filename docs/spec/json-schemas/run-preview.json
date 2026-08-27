@@ -82,6 +82,11 @@
       "type": "string",
       "pattern": "^sha256:[0-9a-f]{64}$"
     },
+    "canonicalMigrationRoot": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!\\s)(?!.*\\s$)(?![A-Za-z]:)(?!/)(?!.*[\\u0000-\\u001f\\u007f-\\u009f\\u2028\\u2029])(?!.*//)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*\\\\)(?!.*\/$).+$"
+    },
     "effectApplicationManifestFile": {
       "type": "object",
       "additionalProperties": false,
@@ -97,13 +102,85 @@
       "required": ["schema_version", "root", "identity", "files"],
       "properties": {
         "schema_version": { "const": 1 },
-        "root": { "type": "string", "minLength": 1 },
+        "root": { "$ref": "#/$defs/canonicalMigrationRoot" },
         "identity": { "$ref": "#/$defs/sha256Identity" },
         "files": {
           "type": "array",
           "items": { "$ref": "#/$defs/effectApplicationManifestFile" }
         }
       }
+    },
+    "effectApplicationMigrationSet": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["root", "content_identity"],
+      "properties": {
+        "root": { "$ref": "#/$defs/canonicalMigrationRoot" },
+        "content_identity": { "$ref": "#/$defs/sha256Identity" }
+      }
+    },
+    "effectApplicationBounds": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "migration_set", "start_state"],
+          "properties": {
+            "kind": { "const": "apply_migration_set" },
+            "migration_set": { "$ref": "#/$defs/effectApplicationMigrationSet" },
+            "start_state": {
+              "oneOf": [
+                { "const": "any_within_set" },
+                { "$ref": "#/$defs/sha256Identity" }
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "migration_set", "target_migration_identity", "start_state"],
+          "properties": {
+            "kind": { "const": "rollback_migration_set" },
+            "migration_set": { "$ref": "#/$defs/effectApplicationMigrationSet" },
+            "target_migration_identity": { "$ref": "#/$defs/sha256Identity" },
+            "start_state": {
+              "oneOf": [
+                { "const": "any_within_set" },
+                { "$ref": "#/$defs/sha256Identity" }
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "reset_scope", "post_reset"],
+          "properties": {
+            "kind": { "const": "reset_schema" },
+            "reset_scope": { "const": "schema" },
+            "post_reset": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["kind"],
+                  "properties": { "kind": { "const": "empty" } }
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["kind", "migration_set"],
+                  "properties": {
+                    "kind": { "const": "apply_migration_set" },
+                    "migration_set": { "$ref": "#/$defs/effectApplicationMigrationSet" }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ]
     },
     "effectApplicationPlan": {
       "type": "object",
@@ -120,6 +197,7 @@
         "effect_identity",
         "resource_binding_identity",
         "action",
+        "bounds",
         "migration_manifests"
       ],
       "properties": {
@@ -144,6 +222,7 @@
         "action": {
           "enum": ["apply_migration_set", "rollback_migration_set", "reset_schema"]
         },
+        "bounds": { "$ref": "#/$defs/effectApplicationBounds" },
         "migration_manifests": {
           "type": "array",
           "maxItems": 1,
@@ -152,6 +231,36 @@
       },
       "allOf": [
         {
+          "if": { "properties": { "action": { "const": "apply_migration_set" } } },
+          "then": {
+            "properties": {
+              "bounds": {
+                "properties": { "kind": { "const": "apply_migration_set" } }
+              }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "action": { "const": "rollback_migration_set" } } },
+          "then": {
+            "properties": {
+              "bounds": {
+                "properties": { "kind": { "const": "rollback_migration_set" } }
+              }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "action": { "const": "reset_schema" } } },
+          "then": {
+            "properties": {
+              "bounds": {
+                "properties": { "kind": { "const": "reset_schema" } }
+              }
+            }
+          }
+        },
+        {
           "if": {
             "properties": {
               "action": {
@@ -159,6 +268,50 @@
               }
             },
             "required": ["action"]
+          },
+          "then": {
+            "properties": {
+              "migration_manifests": { "minItems": 1, "maxItems": 1 }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": { "const": "reset_schema" },
+              "bounds": {
+                "properties": {
+                  "post_reset": {
+                    "properties": { "kind": { "const": "empty" } },
+                    "required": ["kind"]
+                  }
+                },
+                "required": ["post_reset"]
+              }
+            },
+            "required": ["action", "bounds"]
+          },
+          "then": {
+            "properties": {
+              "migration_manifests": { "maxItems": 0 }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": { "const": "reset_schema" },
+              "bounds": {
+                "properties": {
+                  "post_reset": {
+                    "properties": { "kind": { "const": "apply_migration_set" } },
+                    "required": ["kind"]
+                  }
+                },
+                "required": ["post_reset"]
+              }
+            },
+            "required": ["action", "bounds"]
           },
           "then": {
             "properties": {

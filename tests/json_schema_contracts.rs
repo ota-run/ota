@@ -456,6 +456,10 @@ fn published_contract_schema_discriminates_typed_effect_bounds() {
         "migrations/\u{0000}next",
         "migrations/\u{2028}next",
         "migrations/\u{2029}next",
+        " migrations",
+        "migrations ",
+        "\u{00a0}migrations",
+        "migrations\u{00a0}",
     ] {
         let mut aliased_migration_root = valid.clone();
         aliased_migration_root["effect_definitions"]["production_schema_migration"]["bounds"]["migration_set"]
@@ -1180,7 +1184,7 @@ fn run_preview_schema_enforces_typed_effect_manifest_cardinality() {
         "identity": identity,
         "files": []
     });
-    let mut plan = serde_json::json!({
+    let plan = serde_json::json!({
         "schema_version": 1,
         "identity": identity,
         "adapter_profile_identity": identity,
@@ -1192,18 +1196,93 @@ fn run_preview_schema_enforces_typed_effect_manifest_cardinality() {
         "effect_identity": identity,
         "resource_binding_identity": identity,
         "action": "apply_migration_set",
+        "bounds": {
+            "kind": "apply_migration_set",
+            "migration_set": {
+                "root": "migrations",
+                "content_identity": identity
+            },
+            "start_state": "any_within_set"
+        },
         "migration_manifests": [manifest]
     });
     assert!(compiled.is_valid(&plan));
 
-    plan["migration_manifests"] = serde_json::json!([]);
-    assert!(!compiled.is_valid(&plan));
+    let mut missing_apply_manifest = plan.clone();
+    missing_apply_manifest["migration_manifests"] = serde_json::json!([]);
+    assert!(!compiled.is_valid(&missing_apply_manifest));
 
-    plan["action"] = serde_json::json!("rollback_migration_set");
-    assert!(!compiled.is_valid(&plan));
+    let mut mismatched_action = plan.clone();
+    mismatched_action["action"] = serde_json::json!("rollback_migration_set");
+    assert!(!compiled.is_valid(&mismatched_action));
 
-    plan["action"] = serde_json::json!("reset_schema");
-    assert!(compiled.is_valid(&plan));
+    let mut rollback = plan.clone();
+    rollback["action"] = serde_json::json!("rollback_migration_set");
+    rollback["bounds"] = serde_json::json!({
+        "kind": "rollback_migration_set",
+        "migration_set": {
+            "root": "migrations",
+            "content_identity": identity
+        },
+        "target_migration_identity": identity,
+        "start_state": "any_within_set"
+    });
+    assert!(compiled.is_valid(&rollback));
+
+    let mut reset_empty = plan.clone();
+    reset_empty["action"] = serde_json::json!("reset_schema");
+    reset_empty["bounds"] = serde_json::json!({
+        "kind": "reset_schema",
+        "reset_scope": "schema",
+        "post_reset": { "kind": "empty" }
+    });
+    reset_empty["migration_manifests"] = serde_json::json!([]);
+    assert!(compiled.is_valid(&reset_empty));
+
+    let mut reset_empty_with_manifest = reset_empty.clone();
+    reset_empty_with_manifest["migration_manifests"] = serde_json::json!([manifest.clone()]);
+    assert!(!compiled.is_valid(&reset_empty_with_manifest));
+
+    let mut reset_apply = plan;
+    reset_apply["action"] = serde_json::json!("reset_schema");
+    reset_apply["bounds"] = serde_json::json!({
+        "kind": "reset_schema",
+        "reset_scope": "schema",
+        "post_reset": {
+            "kind": "apply_migration_set",
+            "migration_set": {
+                "root": "migrations",
+                "content_identity": identity
+            }
+        }
+    });
+    assert!(compiled.is_valid(&reset_apply));
+
+    let mut reset_apply_without_manifest = reset_apply.clone();
+    reset_apply_without_manifest["migration_manifests"] = serde_json::json!([]);
+    assert!(!compiled.is_valid(&reset_apply_without_manifest));
+
+    for root in [
+        "../migrations",
+        "/migrations",
+        "C:/migrations",
+        "migrations//nested",
+        "migrations/",
+        ".",
+        " migrations",
+        "migrations ",
+        "\u{00a0}migrations",
+        "migrations\u{00a0}",
+    ] {
+        let mut invalid_manifest_root = reset_apply.clone();
+        invalid_manifest_root["migration_manifests"][0]["root"] = serde_json::json!(root);
+        assert!(!compiled.is_valid(&invalid_manifest_root), "{root}");
+
+        let mut invalid_bounds_root = reset_apply.clone();
+        invalid_bounds_root["bounds"]["post_reset"]["migration_set"]["root"] =
+            serde_json::json!(root);
+        assert!(!compiled.is_valid(&invalid_bounds_root), "{root}");
+    }
 }
 
 #[test]

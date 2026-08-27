@@ -347,11 +347,14 @@ migration roots, unbounded command arguments, or provider-owned migration behavi
 
 The typed adapter produces one content-addressed `EffectApplicationPlan` from the selected
 invocation, resource binding, migration-set manifest where applicable, and discriminated bounds.
-The realization is derived from that plan, and the executor must consume the same plan identity
-rather than reconstructing a parallel command. Immediately before allowed execution, Ota
+The realization is derived from that plan, whose canonical discriminated action payload contains
+every action-specific bound needed by the executor. The executor receives that exact plan rather
+than rereading the contract or reconstructing a parallel command. Immediately before allowed execution, Ota
 re-observes resource-binding and migration-set inputs and re-derives the plan; drift refuses before
-provider contact. Provider/application evidence binds the exact consumed plan identity. This
-proves plan-to-executor continuity only, not database correctness or successful schema mutation.
+provider contact. Provider/application evidence binds the exact delivered plan identity. Core can
+prove ordered byte delivery to the selected adapter boundary; provider evidence must separately
+prove what the adapter did after delivery. This does not prove database correctness or successful
+schema mutation.
 
 Later families may add:
 
@@ -741,9 +744,10 @@ the incident ratchet.
 - bare target labels, unresolved namespace authority, or conflicting resource-binding evidence
   make the effect incomplete; policy wildcard matching remains an explicit selector rather than an
   identity omission;
-- an allowed typed-adapter control consumes the exact admitted `EffectApplicationPlan`; immediate
-  source or plan substitution refuses before provider contact, and a disconnected/no-op executor
-  cannot satisfy the continuity regression merely by emitting effect metadata;
+- an allowed typed-adapter control receives the exact admitted `EffectApplicationPlan`, including
+  canonical action-specific bounds, and every ordered retained migration byte; immediate source or
+  plan substitution and disconnected or failing delivery refuse before provider contact; Core does
+  not claim to prove what an in-process callback does after delivery;
 - task/workflow labels, machine paths, timestamps, and contract-local effect labels do not change
   semantic effect identity;
 - unresolved secret-derived or free-form resource truth becomes incomplete without exposing or
@@ -793,9 +797,10 @@ the incident ratchet.
 ## Pressure Bar
 
 Pressure must use at least two independent real repositories and an adversarial Core fixture. The
-Core fixture includes an allowed typed-adapter control proving that the executor consumes the exact
-admitted application-plan identity, plus source/plan substitution and disconnected-executor
-controls. This control proves plan continuity only; it does not claim database correctness.
+Core fixture includes an allowed typed-adapter control proving exact ordered delivery of the admitted
+application plan, canonical action payload, and retained bytes, plus source/plan substitution and
+disconnected/failing callback controls. This control proves delivery continuity only; it does not
+claim callback behavior, database correctness, or successful mutation.
 
 The first repository must contain committed deterministic database migration truth and at least
 two real selected lanes with different task/workflow names that resolve to the same typed

@@ -3316,7 +3316,7 @@ free-form `requirement_lines`.
 For `action.kind: database_schema_mutation` on Unix, `plan.effect_application_plans` contains the exact
 non-secret schema-v1 plan admitted by the typed adapter. It binds the adapter profile, selected
 task, contract invocation origin, repository-relative effective working directory, effect reference,
-attachment, consequence, resource binding, action, and ordered migration manifests. Apply and
+attachment, consequence, resource binding, action, canonical discriminated action bounds, and ordered migration manifests. Apply and
 rollback plans carry exactly one manifest; reset plans carry zero or one according to their declared
 post-reset posture. File entries expose only root-relative paths and SHA-256 identities, never
 migration bytes or credentials. Repo-level `ota run` and non-dry-run repo-level `ota up` perform one

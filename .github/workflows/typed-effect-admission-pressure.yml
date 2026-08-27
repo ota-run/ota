@@ -66,6 +66,14 @@ jobs:
             "$proof_root" \
             "$GITHUB_WORKSPACE"
 
+      - name: Exercise Core-owned ordered executor delivery control
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --locked effect_application_plan::tests::admitted_plan_refuses_source_plan_and_materialized_input_substitution \
+            --lib -- --test-threads=1 2>&1 | tee \
+            "$RUNNER_TEMP/ota-typed-effect-admission-pressure/plan-to-executor-continuity.txt"
+
       - name: Upload pressure evidence
         if: always()
         uses: actions/upload-artifact@v7

@@ -2204,6 +2204,12 @@ tasks:
         plans[0]["migration_manifests"][0]["identity"],
         manifest_identity
     );
+    assert_eq!(plans[0]["bounds"]["kind"], "apply_migration_set");
+    assert_eq!(
+        plans[0]["bounds"]["migration_set"]["content_identity"],
+        manifest_identity
+    );
+    assert_eq!(plans[0]["bounds"]["start_state"], "any_within_set");
 
     let execution = Command::new(env!("CARGO_BIN_EXE_ota"))
         .args(["run", "migrate", "--plain"])

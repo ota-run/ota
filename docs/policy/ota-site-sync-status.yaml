@@ -25,9 +25,8 @@
 version: 1
 repository: ota-run/ota-site
 mode: synced
-reviewed_ota_commit: "bfcf3d6c00840891204b870d3dd5b1bca6e67670"
-consumer_commit: "00a2f60729e264dc4806b1698b475576a3a58a93"
+reviewed_ota_commit: "b9a97a52b6720d665b54356feb584b67317eb1d7"
+consumer_commit: "cb1f21463abcc5b1e866ea87aafc1c31bdfc7729"
 notes: >
-  Site contract and Learn references bind descriptor-relative migration capture, complete typed
-  closure admission for repo-level run and non-dry-run up, and the distinction between blocked
-  readiness receipts and positive effect or execution evidence.
+  Site reference documentation publishes canonical action-specific bounds and ordered migration
+  manifests while preserving the boundary that byte delivery does not prove provider mutation.
