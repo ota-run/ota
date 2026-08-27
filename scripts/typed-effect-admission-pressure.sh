@@ -150,6 +150,15 @@ workflows:
       task: migrate
     proof:
       claim: bounded
+agent:
+  effect_refusal_canaries:
+    - id: pressure_schema_refusal
+      effect: migration
+      challenge_lanes:
+        - task: migrate
+          origin: { task: migrate, effect: migration }
+        - workflow: typed
+          origin: { task: migrate, effect: migration }
 """))
 policy = textwrap.dedent("""\
 policies:
@@ -170,6 +179,10 @@ policies:
 (preview_fixture / ".ota/org-policy.yaml").write_text(policy)
 PY
 record_stage fixture_created
+printf '%s\n' \
+  'policies:' \
+  '  effects:' \
+  '    mode: strict' > "$proof_root/strict-policy.yaml"
 
 stage=contract_validation
 git -C "$core_root" rev-parse HEAD > "$proof_root/core-revision.txt"
@@ -222,6 +235,61 @@ test ! -e "$fixture/setup-sentinel" || fail "workflow setup executed before refu
 test ! -e "$fixture/.env.typed" || fail "workflow environment rendered before refusal"
 test ! -e "$fixture/.ota/state/logs" || fail "durable execution logs were created before refusal"
 record_stage execution_refusals_verified
+
+stage=effect_refusal_canary
+"$ota" json validate --schema effect-refusal-canary.json --assert-eq ok=true \
+  --assert-eq status=passed --assert-eq canary.lane_kind=task \
+  --assert-eq canary.lane_target=migrate --assert-eq canary.actual_decision=deny \
+  --assert-eq canary.execution_started=false \
+  --assert-non-empty-string canary.canary_identity \
+  --write-payload "$proof_root/effect-canary-task.json" \
+  -- "$ota" run --agent --expect-effect-refusal pressure_schema_refusal --json migrate "$fixture"
+"$ota" json validate --schema effect-refusal-canary.json --assert-eq ok=true \
+  --assert-eq status=passed --assert-eq canary.lane_kind=workflow \
+  --assert-eq canary.lane_target=typed --assert-eq canary.actual_decision=deny \
+  --assert-eq canary.execution_started=false \
+  --assert-non-empty-string canary.canary_identity \
+  --write-payload "$proof_root/effect-canary-workflow.json" \
+  -- "$ota" up --workflow typed --agent --expect-effect-refusal pressure_schema_refusal --json "$fixture"
+"$ota" run --agent --expect-effect-refusal pressure_schema_refusal --plain migrate "$fixture" \
+  > "$proof_root/effect-canary-plain.txt" 2>&1
+grep -Fq 'EFFECT REFUSAL CANARY pressure_schema_refusal' "$proof_root/effect-canary-plain.txt" \
+  || fail "plain effect-refusal canary did not render its heading"
+if grep -Fq '🦦' "$proof_root/effect-canary-plain.txt"; then
+  fail "plain effect-refusal canary rendered an icon"
+fi
+if env OTA_POLICY="$proof_root/strict-policy.yaml" "$ota" run --agent \
+  --expect-effect-refusal pressure_schema_refusal --json migrate "$fixture" \
+  > "$proof_root/effect-canary-strict-fallback-raw.json" 2>&1; then
+  strict_canary_status=0
+else
+  strict_canary_status=$?
+fi
+[ "$strict_canary_status" -eq 1 ] \
+  || fail "strict fallback canary returned $strict_canary_status, expected 1"
+"$ota" json validate --schema effect-refusal-canary.json --allow-exit 1 \
+  --assert-eq ok=false --assert-eq status=failed \
+  --assert-eq canary.reason_code=effect_canary_explicit_typed_deny_not_observed \
+  --write-payload "$proof_root/effect-canary-strict-fallback.json" \
+  -- env OTA_POLICY="$proof_root/strict-policy.yaml" "$ota" run --agent \
+    --expect-effect-refusal pressure_schema_refusal --json migrate "$fixture"
+if "$ota" run --agent --expect-effect-refusal unknown_pressure_refusal --json migrate "$fixture" \
+  > "$proof_root/effect-canary-unknown-raw.json" 2>&1; then
+  unknown_canary_status=0
+else
+  unknown_canary_status=$?
+fi
+[ "$unknown_canary_status" -eq 1 ] \
+  || fail "unknown canary returned $unknown_canary_status, expected 1"
+"$ota" json validate --schema effect-refusal-canary.json --allow-exit 1 \
+  --assert-eq ok=false --assert-eq status=not_evaluated \
+  --assert-eq canary.reason_code=effect_canary_unknown \
+  --write-payload "$proof_root/effect-canary-unknown.json" \
+  -- "$ota" run --agent --expect-effect-refusal unknown_pressure_refusal --json migrate "$fixture"
+test ! -e "$fixture/setup-sentinel" || fail "effect-refusal canary executed workflow setup"
+test ! -e "$fixture/.env.typed" || fail "effect-refusal canary rendered workflow environment"
+test ! -e "$fixture/.ota/state/logs" || fail "effect-refusal canary created durable execution logs"
+record_stage effect_refusal_canary_verified
 
 stage=refusal_schema_validation
 "$ota" json validate --schema up.json --allow-exit 1 --assert-eq ok=false \
@@ -278,6 +346,11 @@ printf '%s\n' \
   'proof_inherited_up_precondition_refusal' \
   'policy_decision_published' \
   'policy_denial_code_published' \
+  'effect_refusal_canary_task_passed' \
+  'effect_refusal_canary_workflow_passed' \
+  'effect_refusal_canary_strict_fallback_failed' \
+  'effect_refusal_canary_unknown_failed' \
+  'effect_refusal_canary_plain_output_icon_free' \
   'setup_sentinel_absent' \
   'workflow_env_artifact_absent' \
   'stale_input_refused' \
