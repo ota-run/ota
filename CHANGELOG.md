@@ -31,7 +31,9 @@
   contract. Preview schemas enforce the same canonical migration-root and action-specific manifest
   cardinality rules. The internal continuity control proves exact ordered delivery and binds its
   acknowledgement to the plan and executor input; callback behavior and provider mutation remain
-  unproved.
+  unproved. Immutable Linux/x64 and macOS internal-fixture pressure is green in
+  [run 33032683375](https://github.com/ota-run/ota/actions/runs/33032683375) against exact Core
+  `32e3395f92e1114ce209dc620d14ecc82330856f`.
 
 - Validate that a released `agent.bootstrap.ota.source.version` is not below
   `metadata.ota.minimum_version`. CI can consume that single checked source through

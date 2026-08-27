@@ -86,9 +86,15 @@ durable agent workflow belongs in the canonical Ota skill.
   delivers every ordered file to the selected callback before Core records a delivery
   acknowledgement. Substituted source or plan and disconnected or failing callbacks refuse. The
   callback remains trusted for its behavior after delivery, so this does not enable provider contact,
-  mutation, execution evidence, or positive assurance. Plan-to-executor continuity is locally
-  covered and included in the next immutable hosted internal-fixture run; no independent
-  real-repository effect pressure exists yet. Contract validation now
+  mutation, execution evidence, or positive assurance. Plan-to-executor continuity is now
+  immutable-hosted on Linux/x64 and macOS in
+  [run 33032683375](https://github.com/ota-run/ota/actions/runs/33032683375) against exact Core
+  `32e3395f92e1114ce209dc620d14ecc82330856f`. Both retained artifacts bind that revision, record all
+  seven admission/refusal stages and all seven side-effect-absence checkpoints, retain status `1`
+  for run, up, inherited proof, stale-input, and intermediate-symlink refusals, publish canonical
+  action bounds and ordered migration manifests, and pass the Core-owned continuity control. This
+  remains an internal execution-disabled fixture; no provider behavior or independent
+  real-repository effect pressure is proved. Contract validation now
   also rejects a released `agent.bootstrap.ota.source.version`
   below `metadata.ota.minimum_version`; `source: contract` is the canonical CI consumer so a
   workflow cannot maintain a divergent released bootstrap version. Git revisions and pressure
@@ -96,7 +102,9 @@ durable agent workflow belongs in the canonical Ota skill.
   propagation is committed at Site `00a2f60729e264dc4806b1698b475576a3a58a93`, Skills
   `8ef5d9e2fe3a31010c9bb0af534114d390c52a3d`, and Examples
   `6634e1509ebcbbfef652e084b8f3982fc5fa0dda`; the unrelated generated Site pressure note remains
-  outside this batch.
+  outside this batch. The plan-to-executor reference propagation is committed at Site
+  `cb1f21463abcc5b1e866ea87aafc1c31bdfc7729` and the reviewed implementation foundation at Core
+  `32e3395f92e1114ce209dc620d14ecc82330856f`.
 - completed V11.21 enforced sandbox policy application. Core now derives one
   provider-neutral, target-platform-bound segment graph from the selected task/workflow closure,
   applies only identified monotonic policy restrictions, and fails closed before preparation when

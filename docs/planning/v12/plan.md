@@ -25,9 +25,12 @@
 # V12: Effect-Bound Refusal Assurance
 
 Status: active. Activated on 2026-08-25 after V11 closure reconciliation and independent plan
-review. The first local implementation batch provides declaration and canonical-identity
-foundations without changing execution admission; it remains uncommitted and has no pressure
-evidence.
+review. Declaration, canonical-identity, execution-disabled application-plan, and Core-owned
+ordered-delivery continuity foundations are committed through Core
+`32e3395f92e1114ce209dc620d14ecc82330856f`. Immutable internal-fixture pressure is green on
+Linux/x64 and macOS in [run 33032683375](https://github.com/ota-run/ota/actions/runs/33032683375).
+This evidence does not enable provider mutation, establish callback behavior after delivery, or
+replace the required independent real-repository pressure.
 
 ## Activation Gates
 
