@@ -310,3 +310,14 @@
   derived subject.
 - Rule: Trust-sensitive output is complete only when producer behavior, local schema constraints,
   and returned identity bindings are independently locked.
+
+## 2026-08-27
+
+- Pattern: After closing and pressure-proving a feature slice, the next-step recommendation can jump
+  directly to the next acceptance feature while forgetting an already agreed behavior-neutral
+  extraction at the boundary between batches.
+- Correction: Before naming the next implementation slice, reconcile the active plan, current
+  handoff, and recorded architecture sequencing decisions, including any extraction deliberately
+  deferred until the preceding pressure gate completed.
+- Rule: Every "what is next" recommendation must include pending between-batch architecture work;
+  complete narrow hotspot extraction before adding another feature to the same orchestration path.
