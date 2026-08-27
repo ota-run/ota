@@ -217,7 +217,7 @@ enum Commands {
     },
     #[command(
         display_order = 4,
-        after_help = "Ordering:\n  Put ota command flags like `--agent`, `--sandbox-target`, `--grant`, `--expect-refusal`, `--dry-run`, `--json`, `--stream`, `--receipt`, `--log`, `--mode`, `--native`, `--container`, `--lifecycle`, `--ephemeral`, `--persistent`, `--skip-deps`, `--host-port`, `--memory`, `--effect-override`, and `--reason` before task inputs.\n\nExamples:\n  ota run ci --dry-run\n  ota run ci --dry-run --json\n  ota run verify --agent --sandbox-target oci_local\n  ota run publish --grant approved-publish\n  ota run --agent --expect-refusal release\n  ota run version:bump --stream --version patch\n  ota run dev --host-port 4000\n  ota run dev --memory 4GiB\n  ota run test --skip-deps\n  ota run dev --log\n  ota run ci --effect-override network:broad=allow\n  ota run version:bump patch"
+        after_help = "Ordering:\n  Put ota command flags like `--agent`, `--sandbox-target`, `--grant`, `--expect-refusal`, `--expect-effect-refusal`, `--dry-run`, `--json`, `--stream`, `--receipt`, `--log`, `--mode`, `--native`, `--container`, `--lifecycle`, `--ephemeral`, `--persistent`, `--skip-deps`, `--host-port`, `--memory`, `--effect-override`, and `--reason` before task inputs. Put `--expect-effect-refusal <ID>` before the positional task so the canary ID cannot be mistaken for the optional repo path.\n\nExamples:\n  ota run ci --dry-run\n  ota run ci --dry-run --json\n  ota run verify --agent --sandbox-target oci_local\n  ota run publish --grant approved-publish\n  ota run --agent --expect-refusal release\n  ota run --agent --expect-effect-refusal production_schema_refusal --json db:migrate\n  ota run version:bump --stream --version patch\n  ota run dev --host-port 4000\n  ota run dev --memory 4GiB\n  ota run test --skip-deps\n  ota run dev --log\n  ota run ci --effect-override network:broad=allow\n  ota run version:bump patch"
     )]
     /// Run a validated task from an Ota contract.
     Run {
@@ -233,6 +233,9 @@ enum Commands {
         /// Assert that the contract-declared task refusal canary is refused by agent execution.
         #[arg(long, action = ArgAction::SetTrue, requires = "agent", conflicts_with_all = ["dry_run", "stream", "receipt", "log"])]
         expect_refusal: bool,
+        /// Prove that one predeclared exact effect realization is denied by explicit typed policy.
+        #[arg(long = "expect-effect-refusal", value_name = "ID", requires = "agent", conflicts_with_all = ["expect_refusal", "dry_run", "stream", "receipt", "log"])]
+        expect_effect_refusal: Option<String>,
         /// Print machine-readable JSON output for a dry-run preview or refusal canary.
         #[arg(long, action = ArgAction::SetTrue)]
         json: bool,
@@ -575,6 +578,9 @@ enum Commands {
         /// Assert that the contract-declared workflow refusal canary is refused by agent execution.
         #[arg(long, action = ArgAction::SetTrue, requires = "agent", requires = "workflow", conflicts_with_all = ["dry_run", "stream", "attach", "detach", "receipt", "replay_baseline", "member"])]
         expect_refusal: bool,
+        /// Prove that one predeclared workflow effect realization is denied by explicit typed policy.
+        #[arg(long = "expect-effect-refusal", value_name = "ID", requires = "agent", requires = "workflow", conflicts_with_all = ["expect_refusal", "dry_run", "stream", "attach", "detach", "receipt", "replay_baseline", "member"])]
+        expect_effect_refusal: Option<String>,
         /// Preview the selected up plan without mutating repo or execution state.
         #[arg(long, action = ArgAction::SetTrue)]
         dry_run: bool,
@@ -5597,6 +5603,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
             agent,
             sandbox_target,
             expect_refusal,
+            expect_effect_refusal,
             json,
             dry_run,
             backend,
@@ -5628,7 +5635,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
                 skip_deps,
             };
             if agent {
-                commands::run_command_with_agent_reason_and_grant(
+                commands::run_command_with_agent_reason_and_grant_and_effect_canary(
                     task.as_str(),
                     path.as_deref(),
                     file.as_deref(),
@@ -5639,6 +5646,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
                     &inputs,
                     true,
                     expect_refusal,
+                    expect_effect_refusal.as_deref(),
                     reason.as_deref(),
                     grant.as_deref(),
                     sandbox_target.as_deref(),
@@ -5797,6 +5805,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
             agent,
             sandbox_target,
             expect_refusal,
+            expect_effect_refusal,
             dry_run,
             stream,
             attach,
@@ -5828,7 +5837,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
                 skip_deps: false,
             };
             if agent {
-                commands::up_with_agent_reason_and_grant(
+                commands::up_with_agent_reason_and_grant_and_effect_canary(
                     path.as_deref(),
                     file.as_deref(),
                     overrides,
@@ -5837,6 +5846,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
                     workflow.as_deref(),
                     true,
                     expect_refusal,
+                    expect_effect_refusal.as_deref(),
                     reason.as_deref(),
                     grant.as_deref(),
                     sandbox_target.as_deref(),
@@ -18582,6 +18592,7 @@ tasks:
                 task: String::from("install-from-source"),
                 agent: false,
                 expect_refusal: false,
+                expect_effect_refusal: None,
                 json: false,
                 dry_run: false,
                 backend: None,
@@ -18626,6 +18637,7 @@ tasks:
                 task: String::from("ci"),
                 agent: false,
                 expect_refusal: false,
+                expect_effect_refusal: None,
                 json: false,
                 dry_run: false,
                 backend: None,
@@ -19627,6 +19639,7 @@ tasks:
             json: false,
             agent: false,
             expect_refusal: false,
+            expect_effect_refusal: None,
             dry_run: false,
             stream: false,
             attach: false,
@@ -19658,6 +19671,7 @@ tasks:
             json: false,
             agent: false,
             expect_refusal: false,
+            expect_effect_refusal: None,
             dry_run: false,
             stream: true,
             attach: false,
@@ -19722,6 +19736,7 @@ tasks:
                 json: false,
                 agent: false,
                 expect_refusal: false,
+                expect_effect_refusal: None,
                 dry_run: false,
                 stream: false,
                 attach: false,
@@ -19759,6 +19774,7 @@ tasks:
                 json: false,
                 agent: false,
                 expect_refusal: false,
+                expect_effect_refusal: None,
                 dry_run: false,
                 stream: false,
                 attach: false,
@@ -19836,6 +19852,7 @@ tasks:
             task: String::from("test"),
             agent: false,
             expect_refusal: false,
+            expect_effect_refusal: None,
             json: false,
             dry_run: false,
             backend: None,
@@ -20228,6 +20245,7 @@ tasks:
                     json: true,
                     agent: false,
                     expect_refusal: false,
+                    expect_effect_refusal: None,
                     dry_run: false,
                     stream: false,
                     attach: false,
@@ -20691,6 +20709,46 @@ tasks:
                         super::command_requests_json(&cli.command),
                         "{label} should request json after parsing"
                     );
+                }
+            })
+            .expect("spawn parser worker");
+
+        if let Err(panic) = worker.join() {
+            std::panic::resume_unwind(panic);
+        }
+    }
+
+    #[test]
+    fn effect_refusal_canaries_reject_dry_run_mode() {
+        let worker = std::thread::Builder::new()
+            .name(String::from("effect-canary-cli-parse"))
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                for argv in [
+                    vec![
+                        "ota",
+                        "run",
+                        "--agent",
+                        "--expect-effect-refusal",
+                        "production_schema_refusal",
+                        "--dry-run",
+                        "db:migrate",
+                    ],
+                    vec![
+                        "ota",
+                        "up",
+                        "--workflow",
+                        "release",
+                        "--agent",
+                        "--expect-effect-refusal",
+                        "production_schema_refusal",
+                        "--dry-run",
+                    ],
+                ] {
+                    let error = super::Cli::try_parse_from(argv).expect_err(
+                        "effect-refusal canary mode must not overlap the ordinary dry-run surface",
+                    );
+                    assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
                 }
             })
             .expect("spawn parser worker");
@@ -29026,6 +29084,7 @@ policies:
             task: String::from("ci"),
             agent: false,
             expect_refusal: false,
+            expect_effect_refusal: None,
             json: true,
             dry_run: true,
             backend: None,

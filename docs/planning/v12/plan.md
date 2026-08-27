@@ -569,13 +569,13 @@ does not change those identities.
 The first public invocation stays on the existing runner surfaces:
 
 ```text
-ota run db:migrate --agent --expect-effect-refusal production_schema_refusal --json
+ota run --agent --expect-effect-refusal production_schema_refusal --json db:migrate
 ota up --workflow release --agent --expect-effect-refusal production_schema_refusal --json
 ```
 
-`--expect-effect-refusal` is an Ota flag after the task/workflow selection and before free-form task
-inputs. Its value is a predeclared canary ID, not an effect reference or origin supplied by the
-caller. Ota resolves that ID plus the exact selected lane to one stored challenge entry, then uses
+`--expect-effect-refusal` is an Ota flag before the repo-level positional task/path/input tail; the
+workflow form follows `--workflow`. Its value is a predeclared canary ID, not an effect reference or
+origin supplied by the caller. Ota resolves that ID plus the exact selected lane to one stored challenge entry, then uses
 the entry's mandatory origin to resolve one attachment and realization. Unknown IDs, a lane not
 declared under that ID, or zero/multiple normalized challenge matches refuse as `not_evaluated`
 before effect evaluation. The command never guesses an origin and never accepts a caller-authored
@@ -591,9 +591,10 @@ The operational result is:
 | `failed` | Policy did not deny, the expectation mismatched, or execution/provider mutation began. | non-zero |
 
 If the selected lane is admitted, the expectation fails before selected execution rather than
-running a potentially dangerous lane to demonstrate failure. Dry-run and real canary invocation
-must return the same admission decision; neither may create selected-lane effects. Existing
-`--expect-refusal` behavior and JSON remain unchanged.
+running a potentially dangerous lane to demonstrate failure. Canary invocation is already
+execution-free and cannot be combined with `--dry-run`; it must reconcile with the same decision
+derived by ordinary preview and execution admission. Neither path may create selected-lane effects.
+Existing `--expect-refusal` behavior and JSON remain unchanged.
 
 ## Shared Enforcement Surface
 
@@ -727,10 +728,13 @@ the incident ratchet.
 
 ## Implementation Order
 
-Current implementation boundary: steps 1-3 are locally implemented. The shared evaluator can
-produce an effect-caused refusal for repo-level `run` and non-dry-run `up`, while provider mutation,
-canaries, receipts, archives, and positive assurance remain disabled. Step 4 is not complete across
-hooks, services, proof closure diagnostics, sandbox compilation, or provider-side re-evaluation.
+Current implementation boundary: steps 1-3 and the local task/workflow branch of step 5 are
+implemented. The shared evaluator can produce an effect-caused refusal for repo-level `run` and
+non-dry-run `up`; a predeclared effect-refusal canary can independently prove one exact explicit
+typed denial without starting execution. Provider mutation, CI projection, receipts, archives, and
+positive assurance remain disabled. Step 4 is not complete across hooks, services, proof closure
+diagnostics, sandbox compilation, or provider-side re-evaluation, and step 5 still requires
+immutable pressure before closure.
 
 1. Add the provider-neutral effect domain, canonical identities, origins, and derivation posture
    plus strict resource-binding branches without changing execution admission.

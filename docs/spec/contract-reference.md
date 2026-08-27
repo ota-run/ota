@@ -2139,9 +2139,47 @@ Ota derives separate domain-separated identities for the canonical resource bind
 consequence, exact attachment origin, resource-binding evidence, and effect realization. Task
 names, display labels, and contract-local definition labels do not split equal consequence
 identities. Adapter/profile, application-plan, evidence-posture, and invocation-origin changes do
-split realization identities. This foundation does not change execution admission, evaluate
-policy, contact a provider, emit a refusal canary, or make `declared_only` effects eligible for a
-protected claim.
+split realization identities. This foundation does not contact a provider or make `declared_only`
+effects eligible for a protected claim.
+
+### Effect-refusal canaries
+
+`agent.effect_refusal_canaries` declares contract-owned negative controls for exact typed-effect
+policy denial. Each canary has a unique canonical lowercase ASCII `id` that starts with a letter,
+one `effect` reference, and one
+or more exact `challenge_lanes`. Every lane selects exactly one task or workflow and carries a
+mandatory `origin` naming the task attachment and effect that must appear once in that selected
+closure:
+
+```yaml
+agent:
+  effect_refusal_canaries:
+    - id: production_schema_refusal
+      effect: production_schema_migration
+      challenge_lanes:
+        - task: db:migrate
+          origin:
+            task: db:migrate
+            effect: production_schema_migration
+        - workflow: release
+          origin:
+            task: db:migrate
+            effect: production_schema_migration
+```
+
+Validation rejects unknown effects, duplicate IDs or lanes, missing or ambiguous lane selectors,
+unknown tasks/workflows, origin/effect disagreement, origins outside the selected task/workflow
+closure, and origins without exactly one matching task attachment. The `id` is only a local
+invocation locator. The semantic canary identity binds the
+resolved effect, attachment, realization, selected invocation, invocation origin, and explicit
+typed-deny requirement; renaming only the locator does not change that identity.
+
+Invoke a task challenge with `ota run --agent --expect-effect-refusal <id> --json <task>` and a
+workflow challenge with `ota up --workflow <name> --agent --expect-effect-refusal <id> --json`.
+A pass proves only that the exact eligible realization was denied by an explicit matching typed
+rule before execution began. Fallback-only or generic refusals do not satisfy it. The carrier does
+not prove provider mutation, emit a positive effect/execution receipt or archive, or establish
+positive assurance.
 
 Task-effect rules:
 

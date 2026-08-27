@@ -1,0 +1,241 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dist.ota.run/spec/json-schemas/latest/effect-refusal-canary.json",
+  "title": "ota effect refusal canary --json",
+  "$defs": {
+    "sha256Identity": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    }
+  },
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["ok", "status", "canary"],
+  "properties": {
+    "ok": { "type": "boolean" },
+    "status": { "enum": ["passed", "not_evaluated", "assurance_gap", "failed"] },
+    "canary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version", "status", "canary_id", "lane_kind", "lane_target",
+        "expected_decision", "execution_started", "reason_code", "reason"
+      ],
+      "properties": {
+        "schema_version": { "const": 1 },
+        "status": { "enum": ["passed", "not_evaluated", "assurance_gap", "failed"] },
+        "canary_id": { "type": "string" },
+        "canary_identity": { "$ref": "#/$defs/sha256Identity" },
+        "lane_kind": { "enum": ["task", "workflow"] },
+        "lane_target": { "type": "string", "minLength": 1 },
+        "effect_ref": { "type": "string", "minLength": 1 },
+        "effect_identity": { "$ref": "#/$defs/sha256Identity" },
+        "attachment_identity": { "$ref": "#/$defs/sha256Identity" },
+        "realization_identity": { "$ref": "#/$defs/sha256Identity" },
+        "selected_invocation_identity": { "$ref": "#/$defs/sha256Identity" },
+        "policy_decision_identity": { "$ref": "#/$defs/sha256Identity" },
+        "policy_snapshot_identity": { "$ref": "#/$defs/sha256Identity" },
+        "policy_source_evidence_identity": { "$ref": "#/$defs/sha256Identity" },
+        "rule_identities": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/sha256Identity" }
+        },
+        "expected_decision": { "const": "deny" },
+        "actual_decision": { "enum": ["allow", "warn", "deny"] },
+        "execution_started": { "const": false },
+        "reason_code": { "type": "string", "minLength": 1 },
+        "reason": { "type": "string", "minLength": 1 }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "status": { "const": "passed" } }, "required": ["status"] },
+      "then": {
+        "properties": {
+          "ok": { "const": true },
+          "canary": {
+            "required": [
+              "canary_identity", "effect_ref", "effect_identity", "attachment_identity",
+              "realization_identity", "selected_invocation_identity", "policy_decision_identity",
+              "policy_snapshot_identity", "policy_source_evidence_identity", "rule_identities",
+              "actual_decision"
+            ],
+            "properties": {
+              "status": { "const": "passed" },
+              "canary_id": { "maxLength": 128, "pattern": "^[a-z][a-z0-9_-]*$" },
+              "actual_decision": { "const": "deny" },
+              "rule_identities": { "minItems": 1 },
+              "reason_code": { "const": "effect_canary_explicit_typed_deny" }
+            }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "ok": { "const": false }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "status": { "const": "not_evaluated" } }, "required": ["status"] },
+      "then": {
+        "properties": {
+          "canary": {
+            "properties": { "status": { "const": "not_evaluated" } },
+            "not": {
+              "anyOf": [
+                { "required": ["canary_identity"] },
+                { "required": ["realization_identity"] },
+                { "required": ["selected_invocation_identity"] },
+                { "required": ["policy_decision_identity"] },
+                { "required": ["policy_snapshot_identity"] },
+                { "required": ["policy_source_evidence_identity"] },
+                { "required": ["rule_identities"] },
+                { "required": ["actual_decision"] }
+              ]
+            },
+            "oneOf": [
+              {
+                "properties": {
+                  "reason_code": {
+                    "enum": [
+                      "effect_canary_unknown",
+                      "effect_canary_closure_unavailable",
+                      "effect_canary_policy_evaluation_unavailable",
+                      "effect_canary_caller_selection_not_allowed"
+                    ]
+                  }
+                },
+                "not": {
+                  "anyOf": [
+                    { "required": ["effect_ref"] },
+                    { "required": ["effect_identity"] },
+                    { "required": ["attachment_identity"] }
+                  ]
+                }
+              },
+              {
+                "required": ["effect_ref"],
+                "properties": {
+                  "reason_code": { "const": "effect_canary_lane_not_declared" }
+                },
+                "not": {
+                  "anyOf": [
+                    { "required": ["effect_identity"] },
+                    { "required": ["attachment_identity"] }
+                  ]
+                }
+              },
+              {
+                "required": ["effect_ref", "effect_identity", "attachment_identity"],
+                "properties": {
+                  "reason_code": { "const": "effect_canary_policy_unavailable" }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "status": { "const": "assurance_gap" } }, "required": ["status"] },
+      "then": {
+        "properties": {
+          "canary": {
+            "required": ["effect_ref"],
+            "properties": {
+              "status": { "const": "assurance_gap" },
+              "canary_id": { "maxLength": 128, "pattern": "^[a-z][a-z0-9_-]*$" },
+              "reason_code": {
+                "enum": [
+                  "effect_canary_origin_absent",
+                  "effect_canary_origin_ambiguous",
+                  "effect_canary_decision_subject_mismatch",
+                  "effect_canary_realization_ineligible"
+                ]
+              }
+            },
+            "not": {
+              "anyOf": [
+                { "required": ["canary_identity"] },
+                { "required": ["rule_identities"] }
+              ]
+            },
+            "oneOf": [
+              {
+                "properties": {
+                  "reason_code": {
+                    "enum": [
+                      "effect_canary_origin_absent",
+                      "effect_canary_origin_ambiguous"
+                    ]
+                  }
+                },
+                "not": {
+                  "anyOf": [
+                    { "required": ["effect_identity"] },
+                    { "required": ["attachment_identity"] },
+                    { "required": ["realization_identity"] },
+                    { "required": ["selected_invocation_identity"] },
+                    { "required": ["policy_decision_identity"] },
+                    { "required": ["policy_snapshot_identity"] },
+                    { "required": ["policy_source_evidence_identity"] },
+                    { "required": ["actual_decision"] }
+                  ]
+                }
+              },
+              {
+                "required": [
+                  "effect_identity", "attachment_identity", "selected_invocation_identity",
+                  "policy_decision_identity", "policy_snapshot_identity",
+                  "policy_source_evidence_identity"
+                ],
+                "properties": {
+                  "reason_code": { "const": "effect_canary_decision_subject_mismatch" }
+                },
+                "not": {
+                  "anyOf": [
+                    { "required": ["realization_identity"] },
+                    { "required": ["actual_decision"] }
+                  ]
+                }
+              },
+              {
+                "required": [
+                  "effect_identity", "attachment_identity", "realization_identity",
+                  "selected_invocation_identity", "policy_decision_identity",
+                  "policy_snapshot_identity", "policy_source_evidence_identity", "actual_decision"
+                ],
+                "properties": {
+                  "reason_code": { "const": "effect_canary_realization_ineligible" }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "status": { "const": "failed" } }, "required": ["status"] },
+      "then": {
+        "properties": {
+          "canary": {
+            "required": [
+              "canary_identity", "effect_ref", "effect_identity", "attachment_identity",
+              "realization_identity", "selected_invocation_identity", "policy_decision_identity",
+              "policy_snapshot_identity", "policy_source_evidence_identity", "actual_decision"
+            ],
+            "properties": {
+              "status": { "const": "failed" },
+              "canary_id": { "maxLength": 128, "pattern": "^[a-z][a-z0-9_-]*$" },
+              "reason_code": { "const": "effect_canary_explicit_typed_deny_not_observed" }
+            },
+            "not": { "required": ["rule_identities"] }
+          }
+        }
+      }
+    }
+  ]
+}

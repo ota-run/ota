@@ -22,6 +22,7 @@ Canonical JSON Schema files for the current shipped shapes live in:
 - [json-schemas/proof-runtime.json](json-schemas/proof-runtime.json)
 - [json-schemas/proof-lifecycle.json](json-schemas/proof-lifecycle.json)
 - [json-schemas/refusal-canary.json](json-schemas/refusal-canary.json)
+- [json-schemas/effect-refusal-canary.json](json-schemas/effect-refusal-canary.json)
 - [json-schemas/authority-inspect.json](json-schemas/authority-inspect.json)
 - [json-schemas/replay-baseline.json](json-schemas/replay-baseline.json)
 - [json-schemas/replay-baseline-authority.json](json-schemas/replay-baseline-authority.json)
@@ -3340,6 +3341,17 @@ Matching policy bytes never upgrade that posture. An aggregate deny causes
 `OTA_EFFECT_POLICY_DENIED` before side effects; allow and warn do not enable provider execution,
 which remains disabled. The decision is not a canary, receipt, archive, provider attestation, or
 positive assurance record.
+
+`ota run --agent --expect-effect-refusal <id> --json <task>` and `ota up --workflow <name>
+--agent --expect-effect-refusal <id> --json` emit the separate
+[effect-refusal-canary.json](json-schemas/effect-refusal-canary.json) envelope. `status` is exactly
+`passed`, `not_evaluated`, `assurance_gap`, or `failed`; only `passed` sets `ok: true` and exits `0`.
+A pass carries the canary, effect, attachment, realization, selected invocation, policy decision,
+policy snapshot, policy-source evidence, and explicit deny-rule identities with
+`execution_started: false`. Generic or fallback-only refusal never satisfies the pass shape.
+Unknown IDs or caller-selected overrides are `not_evaluated`; an absent exact origin is an
+`assurance_gap`; an evaluated lane without explicit typed denial is `failed`. This is bounded
+negative-control evidence, not provider mutation, receipt/archive evidence, or positive assurance.
 
 The published schema for this surface is
 [json-schemas/run-preview.json](json-schemas/run-preview.json). It covers single-target ready or

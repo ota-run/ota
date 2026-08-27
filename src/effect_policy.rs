@@ -30,7 +30,9 @@ use std::collections::BTreeSet;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::effect_application_plan::EffectApplicationPlan;
+use crate::effect_application_plan::{
+    EffectApplicationPlan, effect_realization_contract_snapshot_identity,
+};
 use crate::effect_domain::{
     CanonicalResourceNamespace, EffectDerivationPosture, EffectOrigin, EffectRealizationInput,
     ResourceBindingEvidencePosture, effect_realization_identity, resolve_declared_effect_catalog,
@@ -42,7 +44,6 @@ use crate::policy_pack::{
     PolicyTypedResourceNamespacePattern, SafeTaskEffectGovernanceDecision,
 };
 use crate::schema::Contract;
-use crate::semantic_identity::semantic_contract_identity;
 
 const POLICY_SOURCE_EVIDENCE_DOMAIN: &[u8] = b"ota.effect-policy-source-evidence.v1\0";
 const POLICY_RULE_DOMAIN: &[u8] = b"ota.effect-policy-rule.v1\0";
@@ -217,9 +218,10 @@ fn build_typed_effect_policy_decision(
         )
     })?;
     let source_evidence = policy_source_evidence(loaded_policy, &policy_snapshot_identity)?;
-    let contract_identity = semantic_contract_identity(contract).map_err(|message| {
-        EffectPolicyError::new("effect_policy_contract_identity_failed", message)
-    })?;
+    let contract_identity =
+        effect_realization_contract_snapshot_identity(contract).map_err(|error| {
+            EffectPolicyError::new("effect_policy_contract_identity_failed", error.message)
+        })?;
     let catalog = resolve_declared_effect_catalog(contract)
         .map_err(|error| EffectPolicyError::new(error.code, error.message))?;
     let plan_identities = plans

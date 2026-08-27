@@ -25,8 +25,8 @@
 version: 1
 repository: ota-run/ota-site
 mode: synced
-reviewed_ota_commit: ede4a83920ffc0abad451f6b167aa84246eb6888
-consumer_commit: 32d707f9a41d2bf10f4705c71949e356e0049684
+reviewed_ota_commit: 2d439f14839acd7abfe5afdc5ced4e51c10c62ab
+consumer_commit: f1ef9c91fd53029cf3d3758d30fbb50d04ab4a11
 notes: >
-  The Site policy reference documents the shared typed effect evaluator, canonical local source
-  posture, selector branches, and refusal boundary.
+  The connected command, contract, schema, reference, and Learn propagation is committed at the
+  recorded immutable Site revision.

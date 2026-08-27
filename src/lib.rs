@@ -41,6 +41,7 @@ pub mod effect_application_plan;
 pub mod effect_domain;
 pub(crate) mod effect_orchestration;
 pub mod effect_policy;
+pub(crate) mod effect_refusal_canary;
 pub(crate) mod execution;
 pub(crate) mod execution_boundary;
 pub(crate) mod github_projection;

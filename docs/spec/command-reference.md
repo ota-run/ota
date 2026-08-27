@@ -1587,9 +1587,10 @@ Current behavior:
 - `--dry-run` prints `RUN PREVIEW`, uses the execution-preview vocabulary
   `RUNNABLE` / `RUNNABLE WITH WARNINGS` / `BLOCKED`, and shows `Mode: dry-run (no write)` plus
   the selected execution path, requirements, and planned actions
-- repo-level `--json` normally requires `--dry-run`; the one execution-free exception is a
-  contract-declared refusal canary: `ota run --agent --expect-refusal --json <task>` emits the
-  runner-authored `refused_as_expected` or `refusal_not_observed` result without starting the task
+- repo-level `--json` normally requires `--dry-run`; execution-free exceptions are the existing
+  task refusal canary and the V12 effect-refusal canary. `ota run --agent --expect-refusal --json
+  <task>` tests the agent boundary. `ota run --agent --expect-effect-refusal <id> --json <task>`
+  tests one contract-owned exact typed-effect denial. Neither starts the selected task.
 - preview JSON includes additive `governance`, a compact selected-lane summary with
   `safety_posture`, `review_required`, closure-aware effective safety, effective `default_mode`,
   runnable mode commands, selected effect surface, and the next durable receipt command
@@ -1602,6 +1603,16 @@ Current behavior:
 - `--expect-refusal` is the negative-control form of that same boundary. It requires `--agent`
   and a matching `agent.refusal_canaries` target; a refusal is exit `0`, while admission is exit
   `1`. It never accepts task inputs or starts the selected lane.
+- `--expect-effect-refusal <id>` requires `--agent` and one exact task challenge declared under
+  `agent.effect_refusal_canaries`. Put the flag and ID before the positional task. It exits `0`
+  only when the selected closure contains the predeclared origin and one eligible realization is
+  denied by an explicit matching typed policy rule. Unknown IDs, undeclared lanes, caller
+  overrides, absent origins, fallback-only denial, or non-denial return `not_evaluated`,
+  `assurance_gap`, or `failed` with exit `1`. `ota up --workflow <name> --agent
+  --expect-effect-refusal <id> --json` applies the same evaluator to a declared workflow lane.
+  The canary is already execution-free and conflicts with `--dry-run`.
+  Generic safety, readiness, authority, runtime, sandbox, or policy fallback refusal cannot make
+  this canary pass. The command does not start setup, services, tasks, or provider mutation.
 - when the requested task is a service runtime with declared readiness, `--stream` also shows live
   readiness probe progress while ota is still trying to prove startup
 - for service runtimes with declared readiness, ota now treats the declared startup readiness

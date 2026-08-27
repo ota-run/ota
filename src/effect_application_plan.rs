@@ -357,9 +357,7 @@ fn derive_effect_application_admissions(
 
     let effective_working_directory =
         repository_relative_effective_working_directory(repository_root, effective_working_dir)?;
-    let contract_snapshot_identity = semantic_contract_identity(contract).map_err(|error| {
-        EffectApplicationPlanError::new("effect_application_contract_identity_failed", error)
-    })?;
+    let contract_snapshot_identity = effect_realization_contract_snapshot_identity(contract)?;
     let mut admissions = Vec::new();
     for attachment in catalog
         .attachments
@@ -428,6 +426,19 @@ fn derive_effect_application_admissions(
             .count()
     );
     Ok(admissions)
+}
+
+pub(crate) fn effect_realization_contract_snapshot_identity(
+    contract: &Contract,
+) -> Result<String, EffectApplicationPlanError> {
+    let mut realization_contract = contract.clone();
+    if let Some(agent) = realization_contract.agent.as_mut() {
+        // Refusal canaries observe a realization; their local invocation locators do not define it.
+        agent.effect_refusal_canaries.clear();
+    }
+    semantic_contract_identity(&realization_contract).map_err(|error| {
+        EffectApplicationPlanError::new("effect_application_contract_identity_failed", error)
+    })
 }
 
 fn capture_effect_migration_sets(

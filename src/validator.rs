@@ -18693,6 +18693,126 @@ fn validate_agent(contract: &Contract, errors: &mut Vec<ValidationError>) {
         }
     }
 
+    let mut effect_canary_ids = std::collections::BTreeSet::new();
+    for (index, canary) in agent.effect_refusal_canaries.iter().enumerate() {
+        let field = format!("agent.effect_refusal_canaries[{index}]");
+        if !is_canonical_effect_canary_id(canary.id.as_str()) {
+            errors.push(ValidationError::new(format!(
+                "`{field}.id` must start with a lowercase ASCII letter and contain at most 128 lowercase ASCII letters, digits, `_`, or `-`"
+            )));
+        } else if !effect_canary_ids.insert(canary.id.as_str()) {
+            errors.push(ValidationError::new(format!(
+                "`{field}.id` duplicates effect-refusal canary `{}`",
+                canary.id
+            )));
+        }
+        if !contract
+            .effect_definitions
+            .contains_key(canary.effect.as_str())
+        {
+            errors.push(ValidationError::new(format!(
+                "`{field}.effect` references unknown effect definition `{}`",
+                canary.effect
+            )));
+        }
+        if canary.challenge_lanes.is_empty() {
+            errors.push(ValidationError::new(format!(
+                "`{field}.challenge_lanes` must declare at least one exact task or workflow lane"
+            )));
+        }
+        let mut challenge_lanes = std::collections::BTreeSet::new();
+        for (lane_index, lane) in canary.challenge_lanes.iter().enumerate() {
+            let lane_field = format!("{field}.challenge_lanes[{lane_index}]");
+            match (&lane.task, &lane.workflow) {
+                (Some(task), None) => {
+                    if !challenge_lanes.insert(("task", task.as_str())) {
+                        errors.push(ValidationError::new(format!(
+                            "`{lane_field}` duplicates task challenge lane `{task}`"
+                        )));
+                    }
+                    validate_task_reference(
+                        lane_field.as_str(),
+                        Some(task.as_str()),
+                        &contract.tasks,
+                        errors,
+                    );
+                }
+                (None, Some(workflow)) => {
+                    if !challenge_lanes.insert(("workflow", workflow.as_str())) {
+                        errors.push(ValidationError::new(format!(
+                            "`{lane_field}` duplicates workflow challenge lane `{workflow}`"
+                        )));
+                    }
+                    let declared = contract
+                        .workflows
+                        .as_ref()
+                        .is_some_and(|workflows| workflows.items.contains_key(workflow));
+                    if !declared {
+                        errors.push(ValidationError::new(format!(
+                            "`{lane_field}.workflow` references unknown workflow `{workflow}`"
+                        )));
+                    }
+                }
+                _ => errors.push(ValidationError::new(format!(
+                    "`{lane_field}` must declare exactly one of `task` or `workflow`"
+                ))),
+            }
+            validate_task_reference(
+                format!("{lane_field}.origin.task").as_str(),
+                Some(lane.origin.task.as_str()),
+                &contract.tasks,
+                errors,
+            );
+            if lane.origin.effect != canary.effect {
+                errors.push(ValidationError::new(format!(
+                    "`{lane_field}.origin.effect` must equal canary effect `{}`",
+                    canary.effect
+                )));
+            }
+            let attachment_count = contract
+                .tasks
+                .get(lane.origin.task.as_str())
+                .map(|task| {
+                    task.effects
+                        .declared
+                        .iter()
+                        .filter(|effect| effect.as_str() == lane.origin.effect)
+                        .count()
+                })
+                .unwrap_or_default();
+            if attachment_count != 1 {
+                errors.push(ValidationError::new(format!(
+                    "`{lane_field}.origin` must resolve exactly one `{}` effect attachment on task `{}`",
+                    lane.origin.effect, lane.origin.task
+                )));
+            }
+            let reachable_tasks = match (&lane.task, &lane.workflow) {
+                (Some(task), None) if contract.tasks.contains_key(task) => {
+                    Some(contract.task_execution_closure_names([task.clone()]))
+                }
+                (None, Some(workflow))
+                    if contract
+                        .workflows
+                        .as_ref()
+                        .is_some_and(|workflows| workflows.items.contains_key(workflow)) =>
+                {
+                    Some(contract.task_execution_closure_names(
+                        contract.selected_workflow_task_closure_names(Some(workflow.as_str())),
+                    ))
+                }
+                _ => None,
+            };
+            if reachable_tasks.as_ref().is_some_and(|reachable_tasks| {
+                !reachable_tasks.iter().any(|task| task == &lane.origin.task)
+            }) {
+                errors.push(ValidationError::new(format!(
+                    "`{lane_field}.origin.task` `{}` is not reachable from the declared challenge lane",
+                    lane.origin.task
+                )));
+            }
+        }
+    }
+
     for task in &agent.verify_after_changes {
         validate_task_reference(
             "agent.verify_after_changes",
@@ -18846,6 +18966,15 @@ fn validate_agent(contract: &Contract, errors: &mut Vec<ValidationError>) {
             }
         }
     }
+}
+
+fn is_canonical_effect_canary_id(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 128
+        && value.as_bytes()[0].is_ascii_lowercase()
+        && value.bytes().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'_' | b'-')
+        })
 }
 
 fn validate_agent_bootstrap_source(
@@ -44404,6 +44533,159 @@ workflows:
         assert!(
             error.contains("`workflows.verify.proof.claim` requires `workflows.verify.run`"),
             "{error}"
+        );
+    }
+
+    #[test]
+    fn effect_refusal_canaries_require_exact_existing_effect_origins_and_unique_lanes() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: effect-canary
+resource_bindings:
+  primary:
+    kind: database
+    provider: postgresql
+    namespace: { authority: dns:example.org, environment: production }
+effect_definitions:
+  migration:
+    kind: database_schema_mutation
+    action: apply_migration_set
+    resource: { engine: postgresql, target_ref: primary, schema: public }
+    bounds:
+      migration_set:
+        root: migrations
+        content_identity: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      start_state: any_within_set
+tasks:
+  migrate:
+    action: { kind: database_schema_mutation, effect: migration }
+    effects: { declared: [migration] }
+  unrelated:
+    action: { kind: database_schema_mutation, effect: migration }
+    effects: { declared: [migration] }
+  other:
+    run: true
+workflows:
+  default: release
+  release:
+    run: { task: migrate }
+  empty: {}
+agent:
+  effect_refusal_canaries:
+    - id: production_schema_refusal
+      effect: migration
+      challenge_lanes:
+        - task: migrate
+          origin: { task: migrate, effect: migration }
+"#,
+        )
+        .expect("contract parses");
+        validate_contract(&contract).expect("exact canary validates");
+
+        let mut unknown_effect = contract.clone();
+        unknown_effect
+            .agent
+            .as_mut()
+            .expect("agent")
+            .effect_refusal_canaries[0]
+            .effect = String::from("missing");
+        assert!(
+            validate_contract(&unknown_effect)
+                .expect_err("unknown effect refuses")
+                .to_string()
+                .contains("references unknown effect definition `missing`")
+        );
+
+        let mut absent_origin = contract.clone();
+        absent_origin
+            .agent
+            .as_mut()
+            .expect("agent")
+            .effect_refusal_canaries[0]
+            .challenge_lanes[0]
+            .origin
+            .task = String::from("other");
+        assert!(
+            validate_contract(&absent_origin)
+                .expect_err("origin without attachment refuses")
+                .to_string()
+                .contains("must resolve exactly one `migration` effect attachment")
+        );
+
+        for workflow_lane in [false, true] {
+            let mut unreachable_origin = contract.clone();
+            let lane = &mut unreachable_origin
+                .agent
+                .as_mut()
+                .expect("agent")
+                .effect_refusal_canaries[0]
+                .challenge_lanes[0];
+            lane.origin.task = String::from("unrelated");
+            if workflow_lane {
+                lane.task = None;
+                lane.workflow = Some(String::from("release"));
+            }
+            assert!(
+                validate_contract(&unreachable_origin)
+                    .expect_err("unreachable canary origin refuses")
+                    .to_string()
+                    .contains("is not reachable from the declared challenge lane")
+            );
+        }
+
+        let mut empty_workflow = contract.clone();
+        let lane = &mut empty_workflow
+            .agent
+            .as_mut()
+            .expect("agent")
+            .effect_refusal_canaries[0]
+            .challenge_lanes[0];
+        lane.task = None;
+        lane.workflow = Some(String::from("empty"));
+        assert!(
+            validate_contract(&empty_workflow)
+                .expect_err("empty workflow cannot carry a reachable canary origin")
+                .to_string()
+                .contains("is not reachable from the declared challenge lane")
+        );
+
+        let mut leading_digit = contract.clone();
+        leading_digit
+            .agent
+            .as_mut()
+            .expect("agent")
+            .effect_refusal_canaries[0]
+            .id = String::from("1production_schema_refusal");
+        assert!(
+            validate_contract(&leading_digit)
+                .expect_err("leading-digit canary ID refuses")
+                .to_string()
+                .contains("must start with a lowercase ASCII letter")
+        );
+
+        let mut duplicate_lane = contract.clone();
+        let duplicate = duplicate_lane
+            .agent
+            .as_ref()
+            .expect("agent")
+            .effect_refusal_canaries[0]
+            .challenge_lanes[0]
+            .clone();
+        duplicate_lane
+            .agent
+            .as_mut()
+            .expect("agent")
+            .effect_refusal_canaries[0]
+            .challenge_lanes
+            .push(duplicate);
+        assert!(
+            validate_contract(&duplicate_lane)
+                .expect_err("duplicate lane refuses")
+                .to_string()
+                .contains("duplicates task challenge lane `migrate`")
         );
     }
 }

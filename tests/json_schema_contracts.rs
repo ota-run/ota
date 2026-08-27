@@ -467,6 +467,38 @@ fn published_contract_schema_discriminates_typed_effect_bounds() {
         assert!(!compiled.is_valid(&aliased_migration_root), "{root}");
     }
 
+    let mut canary = valid.clone();
+    canary["agent"] = json!({
+        "effect_refusal_canaries": [{
+            "id": "production_schema_refusal",
+            "effect": "production_schema_migration",
+            "challenge_lanes": [{
+                "task": "db-migrate",
+                "origin": {
+                    "task": "db-migrate",
+                    "effect": "production_schema_migration"
+                }
+            }]
+        }]
+    });
+    assert!(compiled.is_valid(&canary));
+
+    let mut missing_origin = canary.clone();
+    missing_origin["agent"]["effect_refusal_canaries"][0]["challenge_lanes"][0]
+        .as_object_mut()
+        .expect("challenge object")
+        .remove("origin");
+    assert!(!compiled.is_valid(&missing_origin));
+
+    let mut ambiguous_lane = canary.clone();
+    ambiguous_lane["agent"]["effect_refusal_canaries"][0]["challenge_lanes"][0]["workflow"] =
+        json!("release");
+    assert!(!compiled.is_valid(&ambiguous_lane));
+
+    let mut empty_lanes = canary.clone();
+    empty_lanes["agent"]["effect_refusal_canaries"][0]["challenge_lanes"] = json!([]);
+    assert!(!compiled.is_valid(&empty_lanes));
+
     let mut rollback = valid.clone();
     rollback["effect_definitions"]["production_schema_migration"]["action"] =
         json!("rollback_migration_set");

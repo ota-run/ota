@@ -10079,6 +10079,34 @@ pub struct AgentRefusalCanaryConfig {
     pub workflow: Option<String>,
 }
 
+/// One exact task attachment expected to carry the challenged effect.
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct AgentEffectRefusalCanaryOriginConfig {
+    pub task: String,
+    pub effect: String,
+}
+
+/// One exact selected task or workflow lane challenged by an effect-refusal canary.
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct AgentEffectRefusalCanaryChallengeConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workflow: Option<String>,
+    pub origin: AgentEffectRefusalCanaryOriginConfig,
+}
+
+/// A contract-owned negative control requiring an explicit typed effect-policy denial.
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct AgentEffectRefusalCanaryConfig {
+    pub id: String,
+    pub effect: String,
+    pub challenge_lanes: Vec<AgentEffectRefusalCanaryChallengeConfig>,
+}
+
 impl AgentExceptionsConfig {
     pub fn is_empty(&self) -> bool {
         self.sensitive_writes.is_empty()
@@ -10098,6 +10126,8 @@ pub struct AgentConfig {
     pub safe_tasks: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub refusal_canaries: Vec<AgentRefusalCanaryConfig>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub effect_refusal_canaries: Vec<AgentEffectRefusalCanaryConfig>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub verify_after_changes: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -10127,6 +10157,8 @@ struct RawAgentConfig {
     safe_tasks: Vec<String>,
     #[serde(default)]
     refusal_canaries: Vec<AgentRefusalCanaryConfig>,
+    #[serde(default)]
+    effect_refusal_canaries: Vec<AgentEffectRefusalCanaryConfig>,
     #[serde(default)]
     verify_after_changes: Vec<String>,
     #[serde(default)]
@@ -10164,6 +10196,7 @@ impl<'de> Deserialize<'de> for AgentConfig {
             default_task: raw.default_task,
             safe_tasks: raw.safe_tasks,
             refusal_canaries: raw.refusal_canaries,
+            effect_refusal_canaries: raw.effect_refusal_canaries,
             verify_after_changes: raw.verify_after_changes,
             writable_paths: raw.writable_paths,
             exceptions: AgentExceptionsConfig { sensitive_writes },

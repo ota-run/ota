@@ -2495,6 +2495,15 @@ workflows:
   release:
     setup: {{ task: setup }}
     run: {{ task: parent }}
+agent:
+  effect_refusal_canaries:
+    - id: production_schema_refusal
+      effect: migration
+      challenge_lanes:
+        - task: parent
+          origin: {{ task: migrate, effect: migration }}
+        - workflow: release
+          origin: {{ task: migrate, effect: migration }}
 "#
         ),
     )
@@ -2745,7 +2754,7 @@ policies:
     let strict_execution = Command::new(env!("CARGO_BIN_EXE_ota"))
         .args(["run", "migrate", "--plain"])
         .current_dir(fixture.path())
-        .env("OTA_POLICY", strict_path)
+        .env("OTA_POLICY", &strict_path)
         .output()
         .expect("strict fallback refusal");
     assert!(!strict_execution.status.success());
@@ -2803,6 +2812,269 @@ policies:
             .len(),
         0
     );
+
+    let task_canary = run_ota(
+        &[
+            "run",
+            "--agent",
+            "--expect-effect-refusal",
+            "production_schema_refusal",
+            "--json",
+            "parent",
+        ],
+        fixture.path(),
+    );
+    assert_matches_schema("effect-refusal-canary.json", &task_canary);
+    assert_eq!(task_canary["status"], "passed");
+    assert_eq!(task_canary["canary"]["lane_kind"], "task");
+    assert_eq!(task_canary["canary"]["lane_target"], "parent");
+    assert_eq!(task_canary["canary"]["effect_ref"], "migration");
+    assert_eq!(task_canary["canary"]["actual_decision"], "deny");
+    assert_eq!(task_canary["canary"]["execution_started"], false);
+    assert!(
+        task_canary["canary"]["rule_identities"]
+            .as_array()
+            .is_some_and(|rules| !rules.is_empty())
+    );
+    assert!(!fixture.path().join("setup-sentinel").exists());
+    assert!(!fixture.path().join("parent-sentinel").exists());
+
+    let original_contract = fs::read_to_string(fixture.path().join("ota.yaml")).expect("contract");
+    fs::write(
+        fixture.path().join("ota.yaml"),
+        original_contract.replace("production_schema_refusal", "renamed_schema_refusal"),
+    )
+    .expect("renamed canary locator");
+    let renamed_canary = run_ota(
+        &[
+            "run",
+            "--agent",
+            "--expect-effect-refusal",
+            "renamed_schema_refusal",
+            "--json",
+            "parent",
+        ],
+        fixture.path(),
+    );
+    assert_eq!(renamed_canary["status"], "passed");
+    assert_eq!(
+        renamed_canary["canary"]["canary_identity"], task_canary["canary"]["canary_identity"],
+        "renaming only the local canary locator must preserve semantic canary identity"
+    );
+    fs::write(fixture.path().join("ota.yaml"), original_contract).expect("restore contract");
+
+    let workflow_canary = run_ota(
+        &[
+            "up",
+            "--workflow",
+            "release",
+            "--agent",
+            "--expect-effect-refusal",
+            "production_schema_refusal",
+            "--json",
+        ],
+        fixture.path(),
+    );
+    assert_matches_schema("effect-refusal-canary.json", &workflow_canary);
+    assert_eq!(workflow_canary["status"], "passed");
+    assert_eq!(workflow_canary["canary"]["lane_kind"], "workflow");
+    assert_eq!(workflow_canary["canary"]["lane_target"], "release");
+    assert_ne!(
+        workflow_canary["canary"]["canary_identity"], task_canary["canary"]["canary_identity"],
+        "different selected task and workflow invocations must split semantic canary identity"
+    );
+    assert!(!fixture.path().join("setup-sentinel").exists());
+
+    let strict_canary = run_ota_failure_stdout_json_with_env(
+        &[
+            "run",
+            "--agent",
+            "--expect-effect-refusal",
+            "production_schema_refusal",
+            "--json",
+            "parent",
+        ],
+        fixture.path(),
+        &[("OTA_POLICY", strict_path.as_str())],
+    );
+    assert_matches_schema("effect-refusal-canary.json", &strict_canary);
+    assert_eq!(strict_canary["status"], "failed");
+    assert_eq!(
+        strict_canary["canary"]["reason_code"],
+        "effect_canary_explicit_typed_deny_not_observed"
+    );
+    assert!(
+        strict_canary["canary"]["rule_identities"].is_null(),
+        "strict fallback denial must not emit explicit typed rule identities"
+    );
+
+    let unknown = run_ota_failure_stdout_json(
+        &[
+            "run",
+            "--agent",
+            "--expect-effect-refusal",
+            "unknown_refusal",
+            "--json",
+            "parent",
+        ],
+        fixture.path(),
+    );
+    assert_matches_schema("effect-refusal-canary.json", &unknown);
+    assert_eq!(unknown["status"], "not_evaluated");
+    assert_eq!(unknown["canary"]["reason_code"], "effect_canary_unknown");
+
+    let noncanonical_unknown = run_ota_failure_stdout_json(
+        &[
+            "run",
+            "--agent",
+            "--expect-effect-refusal",
+            "!!!",
+            "--json",
+            "parent",
+        ],
+        fixture.path(),
+    );
+    assert_matches_schema("effect-refusal-canary.json", &noncanonical_unknown);
+    assert_eq!(noncanonical_unknown["status"], "not_evaluated");
+    assert_eq!(noncanonical_unknown["canary"]["canary_id"], "!!!");
+    assert_eq!(
+        noncanonical_unknown["canary"]["reason_code"],
+        "effect_canary_unknown"
+    );
+    let mut valid_assurance_gap = task_canary.clone();
+    valid_assurance_gap["ok"] = json!(false);
+    valid_assurance_gap["status"] = json!("assurance_gap");
+    valid_assurance_gap["canary"]["status"] = json!("assurance_gap");
+    valid_assurance_gap["canary"]
+        .as_object_mut()
+        .expect("canary output object")
+        .remove("canary_identity");
+    valid_assurance_gap["canary"]
+        .as_object_mut()
+        .expect("canary output object")
+        .remove("rule_identities");
+    valid_assurance_gap["canary"]["reason_code"] = json!("effect_canary_realization_ineligible");
+    assert_matches_schema("effect-refusal-canary.json", &valid_assurance_gap);
+
+    fs::rename(
+        fixture.path().join(".ota/org-policy.yaml"),
+        fixture.path().join(".ota/org-policy.unavailable.yaml"),
+    )
+    .expect("hide policy");
+    let unavailable_policy = run_ota_failure_stdout_json(
+        &[
+            "run",
+            "--agent",
+            "--expect-effect-refusal",
+            "production_schema_refusal",
+            "--json",
+            "parent",
+        ],
+        fixture.path(),
+    );
+    assert_matches_schema("effect-refusal-canary.json", &unavailable_policy);
+    assert_eq!(unavailable_policy["status"], "not_evaluated");
+    assert_eq!(
+        unavailable_policy["canary"]["reason_code"],
+        "effect_canary_policy_unavailable"
+    );
+    fs::rename(
+        fixture.path().join(".ota/org-policy.unavailable.yaml"),
+        fixture.path().join(".ota/org-policy.yaml"),
+    )
+    .expect("restore policy");
+
+    let overridden = run_ota_failure_stdout_json(
+        &[
+            "run",
+            "--agent",
+            "--expect-effect-refusal",
+            "production_schema_refusal",
+            "--mode",
+            "native",
+            "--json",
+            "parent",
+        ],
+        fixture.path(),
+    );
+    assert_matches_schema("effect-refusal-canary.json", &overridden);
+    assert_eq!(overridden["status"], "not_evaluated");
+    assert_eq!(
+        overridden["canary"]["reason_code"],
+        "effect_canary_caller_selection_not_allowed"
+    );
+
+    let mut contradictory_status = task_canary.clone();
+    contradictory_status["canary"]["status"] = json!("failed");
+    assert_rejected_by_schema("effect-refusal-canary.json", &contradictory_status);
+    let mut contradictory_failure = task_canary.clone();
+    contradictory_failure["status"] = json!("failed");
+    contradictory_failure["canary"]["status"] = json!("failed");
+    assert_rejected_by_schema("effect-refusal-canary.json", &contradictory_failure);
+    let mut contradictory_assurance_gap = task_canary.clone();
+    contradictory_assurance_gap["status"] = json!("assurance_gap");
+    contradictory_assurance_gap["canary"]["status"] = json!("assurance_gap");
+    contradictory_assurance_gap["canary"]["reason_code"] = json!("effect_canary_origin_absent");
+    assert_rejected_by_schema("effect-refusal-canary.json", &contradictory_assurance_gap);
+    let mut incomplete_realization_ineligible = valid_assurance_gap.clone();
+    incomplete_realization_ineligible["canary"]
+        .as_object_mut()
+        .expect("canary output object")
+        .remove("realization_identity");
+    incomplete_realization_ineligible["canary"]
+        .as_object_mut()
+        .expect("canary output object")
+        .remove("actual_decision");
+    assert_rejected_by_schema(
+        "effect-refusal-canary.json",
+        &incomplete_realization_ineligible,
+    );
+    let mut noncanonical_failed_id = strict_canary.clone();
+    noncanonical_failed_id["canary"]["canary_id"] = json!("!!!");
+    assert_rejected_by_schema("effect-refusal-canary.json", &noncanonical_failed_id);
+    let mut contradictory_not_evaluated = task_canary.clone();
+    contradictory_not_evaluated["status"] = json!("not_evaluated");
+    contradictory_not_evaluated["canary"]["status"] = json!("not_evaluated");
+    contradictory_not_evaluated["canary"]["reason_code"] = json!("effect_canary_unknown");
+    assert_rejected_by_schema("effect-refusal-canary.json", &contradictory_not_evaluated);
+    let mut unbacked_pass = task_canary.clone();
+    unbacked_pass["canary"]["rule_identities"] = json!([]);
+    assert_rejected_by_schema("effect-refusal-canary.json", &unbacked_pass);
+
+    let plain_success = run_ota_success_text(
+        &[
+            "run",
+            "--agent",
+            "--expect-effect-refusal",
+            "production_schema_refusal",
+            "--plain",
+            "parent",
+        ],
+        fixture.path(),
+    );
+    assert!(plain_success.contains("EFFECT REFUSAL CANARY"));
+    assert!(!plain_success.contains('🦦'));
+
+    let plain_failure = Command::new(env!("CARGO_BIN_EXE_ota"))
+        .args([
+            "run",
+            "--agent",
+            "--expect-effect-refusal",
+            "unknown_refusal",
+            "--plain",
+            "parent",
+        ])
+        .current_dir(fixture.path())
+        .output()
+        .expect("plain canary failure should run");
+    assert!(!plain_failure.status.success());
+    let plain_failure_text = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&plain_failure.stdout),
+        String::from_utf8_lossy(&plain_failure.stderr)
+    );
+    assert!(plain_failure_text.contains("EFFECT REFUSAL CANARY"));
+    assert!(!plain_failure_text.contains('🦦'));
 }
 
 #[cfg(unix)]
@@ -3063,9 +3335,14 @@ fn run_ota_with_env(
 }
 
 fn run_ota_failure_stdout_json(args: &[&str], cwd: &Path) -> Value {
+    run_ota_failure_stdout_json_with_env(args, cwd, &[])
+}
+
+fn run_ota_failure_stdout_json_with_env(args: &[&str], cwd: &Path, envs: &[(&str, &str)]) -> Value {
     let output = Command::new(env!("CARGO_BIN_EXE_ota"))
         .args(args)
         .current_dir(cwd)
+        .envs(envs.iter().copied())
         .output()
         .expect("ota command should run");
     let stdout = String::from_utf8_lossy(&output.stdout);

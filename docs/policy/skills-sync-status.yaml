@@ -25,8 +25,8 @@
 version: 1
 repository: ota-run/skills
 mode: synced
-reviewed_ota_commit: ede4a83920ffc0abad451f6b167aa84246eb6888
-consumer_commit: 83c01d858a2a41c7c8624ca3858505f1a3900046
+reviewed_ota_commit: 2d439f14839acd7abfe5afdc5ced4e51c10c62ab
+consumer_commit: 729834039379c3e7b033e4ec4b04b932a8b83e25
 notes: >
-  The canonical Skill and both installed mirrors explain typed effect-policy decisions and preserve
-  the provider/canary/receipt/archive/assurance boundary.
+  The connected canonical guidance and both installed mirrors are committed at the recorded
+  immutable Skills revision.

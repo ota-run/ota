@@ -1561,6 +1561,7 @@ fn starter_agent_config_from_parts(
         default_task,
         safe_tasks,
         refusal_canaries: Vec::new(),
+        effect_refusal_canaries: Vec::new(),
         verify_after_changes,
         writable_paths: boundary.writable_paths,
         exceptions,

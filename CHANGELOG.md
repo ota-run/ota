@@ -26,14 +26,23 @@
 
 ## Unreleased
 
+- Added contract-owned V12 effect-refusal canaries for exact task and workflow lanes.
+  `agent.effect_refusal_canaries` binds a local locator to one typed effect and mandatory origin.
+  `ota run --agent --expect-effect-refusal <id> --json <task>` and the matching workflow `ota up`
+  form exit `0` only when one eligible realization is denied by an explicit matching typed rule
+  before execution starts. Fallback-only and generic refusals cannot false-green the canary;
+  unknown IDs, caller overrides, missing origins, and non-denial retain distinct non-passing
+  statuses. The result is negative-control evidence only, not provider mutation, a positive
+  receipt/archive, or positive assurance.
+
 - Added the shared V12 typed effect-policy evaluator. Policy packs can declare canonical
   `policies.effects.typed.rules` with exact, namespace-pattern, or provider-wide PostgreSQL
   resource selectors. One command-scoped decision binds policy/source authority, selected
   invocation and execution graph, effect and realization sets, every matching rule, coarse effect
   components, and `deny > warn > allow` precedence. Explicit typed denial, strict fallback, or a
   coarser deny now causes a distinct pre-side-effect refusal in repo-level `ota run` and non-dry-run
-  `ota up`; dry-run exposes the non-secret decision. Provider mutation, canaries, positive effect
-  receipts, archives, and assurance remain disabled.
+  `ota up`; dry-run exposes the non-secret decision. Provider mutation, positive effect receipts,
+  archives, and assurance remain disabled.
 
 - Include canonical discriminated action bounds in V12 effect application plans so an executor can
   receive apply, rollback, reset-empty, or reset-with-migrations semantics without rereading the

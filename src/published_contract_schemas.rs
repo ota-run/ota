@@ -2518,6 +2518,44 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
         { "required": ["workflow"], "not": { "required": ["task"] } }
       ]
     },
+    "agentEffectRefusalCanaryOrigin": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["task", "effect"],
+      "properties": {
+        "task": { "type": "string", "minLength": 1 },
+        "effect": { "$ref": "#/$defs/effectCatalogLabel" }
+      }
+    },
+    "agentEffectRefusalCanaryChallenge": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["origin"],
+      "properties": {
+        "task": { "type": "string", "minLength": 1 },
+        "workflow": { "type": "string", "minLength": 1 },
+        "origin": { "$ref": "#/$defs/agentEffectRefusalCanaryOrigin" }
+      },
+      "oneOf": [
+        { "required": ["task"], "not": { "required": ["workflow"] } },
+        { "required": ["workflow"], "not": { "required": ["task"] } }
+      ]
+    },
+    "agentEffectRefusalCanary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "effect", "challenge_lanes"],
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-z][a-z0-9_-]*$" },
+        "effect": { "$ref": "#/$defs/effectCatalogLabel" },
+        "challenge_lanes": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/agentEffectRefusalCanaryChallenge" }
+        }
+      }
+    },
     "agentConfig": {
       "type": "object",
       "additionalProperties": false,
@@ -2530,6 +2568,11 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
           "type": "array",
           "uniqueItems": true,
           "items": { "$ref": "#/$defs/agentRefusalCanary" }
+        },
+        "effect_refusal_canaries": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/agentEffectRefusalCanary" }
         },
         "verify_after_changes": { "$ref": "#/$defs/stringArray" },
         "writable_paths": { "$ref": "#/$defs/stringArray" },
