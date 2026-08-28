@@ -1021,6 +1021,9 @@ selected transaction completed and cleanup reached its declared terminal boundar
 read `proof_verdict` with required `not_proved[]` before treating it as application or repo proof.
 
 - `mode` is `lifecycle-proof`, `phase` is `lifecycle`, and `stage_family` is `proof`.
+- A typed-effect refusal before transaction creation uses the standard pre-execution failure
+  envelope: `ok: false`, `code: OTA_EFFECT_POLICY_DENIED`, and
+  `execution_started: false`. It records no positive lifecycle receipt or archive.
 - A concurrent lifecycle transaction is rejected before a manager observation or cleanup lease;
   its finalization is `not_run` and its terminal record remains an unsuccessful, lease-free
   transaction.
@@ -1116,6 +1119,9 @@ declared artifacts that remain canonical:
 Notes:
 
 - `mode` is always `runtime-proof`
+- A typed-effect refusal before proof artifact creation uses the standard pre-execution failure
+  envelope: `ok: false`, `code: OTA_EFFECT_POLICY_DENIED`, and
+  `execution_started: false`. It records no positive runtime-proof receipt or archive.
 - `workflow` is present when the proof targeted one explicit or effective workflow
 - `phase` stays machine-stable and uses the proof phase keys `preconditions`, `prepare`,
   `setup`, `services`, `run`, `readiness`, `cleanup`, and `interrupted`

@@ -636,6 +636,12 @@ Current behavior:
   prerequisite-plus-assertion closure before creating a lifecycle transaction, running a task,
   observing or starting a service, or executing the assertion; JSON refusal carries
   `execution_started: false` plus the hard-pin and policy evidence
+- evaluates the same typed-effect admission used by `ota run` and `ota up` over that full selected
+  proof closure, retaining phase/assertion invocation role and order, before replay-input
+  evaluation, crossing admission, sandbox admission, service work, or
+  proof artifacts. A typed deny returns `OTA_EFFECT_POLICY_DENIED` with
+  `execution_started: false`; an admitted typed action still refuses because provider execution is
+  disabled in V12
 - refuses with `replay_input_policy_unavailable` before lifecycle work when the active policy
   source cannot be loaded
 - when `governance.crossing_authority` governs the selected non-agent workflow closure, requires
@@ -708,6 +714,11 @@ Current behavior:
   `.ota/proof`, writing topology or Doctor artifacts, or spawning the child runtime. The evaluated
   closure includes post-readiness seam observers and the selected negative-control task; JSON
   refusal carries `execution_started: false` plus the hard-pin and policy evidence
+- evaluates the same typed-effect admission over the complete selected proof closure, retaining
+  phase, seam-observer, and negative-control invocation role/order, before replay-input
+  evaluation, crossing admission, proof artifact creation, or child runtime startup. A typed deny
+  returns `OTA_EFFECT_POLICY_DENIED` with `execution_started: false`; an admitted typed action
+  still refuses because provider execution is disabled in V12
 - refuses with `replay_input_policy_unavailable` before proof artifacts or child execution when
   the active policy source cannot be loaded
 - when `governance.crossing_authority` governs the selected proof scope, requires `--grant <id>`

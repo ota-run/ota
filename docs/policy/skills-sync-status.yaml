@@ -28,5 +28,6 @@ mode: synced
 reviewed_ota_commit: 2d439f14839acd7abfe5afdc5ced4e51c10c62ab
 consumer_commit: 729834039379c3e7b033e4ec4b04b932a8b83e25
 notes: >
-  The connected canonical guidance and both installed mirrors are committed at the recorded
-  immutable Skills revision.
+  The proof-runtime and proof-lifecycle admission behavior adds no authoring rule, command syntax,
+  or review guidance. The canonical Skill and installed mirrors remain at the recorded immutable
+  revision.

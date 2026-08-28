@@ -56,10 +56,13 @@ durable agent workflow belongs in the canonical Ota skill.
   artifact rendering, or durable-log preparation. It re-observes source truth through retained
   no-follow descriptors and returns the provider-disabled refusal before task conditions, required
   services, dependencies, shell dispatch, provider contact, or repository mutation. The runner
-  repeats the same check as defense in depth for direct/internal callers. Proof paths that invoke
-  repo-level `ota up` inherit this boundary. Dry-run, other read-only command diagnosis, and policy
-  discovery are not claimed to occur after this boundary. Validation refuses mode
-  or OS-variant execution-body overrides so runtime selection
+  repeats the same check as defense in depth for direct/internal callers. `ota proof runtime` and
+  `ota proof lifecycle` now directly admit the complete selected proof closure, retaining phase
+  and proof-helper invocation role/order without unselected-mode dependencies, before replay,
+  crossing or sandbox admission, proof artifacts, service work, or child startup; a typed deny
+  returns `OTA_EFFECT_POLICY_DENIED` with `execution_started: false`. Dry-run, other read-only
+  command diagnosis, and policy discovery are not claimed to occur after this boundary. Validation
+  refuses mode or OS-variant execution-body overrides so runtime selection
   cannot replace the previewed typed action. Non-dry-run `ota up` emits its ordinary blocked
   readiness receipt with `execution_attempted: false`; the typed adapter emits no positive effect
   or execution receipt, archive, success claim, agent-safe authority, canary, or positive assurance.

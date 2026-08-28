@@ -3956,6 +3956,7 @@ Fields:
   - must resolve to native execution
 - `<name>.prepare.action`: optional workflow-owned deterministic host prepare action ota should run first for that workflow
   - must declare one first-class `action` body such as `copy_if_missing`, `ensure_env_file`, `ensure_container_network`, or `ensure_bundle`
+  - cannot declare `database_schema_mutation`; use a named `prepare.task` with the required `effects.declared` attachment so typed-effect admission can bind the action before execution
   - current workflow prepare shape requires exactly one of `<name>.prepare.task` or `<name>.prepare.action`
 - `<name>.setup.task`: optional task ota should treat as the preparation phase for that workflow
 - `<name>.run.task`: optional task ota should treat as the primary runnable surface for that workflow
@@ -4131,7 +4132,7 @@ Current behavior:
   instance index and add it to the declared base port value
 - use `workflows.<name>.instances.<instance>.surfaces.<surface>` when the selected instance publishes the same surface shape on different host ports or paths and Ota should keep proof, exposure, and command guidance aligned on the selected instance
 - use `prepare.task` when the workflow needs one explicit host-side finite normalization/bootstrap step before setup and that step already deserves its own reusable task identity
-- use `prepare.action` when the workflow itself honestly owns one deterministic bootstrap action or bundle and creating a synthetic helper task would only add glue
+- use `prepare.action` when the workflow itself honestly owns one deterministic bootstrap action or bundle and creating a synthetic helper task would only add glue; typed mutations are excluded because they require a named task attachment
 - use `env.profile` when one workflow owns a truthful runtime env overlay or declared-source specialization
   and that selection should stay declarative instead of being repeated across tasks or hidden in shell
 - use `env.profile.render.dotenv` when that workflow also needs one concrete dotenv artifact on disk

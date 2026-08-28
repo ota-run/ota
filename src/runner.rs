@@ -3567,30 +3567,9 @@ pub fn plan_task_execution_with_overrides(
     task_name: &str,
     overrides: ExecutionOverrides,
 ) -> Result<RunPlan, RunError> {
-    if !contract.tasks.contains_key(task_name) {
-        return Err(RunError::UnknownTask {
-            task: task_name.to_string(),
-        });
-    }
+    let plan = plan_task_execution_structure_with_overrides(contract, task_name, overrides)?;
 
-    let mut ordered = Vec::new();
-    let mut steps = Vec::new();
-    let mut edges = Vec::new();
-    let mut visited = BTreeSet::new();
-    visit_task_with_overrides(
-        contract,
-        task_name,
-        overrides,
-        overrides.backend.is_some(),
-        None,
-        None,
-        &mut visited,
-        &mut ordered,
-        &mut steps,
-        &mut edges,
-    );
-
-    if let Some((blocked_task, blocked_os)) = steps.iter().find_map(|step| {
+    if let Some((blocked_task, blocked_os)) = plan.steps.iter().find_map(|step| {
         let task = contract.tasks.get(step.task.as_str())?;
         let effective = effective_task_execution(
             contract,
@@ -3617,6 +3596,42 @@ pub fn plan_task_execution_with_overrides(
             supported_os,
         });
     }
+
+    Ok(plan)
+}
+
+/// Builds the backend-selected execution graph without admitting its platform.
+///
+/// Typed-effect orchestration uses this to decide whether its boundary applies at all. The
+/// ordinary planner remains responsible for reporting platform refusal once the boundary is not
+/// applicable.
+pub fn plan_task_execution_structure_with_overrides(
+    contract: &Contract,
+    task_name: &str,
+    overrides: ExecutionOverrides,
+) -> Result<RunPlan, RunError> {
+    if !contract.tasks.contains_key(task_name) {
+        return Err(RunError::UnknownTask {
+            task: task_name.to_string(),
+        });
+    }
+
+    let mut ordered = Vec::new();
+    let mut steps = Vec::new();
+    let mut edges = Vec::new();
+    let mut visited = BTreeSet::new();
+    visit_task_with_overrides(
+        contract,
+        task_name,
+        overrides,
+        overrides.backend.is_some(),
+        None,
+        None,
+        &mut visited,
+        &mut ordered,
+        &mut steps,
+        &mut edges,
+    );
 
     Ok(RunPlan {
         tasks: ordered,

@@ -91,10 +91,20 @@ fn effect_refusal_canary_command(
         Ok(resolved) => resolved,
         Err(outcome) => return render_effect_refusal_canary_result(format, &outcome),
     };
+    let roots = task_names
+        .iter()
+        .enumerate()
+        .map(
+            |(ordinal, task)| crate::effect_policy::EffectPolicyInvocation {
+                task: task.clone(),
+                origin: format!("effect_refusal_canary:{ordinal:04}"),
+            },
+        )
+        .collect::<Vec<_>>();
     let closure = match build_typed_effect_closure_admission(
         contract,
         contract_path,
-        task_names,
+        &roots,
         ExecutionOverrides::default(),
     ) {
         Ok(closure) => closure,

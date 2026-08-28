@@ -26,6 +26,16 @@
 
 ## Unreleased
 
+- Rejected `database_schema_mutation` under `workflows.<name>.prepare.action`. Typed mutations
+  must use a named task with `effects.declared`, so the shared typed-effect admission boundary can
+  bind the canonical attachment before workflow preparation begins.
+
+- Extended V12 typed-effect admission to `ota proof runtime` and `ota proof lifecycle`. Both now
+  evaluate the complete selected proof closure before replay-input evaluation, crossing or sandbox
+  admission, proof artifact creation, service work, or child startup. A typed deny returns
+  `OTA_EFFECT_POLICY_DENIED` with `execution_started: false`; provider execution, positive proof
+  receipts, archives, and assurance remain disabled.
+
 - Added contract-owned V12 effect-refusal canaries for exact task and workflow lanes.
   `agent.effect_refusal_canaries` binds a local locator to one typed effect and mandatory origin.
   `ota run --agent --expect-effect-refusal <id> --json <task>` and the matching workflow `ota up`

@@ -132,8 +132,15 @@ pub struct EffectPolicyDecision {
 pub struct EffectPolicyEvaluationScope<'a> {
     pub selected_subject: &'a [String],
     pub workflow_name: Option<&'a str>,
-    pub ordered_tasks: &'a [String],
+    pub ordered_invocations: &'a [EffectPolicyInvocation],
     pub plans: &'a [EffectApplicationPlan],
+}
+
+/// A selected execution occurrence, retained even when one task participates in multiple roles.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct EffectPolicyInvocation {
+    pub task: String,
+    pub origin: String,
 }
 
 #[derive(Serialize)]
@@ -164,7 +171,7 @@ struct SelectedInvocationPayload<'a> {
 #[derive(Serialize)]
 struct ExecutionGraphPayload<'a> {
     schema_version: u32,
-    tasks: &'a [String],
+    invocations: &'a [EffectPolicyInvocation],
     application_plans: &'a [String],
 }
 
@@ -205,7 +212,7 @@ fn build_typed_effect_policy_decision(
 ) -> Result<EffectPolicyDecision, EffectPolicyError> {
     let selected_subject = scope.selected_subject;
     let workflow_name = scope.workflow_name;
-    let ordered_tasks = scope.ordered_tasks;
+    let ordered_invocations = scope.ordered_invocations;
     let plans = scope.plans;
     loaded_policy
         .pack
@@ -232,7 +239,7 @@ fn build_typed_effect_policy_decision(
         EXECUTION_GRAPH_DOMAIN,
         &ExecutionGraphPayload {
             schema_version: 1,
-            tasks: ordered_tasks,
+            invocations: ordered_invocations,
             application_plans: &plan_identities,
         },
     )?;
@@ -392,14 +399,14 @@ fn build_typed_effect_policy_decision(
         },
     )?;
     let mut coarse_decisions = Vec::new();
-    for task_name in ordered_tasks {
-        let Some(task) = contract.tasks.get(task_name) else {
+    for invocation in ordered_invocations {
+        let Some(task) = contract.tasks.get(invocation.task.as_str()) else {
             continue;
         };
         let scope = if contract
             .agent
             .as_ref()
-            .is_some_and(|agent| agent.safe_tasks.contains(task_name))
+            .is_some_and(|agent| agent.safe_tasks.contains(&invocation.task))
         {
             EffectGovernanceScope::SafeTask
         } else {

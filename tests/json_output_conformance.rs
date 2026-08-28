@@ -2445,6 +2445,301 @@ workflows:
 
 #[cfg(unix)]
 #[test]
+fn untyped_run_does_not_load_effect_policy() {
+    let fixture = tempfile::tempdir().expect("tempdir");
+    fs::write(
+        fixture.path().join("ota.yaml"),
+        r#"
+version: 1
+project:
+  name: untyped-policy-fast-path
+tasks:
+  check:
+    command:
+      exe: sh
+      args: ["-c", "true"]
+"#,
+    )
+    .expect("contract");
+    fs::create_dir_all(fixture.path().join(".ota")).expect("policy directory");
+    fs::write(fixture.path().join(".ota/org-policy.yaml"), "policies: [").expect("policy");
+
+    let preview = run_ota_json_output(&["run", "check", "--dry-run", "--json"], fixture.path());
+    assert_matches_schema("run-preview.json", &preview);
+    assert_eq!(preview["execution_started"], false);
+    assert!(preview["plan"]["effect_policy_decision"].is_null());
+}
+
+#[cfg(unix)]
+#[test]
+fn proof_runtime_uses_only_the_selected_mode_typed_effect_closure() {
+    let fixture = tempfile::tempdir().expect("tempdir");
+    fs::create_dir_all(fixture.path().join("migrations")).expect("migration directory");
+    let migration_bytes = b"create table selected_mode ();\n";
+    fs::write(fixture.path().join("migrations/001.sql"), migration_bytes).expect("migration file");
+    let file_identity = format!("sha256:{:x}", Sha256::digest(migration_bytes));
+    let manifest = json!({
+        "schema_version": 1,
+        "root": "migrations",
+        "files": [{ "path": "001.sql", "identity": file_identity }]
+    });
+    let mut manifest_identity_bytes = b"ota.schema-migration-manifest.v1\0".to_vec();
+    manifest_identity_bytes
+        .extend(serde_jcs::to_vec(&manifest).expect("migration manifest canonicalizes"));
+    let manifest_identity = format!("sha256:{:x}", Sha256::digest(manifest_identity_bytes));
+    write_contract(
+        &fixture,
+        &format!(
+            r#"
+version: 1
+project:
+  name: selected-mode-proof
+governance:
+  crossing_authority:
+    authority_id: release-authority
+execution:
+  default_context: local
+  contexts:
+    local:
+      backend: native
+    container:
+      backend: container
+      container:
+        image: alpine:3.21
+      lifecycle: ephemeral
+resource_bindings:
+  primary:
+    kind: database
+    provider: postgresql
+    namespace: {{ authority: dns:example.org, environment: production }}
+effect_definitions:
+  migration:
+    kind: database_schema_mutation
+    action: apply_migration_set
+    resource: {{ engine: postgresql, target_ref: primary, schema: public }}
+    bounds:
+      migration_set: {{ root: migrations, content_identity: {manifest_identity} }}
+      start_state: any_within_set
+tasks:
+  migrate:
+    action: {{ kind: database_schema_mutation, effect: migration }}
+    effects:
+      declared: [migration]
+  verify:
+    execution:
+      default_mode: native
+      modes:
+        native:
+          context: local
+          command: {{ exe: sh, args: ["-c", "touch native-ran"] }}
+        container:
+          context: container
+          depends_on: [migrate]
+          command: {{ exe: sh, args: ["-c", "touch container-ran"] }}
+workflows:
+  default: release
+  release:
+    run: {{ task: verify }}
+"#
+        ),
+    );
+
+    let json = run_ota_json_output(
+        &[
+            "proof",
+            "runtime",
+            "--json",
+            "--workflow",
+            "release",
+            "--native",
+            fixture.path().to_str().expect("fixture path"),
+        ],
+        fixture.path(),
+    );
+
+    assert_matches_schema("proof-runtime.json", &json);
+    assert_eq!(json["code"], "crossing_grant_required", "{json}");
+    assert_eq!(json["execution_started"], false);
+    assert!(!fixture.path().join("native-ran").exists());
+    assert!(!fixture.path().join("container-ran").exists());
+}
+
+#[cfg(unix)]
+fn assert_proof_runtime_typed_helper_refusal(
+    typed_observer: bool,
+    typed_control: bool,
+    select_control: bool,
+) {
+    let fixture = tempfile::tempdir().expect("tempdir");
+    fs::create_dir_all(fixture.path().join("migrations")).expect("migration directory");
+    let migration_bytes = b"create table proof_helpers ();\n";
+    fs::write(fixture.path().join("migrations/001.sql"), migration_bytes).expect("migration file");
+    let file_identity = format!("sha256:{:x}", Sha256::digest(migration_bytes));
+    let manifest = json!({
+        "schema_version": 1,
+        "root": "migrations",
+        "files": [{ "path": "001.sql", "identity": file_identity }]
+    });
+    let mut manifest_identity_bytes = b"ota.schema-migration-manifest.v1\0".to_vec();
+    manifest_identity_bytes
+        .extend(serde_jcs::to_vec(&manifest).expect("migration manifest canonicalizes"));
+    let manifest_identity = format!("sha256:{:x}", Sha256::digest(manifest_identity_bytes));
+    let observe_action = if typed_observer {
+        "action: { kind: database_schema_mutation, effect: migration }\n    effects:\n      declared: [migration]"
+    } else {
+        "command: { exe: sh, args: [\"-c\", \"touch observer-ran\"] }"
+    };
+    let control_action = if typed_control {
+        "action: { kind: database_schema_mutation, effect: migration }\n    effects:\n      declared: [migration]"
+    } else {
+        "command: { exe: sh, args: [\"-c\", \"touch control-ran\"] }"
+    };
+    write_contract(
+        &fixture,
+        &format!(
+            r#"
+version: 1
+project:
+  name: typed-proof-helpers
+resource_bindings:
+  primary:
+    kind: database
+    provider: postgresql
+    namespace: {{ authority: dns:example.org, environment: production }}
+effect_definitions:
+  migration:
+    kind: database_schema_mutation
+    action: apply_migration_set
+    resource: {{ engine: postgresql, target_ref: primary, schema: public }}
+    bounds:
+      migration_set: {{ root: migrations, content_identity: {manifest_identity} }}
+      start_state: any_within_set
+services:
+  dependency:
+    manager:
+      kind: compose
+      name: typed-proof-helpers
+      file: compose.yaml
+      service: dependency
+tasks:
+  produce:
+    command: {{ exe: sh, args: ["-c", "touch producer-ran"] }}
+    requires_services: [dependency]
+  app:
+    command: {{ exe: sh, args: ["-c", "touch app-ran"] }}
+    requires_services: [dependency]
+  observe:
+    {observe_action}
+    depends_on: [produce]
+    requires_services: [dependency]
+  control:
+    {control_action}
+    depends_on: [produce]
+workflows:
+  default: app-proof
+  app-proof:
+    setup: {{ task: produce }}
+    run: {{ task: app }}
+    proof:
+      seam_observations:
+        - id: dependency-marker
+          dependency: dependency
+          producer_task: produce
+          task: observe
+          marker_env: OTA_PROOF_DEPENDENCY_MARKER
+      negative_controls:
+        - id: dependency-unavailable
+          dependency: dependency
+          obligation: dependency-marker
+          task: control
+          intervention:
+            kind: dependency_endpoint_override
+          expected_failure: dependency_unavailable
+"#
+        ),
+    );
+    fs::write(
+        fixture.path().join("compose.yaml"),
+        "services:\n  dependency:\n    image: postgres:17\n",
+    )
+    .expect("compose file");
+
+    let mut args = vec!["proof", "runtime", "--json", "--workflow", "app-proof"];
+    if select_control {
+        args.extend(["--negative-control", "dependency-unavailable"]);
+    }
+    args.push(fixture.path().to_str().expect("fixture path"));
+    let json = run_ota_json_output(&args, fixture.path());
+
+    assert_matches_schema("proof-runtime.json", &json);
+    assert_eq!(json["code"], "typed_effect_admission_refused", "{json}");
+    assert_eq!(json["execution_started"], false);
+    assert!(!fixture.path().join("producer-ran").exists());
+    assert!(!fixture.path().join("app-ran").exists());
+    assert!(!fixture.path().join(".ota/proof").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn proof_runtime_typed_observer_refuses_before_artifacts() {
+    assert_proof_runtime_typed_helper_refusal(true, false, false);
+}
+
+#[cfg(unix)]
+#[test]
+fn proof_runtime_typed_negative_control_refuses_before_artifacts() {
+    assert_proof_runtime_typed_helper_refusal(false, true, true);
+}
+
+#[cfg(unix)]
+#[test]
+fn inline_typed_workflow_prepare_refuses_before_run_admission() {
+    let fixture = tempfile::tempdir().expect("tempdir");
+    write_contract(
+        &fixture,
+        r#"
+version: 1
+project:
+  name: invalid-inline-typed-prepare
+tasks:
+  app:
+    command: { exe: sh, args: ["-c", "touch app-ran"] }
+workflows:
+  default: app
+  app:
+    prepare:
+      action:
+        kind: database_schema_mutation
+        effect: migration
+    run: { task: app }
+"#,
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ota"))
+        .args(["run", "app", "--plain"])
+        .current_dir(fixture.path())
+        .output()
+        .expect("ota run");
+    let rendered = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!output.status.success(), "{rendered}");
+    assert!(
+        rendered
+            .contains("`workflows.app.prepare.action` cannot declare `database_schema_mutation`"),
+        "{rendered}"
+    );
+    assert!(
+        !rendered.contains("typed_effect_admission_refused"),
+        "{rendered}"
+    );
+    assert!(!fixture.path().join("app-ran").exists());
+}
+
+#[cfg(unix)]
+#[test]
 fn typed_effect_policy_decision_causes_exact_pre_side_effect_refusal() {
     let fixture = tempfile::tempdir().expect("tempdir");
     fs::create_dir_all(fixture.path().join("migrations")).expect("migration directory");
@@ -2488,7 +2783,7 @@ tasks:
     effects:
       declared: [migration]
   parent:
-    depends_on: [migrate]
+    after_always: [migrate]
     command: {{ exe: sh, args: [-c, "touch parent-sentinel"] }}
 workflows:
   default: release
@@ -2582,11 +2877,17 @@ policies:
         .plan,
     ];
     let selected_subject = vec![String::from("tasks"), String::from("parent")];
-    let ordered_tasks = ota::runner::plan_task_execution(&contract, "parent")
+    let ordered_invocations = ota::runner::plan_task_execution(&contract, "parent")
         .expect("closure re-derives")
         .steps
         .into_iter()
-        .map(|step| step.task)
+        .enumerate()
+        .map(
+            |(ordinal, step)| ota::effect_policy::EffectPolicyInvocation {
+                task: step.task,
+                origin: format!("run_preview:step:{ordinal}"),
+            },
+        )
         .collect::<Vec<_>>();
     let verify = |decision| {
         ota::effect_policy::verify_effect_policy_decision(
@@ -2595,7 +2896,7 @@ policies:
             ota::effect_policy::EffectPolicyEvaluationScope {
                 selected_subject: &selected_subject,
                 workflow_name: None,
-                ordered_tasks: &ordered_tasks,
+                ordered_invocations: &ordered_invocations,
                 plans: &plans,
             },
             &loaded_policy,
@@ -2609,7 +2910,7 @@ policies:
         ota::effect_policy::EffectPolicyEvaluationScope {
             selected_subject: &selected_subject,
             workflow_name: None,
-            ordered_tasks: &ordered_tasks,
+            ordered_invocations: &ordered_invocations,
             plans: &plans,
         },
         &loaded_policy,
@@ -2708,6 +3009,16 @@ policies:
         assert!(!fixture.path().join("setup-sentinel").exists());
         assert!(!fixture.path().join("parent-sentinel").exists());
     }
+
+    let proof_refusal = run_ota_json_output(
+        &["proof", "runtime", "--workflow", "release", "--json"],
+        fixture.path(),
+    );
+    assert_matches_schema("proof-runtime.json", &proof_refusal);
+    assert_eq!(proof_refusal["code"], "OTA_EFFECT_POLICY_DENIED");
+    assert_eq!(proof_refusal["execution_started"], false);
+    assert!(!fixture.path().join("setup-sentinel").exists());
+    assert!(!fixture.path().join("parent-sentinel").exists());
 
     let nonmatching_policy = matching_policy.replace("production }", "staging }");
     let override_path = fixture.path().join("nonmatching-policy.yaml");
@@ -4956,6 +5267,122 @@ policies:
     );
     assert!(!fixture.path().join("build-ran").exists());
     assert!(!fixture.path().join("assertion-ran").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn proof_lifecycle_effect_policy_refusal_precedes_replay_and_service_work() {
+    let fixture = TempDir::new().expect("fixture");
+    fs::create_dir_all(fixture.path().join("migrations")).expect("migration directory");
+    let migration_bytes = b"create table lifecycle_policy_example ();\n";
+    fs::write(fixture.path().join("migrations/001.sql"), migration_bytes).expect("migration file");
+    let file_identity = format!("sha256:{:x}", Sha256::digest(migration_bytes));
+    let manifest = json!({
+        "schema_version": 1,
+        "root": "migrations",
+        "files": [{ "path": "001.sql", "identity": file_identity }]
+    });
+    let mut manifest_identity_bytes = b"ota.schema-migration-manifest.v1\0".to_vec();
+    manifest_identity_bytes
+        .extend(serde_jcs::to_vec(&manifest).expect("migration manifest canonicalizes"));
+    let manifest_identity = format!("sha256:{:x}", Sha256::digest(manifest_identity_bytes));
+    write_contract(
+        &fixture,
+        &format!(
+            r#"
+version: 1
+project:
+  name: lifecycle-effect-policy-refusal
+resource_bindings:
+  primary:
+    kind: database
+    provider: postgresql
+    namespace: {{ authority: dns:example.org, environment: production }}
+effect_definitions:
+  migration:
+    kind: database_schema_mutation
+    action: apply_migration_set
+    resource: {{ engine: postgresql, target_ref: primary, schema: public }}
+    bounds:
+      migration_set: {{ root: migrations, content_identity: {manifest_identity} }}
+      start_state: any_within_set
+services:
+  database:
+    manager:
+      kind: compose
+      name: lifecycle-effect-policy-refusal
+      file: compose.yaml
+      service: database
+    lifecycle:
+      teardown_assertion: manager_inactive
+tasks:
+  build:
+    command:
+      exe: sh
+      args: ["-c", "touch build-ran"]
+  assert-database:
+    action: {{ kind: database_schema_mutation, effect: migration }}
+    effects:
+      declared: [migration]
+workflows:
+  default: smoke
+  smoke:
+    run:
+      task: build
+    proof:
+      lifecycle:
+        services: [database]
+        assertion:
+          task: assert-database
+"#
+        ),
+    );
+    fs::write(
+        fixture.path().join("compose.yaml"),
+        "services:\n  database:\n    image: postgres:17\n",
+    )
+    .expect("compose file");
+    fs::create_dir_all(fixture.path().join(".ota")).expect("policy directory");
+    fs::write(
+        fixture.path().join(".ota/org-policy.yaml"),
+        r#"
+policies:
+  effects:
+    mode: compatibility
+    typed:
+      rules:
+        - id: deny_production_schema_mutation
+          selector:
+            kind: database_schema_mutation
+            actions: [apply_migration_set]
+            resource:
+              match: exact
+              engine: postgresql
+              namespace: { authority: dns:example.org, environment: production }
+              schema: public
+          decision: deny
+"#,
+    )
+    .expect("policy");
+
+    let json = run_ota_json_output(
+        &[
+            "proof",
+            "lifecycle",
+            "--json",
+            "--workflow",
+            "smoke",
+            fixture.path().to_str().expect("fixture path"),
+        ],
+        fixture.path(),
+    );
+
+    assert_matches_schema("proof-lifecycle.json", &json);
+    assert_eq!(json["code"], "OTA_EFFECT_POLICY_DENIED");
+    assert_eq!(json["execution_started"], false);
+    assert!(!fixture.path().join("build-ran").exists());
+    assert!(!fixture.path().join("assertion-ran").exists());
+    assert!(!fixture.path().join(".ota/proof").exists());
 }
 
 #[test]

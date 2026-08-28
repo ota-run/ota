@@ -27,7 +27,9 @@ use std::path::Path;
 use crate::effect_application_plan::{
     EffectApplicationPlan, admit_database_schema_mutation_action,
 };
-use crate::effect_policy::{EffectPolicyDecision, EffectPolicyEvaluationScope};
+use crate::effect_policy::{
+    EffectPolicyDecision, EffectPolicyEvaluationScope, EffectPolicyInvocation,
+};
 use crate::policy_pack::{EffectGovernanceOverrides, load_org_policy_pack_auto_details};
 use crate::schema::{Contract, TaskDatabaseSchemaMutationActionSpec};
 
@@ -41,7 +43,7 @@ pub(crate) fn typed_effect_policy_decision(
     contract_path: &Path,
     workflow_name: Option<&str>,
     selected_task_name: &str,
-    task_names: &[String],
+    invocations: &[EffectPolicyInvocation],
     application_plans: &[EffectApplicationPlan],
     overrides: Option<&EffectGovernanceOverrides>,
 ) -> Result<Option<EffectPolicyDecision>, EffectAdmissionError> {
@@ -64,7 +66,7 @@ pub(crate) fn typed_effect_policy_decision(
         EffectPolicyEvaluationScope {
             selected_subject: &selected_subject,
             workflow_name,
-            ordered_tasks: task_names,
+            ordered_invocations: invocations,
             plans: application_plans,
         },
         &loaded,

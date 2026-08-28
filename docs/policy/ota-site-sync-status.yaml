@@ -26,7 +26,8 @@ version: 1
 repository: ota-run/ota-site
 mode: synced
 reviewed_ota_commit: 2d439f14839acd7abfe5afdc5ced4e51c10c62ab
-consumer_commit: f1ef9c91fd53029cf3d3758d30fbb50d04ab4a11
+consumer_commit: af09d06950754acace48a89dc485f8bc46a8fb3b
 notes: >
-  The connected command, contract, schema, reference, and Learn propagation is committed at the
-  recorded immutable Site revision.
+  The Site reference documents proof-runtime and proof-lifecycle typed-effect refusal plus the
+  named-task requirement for typed workflow preparation. The generated cloud.devenv pressure post
+  remains unrelated and is not part of this propagation revision.

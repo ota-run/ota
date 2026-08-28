@@ -728,16 +728,22 @@ the incident ratchet.
 
 ## Implementation Order
 
-Current implementation boundary: steps 1-3 and the local task/workflow branch of step 5 are
-implemented. The shared evaluator can produce an effect-caused refusal for repo-level `run` and
-non-dry-run `up`; a predeclared effect-refusal canary can independently prove one exact explicit
+Current implementation boundary: steps 1-3, the proof-closure branch of step 4, and the local
+task/workflow branch of step 5 are implemented. The shared evaluator can produce an effect-caused
+refusal for repo-level `run`, non-dry-run `up`, `proof runtime`, and `proof lifecycle`; proof
+commands admit their complete selected closure before replay, authority or sandbox admission,
+artifacts, service work, or child startup. Admission preserves the selected phase and proof-helper
+invocation order and role, including repeated task use; it does not union dependencies from
+unselected execution modes. The selected runner closure includes dependencies and aggregated hooks.
+A predeclared effect-refusal canary can independently prove one exact explicit
 typed denial without starting execution. The bounded internal Linux/x64 and macOS carrier is green
 in [run 33098093213](https://github.com/ota-run/ota/actions/runs/33098093213) against Core
 `dc368fbb2fc298490bfce6de86ea4ed79b493beb`; it proves the exact task/workflow canary, strict
 fallback and unknown-ID refusal, and absence of local setup/environment/log side effects. Provider
 mutation, CI projection, receipts, archives, and positive assurance remain disabled. Step 4 is not
-complete across hooks, services, proof closure diagnostics, sandbox compilation, or provider-side
-re-evaluation, and V12 still requires its independent real-repository pressure bar before closure.
+complete across sandbox capability/projection and CI/provider checkout re-evaluation; provider
+execution remains disabled, and V12 still requires its independent real-repository pressure bar
+before closure.
 
 1. Add the provider-neutral effect domain, canonical identities, origins, and derivation posture
    plus strict resource-binding branches without changing execution admission.

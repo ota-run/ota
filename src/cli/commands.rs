@@ -97,8 +97,10 @@ use crate::doctor::{
     finding_targets_remote_backend, provisioning_installability_finding, resolve_command_path,
 };
 use crate::effect_orchestration::{
-    build_typed_effect_closure_admission, typed_effect_policy_decision,
+    TypedEffectAdmission, admit_typed_effect_closure, build_typed_effect_closure_admission,
+    typed_effect_admission_refusal, typed_effect_policy_decision,
 };
+use crate::effect_policy::EffectPolicyInvocation;
 use crate::execution::{
     container_backend_probe_failure, container_engine_candidates,
     container_engine_candidates_from_backend, ephemeral_container_target, execution_image,
@@ -3331,6 +3333,38 @@ pub fn proof_lifecycle_with_grant(
             2,
         );
     };
+    let mut typed_effect_roots = selected_workflow_phase_task_roots(&contract, Some(workflow_key));
+    if let Some(assertion) = lifecycle.assertion.as_ref() {
+        typed_effect_roots.push(EffectPolicyInvocation {
+            task: assertion.task.clone(),
+            origin: String::from("lifecycle_assertion"),
+        });
+    }
+    match typed_effect_closure_refusal(
+        &contract,
+        &target.contract_path,
+        Some(workflow_key),
+        &typed_effect_roots,
+        overrides,
+    ) {
+        Ok(Some(error)) => {
+            return proof_typed_effect_admission_failure_output(
+                format,
+                "ota proof lifecycle",
+                &target.contract_path,
+                error,
+            );
+        }
+        Ok(None) => {}
+        Err(error) => {
+            return proof_typed_effect_admission_failure_output(
+                format,
+                "ota proof lifecycle",
+                &target.contract_path,
+                error,
+            );
+        }
+    }
     let mut proof_task_closure = contract.selected_workflow_task_closure_names(Some(workflow_key));
     if let Some(assertion) = lifecycle.assertion.as_ref() {
         proof_task_closure.extend(contract.task_dependency_closure_names([assertion.task.clone()]));
@@ -3992,6 +4026,47 @@ pub fn proof_runtime_with_grant(
                     contract,
                     effective_workflow_selector.as_deref(),
                 );
+                let mut typed_effect_roots = selected_workflow_phase_task_roots(
+                    contract,
+                    effective_workflow_selector.as_deref(),
+                );
+                for (ordinal, observation) in selected_seam_observations.iter().enumerate() {
+                    typed_effect_roots.push(EffectPolicyInvocation {
+                        task: observation.task.clone(),
+                        origin: format!("seam_observer:{ordinal:04}"),
+                    });
+                }
+                if let Some(control) = selected_negative_control.as_ref() {
+                    typed_effect_roots.push(EffectPolicyInvocation {
+                        task: control.task.clone(),
+                        origin: String::from("negative_control"),
+                    });
+                }
+                match typed_effect_closure_refusal(
+                    contract,
+                    &target.contract_path,
+                    effective_workflow_selector.as_deref(),
+                    &typed_effect_roots,
+                    overrides,
+                ) {
+                    Ok(Some(error)) => {
+                        return proof_typed_effect_admission_failure_output(
+                            format,
+                            "ota proof runtime",
+                            &target.contract_path,
+                            error,
+                        );
+                    }
+                    Ok(None) => {}
+                    Err(error) => {
+                        return proof_typed_effect_admission_failure_output(
+                            format,
+                            "ota proof runtime",
+                            &target.contract_path,
+                            error,
+                        );
+                    }
+                }
                 let mut proof_task_closure = contract
                     .selected_workflow_task_closure_names(effective_workflow_selector.as_deref());
                 for observation in &selected_seam_observations {
@@ -21597,6 +21672,39 @@ struct ProofReplayInputAdmissionFailure {
     replay_input_policy: Option<ReplayInputPolicyEvaluation>,
 }
 
+#[derive(Serialize)]
+struct ProofTypedEffectAdmissionFailure {
+    ok: bool,
+    path: String,
+    code: String,
+    error: String,
+    execution_started: bool,
+}
+
+fn proof_typed_effect_admission_failure_output(
+    format: OutputFormat,
+    command: &str,
+    contract_path: &Path,
+    error: RunError,
+) -> CommandOutput {
+    let code = if matches!(error, RunError::EffectPolicyDenied { .. }) {
+        String::from("OTA_EFFECT_POLICY_DENIED")
+    } else {
+        String::from("typed_effect_admission_refused")
+    };
+    let error = render_run_error(error);
+    match format {
+        OutputFormat::Text => CommandOutput::failure(stylize_text_failure(command, &error)),
+        OutputFormat::Json => CommandOutput::failure(to_json(&ProofTypedEffectAdmissionFailure {
+            ok: false,
+            path: compact_contract_path(contract_path),
+            code,
+            error,
+            execution_started: false,
+        })),
+    }
+}
+
 fn proof_replay_input_admission_failure_output(
     format: OutputFormat,
     command: &str,
@@ -22774,10 +22882,14 @@ fn render_run_preview_target(
             )),
         };
     };
+    let typed_effect_roots = [EffectPolicyInvocation {
+        task: task_name.clone(),
+        origin: String::from("run_preview"),
+    }];
     let typed_effect_closure = match build_typed_effect_closure_admission(
         &target.contract,
         &target.contract_path,
-        std::slice::from_ref(&task_name),
+        &typed_effect_roots,
         overrides,
     ) {
         Ok(closure) => closure,
@@ -108698,8 +108810,11 @@ fn enforce_typed_effect_pre_execution_boundary(
     task_name: &str,
     overrides: ExecutionOverrides,
 ) -> Result<(), RunCommandFailure> {
-    let task_names = [task_name.to_string()];
-    let error = typed_effect_closure_refusal(contract, contract_path, None, &task_names, overrides)
+    let roots = [EffectPolicyInvocation {
+        task: task_name.to_string(),
+        origin: String::from("run"),
+    }];
+    let error = typed_effect_closure_refusal(contract, contract_path, None, &roots, overrides)
         .map_err(|error| RunCommandFailure {
             message: stylize_text_failure("ota run", &render_run_error(error)),
             summary: None,
@@ -108717,21 +108832,58 @@ fn enforce_typed_effect_pre_execution_boundary(
     Ok(())
 }
 
+fn selected_workflow_phase_task_roots(
+    contract: &Contract,
+    workflow_name: Option<&str>,
+) -> Vec<EffectPolicyInvocation> {
+    [
+        (
+            "prepare",
+            contract.selected_prepare_task_name_for(workflow_name),
+        ),
+        (
+            "setup",
+            contract.selected_setup_task_name_for(workflow_name),
+        ),
+        ("run", contract.selected_run_task_name_for(workflow_name)),
+    ]
+    .into_iter()
+    .filter_map(|(origin, task)| {
+        task.map(|task| EffectPolicyInvocation {
+            task: task.to_string(),
+            origin: origin.to_string(),
+        })
+    })
+    .collect()
+}
+
 fn typed_effect_closure_refusal(
     contract: &Contract,
     contract_path: &Path,
     workflow_name: Option<&str>,
-    task_names: &[String],
+    roots: &[EffectPolicyInvocation],
     overrides: ExecutionOverrides,
 ) -> Result<Option<RunError>, RunError> {
+    let admission =
+        typed_effect_closure_admission(contract, contract_path, workflow_name, roots, overrides)?;
+    Ok(typed_effect_admission_refusal(&admission))
+}
+
+fn typed_effect_closure_admission(
+    contract: &Contract,
+    contract_path: &Path,
+    workflow_name: Option<&str>,
+    roots: &[EffectPolicyInvocation],
+    overrides: ExecutionOverrides,
+) -> Result<TypedEffectAdmission, RunError> {
     let adjusted_contract =
         contract_adjusted_for_selected_workflow_env_profile(contract, workflow_name);
     let contract = adjusted_contract.as_ref().unwrap_or(contract);
-    crate::effect_orchestration::typed_effect_closure_refusal(
+    admit_typed_effect_closure(
         contract,
         contract_path,
         workflow_name,
-        task_names,
+        roots,
         overrides,
         Some(&current_effect_governance_overrides()),
     )
@@ -135577,11 +135729,19 @@ fn typed_effect_up_pre_execution_result(
         .selected_workflow(workflow_name)
         .map(|(name, _)| name);
     let task_names = contract.selected_workflow_task_closure_names(effective_workflow_name);
+    let roots = task_names
+        .into_iter()
+        .enumerate()
+        .map(|(ordinal, task)| EffectPolicyInvocation {
+            task,
+            origin: format!("up_closure:{ordinal:04}"),
+        })
+        .collect::<Vec<_>>();
     let error = match typed_effect_closure_refusal(
         contract,
         resolved_path,
         effective_workflow_name,
-        task_names.as_slice(),
+        roots.as_slice(),
         overrides,
     ) {
         Ok(error) => error?,

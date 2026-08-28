@@ -17362,6 +17362,14 @@ fn validate_workflows(contract: &Contract, errors: &mut Vec<ValidationError>) {
                     Backend::Native,
                     errors,
                 );
+                if matches!(
+                    action,
+                    crate::schema::TaskActionSpec::DatabaseSchemaMutation(_)
+                ) {
+                    errors.push(ValidationError::new(format!(
+                        "`workflows.{name}.prepare.action` cannot declare `database_schema_mutation`; use a named prepare task with `effects.declared` so typed-effect admission can bind the canonical attachment"
+                    )));
+                }
             }
         }
         if let Some(setup) = workflow.setup.as_ref() {
@@ -22280,6 +22288,33 @@ workflows:
         .expect("contract should parse");
 
         validate_contract(&contract).expect("inline action prepare should validate");
+    }
+
+    #[test]
+    fn rejects_inline_workflow_prepare_database_schema_mutation() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: invalid-inline-typed-prepare
+workflows:
+  default: app
+  app:
+    prepare:
+      action:
+        kind: database_schema_mutation
+        effect: migration
+"#,
+        )
+        .expect("contract should parse");
+
+        let error = validate_contract(&contract).expect_err("inline typed prepare must refuse");
+        assert!(
+            error.to_string().contains(
+                "`workflows.app.prepare.action` cannot declare `database_schema_mutation`"
+            )
+        );
     }
 
     #[test]
