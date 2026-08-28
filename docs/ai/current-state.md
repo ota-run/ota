@@ -725,7 +725,14 @@ durable agent workflow belongs in the canonical Ota skill.
   site reference are aligned. Connected public guidance is pinned at Site
   `7fa71e4dd4a4f1348e9b45af9060acc954ed7034` and Skills
   `610e801c9b32030d888b0c6d0118a5e70af0165a`; Examples require no change because this slice adds
-  no contract-authoring shape.
+  no contract-authoring shape. The focused CI boundary is immutable-hosted on Linux/x64 and macOS
+  in [run 33173733814](https://github.com/ota-run/ota/actions/runs/33173733814) against exact Core
+  `39d2f3964aec84a6e5ff5b0fdb19fa94ce27c8eb`. Both retained artifacts carry schema-valid
+  compatibility-warn and explicit-deny projections, bind distinct projection and policy-decision
+  identities after checkout policy drift, and retain the deny as `effect_policy_denied` before
+  setup, execution, or durable logs. This remains an internal fixture: provider execution,
+  mutation, positive receipts, archives, assurance, and independent real-repository behavior are
+  not proved.
   Bedrock [run 30413944121](https://github.com/bobaikato/bedrock/actions/runs/30413944121)
   proves strict matching admission for four declared frozen inputs through native and container
   execution. Kylrix [run 30413944203](https://github.com/bobaikato/kylrix/actions/runs/30413944203)

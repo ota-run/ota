@@ -29,7 +29,11 @@
 - Extended provider-neutral CI projection with identity-bound typed effect-policy decisions. The
   generated provider workflow re-evaluates that decision against its checkout before setup or
   selected execution; explicit typed denial returns inspectable `effect_policy_denied`. This does
-  not enable provider mutation, receipts, archives, or positive assurance.
+  not enable provider mutation, receipts, archives, or positive assurance. Immutable Linux/x64
+  and macOS pressure in
+  [run 33173733814](https://github.com/ota-run/ota/actions/runs/33173733814) binds exact Core
+  `39d2f3964aec84a6e5ff5b0fdb19fa94ce27c8eb`, retains schema-valid warn and deny projections,
+  and proves checkout policy drift changes projection identity before provider setup or execution.
 
 - Rejected `database_schema_mutation` under `workflows.<name>.prepare.action`. Typed mutations
   must use a named task with `effects.declared`, so the shared typed-effect admission boundary can
