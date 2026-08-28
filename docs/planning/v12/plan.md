@@ -762,7 +762,7 @@ typed denial without starting execution. The bounded internal Linux/x64 and macO
 in [run 33098093213](https://github.com/ota-run/ota/actions/runs/33098093213) against Core
 `dc368fbb2fc298490bfce6de86ea4ed79b493beb`; it proves the exact task/workflow canary, strict
 fallback and unknown-ID refusal, and absence of local setup/environment/log side effects. Provider
-mutation, receipts, archives, and positive assurance remain disabled. The selected
+mutation and positive assurance remain disabled. The selected
 runtime-proof closure branch is separately green on Linux/x64 and macOS in
 [run 33166914327](https://github.com/ota-run/ota/actions/runs/33166914327) against Core
 `0f4db8e2a19367f4cfb6d6a4522ad3b007690bba`: typed denial occurs before proof artifacts, setup,
@@ -784,6 +784,14 @@ task/workflow canary outcomes, and the Core-owned delivery-continuity control. T
 not independently establish arbitrary child-process absence, provider contact or mutation, or
 complete repository immutability. It remains execution-disabled internal evidence; V12 still
 requires its independent real-repository pressure bar before closure.
+The explicit durable refusal archive carrier is separately immutable-hosted on Linux/x64 and macOS
+in [run 33215430688](https://github.com/ota-run/ota/actions/runs/33215430688) against Core
+`a8a27cbbf9daf7b40d0673e5babc715bed0666b6`. Both retained artifacts create one negative receipt
+archive with private policy and immutable contract snapshots, accept it through independent
+history re-derivation, reject a deliberately stripped replay context, and accept the restored
+bytes. The fixture also observes absent setup, rendered environment, and durable logs. It remains
+internal, provider-disabled negative evidence: it does not prove provider contact, database
+mutation prevention outside Ota, positive assurance, or public export safety.
 
 1. Add the provider-neutral effect domain, canonical identities, origins, and derivation posture
    plus strict resource-binding branches without changing execution admission.

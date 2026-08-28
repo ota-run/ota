@@ -59,12 +59,13 @@
   consumes the exact command admission instead of re-planning with a second origin or reloading
   policy truth; malformed policy does not contaminate untyped lanes. Missing policy or aggregate
   denial refuses before canonical sandbox policy construction or provider capability evaluation.
-  This does not enable typed provider execution, receipts, archives, or positive assurance.
+  This does not enable typed provider execution, positive receipts or archives, or positive
+  assurance.
 
 - Extended provider-neutral CI projection with identity-bound typed effect-policy decisions. The
   generated provider workflow re-evaluates that decision against its checkout before setup or
   selected execution; explicit typed denial returns inspectable `effect_policy_denied`. This does
-  not enable provider mutation, receipts, archives, or positive assurance. Immutable Linux/x64
+  not enable provider mutation, positive receipts or archives, or positive assurance. Immutable Linux/x64
   and macOS pressure in
   [run 33173733814](https://github.com/ota-run/ota/actions/runs/33173733814) binds exact Core
   `39d2f3964aec84a6e5ff5b0fdb19fa94ce27c8eb`, retains schema-valid warn and deny projections,
@@ -78,7 +79,7 @@
   evaluate the complete selected proof closure before replay-input evaluation, crossing or sandbox
   admission, proof artifact creation, service work, or child startup. A typed deny returns
   `OTA_EFFECT_POLICY_DENIED` with `execution_started: false`; provider execution, positive proof
-  receipts, archives, and assurance remain disabled.
+  positive receipts, archives, and assurance remain disabled.
   Immutable Linux/x64 and macOS pressure in
   [run 33166914327](https://github.com/ota-run/ota/actions/runs/33166914327) proves that boundary
   before proof artifacts, setup, workflow environment rendering, durable logs, or child startup.
