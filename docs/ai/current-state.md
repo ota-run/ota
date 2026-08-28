@@ -142,7 +142,19 @@ durable agent workflow belongs in the canonical Ota skill.
   absent or refused. This is bounded internal-fixture evidence of pre-side-effect policy refusal;
   it does not prove provider contact or mutation, canary assurance, positive receipts or archives,
   independently administered policy authority, or the required independent real-repository
-  effect-pressure bar. Between V12 feature batches, typed-effect ownership was extracted without
+  effect-pressure bar. The composed command-admission, capability, and sandbox carrier is now
+  immutable-hosted on Linux/x64 and macOS in
+  [run 33199213628](https://github.com/ota-run/ota/actions/runs/33199213628) against exact Core
+  `1339476f1806a14278028de95020afd7e9ef5098`. Both retained artifacts record all nine staged
+  checks: typed `run`, `up`, and inherited-proof denial with `execution_attempted: false`; absent
+  workflow setup, environment-rendering, proof-artifact, and durable-log paths; stale-input and
+  intermediate-symlink refusal; task/workflow canary results; and the Core-owned
+  delivery-continuity control. The fixture does not independently establish arbitrary
+  child-process absence, provider contact or mutation, or complete repository immutability. It
+  remains internal execution-disabled evidence and does not close independent real-repository
+  pressure, positive receipts/archives, assurance, or independently administered policy
+  authority. Between V12 feature batches,
+  typed-effect ownership was extracted without
   behavior changes: `effect_admission` owns runner-independent domain verification,
   `effect_orchestration` adapts selected runner closures for CLI admission, and `runner` translates
   domain failures without a reverse dependency. The current local branch adds contract-owned

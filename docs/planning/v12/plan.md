@@ -753,7 +753,15 @@ plans, or policy snapshot. Missing policy or denial refuses before provider capa
 allow/warn remains provider-disabled, and malformed policy does not contaminate untyped capability
 lanes. CI/provider-checkout re-evaluation binds and re-derives typed effect-policy truth
 before provider setup or execution. Provider execution remains
-disabled, and V12 still requires its independent real-repository pressure bar before closure.
+disabled. The combined command-admission carrier is immutable-hosted on Linux/x64 and macOS in
+[run 33199213628](https://github.com/ota-run/ota/actions/runs/33199213628) against exact Core
+`1339476f1806a14278028de95020afd7e9ef5098`: both retained artifacts record `run`, `up`, and
+inherited-proof typed denial with `execution_attempted: false`, absent workflow setup,
+environment-rendering, proof-artifact, and durable-log paths, stale-input and symlink refusal,
+task/workflow canary outcomes, and the Core-owned delivery-continuity control. The fixture does
+not independently establish arbitrary child-process absence, provider contact or mutation, or
+complete repository immutability. It remains execution-disabled internal evidence; V12 still
+requires its independent real-repository pressure bar before closure.
 
 1. Add the provider-neutral effect domain, canonical identities, origins, and derivation posture
    plus strict resource-binding branches without changing execution admission.

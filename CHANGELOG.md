@@ -26,6 +26,17 @@
 
 ## Unreleased
 
+- Recorded immutable Linux/x64 and macOS pressure for the command-scoped typed effect-policy,
+  capability, and sandbox-admission boundary in
+  [run 33199213628](https://github.com/ota-run/ota/actions/runs/33199213628) against exact Core
+  `1339476f1806a14278028de95020afd7e9ef5098`. Both retained artifacts record typed `run`, `up`,
+  and inherited-proof refusal with `execution_attempted: false`; absent workflow setup,
+  environment-rendering, proof-artifact, and durable-log paths; stale-input and symlink refusal;
+  task/workflow canary results; and the Core-owned delivery-continuity control. This remains
+  execution-disabled internal-fixture evidence, not arbitrary child-process absence, provider
+  contact or mutation, complete repository immutability, positive receipt/archive, assurance,
+  independently administered policy authority, or independent real-repository pressure.
+
 - Bound V12 typed effect-policy truth into task and workflow harness capabilities plus live sandbox
   admission. Capability JSON distinguishes untyped, evaluated, and unavailable policy posture and
   keeps every typed lane provider-disabled and schema-bound to refused preflight. Only untyped
