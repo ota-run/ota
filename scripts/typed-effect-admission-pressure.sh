@@ -373,6 +373,83 @@ stage=refusal_schema_validation
   --write-payload "$proof_root/up-refusal.json" -- "$ota" up --json "$fixture"
 record_stage refusal_schema_validated
 
+stage=durable_refusal_archive
+"$ota" json validate --schema up.json --allow-exit 1 --assert-eq status=BLOCKED \
+  --assert-eq receipt.typed_effect_policy_refusal.execution_started=false \
+  --assert-non-empty-string receipt.typed_effect_policy_refusal.refusal_archive_path \
+  --assert-non-empty-string receipt.typed_effect_policy_refusal.policy_snapshot_archive.path \
+  --write-payload "$proof_root/refusal-archive-up.json" \
+  -- "$ota" up --workflow typed --archive-effect-refusal --json "$fixture"
+python3 - "$proof_root/refusal-archive-up.json" "$fixture" "$proof_root" <<'PY'
+import json
+import pathlib
+import sys
+
+payload = json.loads(pathlib.Path(sys.argv[1]).read_text())
+fixture = pathlib.Path(sys.argv[2])
+proof_root = pathlib.Path(sys.argv[3])
+refusal = payload["receipt"]["typed_effect_policy_refusal"]
+archive_path = fixture / refusal["refusal_archive_path"]
+policy_snapshot_path = fixture / refusal["policy_snapshot_archive"]["path"]
+contract_snapshot_path = fixture / payload["receipt"]["contract_snapshot_ref"]
+for path in (archive_path, policy_snapshot_path, contract_snapshot_path):
+    if not path.is_file():
+        raise SystemExit(f"expected durable refusal artifact: {path}")
+(proof_root / "refusal-archive-path.txt").write_text(str(archive_path) + "\n")
+(proof_root / "refusal-archive-original.json").write_bytes(archive_path.read_bytes())
+PY
+"$ota" receipt --history --json "$fixture" > "$proof_root/refusal-archive-history-valid.json"
+python3 - "$proof_root/refusal-archive-history-valid.json" <<'PY'
+import json
+import pathlib
+import sys
+
+summary = json.loads(pathlib.Path(sys.argv[1]).read_text())["summary"]
+if summary["archive_count"] != 1 or summary["invalid_archive_count"] != 0:
+    raise SystemExit(f"unexpected valid archive history: {summary}")
+PY
+python3 - "$proof_root/refusal-archive-path.txt" <<'PY'
+import json
+import pathlib
+import sys
+
+archive_path = pathlib.Path(pathlib.Path(sys.argv[1]).read_text().strip())
+archive = json.loads(archive_path.read_text())
+archive.pop("archive_context")
+archive_path.write_text(json.dumps(archive, indent=2) + "\n")
+PY
+"$ota" receipt --history --json "$fixture" > "$proof_root/refusal-archive-history-tampered.json"
+python3 - "$proof_root/refusal-archive-history-tampered.json" <<'PY'
+import json
+import pathlib
+import sys
+
+summary = json.loads(pathlib.Path(sys.argv[1]).read_text())["summary"]
+if summary["archive_count"] != 0 or summary["invalid_archive_count"] != 1:
+    raise SystemExit(f"tampered archive was accepted: {summary}")
+PY
+python3 - "$proof_root/refusal-archive-path.txt" "$proof_root/refusal-archive-original.json" <<'PY'
+import pathlib
+import sys
+
+archive_path = pathlib.Path(pathlib.Path(sys.argv[1]).read_text().strip())
+archive_path.write_bytes(pathlib.Path(sys.argv[2]).read_bytes())
+PY
+"$ota" receipt --history --json "$fixture" > "$proof_root/refusal-archive-history-restored.json"
+python3 - "$proof_root/refusal-archive-history-restored.json" <<'PY'
+import json
+import pathlib
+import sys
+
+summary = json.loads(pathlib.Path(sys.argv[1]).read_text())["summary"]
+if summary["archive_count"] != 1 or summary["invalid_archive_count"] != 0:
+    raise SystemExit(f"restored archive did not reconcile: {summary}")
+PY
+test ! -e "$fixture/setup-sentinel" || fail "refusal archive executed workflow setup"
+test ! -e "$fixture/.env.typed" || fail "refusal archive rendered workflow environment"
+test ! -e "$fixture/.ota/state/logs" || fail "refusal archive created durable execution logs"
+record_stage durable_refusal_archive_verified
+
 stage=stale_input_refusal
 cp -R "$preview_fixture" "$proof_root/stale-fixture"
 printf 'alter table example add column value integer;\n' \
@@ -430,6 +507,10 @@ printf '%s\n' \
   'effect_refusal_canary_strict_fallback_failed' \
   'effect_refusal_canary_unknown_failed' \
   'effect_refusal_canary_plain_output_icon_free' \
+  'durable_refusal_archive_created' \
+  'durable_refusal_archive_history_rederived' \
+  'durable_refusal_archive_tamper_rejected' \
+  'durable_refusal_archive_restored' \
   'setup_sentinel_absent' \
   'workflow_env_artifact_absent' \
   'stale_input_refused' \
