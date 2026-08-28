@@ -321,3 +321,14 @@
   deferred until the preceding pressure gate completed.
 - Rule: Every "what is next" recommendation must include pending between-batch architecture work;
   complete narrow hotspot extraction before adding another feature to the same orchestration path.
+
+## 2026-08-28
+
+- Pattern: Focused command regressions can pass while a checked-in hosted pressure carrier still
+  asserts an older artifact lifecycle, causing every hosted platform to fail after a correct
+  pre-side-effect boundary moves earlier.
+- Correction: After changing trust-boundary ordering, run the exact checked-in pressure script
+  locally and update its assertions to the stable machine refusal plus required artifact presence
+  or absence, rather than legacy human text or files the stronger boundary intentionally removed.
+- Rule: A hosted pressure workflow is part of the acceptance surface; its local carrier must pass
+  against the exact release binary before the implementing revision is pushed.

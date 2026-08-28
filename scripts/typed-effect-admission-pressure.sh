@@ -227,10 +227,10 @@ grep -Fq 'OTA_EFFECT_POLICY_DENIED' "$proof_root/run-refusal.txt" \
   || fail "ota run did not report the typed effect-policy denial code"
 grep -Fq 'Typed effect denied by policy' "$proof_root/up-refusal.txt" \
   || fail "ota up did not report typed effect-policy denial"
-grep -Fq 'Phase: preconditions' "$proof_root/proof-refusal.txt" \
-  || fail "ota proof runtime did not preserve the preconditions stage"
-grep -Fq 'effect policy denied' "$fixture/.ota/proof/typed/up.log" \
-  || fail "proof up.log did not retain the typed effect-policy refusal"
+grep -Fq 'OTA_EFFECT_POLICY_DENIED' "$proof_root/proof-refusal.txt" \
+  || fail "ota proof runtime did not report the typed effect-policy denial code"
+test ! -e "$fixture/.ota/proof" \
+  || fail "proof artifacts were created before typed effect-policy refusal"
 test ! -e "$fixture/setup-sentinel" || fail "workflow setup executed before refusal"
 test ! -e "$fixture/.env.typed" || fail "workflow environment rendered before refusal"
 test ! -e "$fixture/.ota/state/logs" || fail "durable execution logs were created before refusal"
