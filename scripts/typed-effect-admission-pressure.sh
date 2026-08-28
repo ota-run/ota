@@ -37,6 +37,7 @@ proof_root=$2
 core_root=$3
 fixture="$proof_root/fixture"
 preview_fixture="$proof_root/preview-fixture"
+ci_fixture="$proof_root/ci-fixture"
 stage=initialization
 
 record_stage() {
@@ -63,11 +64,13 @@ mkdir -p "$proof_root"
 test -z "$(find "$proof_root" -mindepth 1 -maxdepth 1 -print -quit)" \
   || fail "Evidence root must be empty: $proof_root"
 stage=fixture_creation
-mkdir -p "$fixture/migrations" "$fixture/.ota" "$preview_fixture/migrations" "$preview_fixture/.ota"
+mkdir -p "$fixture/migrations" "$fixture/.ota" "$preview_fixture/migrations" \
+  "$preview_fixture/.ota" "$ci_fixture/migrations" "$ci_fixture/.ota"
 printf 'create table example ();\n' > "$fixture/migrations/001.sql"
 cp "$fixture/migrations/001.sql" "$preview_fixture/migrations/001.sql"
+cp "$fixture/migrations/001.sql" "$ci_fixture/migrations/001.sql"
 
-python3 - "$fixture" "$preview_fixture" <<'PY'
+python3 - "$fixture" "$preview_fixture" "$ci_fixture" <<'PY'
 import hashlib
 import json
 import pathlib
@@ -76,6 +79,7 @@ import textwrap
 
 fixture = pathlib.Path(sys.argv[1])
 preview_fixture = pathlib.Path(sys.argv[2])
+ci_fixture = pathlib.Path(sys.argv[3])
 migration = fixture / "migrations" / "001.sql"
 file_identity = "sha256:" + hashlib.sha256(migration.read_bytes()).hexdigest()
 manifest = {
@@ -119,6 +123,21 @@ workflows:
   typed:
     run:
       task: migrate
+"""))
+(ci_fixture / "ota.yaml").write_text(common + textwrap.dedent("""\
+tasks:
+  migrate:
+    safe_for_agent: true
+    action: { kind: database_schema_mutation, effect: migration }
+    effects:
+      declared: [migration]
+workflows:
+  default: typed
+  typed:
+    run:
+      task: migrate
+agent:
+  safe_tasks: [migrate]
 """))
 (fixture / "ota.yaml").write_text(common + textwrap.dedent("""\
 env:
@@ -177,6 +196,11 @@ policies:
 """)
 (fixture / ".ota/org-policy.yaml").write_text(policy)
 (preview_fixture / ".ota/org-policy.yaml").write_text(policy)
+(ci_fixture / ".ota/org-policy.yaml").write_text(textwrap.dedent("""\
+policies:
+  effects:
+    mode: compatibility
+"""))
 PY
 record_stage fixture_created
 printf '%s\n' \
@@ -188,6 +212,7 @@ stage=contract_validation
 git -C "$core_root" rev-parse HEAD > "$proof_root/core-revision.txt"
 "$ota" validate "$fixture" --plain 2>&1 | tee "$proof_root/validate.txt"
 "$ota" validate "$preview_fixture" --plain 2>&1 | tee "$proof_root/preview-validate.txt"
+"$ota" validate "$ci_fixture" --plain 2>&1 | tee "$proof_root/ci-validate.txt"
 record_stage contracts_validated
 
 stage=preview_validation
@@ -201,6 +226,57 @@ stage=preview_validation
   --assert-eq phase=preview --write-payload "$proof_root/up-dry-run.json" \
   -- "$ota" up --dry-run --json "$preview_fixture"
 record_stage previews_validated
+
+stage=ci_projection_policy_reconciliation
+"$ota" json validate --schema ci-projection.json --assert-eq ok=true \
+  --assert-eq projection.governance.effect_policy_decision.aggregate_decision=warn \
+  --assert-eq projection.governance.effect_policy_decision.explicit_typed_deny=false \
+  --assert-non-empty-string projection.identity \
+  --assert-non-empty-string projection.governance.effect_policy_decision.identity \
+  --write-payload "$proof_root/ci-projection-warn.json" \
+  -- "$ota" ci projection --workflow typed --mode native --target-os "${OTA_PRESSURE_TARGET_OS:-linux}" \
+    --json "$ci_fixture"
+cp "$ci_fixture/.ota/org-policy.yaml" "$proof_root/ci-policy-warn.yaml"
+cat > "$ci_fixture/.ota/org-policy.yaml" <<'YAML'
+policies:
+  effects:
+    mode: compatibility
+    typed:
+      rules:
+        - id: deny_pressure_ci_migration
+          selector:
+            kind: database_schema_mutation
+            actions: [apply_migration_set]
+            resource:
+              match: exact
+              engine: postgresql
+              namespace: { authority: dns:example.org, environment: pressure, account: primary }
+              schema: public
+          decision: deny
+YAML
+cp "$ci_fixture/.ota/org-policy.yaml" "$proof_root/ci-policy-deny.yaml"
+"$ota" json validate --schema ci-projection.json --allow-exit 1 \
+  --assert-eq ok=false --assert-eq code=effect_policy_denied \
+  --assert-eq projection.governance.effect_policy_decision.aggregate_decision=deny \
+  --assert-eq projection.governance.effect_policy_decision.explicit_typed_deny=true \
+  --assert-non-empty-string projection.identity \
+  --assert-non-empty-string projection.governance.effect_policy_decision.identity \
+  --write-payload "$proof_root/ci-projection-deny.json" \
+  -- "$ota" ci projection --workflow typed --mode native --target-os "${OTA_PRESSURE_TARGET_OS:-linux}" \
+    --json "$ci_fixture"
+python3 - "$proof_root/ci-projection-warn.json" "$proof_root/ci-projection-deny.json" <<'PY'
+import json
+import pathlib
+import sys
+
+warn = json.loads(pathlib.Path(sys.argv[1]).read_text())
+deny = json.loads(pathlib.Path(sys.argv[2]).read_text())
+if warn["projection"]["identity"] == deny["projection"]["identity"]:
+    raise SystemExit("typed effect-policy drift did not change CI projection identity")
+PY
+test ! -e "$ci_fixture/setup-sentinel" || fail "CI projection executed workflow setup"
+test ! -e "$ci_fixture/.ota/state/logs" || fail "CI projection created durable execution logs"
+record_stage ci_projection_policy_reconciled
 
 stage=execution_refusal
 if "$ota" run migrate --plain "$fixture" > "$proof_root/run-refusal.txt" 2>&1; then
@@ -346,6 +422,9 @@ printf '%s\n' \
   'proof_inherited_up_precondition_refusal' \
   'policy_decision_published' \
   'policy_denial_code_published' \
+  'ci_projection_warn_identity_bound' \
+  'ci_projection_checkout_deny_refused' \
+  'ci_projection_identity_changed_with_policy' \
   'effect_refusal_canary_task_passed' \
   'effect_refusal_canary_workflow_passed' \
   'effect_refusal_canary_strict_fallback_failed' \

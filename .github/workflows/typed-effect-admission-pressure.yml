@@ -58,6 +58,8 @@ jobs:
 
       - name: Exercise typed admission before side effects
         shell: bash
+        env:
+          OTA_PRESSURE_TARGET_OS: ${{ runner.os == 'macOS' && 'macos' || 'linux' }}
         run: |
           set -euo pipefail
           proof_root="$RUNNER_TEMP/ota-typed-effect-admission-pressure"
