@@ -396,6 +396,37 @@ tasks:
       toolchains:
         - rust
     safe_for_agent: true
+  effect-refusal-archive:faults:
+    description: Exercise typed-effect refusal archive post-publication durability reporting
+    notes: |
+      Use this to verify that a directory-sync failure after atomic archive publication reports
+      the exact published path and an explicit durability-uncertain posture. Production and
+      ordinary debug binaries do not expose this fault control.
+    category: test
+    command:
+      exe: cargo
+      args:
+        - test
+        - --features
+        - test-effect-refusal-archive-faults
+        - --test
+        - json_output_conformance
+        - typed_effect_policy_decision_causes_exact_pre_side_effect_refusal
+        - --
+        - --exact
+    variants:
+      - when:
+          os: windows
+        command:
+          exe: pwsh
+          args:
+            - -NoProfile
+            - -Command
+            - Write-Output 'Skipping typed-effect refusal archive fault tests on Windows'
+    requirements:
+      toolchains:
+        - rust
+    safe_for_agent: true
   release-gate:
     description: Run the GitHub Actions verification suite
     notes: |
@@ -420,6 +451,7 @@ tasks:
     depends_on:
       - ci
       - candidate-publication:faults
+      - effect-refusal-archive:faults
       - compat
       - first-party:sync:check
       - dependency-update

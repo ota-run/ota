@@ -25,8 +25,8 @@
 version: 1
 repository: ota-run/ota-site
 mode: synced
-reviewed_ota_commit: pending-local-v12-sandbox-capability
-consumer_commit: de5864968d1cdb29197947da475c8a0988b9d12d
+reviewed_ota_commit: pending-local-v12-effect-refusal-archive
+consumer_commit: 72cfc97a51b42f9fac193af87ecf22a1ad41d973
 notes: >
-  The Site reference documents typed effect-policy capability and retained command-decision sandbox
-  admission without claiming provider mutation, receipts, archives, or assurance.
+  The Site reference documents the ordinary blocked receipt and explicit durable refusal archive,
+  including history re-derivation and the provider-mutation, assurance, and export boundaries.

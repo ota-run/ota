@@ -66,6 +66,19 @@ durable agent workflow belongs in the canonical Ota skill.
   cannot replace the previewed typed action. Non-dry-run `ota up` emits its ordinary blocked
   readiness receipt with `execution_attempted: false`; the typed adapter emits no positive effect
   or execution receipt, archive, success claim, agent-safe authority, canary, or positive assurance.
+  A non-dry-run `ota up --json` typed deny additionally retains the exact command-scoped decision
+  as `receipt.typed_effect_policy_refusal` with `execution_started: false`. Ordinary refusal remains
+  non-durable. Explicit `ota up --workflow <name> --archive-effect-refusal --json` creates one
+  create-new receipt archive plus immutable contract and private policy snapshots only for an
+  explicit typed deny. History independently re-derives the selected invocation closure,
+  application plans, policy snapshot, and decision; missing, aliased, contradictory, or changed
+  evidence invalidates the archive. This remains negative evidence, not provider execution,
+  mutation proof, positive assurance, or a public export profile. Post-publication directory-sync
+  failure returns `effect_refusal_archive_durability_uncertain` with `published: true`, the exact
+  archive path, and recovery guidance; it never claims that no artifact was written.
+  Policy or contract snapshot sync uncertainty is separately identified with
+  `effect_refusal_snapshot_durability_uncertain`, its exact `artifact_kind`, and
+  `receipt_published: false`.
   Task and workflow harness capability JSON now carries mandatory typed effect-policy posture:
   untyped lanes are `not_applicable`, while typed lanes carry the evaluated decision, policy
   snapshot, selected execution graph, and effect-set identities or an explicit unavailable state.

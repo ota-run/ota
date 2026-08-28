@@ -581,6 +581,9 @@ enum Commands {
         /// Prove that one predeclared workflow effect realization is denied by explicit typed policy.
         #[arg(long = "expect-effect-refusal", value_name = "ID", requires = "agent", requires = "workflow", conflicts_with_all = ["expect_refusal", "dry_run", "stream", "attach", "detach", "receipt", "replay_baseline", "member"])]
         expect_effect_refusal: Option<String>,
+        /// Archive one explicit typed policy refusal with immutable contract and policy snapshots.
+        #[arg(long = "archive-effect-refusal", action = ArgAction::SetTrue, requires = "json", requires = "workflow", conflicts_with_all = ["expect_refusal", "expect_effect_refusal", "dry_run", "stream", "attach", "detach", "receipt", "replay_baseline", "member", "grant", "sandbox_target", "effect_override"])]
+        archive_effect_refusal: bool,
         /// Preview the selected up plan without mutating repo or execution state.
         #[arg(long, action = ArgAction::SetTrue)]
         dry_run: bool,
@@ -5806,6 +5809,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
             sandbox_target,
             expect_refusal,
             expect_effect_refusal,
+            archive_effect_refusal,
             dry_run,
             stream,
             attach,
@@ -5847,6 +5851,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
                     true,
                     expect_refusal,
                     expect_effect_refusal.as_deref(),
+                    archive_effect_refusal,
                     reason.as_deref(),
                     grant.as_deref(),
                     sandbox_target.as_deref(),
@@ -5861,7 +5866,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
                     ready_timeout.as_deref(),
                 )
             } else {
-                commands::up_with_agent_reason_and_grant(
+                commands::up_with_agent_reason_and_grant_and_effect_canary(
                     path.as_deref(),
                     file.as_deref(),
                     overrides,
@@ -5870,6 +5875,8 @@ fn dispatch(cli: Cli) -> CommandOutput {
                     workflow.as_deref(),
                     false,
                     false,
+                    None,
+                    archive_effect_refusal,
                     reason.as_deref(),
                     grant.as_deref(),
                     sandbox_target.as_deref(),
@@ -19640,6 +19647,7 @@ tasks:
             agent: false,
             expect_refusal: false,
             expect_effect_refusal: None,
+            archive_effect_refusal: false,
             dry_run: false,
             stream: false,
             attach: false,
@@ -19672,6 +19680,7 @@ tasks:
             agent: false,
             expect_refusal: false,
             expect_effect_refusal: None,
+            archive_effect_refusal: false,
             dry_run: false,
             stream: true,
             attach: false,
@@ -19737,6 +19746,7 @@ tasks:
                 agent: false,
                 expect_refusal: false,
                 expect_effect_refusal: None,
+                archive_effect_refusal: false,
                 dry_run: false,
                 stream: false,
                 attach: false,
@@ -19775,6 +19785,7 @@ tasks:
                 agent: false,
                 expect_refusal: false,
                 expect_effect_refusal: None,
+                archive_effect_refusal: false,
                 dry_run: false,
                 stream: false,
                 attach: false,
@@ -20246,6 +20257,7 @@ tasks:
                     agent: false,
                     expect_refusal: false,
                     expect_effect_refusal: None,
+                    archive_effect_refusal: false,
                     dry_run: false,
                     stream: false,
                     attach: false,
@@ -20755,6 +20767,77 @@ tasks:
 
         if let Err(panic) = worker.join() {
             std::panic::resume_unwind(panic);
+        }
+    }
+
+    #[test]
+    fn effect_refusal_archive_requires_bounded_json_workflow_mode() {
+        let valid = try_parse_cli_on_test_stack(&[
+            "ota",
+            "up",
+            "--workflow",
+            "release",
+            "--archive-effect-refusal",
+            "--json",
+        ])
+        .expect("bounded refusal archival should parse");
+        match valid.command {
+            Commands::Up {
+                workflow,
+                archive_effect_refusal,
+                json,
+                ..
+            } => {
+                assert_eq!(workflow.as_deref(), Some("release"));
+                assert!(archive_effect_refusal);
+                assert!(json);
+            }
+            command => panic!("expected up command, received {command:?}"),
+        }
+
+        for args in [
+            vec!["ota", "up", "--archive-effect-refusal", "--json"],
+            vec![
+                "ota",
+                "up",
+                "--workflow",
+                "release",
+                "--archive-effect-refusal",
+            ],
+            vec![
+                "ota",
+                "up",
+                "--workflow",
+                "release",
+                "--archive-effect-refusal",
+                "--json",
+                "--dry-run",
+            ],
+            vec![
+                "ota",
+                "up",
+                "--workflow",
+                "release",
+                "--archive-effect-refusal",
+                "--json",
+                "--grant",
+                "approved",
+            ],
+            vec![
+                "ota",
+                "up",
+                "--workflow",
+                "release",
+                "--archive-effect-refusal",
+                "--json",
+                "--sandbox-target",
+                "oci_local",
+            ],
+        ] {
+            assert!(
+                try_parse_cli_on_test_stack(&args).is_err(),
+                "invalid refusal archive invocation parsed: {args:?}"
+            );
         }
     }
 

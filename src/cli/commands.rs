@@ -23,9 +23,9 @@
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
-#[cfg(unix)]
-use std::ffi::CString;
 use std::ffi::OsString;
+#[cfg(unix)]
+use std::ffi::{CStr, CString};
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, IsTerminal, Read, Write};
 use std::path::{Component, Path, PathBuf};
@@ -101,7 +101,7 @@ use crate::effect_orchestration::{
     admit_typed_effect_closure, admit_typed_effect_closure_from_loaded_policy,
     build_typed_effect_closure_admission, typed_effect_admission_refusal,
     typed_effect_closure_applies, typed_effect_policy_decision,
-    typed_effect_policy_decision_from_loaded_policy,
+    typed_effect_policy_decision_from_loaded_policy, typed_effect_policy_refusal_evidence,
 };
 use crate::effect_policy::EffectPolicyInvocation;
 use crate::execution::{
@@ -32138,6 +32138,7 @@ pub fn receipt(
                             lane_kind: None,
                             lane_name: None,
                             semantic_scope: None,
+                            effect_policy_refusal: None,
                         }),
                         promoted_baseline: None,
                         artifact_routing: receipt_artifact_routing(
@@ -34226,6 +34227,7 @@ pub(crate) fn up_with_agent_reason_and_grant(
         agent,
         expect_refusal,
         None,
+        false,
         reason,
         grant,
         sandbox_target,
@@ -34252,6 +34254,7 @@ pub(crate) fn up_with_agent_reason_and_grant_and_effect_canary(
     agent: bool,
     expect_refusal: bool,
     expect_effect_refusal: Option<&str>,
+    archive_effect_refusal: bool,
     reason: Option<&str>,
     grant: Option<&str>,
     sandbox_target: Option<&str>,
@@ -34500,6 +34503,64 @@ pub(crate) fn up_with_agent_reason_and_grant_and_effect_canary(
                                 ),
                                 2,
                             ),
+                        };
+                    }
+                    if archive_effect_refusal {
+                        let result = match typed_effect_up_pre_execution_result(
+                            &target.contract,
+                            &target.contract_path,
+                            overrides,
+                            workflow_name,
+                            agent,
+                            false,
+                            true,
+                        ) {
+                            Ok(Some(result)) => result,
+                            Ok(None) => {
+                                return CommandOutput::failure_with_code(
+                                    String::from(
+                                        "`--archive-effect-refusal` is not applicable because the selected workflow has no explicit typed policy refusal",
+                                    ),
+                                    1,
+                                );
+                            }
+                            Err(TypedEffectRefusalArchiveError::Failed(error)) => {
+                                return CommandOutput::failure(error);
+                            }
+                            Err(TypedEffectRefusalArchiveError::DurabilityUncertain(outcome)) => {
+                                let receipt_published = outcome.artifact_kind == "receipt";
+                                let code = if receipt_published {
+                                    "effect_refusal_archive_durability_uncertain"
+                                } else {
+                                    "effect_refusal_snapshot_durability_uncertain"
+                                };
+                                let recovery = if receipt_published {
+                                    "retain the published receipt, verify it with `ota receipt --history --json`, and copy the repository only after the containing directory is durably synchronized"
+                                } else {
+                                    "retain the published snapshot and rerun the same archive command; no refusal receipt was published by this attempt"
+                                };
+                                return CommandOutput {
+                                    stdout: to_json(&json!({
+                                        "ok": false,
+                                        "path": path_display,
+                                        "code": code,
+                                        "published": true,
+                                        "durability": "uncertain",
+                                        "artifact_kind": outcome.artifact_kind,
+                                        "receipt_published": receipt_published,
+                                        "archive_path": receipt_storage_path_display(&outcome.path),
+                                        "message": outcome.message,
+                                        "recovery": recovery,
+                                    })),
+                                    stderr: None,
+                                    exit_code: 1,
+                                };
+                            }
+                        };
+                        return CommandOutput {
+                            stdout: to_json_value(up_result_json_value(&path_display, &result)),
+                            stderr: None,
+                            exit_code: if result.ok { 0 } else { 1 },
                         };
                     }
                     if members.is_empty()
@@ -42053,6 +42114,457 @@ fn contract_snapshot_archive_dir(root: &Path) -> PathBuf {
     root.join(".ota").join("contracts")
 }
 
+fn effect_policy_snapshot_archive_dir(root: &Path) -> PathBuf {
+    root.join(".ota").join("effect-policy-snapshots")
+}
+
+fn effect_policy_snapshot_archive_file_name(identity: &str) -> String {
+    format!("{}.json", identity.replace(':', "-"))
+}
+
+#[cfg(unix)]
+fn open_private_archive_directory(root: &Path, leaf: &str) -> Result<File, String> {
+    use std::os::unix::fs::OpenOptionsExt as _;
+
+    let mut options = OpenOptions::new();
+    options
+        .read(true)
+        .custom_flags(libc::O_CLOEXEC | libc::O_DIRECTORY | libc::O_NOFOLLOW);
+    let mut directory = options.open(root).map_err(|error| {
+        format!(
+            "failed to open repository root `{}` without following aliases: {error}",
+            compact_path(root, ".")
+        )
+    })?;
+    for component in [".ota", leaf] {
+        let component_name = CString::new(component).expect("private archive component is static");
+        let created =
+            unsafe { libc::mkdirat(directory.as_raw_fd(), component_name.as_ptr(), 0o700) };
+        if created != 0 && io::Error::last_os_error().kind() != io::ErrorKind::AlreadyExists {
+            return Err(format!(
+                "failed to create private archive directory `{component}`: {}",
+                io::Error::last_os_error()
+            ));
+        }
+        let descriptor = unsafe {
+            libc::openat(
+                directory.as_raw_fd(),
+                component_name.as_ptr(),
+                libc::O_RDONLY | libc::O_CLOEXEC | libc::O_DIRECTORY | libc::O_NOFOLLOW,
+            )
+        };
+        if descriptor < 0 {
+            return Err(format!(
+                "failed to open private archive directory `{component}` without following aliases: {}",
+                io::Error::last_os_error()
+            ));
+        }
+        directory = unsafe { File::from_raw_fd(descriptor) };
+        let protected = unsafe { libc::fchmod(directory.as_raw_fd(), 0o700) };
+        if protected != 0 {
+            return Err(format!(
+                "failed to protect private archive directory `{component}`: {}",
+                io::Error::last_os_error()
+            ));
+        }
+    }
+    Ok(directory)
+}
+
+#[cfg(not(unix))]
+fn open_private_archive_directory(_root: &Path, _leaf: &str) -> Result<File, String> {
+    Err(String::from(
+        "typed effect refusal archival requires Unix no-follow directory support",
+    ))
+}
+
+#[cfg(unix)]
+fn open_existing_private_archive_directory(root: &Path, leaf: &str) -> Result<File, String> {
+    use std::os::unix::fs::OpenOptionsExt as _;
+
+    let mut options = OpenOptions::new();
+    options
+        .read(true)
+        .custom_flags(libc::O_CLOEXEC | libc::O_DIRECTORY | libc::O_NOFOLLOW);
+    let mut directory = options.open(root).map_err(|error| {
+        format!(
+            "failed to open repository root `{}` without following aliases: {error}",
+            compact_path(root, ".")
+        )
+    })?;
+    for component in [".ota", leaf] {
+        let component_name = CString::new(component).expect("private archive component is static");
+        let descriptor = unsafe {
+            libc::openat(
+                directory.as_raw_fd(),
+                component_name.as_ptr(),
+                libc::O_RDONLY | libc::O_CLOEXEC | libc::O_DIRECTORY | libc::O_NOFOLLOW,
+            )
+        };
+        if descriptor < 0 {
+            return Err(format!(
+                "failed to open private archive directory `{component}` without following aliases: {}",
+                io::Error::last_os_error()
+            ));
+        }
+        directory = unsafe { File::from_raw_fd(descriptor) };
+    }
+    Ok(directory)
+}
+
+#[cfg(not(unix))]
+fn open_existing_private_archive_directory(_root: &Path, _leaf: &str) -> Result<File, String> {
+    Err(String::from(
+        "typed effect refusal archival requires Unix no-follow directory support",
+    ))
+}
+
+#[cfg(unix)]
+fn private_archive_entry_name(name: &str) -> Result<CString, String> {
+    if name.is_empty() || name.contains('/') || name.contains('\\') || name == "." || name == ".." {
+        return Err(String::from("private archive entry name is not canonical"));
+    }
+    CString::new(name).map_err(|_| String::from("private archive entry name contains NUL"))
+}
+
+#[derive(Debug)]
+struct PrivateArchiveDurabilityUncertain {
+    path: PathBuf,
+    artifact_kind: &'static str,
+    message: String,
+}
+
+#[derive(Debug)]
+enum PrivateArchivePublication {
+    Durable,
+    DurabilityUncertain(PrivateArchiveDurabilityUncertain),
+}
+
+#[derive(Debug)]
+enum TypedEffectRefusalArchiveError {
+    Failed(String),
+    DurabilityUncertain(PrivateArchiveDurabilityUncertain),
+}
+
+impl From<String> for TypedEffectRefusalArchiveError {
+    fn from(value: String) -> Self {
+        Self::Failed(value)
+    }
+}
+
+impl std::fmt::Display for TypedEffectRefusalArchiveError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Failed(message) => formatter.write_str(message),
+            Self::DurabilityUncertain(outcome) => formatter.write_str(&outcome.message),
+        }
+    }
+}
+
+fn require_durable_private_archive(
+    publication: PrivateArchivePublication,
+    artifact_kind: &'static str,
+) -> Result<(), TypedEffectRefusalArchiveError> {
+    match publication {
+        PrivateArchivePublication::Durable => Ok(()),
+        PrivateArchivePublication::DurabilityUncertain(mut outcome) => {
+            outcome.artifact_kind = artifact_kind;
+            Err(TypedEffectRefusalArchiveError::DurabilityUncertain(outcome))
+        }
+    }
+}
+
+fn sync_private_archive_directory(
+    directory: &File,
+    display_path: &Path,
+) -> PrivateArchivePublication {
+    #[cfg(feature = "test-effect-refusal-archive-faults")]
+    let forced_sync_failure = std::env::var("OTA_TEST_EFFECT_REFUSAL_ARCHIVE_FAULT")
+        .ok()
+        .is_some_and(|fault| match fault.as_str() {
+            "policy_directory_sync" => display_path
+                .parent()
+                .is_some_and(|parent| parent.ends_with(Path::new(".ota/effect-policy-snapshots"))),
+            "contract_directory_sync" => display_path
+                .parent()
+                .is_some_and(|parent| parent.ends_with(Path::new(".ota/contracts"))),
+            "receipt_directory_sync" => {
+                display_path
+                    .parent()
+                    .is_some_and(|parent| parent.ends_with(Path::new(".ota/receipts")))
+                    && display_path
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .is_some_and(|name| name.starts_with("repo-receipt-"))
+            }
+            _ => false,
+        });
+    #[cfg(not(feature = "test-effect-refusal-archive-faults"))]
+    let forced_sync_failure = false;
+    let durability = if forced_sync_failure {
+        Err(io::Error::other(
+            "injected private archive directory sync failure",
+        ))
+    } else {
+        directory.sync_all()
+    };
+    match durability {
+        Ok(()) => PrivateArchivePublication::Durable,
+        Err(error) => {
+            PrivateArchivePublication::DurabilityUncertain(PrivateArchiveDurabilityUncertain {
+                path: display_path.to_path_buf(),
+                artifact_kind: "unknown",
+                message: format!(
+                    "private archive `{}` was published but directory durability is uncertain: {error}",
+                    compact_path(display_path, ".")
+                ),
+            })
+        }
+    }
+}
+
+#[cfg(unix)]
+fn read_private_archive_entry(directory: &File, name: &str) -> Result<Option<Vec<u8>>, String> {
+    use std::os::unix::fs::MetadataExt as _;
+
+    let name = private_archive_entry_name(name)?;
+    let descriptor = unsafe {
+        libc::openat(
+            directory.as_raw_fd(),
+            name.as_ptr(),
+            libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NOFOLLOW,
+        )
+    };
+    if descriptor < 0 {
+        let error = io::Error::last_os_error();
+        if error.kind() == io::ErrorKind::NotFound {
+            return Ok(None);
+        }
+        return Err(format!(
+            "failed to open private archive entry without following aliases: {error}"
+        ));
+    }
+    let mut file = unsafe { File::from_raw_fd(descriptor) };
+    let metadata = file
+        .metadata()
+        .map_err(|error| format!("failed to inspect private archive entry: {error}"))?;
+    if !metadata.is_file() || metadata.nlink() != 1 {
+        return Err(String::from(
+            "private archive entry must be a single-link regular file",
+        ));
+    }
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)
+        .map_err(|error| format!("failed to read private archive entry: {error}"))?;
+    Ok(Some(bytes))
+}
+
+#[cfg(not(unix))]
+fn read_private_archive_entry(_directory: &File, _name: &str) -> Result<Option<Vec<u8>>, String> {
+    Err(String::from(
+        "typed effect refusal archival requires Unix no-follow file support",
+    ))
+}
+
+#[cfg(unix)]
+fn publish_private_archive_entry(
+    directory: &File,
+    final_name: &str,
+    bytes: &[u8],
+    display_path: &Path,
+) -> Result<PrivateArchivePublication, String> {
+    let final_name = private_archive_entry_name(final_name)?;
+    let mut random = [0_u8; 16];
+    getrandom::getrandom(&mut random)
+        .map_err(|_| String::from("failed to derive private archive temporary name"))?;
+    let temporary_text = format!(
+        ".ota-private-{}.tmp",
+        random
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>()
+    );
+    let temporary_name = private_archive_entry_name(&temporary_text)?;
+    let descriptor = unsafe {
+        libc::openat(
+            directory.as_raw_fd(),
+            temporary_name.as_ptr(),
+            libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_CLOEXEC | libc::O_NOFOLLOW,
+            0o600,
+        )
+    };
+    if descriptor < 0 {
+        return Err(format!(
+            "failed to create private archive temporary file: {}",
+            io::Error::last_os_error()
+        ));
+    }
+    let mut temporary = unsafe { File::from_raw_fd(descriptor) };
+    let persisted = temporary
+        .write_all(bytes)
+        .and_then(|()| temporary.sync_all());
+    if let Err(error) = persisted {
+        let cleanup = unsafe { libc::unlinkat(directory.as_raw_fd(), temporary_name.as_ptr(), 0) };
+        let suffix = (cleanup != 0)
+            .then(|| format!("; temporary cleanup failed: {}", io::Error::last_os_error()))
+            .unwrap_or_default();
+        return Err(format!(
+            "failed to persist private archive temporary file: {error}{suffix}"
+        ));
+    }
+    #[cfg(target_os = "linux")]
+    let published = unsafe {
+        libc::renameat2(
+            directory.as_raw_fd(),
+            temporary_name.as_ptr(),
+            directory.as_raw_fd(),
+            final_name.as_ptr(),
+            libc::RENAME_NOREPLACE,
+        )
+    };
+    #[cfg(target_os = "macos")]
+    let published = unsafe {
+        libc::renameatx_np(
+            directory.as_raw_fd(),
+            temporary_name.as_ptr(),
+            directory.as_raw_fd(),
+            final_name.as_ptr(),
+            libc::RENAME_EXCL,
+        )
+    };
+    #[cfg(all(unix, not(any(target_os = "linux", target_os = "macos"))))]
+    let published = -1;
+    if published != 0 {
+        let publish_error = io::Error::last_os_error();
+        let cleanup = unsafe { libc::unlinkat(directory.as_raw_fd(), temporary_name.as_ptr(), 0) };
+        let suffix = (cleanup != 0)
+            .then(|| format!("; temporary cleanup failed: {}", io::Error::last_os_error()))
+            .unwrap_or_default();
+        return Err(format!(
+            "failed to publish private archive `{}` with atomic create-new semantics: {publish_error}{suffix}",
+            compact_path(display_path, ".")
+        ));
+    }
+    Ok(sync_private_archive_directory(directory, display_path))
+}
+
+#[cfg(not(unix))]
+fn publish_private_archive_entry(
+    _directory: &File,
+    _final_name: &str,
+    _bytes: &[u8],
+    _display_path: &Path,
+) -> Result<PrivateArchivePublication, String> {
+    Err(String::from(
+        "typed effect refusal archival requires Linux or macOS atomic create-new publication",
+    ))
+}
+
+fn write_effect_policy_snapshot_archive(
+    root: &Path,
+    loaded: &LoadedOrgPolicyPack,
+) -> Result<
+    crate::effect_orchestration::EffectPolicySnapshotArchiveReference,
+    TypedEffectRefusalArchiveError,
+> {
+    let archive = crate::effect_policy::archive_effect_policy_snapshot(loaded)
+        .map_err(|error| error.to_string())?;
+    let archive_dir = open_private_archive_directory(root, "effect-policy-snapshots")?;
+    let file_name = effect_policy_snapshot_archive_file_name(&archive.identity);
+    let archive_path = effect_policy_snapshot_archive_dir(root).join(&file_name);
+    if let Some(bytes) = read_private_archive_entry(&archive_dir, &file_name)? {
+        let existing =
+            serde_json::from_slice::<crate::effect_policy::EffectPolicySnapshotArchive>(&bytes)
+                .map_err(|error| {
+                    format!(
+                        "effect-policy snapshot archive `{}` is malformed: {error}",
+                        compact_path(&archive_path, ".")
+                    )
+                })?;
+        crate::effect_policy::verify_effect_policy_snapshot_archive(&existing)
+            .map_err(|error| error.to_string())?;
+        if existing != archive {
+            return Err(format!(
+                "effect-policy snapshot archive `{}` does not match its content-addressed identity",
+                compact_path(&archive_path, ".")
+            )
+            .into());
+        }
+        require_durable_private_archive(
+            sync_private_archive_directory(&archive_dir, &archive_path),
+            "policy_snapshot",
+        )?;
+    } else {
+        let bytes = serde_json::to_vec_pretty(&archive)
+            .map_err(|error| format!("failed to serialize effect-policy snapshot: {error}"))?;
+        require_durable_private_archive(
+            publish_private_archive_entry(&archive_dir, &file_name, &bytes, &archive_path)?,
+            "policy_snapshot",
+        )?;
+    }
+    Ok(
+        crate::effect_orchestration::EffectPolicySnapshotArchiveReference {
+            identity: archive.identity,
+            path: repo_relative_log_path(root, &archive_path),
+        },
+    )
+}
+
+fn read_effect_policy_snapshot_archive(
+    root: &Path,
+    reference: &crate::effect_orchestration::EffectPolicySnapshotArchiveReference,
+) -> Result<LoadedOrgPolicyPack, String> {
+    let relative = Path::new(&reference.path);
+    if relative.is_absolute()
+        || relative.components().any(|component| {
+            !matches!(
+                component,
+                std::path::Component::Normal(_) | std::path::Component::CurDir
+            )
+        })
+    {
+        return Err(String::from(
+            "effect-policy snapshot archive reference is not canonical repository-relative truth",
+        ));
+    }
+    let expected_dir = Path::new(".ota").join("effect-policy-snapshots");
+    if relative.parent() != Some(expected_dir.as_path()) {
+        return Err(String::from(
+            "effect-policy snapshot archive reference is outside the canonical private archive directory",
+        ));
+    }
+    let path = root.join(relative);
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| String::from("effect-policy snapshot archive has no canonical file name"))?;
+    let archive_dir = open_existing_private_archive_directory(root, "effect-policy-snapshots")?;
+    let bytes = read_private_archive_entry(&archive_dir, file_name)?.ok_or_else(|| {
+        format!(
+            "effect-policy snapshot archive `{}` is missing",
+            compact_path(&path, ".")
+        )
+    })?;
+    let archive =
+        serde_json::from_slice::<crate::effect_policy::EffectPolicySnapshotArchive>(&bytes)
+            .map_err(|error| {
+                format!(
+                    "effect-policy snapshot archive `{}` is malformed: {error}",
+                    compact_path(&path, ".")
+                )
+            })?;
+    if archive.identity != reference.identity
+        || path.file_name().and_then(|name| name.to_str())
+            != Some(effect_policy_snapshot_archive_file_name(&archive.identity).as_str())
+    {
+        return Err(String::from(
+            "effect-policy snapshot archive reference does not match its content-addressed identity",
+        ));
+    }
+    crate::effect_policy::verify_effect_policy_snapshot_archive(&archive)
+        .map_err(|error| error.to_string())
+}
+
 struct ContractSnapshotArtifact {
     hash: String,
     archive_path: Option<PathBuf>,
@@ -42099,6 +42611,48 @@ fn write_contract_snapshot_archive(
     Ok(archive_path)
 }
 
+fn write_private_contract_snapshot_archive(
+    root: &Path,
+    hash: &str,
+    snapshot_json: &[u8],
+) -> Result<PathBuf, TypedEffectRefusalArchiveError> {
+    let archive_dir = open_private_archive_directory(root, "contracts")?;
+    let file_name = contract_snapshot_archive_file_name(hash);
+    let archive_path = contract_snapshot_archive_dir(root).join(&file_name);
+    if let Some(existing) = read_private_archive_entry(&archive_dir, &file_name)? {
+        if contract_snapshot_hash(&existing) != hash {
+            return Err(format!(
+                "contract snapshot archive `{}` does not match its content-addressed identity",
+                compact_path(&archive_path, ".")
+            )
+            .into());
+        }
+        require_durable_private_archive(
+            sync_private_archive_directory(&archive_dir, &archive_path),
+            "contract_snapshot",
+        )?;
+    } else {
+        require_durable_private_archive(
+            publish_private_archive_entry(&archive_dir, &file_name, snapshot_json, &archive_path)?,
+            "contract_snapshot",
+        )?;
+    }
+    Ok(archive_path)
+}
+
+fn build_private_contract_snapshot_artifact<T: Serialize>(
+    root: &Path,
+    value: &T,
+) -> Result<ContractSnapshotArtifact, TypedEffectRefusalArchiveError> {
+    let snapshot_json = normalized_contract_snapshot_json(value)?;
+    let hash = contract_snapshot_hash(&snapshot_json);
+    let archive_path = write_private_contract_snapshot_archive(root, &hash, &snapshot_json)?;
+    Ok(ContractSnapshotArtifact {
+        hash,
+        archive_path: Some(archive_path),
+    })
+}
+
 fn build_contract_snapshot_artifact<T: Serialize>(
     root: &Path,
     value: &T,
@@ -42132,12 +42686,16 @@ fn format_receipt_metadata_timestamp(now: OffsetDateTime) -> Result<String, Stri
 fn next_receipt_archive_path(root: &Path, prefix: &str) -> Result<PathBuf, String> {
     let archive_dir = receipt_archive_dir(root);
     ensure_private_receipt_archive_directory(root, &archive_dir)?;
+    Ok(archive_dir.join(next_receipt_archive_file_name(prefix)?))
+}
+
+fn next_receipt_archive_file_name(prefix: &str) -> Result<String, String> {
     let stamp = OffsetDateTime::now_utc()
         .format(&format_description!(
             "[year][month][day]-[hour][minute][second]-[subsecond digits:3]Z"
         ))
         .map_err(|error| format!("failed to format receipt archive timestamp: {error}"))?;
-    Ok(archive_dir.join(format!("{prefix}-{stamp}.json")))
+    Ok(format!("{prefix}-{stamp}.json"))
 }
 
 fn ensure_private_receipt_archive_directory(root: &Path, archive_dir: &Path) -> Result<(), String> {
@@ -42457,6 +43015,112 @@ fn prune_receipt_archives(
     Ok(())
 }
 
+#[cfg(unix)]
+fn prune_private_receipt_archives(
+    directory: &File,
+    prefix: &str,
+    keep: usize,
+    preserved_file: Option<&str>,
+) -> Result<(), String> {
+    let duplicate = unsafe { libc::dup(directory.as_raw_fd()) };
+    if duplicate < 0 {
+        return Err(format!(
+            "failed to duplicate private receipt directory descriptor: {}",
+            io::Error::last_os_error()
+        ));
+    }
+    let stream = unsafe { libc::fdopendir(duplicate) };
+    if stream.is_null() {
+        unsafe { libc::close(duplicate) };
+        return Err(format!(
+            "failed to enumerate private receipt directory: {}",
+            io::Error::last_os_error()
+        ));
+    }
+    let mut entries = Vec::new();
+    loop {
+        let entry = unsafe { libc::readdir(stream) };
+        if entry.is_null() {
+            break;
+        }
+        let name = unsafe { CStr::from_ptr((*entry).d_name.as_ptr()) };
+        let Ok(name) = name.to_str() else {
+            continue;
+        };
+        if name.starts_with(prefix) && name.ends_with(".json") {
+            entries.push(name.to_string());
+        }
+    }
+    unsafe { libc::closedir(stream) };
+
+    if entries.len() <= keep {
+        return Ok(());
+    }
+    entries.sort();
+    let excess = entries.len().saturating_sub(keep);
+    let mut removed = 0usize;
+    for name in entries {
+        if removed >= excess {
+            break;
+        }
+        if preserved_file == Some(name.as_str()) {
+            continue;
+        }
+        let bytes = read_private_archive_entry(directory, &name)?.ok_or_else(|| {
+            format!("private receipt archive `{name}` disappeared during pruning")
+        })?;
+        let requires_finalization = serde_json::from_slice::<serde_json::Value>(&bytes)
+            .ok()
+            .and_then(|value| {
+                value
+                    .pointer(
+                        "/receipt/crossing/authority/archive_evidence/transaction/schema_version",
+                    )
+                    .and_then(serde_json::Value::as_u64)
+            })
+            == Some(
+                crate::crossing_transaction::PORTABLE_LAUNCHER_CROSSING_TRANSACTION_SCHEMA_VERSION
+                    as u64,
+            );
+        let sidecar = name.trim_end_matches(".json").to_string() + ".launcher-finalization";
+        if requires_finalization && read_private_archive_entry(directory, &sidecar)?.is_none() {
+            continue;
+        }
+        let name_c = private_archive_entry_name(&name)?;
+        if unsafe { libc::unlinkat(directory.as_raw_fd(), name_c.as_ptr(), 0) } != 0 {
+            return Err(format!(
+                "failed to prune private receipt archive `{name}`: {}",
+                io::Error::last_os_error()
+            ));
+        }
+        if read_private_archive_entry(directory, &sidecar)?.is_some() {
+            let sidecar_c = private_archive_entry_name(&sidecar)?;
+            if unsafe { libc::unlinkat(directory.as_raw_fd(), sidecar_c.as_ptr(), 0) } != 0 {
+                return Err(format!(
+                    "failed to prune private receipt sidecar `{sidecar}`: {}",
+                    io::Error::last_os_error()
+                ));
+            }
+        }
+        removed += 1;
+    }
+    directory
+        .sync_all()
+        .map_err(|error| format!("failed to sync private receipt pruning: {error}"))
+}
+
+#[cfg(not(unix))]
+fn prune_private_receipt_archives(
+    _directory: &File,
+    _prefix: &str,
+    _keep: usize,
+    _preserved_file: Option<&str>,
+) -> Result<(), String> {
+    Err(String::from(
+        "typed effect refusal archival requires Unix no-follow directory support",
+    ))
+}
+
 fn receipt_archive_requires_portable_finalization(path: &Path) -> bool {
     fs::read(path)
         .ok()
@@ -42559,6 +43223,24 @@ fn repo_receipt_archive_timestamp(path: &Path) -> Option<String> {
 }
 
 fn read_repo_receipt_archive_record(path: &Path) -> Result<RepoReceiptArchiveRecord, String> {
+    #[cfg(unix)]
+    let root = repo_root_from_archive_path(path).ok_or_else(|| {
+        format!(
+            "receipt archive `{}` is outside the canonical repository archive directory",
+            compact_path(path, ".")
+        )
+    })?;
+    #[cfg(unix)]
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| String::from("receipt archive has no canonical file name"))?;
+    #[cfg(unix)]
+    let directory = open_existing_private_archive_directory(root, "receipts")?;
+    #[cfg(unix)]
+    let payload_bytes = read_private_archive_entry(&directory, file_name)?
+        .ok_or_else(|| format!("receipt archive `{}` is missing", compact_path(path, ".")))?;
+    #[cfg(not(unix))]
     let payload_bytes = fs::read(path).map_err(|error| {
         format!(
             "failed to read receipt archive `{}`: {error}",
@@ -42624,6 +43306,7 @@ fn read_repo_receipt_archive_record_from_bytes(
             compact_path(path, ".")
         )
     })?;
+    verify_archived_effect_policy_refusal(&record, &crossing_contract, path)?;
     if let Some(evidence) = record
         .payload
         .receipt
@@ -43072,12 +43755,177 @@ fn archived_receipt_crossing_required(
                 )),
             }
         }
+        "effect_policy_refusal" => {
+            if context.schema_version != 1
+                || context.lane_kind.as_deref() != Some("workflow")
+                || context.lane_name.is_none()
+                || context.semantic_scope.is_some()
+                || context.effect_policy_refusal.is_none()
+            {
+                return Err(format!(
+                    "receipt archive `{}` has incomplete effect-policy refusal context",
+                    compact_path(path, ".")
+                ));
+            }
+            Ok(false)
+        }
         _ => Err(format!(
             "receipt archive `{}` has unsupported archive context kind `{}`",
             compact_path(path, "."),
             context.kind
         )),
     }
+}
+
+fn verify_archived_effect_policy_refusal(
+    record: &RepoReceiptArchiveRecord,
+    contract: &Contract,
+    path: &Path,
+) -> Result<(), String> {
+    let Some(archive_context) = record.payload.archive_context.as_ref() else {
+        if record.payload.receipt.typed_effect_policy_refusal.is_some() {
+            return Err(format!(
+                "receipt archive `{}` carries typed-effect refusal evidence without replay context",
+                compact_path(path, ".")
+            ));
+        }
+        return Ok(());
+    };
+    if archive_context.kind != "effect_policy_refusal" {
+        if record.payload.receipt.typed_effect_policy_refusal.is_some() {
+            return Err(format!(
+                "receipt archive `{}` carries typed-effect refusal evidence outside its archive context",
+                compact_path(path, ".")
+            ));
+        }
+        return Ok(());
+    }
+    let context = archive_context
+        .effect_policy_refusal
+        .as_ref()
+        .ok_or_else(|| {
+            format!(
+                "receipt archive `{}` omits typed-effect refusal replay context",
+                compact_path(path, ".")
+            )
+        })?;
+    if context.schema_version != 1
+        || archive_context.lane_name.as_deref() != Some(context.workflow.as_str())
+        || record.payload.workflow.as_deref() != Some(context.workflow.as_str())
+        || record.payload.ok
+    {
+        return Err(format!(
+            "receipt archive `{}` has contradictory typed-effect refusal context",
+            compact_path(path, ".")
+        ));
+    }
+    let evidence = record
+        .payload
+        .receipt
+        .typed_effect_policy_refusal
+        .as_ref()
+        .ok_or_else(|| {
+            format!(
+                "receipt archive `{}` omits typed-effect refusal evidence",
+                compact_path(path, ".")
+            )
+        })?;
+    if evidence.schema_version != 1
+        || evidence.reason_family != "effect_policy_denied"
+        || evidence.execution_started
+        || evidence.policy_decision.aggregate_decision != PolicyEffectDecision::Deny
+        || !evidence.policy_decision.explicit_typed_deny
+        || record.payload.receipt.ok != Some(false)
+        || record.payload.receipt.status.as_deref() != Some("blocked")
+        || !record
+            .payload
+            .receipt
+            .blocked
+            .iter()
+            .any(|code| code == "OTA_EFFECT_POLICY_DENIED")
+        || record.payload.receipt.crossing.is_some()
+        || record.payload.receipt.refusal.is_some()
+    {
+        return Err(format!(
+            "receipt archive `{}` does not carry one explicit pre-execution typed denial",
+            compact_path(path, ".")
+        ));
+    }
+    let policy_reference = evidence.policy_snapshot_archive.as_ref().ok_or_else(|| {
+        format!(
+            "receipt archive `{}` omits its immutable policy snapshot reference",
+            compact_path(path, ".")
+        )
+    })?;
+    let root = repo_root_from_archive_path(path).ok_or_else(|| {
+        format!(
+            "receipt archive `{}` is not under the canonical repo archive root",
+            compact_path(path, ".")
+        )
+    })?;
+    let expected_archive_ref = repo_relative_log_path(root, path);
+    if evidence.refusal_archive_path.as_deref() != Some(expected_archive_ref.as_str()) {
+        return Err(format!(
+            "receipt archive `{}` does not reference its own canonical archive path",
+            compact_path(path, ".")
+        ));
+    }
+    let loaded_policy = read_effect_policy_snapshot_archive(root, policy_reference)?;
+    let adjusted_contract = contract_adjusted_for_selected_workflow_env_profile(
+        contract,
+        Some(context.workflow.as_str()),
+    );
+    let admission_contract = adjusted_contract.as_ref().unwrap_or(contract);
+    let expected_roots =
+        selected_workflow_phase_task_roots(admission_contract, Some(context.workflow.as_str()));
+    if context.roots != expected_roots {
+        return Err(format!(
+            "receipt archive `{}` roots do not re-derive from the archived workflow",
+            compact_path(path, ".")
+        ));
+    }
+    let overrides = ExecutionOverrides {
+        backend: context.backend,
+        lifecycle: context.lifecycle,
+        host_port: context.host_port,
+        memory: context.memory,
+        skip_deps: context.skip_dependencies,
+    };
+    crate::effect_orchestration::verify_archived_typed_effect_closure(
+        admission_contract,
+        &context.roots,
+        overrides,
+        &context.invocations,
+        &context.application_plans,
+    )
+    .map_err(|error| error.to_string())?;
+    context.roots.first().ok_or_else(|| {
+        format!(
+            "receipt archive `{}` omits its selected typed-effect root",
+            compact_path(path, ".")
+        )
+    })?;
+    let effect_overrides = EffectGovernanceOverrides::default();
+    let selected_subject = vec![String::from("workflows"), context.workflow.clone()];
+    crate::effect_policy::verify_effect_policy_decision(
+        &evidence.policy_decision,
+        admission_contract,
+        crate::effect_policy::EffectPolicyEvaluationScope {
+            selected_subject: &selected_subject,
+            workflow_name: Some(context.workflow.as_str()),
+            ordered_invocations: &context.invocations,
+            plans: &context.application_plans,
+        },
+        &loaded_policy,
+        Some(&effect_overrides),
+    )
+    .map_err(|error| {
+        format!(
+            "receipt archive `{}` contains an unreconciled typed-effect refusal: {error}",
+            compact_path(path, ".")
+        )
+    })?;
+    Ok(())
 }
 
 fn rederive_archived_crossing_scope(
@@ -43824,6 +44672,51 @@ fn required_archived_repo_receipt_snapshot_with_path_and_bytes(
     let snapshot_path = resolve_diff_snapshot_ref(&record.archive_path, snapshot_ref);
     let contents = match protected_snapshot_bytes {
         Some(contents) => contents.to_vec(),
+        None
+            if record
+                .payload
+                .archive_context
+                .as_ref()
+                .is_some_and(|context| context.kind == "effect_policy_refusal") =>
+        {
+            let root = repo_root_from_archive_path(&record.archive_path).ok_or_else(|| {
+                format!(
+                    "receipt archive `{}` is outside the canonical repository archive directory",
+                    compact_path(&record.archive_path, ".")
+                )
+            })?;
+            let relative = Path::new(snapshot_ref);
+            let components = relative
+                .components()
+                .filter_map(|component| match component {
+                    std::path::Component::CurDir => None,
+                    std::path::Component::Normal(value) => Some(value),
+                    _ => Some(std::ffi::OsStr::new("")),
+                })
+                .collect::<Vec<_>>();
+            if components.len() != 3
+                || components[0] != std::ffi::OsStr::new(".ota")
+                || components[1] != std::ffi::OsStr::new("contracts")
+                || components[2].is_empty()
+            {
+                return Err(format!(
+                    "typed-effect refusal archive `{}` references a noncanonical contract snapshot",
+                    compact_path(&record.archive_path, ".")
+                ));
+            }
+            let file_name = relative
+                .file_name()
+                .and_then(|name| name.to_str())
+                .ok_or_else(|| String::from("contract snapshot has no canonical file name"))?;
+            let directory = open_existing_private_archive_directory(root, "contracts")?;
+            read_private_archive_entry(&directory, file_name)?.ok_or_else(|| {
+                format!(
+                    "contract snapshot `{}` referenced by receipt archive `{}` is missing",
+                    compact_path(&snapshot_path, "."),
+                    compact_path(&record.archive_path, ".")
+                )
+            })?
+        }
         None => fs::read(&snapshot_path).map_err(|error| {
             format!(
                 "failed to load archived contract snapshot `{}` referenced by receipt archive `{}`: {error}",
@@ -62903,6 +63796,84 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn typed_effect_private_archives_refuse_aliases_and_publish_single_link_files() {
+        use std::os::unix::fs::{MetadataExt as _, symlink};
+
+        let root = tempfile::tempdir().expect("archive root");
+        let outside = tempfile::tempdir().expect("outside archive root");
+        fs::create_dir(root.path().join(".ota")).expect("ota directory");
+        symlink(outside.path(), root.path().join(".ota/contracts"))
+            .expect("contract archive alias");
+        let error = super::open_private_archive_directory(root.path(), "contracts")
+            .expect_err("aliased contract archive must refuse");
+        assert!(error.contains("without following aliases"), "{error}");
+        assert_eq!(
+            fs::read_dir(outside.path())
+                .expect("outside directory")
+                .count(),
+            0
+        );
+
+        fs::remove_file(root.path().join(".ota/contracts")).expect("remove alias");
+        let directory = super::open_private_archive_directory(root.path(), "receipts")
+            .expect("private receipt directory");
+        let display = root.path().join(".ota/receipts/repo-receipt-control.json");
+        super::publish_private_archive_entry(
+            &directory,
+            "repo-receipt-control.json",
+            br#"{"ok":false}"#,
+            &display,
+        )
+        .expect("private receipt publication");
+        assert_eq!(fs::metadata(&display).expect("receipt metadata").nlink(), 1);
+        assert!(
+            fs::read_dir(display.parent().expect("receipt parent"))
+                .expect("receipt directory")
+                .all(|entry| !entry
+                    .expect("receipt entry")
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(".ota-private-"))
+        );
+
+        for name in ["repo-receipt-001.json", "repo-receipt-002.json"] {
+            super::publish_private_archive_entry(
+                &directory,
+                name,
+                br#"{"ok":false}"#,
+                &root.path().join(".ota/receipts").join(name),
+            )
+            .expect("private pruning fixture");
+        }
+        super::prune_private_receipt_archives(
+            &directory,
+            "repo-receipt",
+            2,
+            Some("repo-receipt-control.json"),
+        )
+        .expect("descriptor-relative pruning");
+        assert!(
+            !root
+                .path()
+                .join(".ota/receipts/repo-receipt-001.json")
+                .exists()
+        );
+        assert!(
+            root.path()
+                .join(".ota/receipts/repo-receipt-002.json")
+                .is_file()
+        );
+        assert!(display.is_file());
+
+        let alias = outside.path().join("receipt-alias.json");
+        fs::hard_link(&display, &alias).expect("hardlink control");
+        let error = super::read_private_archive_entry(&directory, "repo-receipt-control.json")
+            .expect_err("hardlinked archive must refuse");
+        assert!(error.contains("single-link regular file"), "{error}");
+    }
+
     #[test]
     fn pruning_preserves_portable_archives_until_their_sidecar_exists() {
         let root = tempfile::tempdir().expect("archive root");
@@ -73470,6 +74441,7 @@ workflows:
             witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
+            typed_effect_policy_refusal: None,
             replay_input_policy: None,
             workspace: None,
             backend: None,
@@ -74461,6 +75433,7 @@ project:
             witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
+            typed_effect_policy_refusal: None,
             replay_input_policy: None,
             workspace: None,
             backend: Some(String::from("native")),
@@ -84105,6 +85078,7 @@ tasks:
             witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
+            typed_effect_policy_refusal: None,
             replay_input_policy: None,
             workspace: None,
             backend: Some(String::from("native")),
@@ -84198,6 +85172,7 @@ tasks:
             witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
+            typed_effect_policy_refusal: None,
             replay_input_policy: None,
             workspace: None,
             backend: Some(String::from("container")),
@@ -84405,6 +85380,7 @@ tasks:
             witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
+            typed_effect_policy_refusal: None,
             replay_input_policy: None,
             workspace: None,
             backend: Some(String::from("container")),
@@ -84479,6 +85455,7 @@ tasks:
             witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
+            typed_effect_policy_refusal: None,
             replay_input_policy: None,
             workspace: None,
             backend: Some(String::from("container")),
@@ -84583,6 +85560,7 @@ tasks:
             witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
+            typed_effect_policy_refusal: None,
             replay_input_policy: None,
             workspace: None,
             backend: Some(String::from("container")),
@@ -84709,6 +85687,7 @@ tasks:
             witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
+            typed_effect_policy_refusal: None,
             replay_input_policy: None,
             workspace: None,
             backend: Some(String::from("container")),
@@ -84802,6 +85781,7 @@ tasks:
             witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
+            typed_effect_policy_refusal: None,
             replay_input_policy: None,
             workspace: None,
             backend: Some(String::from("container")),
@@ -84902,6 +85882,7 @@ tasks:
             witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
+            typed_effect_policy_refusal: None,
             replay_input_policy: None,
             workspace: None,
             backend: Some(String::from("container")),
@@ -85194,6 +86175,7 @@ tasks:
             witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: Some(Box::new(crossing.clone())),
             refusal: None,
+            typed_effect_policy_refusal: None,
             replay_input_policy: None,
             workspace: None,
             backend: Some(String::from("container")),
@@ -85526,6 +86508,7 @@ tasks:
                     crate::output::ExecutionReceiptWitnessedObservations::default(),
                 crossing: None,
                 refusal: None,
+                typed_effect_policy_refusal: None,
                 replay_input_policy: None,
                 workspace: None,
                 backend: None,
@@ -93715,6 +94698,7 @@ agent:
             witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
+            typed_effect_policy_refusal: None,
             replay_input_policy: None,
             workspace: None,
             backend: Some(String::from("container")),
@@ -95167,6 +96151,7 @@ tasks:
             witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
+            typed_effect_policy_refusal: None,
             replay_input_policy: None,
             workspace: None,
             backend: Some(String::from("native")),
@@ -95231,6 +96216,7 @@ tasks:
             witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
+            typed_effect_policy_refusal: None,
             replay_input_policy: None,
             workspace: None,
             backend: Some(String::from("native")),
@@ -95295,6 +96281,7 @@ tasks:
             witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
+            typed_effect_policy_refusal: None,
             replay_input_policy: None,
             workspace: None,
             backend: Some(String::from("native")),
@@ -95376,6 +96363,7 @@ tasks:
             witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
+            typed_effect_policy_refusal: None,
             replay_input_policy: None,
             workspace: None,
             backend: Some(String::from("container")),
@@ -95457,6 +96445,7 @@ tasks:
             witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
+            typed_effect_policy_refusal: None,
             replay_input_policy: None,
             workspace: None,
             backend: Some(String::from("native")),
@@ -95579,6 +96568,7 @@ tasks:
             witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
+            typed_effect_policy_refusal: None,
             replay_input_policy: None,
             workspace: None,
             backend: Some(String::from("native")),
@@ -95690,6 +96680,7 @@ tasks:
             witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
+            typed_effect_policy_refusal: None,
             replay_input_policy: None,
             workspace: None,
             backend: Some(String::from("native")),
@@ -95808,6 +96799,7 @@ tasks:
             witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
+            typed_effect_policy_refusal: None,
             replay_input_policy: None,
             workspace: None,
             backend: Some(String::from("container")),
@@ -95874,6 +96866,7 @@ tasks:
             witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
+            typed_effect_policy_refusal: None,
             replay_input_policy: None,
             workspace: None,
             backend: Some(String::from("container")),
@@ -99751,6 +100744,7 @@ tasks:
             witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
+            typed_effect_policy_refusal: None,
             replay_input_policy: None,
             workspace: None,
             backend: Some(String::from("container")),
@@ -99843,6 +100837,7 @@ tasks:
             witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
+            typed_effect_policy_refusal: None,
             replay_input_policy: None,
             workspace: None,
             backend: Some(String::from("native")),
@@ -99917,6 +100912,7 @@ tasks:
             witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
+            typed_effect_policy_refusal: None,
             replay_input_policy: None,
             workspace: None,
             backend: Some(String::from("container")),
@@ -99994,6 +100990,7 @@ tasks:
             witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
+            typed_effect_policy_refusal: None,
             replay_input_policy: None,
             workspace: None,
             backend: Some(String::from("native")),
@@ -100064,6 +101061,7 @@ tasks:
             witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
+            typed_effect_policy_refusal: None,
             replay_input_policy: None,
             workspace: None,
             backend: Some(String::from("native")),
@@ -100134,6 +101132,7 @@ tasks:
             witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
+            typed_effect_policy_refusal: None,
             replay_input_policy: None,
             workspace: None,
             backend: Some(String::from("container")),
@@ -100211,6 +101210,7 @@ tasks:
             witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
+            typed_effect_policy_refusal: None,
             replay_input_policy: None,
             workspace: None,
             backend: Some(String::from("container")),
@@ -101044,6 +102044,7 @@ tasks:
             witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
+            typed_effect_policy_refusal: None,
             replay_input_policy: None,
             workspace: None,
             backend: Some(String::from("container")),
@@ -101194,6 +102195,7 @@ tasks:
             witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
+            typed_effect_policy_refusal: None,
             replay_input_policy: None,
             workspace: None,
             backend: Some(String::from("container")),
@@ -101304,6 +102306,7 @@ tasks:
             witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
+            typed_effect_policy_refusal: None,
             replay_input_policy: None,
             workspace: None,
             backend: Some(String::from("container")),
@@ -101990,6 +102993,7 @@ tasks:
             witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
+            typed_effect_policy_refusal: None,
             replay_input_policy: None,
             workspace: None,
             backend: Some(String::from("container")),
@@ -102091,6 +103095,7 @@ tasks:
             witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
+            typed_effect_policy_refusal: None,
             replay_input_policy: None,
             workspace: None,
             backend: Some(String::from("native")),
@@ -102178,6 +103183,7 @@ tasks:
             witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
+            typed_effect_policy_refusal: None,
             replay_input_policy: None,
             workspace: None,
             backend: Some(String::from("native")),
@@ -118049,6 +119055,7 @@ fn archive_sandbox_execution_receipt(
             }),
             lane_name: Some(application.lane.name.clone()),
             semantic_scope: authority_scope.clone(),
+            effect_policy_refusal: None,
         }
     } else if let Some(crossing) = receipt.crossing.as_ref() {
         crate::output::ReceiptArchiveContext {
@@ -118060,6 +119067,7 @@ fn archive_sandbox_execution_receipt(
                 .split_once(':')
                 .map(|(_, lane_name)| lane_name.to_string()),
             semantic_scope: authority_scope,
+            effect_policy_refusal: None,
         }
     } else {
         return Err(String::from(
@@ -118922,6 +119930,7 @@ fn run_execution_receipt_with_shared(
         witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
         crossing: None,
         refusal: None,
+        typed_effect_policy_refusal: None,
         replay_input_policy: None,
         workspace: None,
         backend: Some(format_backend(backend).to_string()),
@@ -129611,6 +130620,8 @@ impl From<ArchivedReceiptSummaryData> for ExecutionReceiptSummary {
 #[derive(Debug, Deserialize, Default)]
 struct ArchivedRepoReceiptData {
     #[serde(default)]
+    ok: Option<bool>,
+    #[serde(default)]
     scope: String,
     #[serde(default)]
     contract: String,
@@ -129629,9 +130640,16 @@ struct ArchivedRepoReceiptData {
     #[serde(default)]
     crossing: Option<crate::output::ExecutionBoundaryCrossing>,
     #[serde(default)]
+    refusal: Option<crate::output::GovernanceRefusalRecord>,
+    #[serde(default)]
+    typed_effect_policy_refusal:
+        Option<crate::effect_orchestration::TypedEffectPolicyRefusalEvidence>,
+    #[serde(default)]
     steps: Vec<ExecutionReceiptStep>,
     #[serde(default)]
     status: Option<String>,
+    #[serde(default)]
+    blocked: Vec<String>,
     #[serde(default)]
     backend: Option<String>,
     #[serde(default)]
@@ -130336,6 +131354,7 @@ fn repo_execution_receipt_with_overrides_and_policy_snapshot(
         witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
         crossing: None,
         refusal: None,
+        typed_effect_policy_refusal: None,
         // Admission paths attach the evaluation captured before execution. A generic receipt
         // constructor must not re-read mutable inputs after execution and present that state as
         // preflight evidence.
@@ -131264,6 +132283,7 @@ fn workspace_up_receipt(
         witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
         crossing: None,
         refusal: None,
+        typed_effect_policy_refusal: None,
         replay_input_policy: None,
         workspace: Some(workspace_name.to_string()),
         backend: None,
@@ -131362,6 +132382,7 @@ fn workspace_status_receipt(
         witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
         crossing: None,
         refusal: None,
+        typed_effect_policy_refusal: None,
         replay_input_policy: None,
         workspace: Some(workspace_name.to_string()),
         backend: None,
@@ -131464,6 +132485,7 @@ fn workspace_run_receipt(
         witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
         crossing: None,
         refusal: None,
+        typed_effect_policy_refusal: None,
         replay_input_policy: None,
         workspace: Some(workspace_name.to_string()),
         backend: None,
@@ -136247,7 +137269,10 @@ fn execute_repo_up_with_behavior_with_agent_and_grant(
         workflow_name,
         agent,
         dry_run,
-    ) {
+        false,
+    )
+    .map_err(|error| error.to_string())?
+    {
         return Ok(result);
     }
     let grant_admission = match evaluate_workflow_crossing_grant(
@@ -136393,7 +137418,10 @@ fn execute_repo_up_with_behavior_with_agent(
         workflow_name,
         agent,
         dry_run,
-    ) {
+        false,
+    )
+    .map_err(|error| error.to_string())?
+    {
         return Ok(result);
     }
     let mut activate_authority = || Ok(());
@@ -136421,37 +137449,198 @@ fn typed_effect_up_pre_execution_result(
     workflow_name: Option<&str>,
     agent: bool,
     dry_run: bool,
-) -> Option<RepoUpResult> {
+    archive_effect_refusal: bool,
+) -> Result<Option<RepoUpResult>, TypedEffectRefusalArchiveError> {
     if dry_run {
-        return None;
+        return Ok(None);
     }
     if let Some(workflow_name) = workflow_name
         && !selected_workflow_selector_is_valid(contract, workflow_name)
     {
-        return None;
+        return Ok(None);
     }
     let effective_workflow_name = contract
         .selected_workflow(workflow_name)
         .map(|(name, _)| name);
     let roots = selected_workflow_phase_task_roots(contract, effective_workflow_name);
-    let error = match typed_effect_closure_refusal(
-        contract,
+    let adjusted_contract =
+        contract_adjusted_for_selected_workflow_env_profile(contract, effective_workflow_name);
+    let admission_contract = adjusted_contract.as_ref().unwrap_or(contract);
+    let command_admission = match admit_command_typed_effect_closure(
+        admission_contract,
         resolved_path,
         effective_workflow_name,
         roots.as_slice(),
         overrides,
+        Some(&current_effect_governance_overrides()),
     ) {
-        Ok(error) => error?,
-        Err(error) => error,
+        Ok(admission) => admission,
+        Err(error) => {
+            return Ok(Some(typed_effect_up_refusal_result(
+                contract,
+                resolved_path,
+                workflow_name,
+                overrides,
+                agent,
+                *error,
+                None,
+            )));
+        }
     };
-    Some(typed_effect_up_refusal_result(
+    let Some(error) = typed_effect_admission_refusal(&command_admission.typed) else {
+        if archive_effect_refusal {
+            return Err(String::from(
+                "`--archive-effect-refusal` requires one eligible explicit typed policy denial; fallback, coarse, unavailable, allowed, warned, and provider-disabled outcomes are not archival authority",
+            ).into());
+        }
+        return Ok(None);
+    };
+    let evidence = typed_effect_policy_refusal_evidence(&command_admission.typed);
+    if archive_effect_refusal && evidence.is_none() {
+        return Err(String::from(
+            "`--archive-effect-refusal` requires an explicit matching typed deny rule; generic effect-policy refusal is not archival authority",
+        ).into());
+    }
+    let mut result = typed_effect_up_refusal_result(
         contract,
         resolved_path,
         workflow_name,
         overrides,
         agent,
         error,
-    ))
+        evidence,
+    );
+    if archive_effect_refusal {
+        archive_typed_effect_policy_refusal(
+            contract,
+            admission_contract,
+            resolved_path,
+            effective_workflow_name.ok_or_else(|| {
+                String::from("typed effect refusal archive requires an explicit workflow")
+            })?,
+            roots,
+            overrides,
+            &command_admission,
+            &mut result.receipt,
+        )?;
+    }
+    Ok(Some(result))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn archive_typed_effect_policy_refusal(
+    archived_contract: &Contract,
+    admission_contract: &Contract,
+    contract_path: &Path,
+    workflow_name: &str,
+    roots: Vec<EffectPolicyInvocation>,
+    overrides: ExecutionOverrides,
+    admission: &CommandTypedEffectAdmission,
+    receipt: &mut ExecutionReceipt,
+) -> Result<PathBuf, TypedEffectRefusalArchiveError> {
+    let loaded_policy = admission.loaded_policy.as_ref().ok_or_else(|| {
+        String::from("typed effect refusal archive requires one retained policy snapshot")
+    })?;
+    let root = contract_working_dir(contract_path);
+    let policy_snapshot = write_effect_policy_snapshot_archive(root, loaded_policy)?;
+    let refusal = receipt
+        .typed_effect_policy_refusal
+        .as_mut()
+        .ok_or_else(|| String::from("typed effect refusal archive omits refusal evidence"))?;
+    refusal.policy_snapshot_archive = Some(policy_snapshot.clone());
+    let selected_subject = vec![String::from("workflows"), workflow_name.to_string()];
+    crate::effect_policy::verify_effect_policy_decision(
+        &refusal.policy_decision,
+        admission_contract,
+        crate::effect_policy::EffectPolicyEvaluationScope {
+            selected_subject: &selected_subject,
+            workflow_name: Some(workflow_name),
+            ordered_invocations: &admission.typed.closure.invocations,
+            plans: &admission.typed.closure.application_plans,
+        },
+        loaded_policy,
+        Some(&current_effect_governance_overrides()),
+    )
+    .map_err(|error| error.to_string())?;
+    let contract_snapshot = build_private_contract_snapshot_artifact(root, archived_contract)?;
+    let normalized_snapshot = normalized_contract_snapshot_value(archived_contract)?;
+    receipt.contract_snapshot_hash = Some(contract_snapshot.hash);
+    receipt.contract_snapshot_ref = contract_snapshot
+        .archive_path
+        .as_deref()
+        .map(|path| repo_relative_log_path(root, path));
+    receipt.assumption_set_hash = Some(assumption_set_hash_from_snapshot(&normalized_snapshot)?);
+    let archive_file = next_receipt_archive_file_name("repo-receipt")?;
+    let archive_path = receipt_archive_dir(root).join(&archive_file);
+    let archive_path_display = receipt_storage_path_display(&archive_path);
+    let refusal_archive_ref = repo_relative_log_path(root, &archive_path);
+    receipt
+        .typed_effect_policy_refusal
+        .as_mut()
+        .expect("refusal evidence was verified above")
+        .refusal_archive_path = Some(refusal_archive_ref);
+    let path_display = compact_path(contract_path, ".");
+    let archive_context = crate::output::ReceiptArchiveContext {
+        schema_version: 1,
+        kind: String::from("effect_policy_refusal"),
+        lane_kind: Some(String::from("workflow")),
+        lane_name: Some(workflow_name.to_string()),
+        semantic_scope: None,
+        effect_policy_refusal: Some(crate::output::EffectPolicyRefusalArchiveContext {
+            schema_version: 1,
+            workflow: workflow_name.to_string(),
+            roots,
+            invocations: admission.typed.closure.invocations.clone(),
+            backend: overrides.backend,
+            lifecycle: overrides.lifecycle,
+            host_port: overrides.host_port,
+            memory: overrides.memory,
+            skip_dependencies: overrides.skip_deps,
+            application_plans: admission.typed.closure.application_plans.clone(),
+        }),
+    };
+    let findings = Vec::<Finding>::new();
+    let payload = ReceiptSuccess {
+        ok: false,
+        path: path_display.as_str(),
+        mode: "receipt",
+        workflow: Some(workflow_name),
+        summary: receipt.summary,
+        receipt: receipt.clone(),
+        archive_path: Some(archive_path_display.as_str()),
+        archive_context: Some(archive_context),
+        promoted_baseline: None,
+        artifact_routing: Vec::new(),
+        findings: &findings,
+    };
+    let payload_bytes = serde_json::to_vec_pretty(&payload)
+        .map_err(|error| format!("failed to serialize typed-effect refusal archive: {error}"))?;
+    let archive_dir = open_private_archive_directory(root, "receipts")?;
+    require_durable_private_archive(
+        publish_private_archive_entry(&archive_dir, &archive_file, &payload_bytes, &archive_path)?,
+        "receipt",
+    )?;
+    let persisted = read_private_archive_entry(&archive_dir, &archive_file)?.ok_or_else(|| {
+        format!(
+            "typed-effect refusal archive `{}` disappeared after publication",
+            compact_path(&archive_path, ".")
+        )
+    })?;
+    if persisted != payload_bytes {
+        return Err(format!(
+            "typed-effect refusal archive `{}` changed during publication",
+            compact_path(&archive_path, ".")
+        )
+        .into());
+    }
+    read_repo_receipt_archive_record(&archive_path)?;
+    prune_private_receipt_archives(
+        &archive_dir,
+        "repo-receipt",
+        RECEIPT_ARCHIVE_LIMIT,
+        Some(&archive_file),
+    )?;
+    Ok(archive_path)
 }
 
 fn typed_effect_up_refusal_result(
@@ -136461,6 +137650,9 @@ fn typed_effect_up_refusal_result(
     overrides: ExecutionOverrides,
     agent: bool,
     error: RunError,
+    typed_effect_policy_refusal: Option<
+        crate::effect_orchestration::TypedEffectPolicyRefusalEvidence,
+    >,
 ) -> RepoUpResult {
     let task_name = match &error {
         RunError::FileActionFailed { task, .. } | RunError::EffectPolicyDenied { task, .. } => {
@@ -136527,6 +137719,7 @@ fn typed_effect_up_refusal_result(
         Some(overrides),
     );
     receipt.blocked.push(String::from(finding_code));
+    receipt.typed_effect_policy_refusal = typed_effect_policy_refusal;
     refresh_execution_receipt_status(&mut receipt);
     RepoUpResult {
         ok: false,

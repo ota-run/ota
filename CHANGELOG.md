@@ -26,6 +26,20 @@
 
 ## Unreleased
 
+- Non-dry-run `ota up --json` now retains `receipt.typed_effect_policy_refusal` when an explicit
+  typed rule denies the selected closure. The additive schema-v1 record binds the exact
+  command-scoped effect-policy decision and `execution_started: false`; it is absent for typed
+  allow/warn provider-disabled refusal and policy unavailability. Operators may explicitly add
+  `--workflow <name> --archive-effect-refusal` to create a durable negative receipt with immutable
+  contract and private policy snapshots. Receipt history re-derives the selected closure,
+  application plans, policy snapshot, and decision before accepting the archive. This does not
+  contact a provider, prove a mutation, establish positive assurance, or create a public export.
+  If atomic publication succeeds but directory synchronization fails, JSON reports
+  `effect_refusal_archive_durability_uncertain`, `published: true`, and the exact recovery path
+  instead of misreporting an ordinary pre-publication failure. Policy or contract snapshot sync
+  uncertainty uses `effect_refusal_snapshot_durability_uncertain`, names the published artifact,
+  and states `receipt_published: false`.
+
 - Recorded immutable Linux/x64 and macOS pressure for the command-scoped typed effect-policy,
   capability, and sandbox-admission boundary in
   [run 33199213628](https://github.com/ota-run/ota/actions/runs/33199213628) against exact Core

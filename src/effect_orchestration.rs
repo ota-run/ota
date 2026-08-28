@@ -25,6 +25,8 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
+use serde::{Deserialize, Serialize};
+
 use crate::effect_application_plan::EffectApplicationPlan;
 use crate::effect_policy::{EffectPolicyDecision, EffectPolicyInvocation};
 use crate::policy_pack::{EffectGovernanceOverrides, LoadedOrgPolicyPack, PolicyEffectDecision};
@@ -47,6 +49,25 @@ pub(crate) struct TypedEffectClosureAdmission {
 pub(crate) struct TypedEffectAdmission {
     pub(crate) closure: TypedEffectClosureAdmission,
     pub(crate) policy_decision: Option<EffectPolicyDecision>,
+}
+
+/// A receipt-safe negative record for one command-scoped typed policy denial.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct TypedEffectPolicyRefusalEvidence {
+    pub(crate) schema_version: u32,
+    pub(crate) reason_family: String,
+    pub(crate) execution_started: bool,
+    pub(crate) policy_decision: EffectPolicyDecision,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) policy_snapshot_archive: Option<EffectPolicySnapshotArchiveReference>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) refusal_archive_path: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct EffectPolicySnapshotArchiveReference {
+    pub(crate) identity: String,
+    pub(crate) path: String,
 }
 
 #[derive(Debug)]
@@ -373,7 +394,7 @@ fn selected_execution_closure_declares_typed_effect(
     })
 }
 
-fn selected_execution_closure_invocations(
+pub(crate) fn selected_execution_closure_invocations(
     contract: &Contract,
     roots: &[EffectPolicyInvocation],
     overrides: ExecutionOverrides,
@@ -390,6 +411,110 @@ fn selected_execution_closure_invocations(
         }));
     }
     Ok(invocations)
+}
+
+pub(crate) fn verify_archived_typed_effect_closure(
+    contract: &Contract,
+    roots: &[EffectPolicyInvocation],
+    overrides: ExecutionOverrides,
+    invocations: &[EffectPolicyInvocation],
+    plans: &[EffectApplicationPlan],
+) -> OrchestrationResult<()> {
+    let expected_invocations = selected_execution_closure_invocations(contract, roots, overrides)?;
+    if expected_invocations != invocations {
+        return Err(Box::new(RunError::FileActionFailed {
+            task: roots
+                .first()
+                .map(|root| root.task.clone())
+                .unwrap_or_default(),
+            message: String::from(
+                "archived typed-effect invocation closure does not re-derive from the archived contract",
+            ),
+        }));
+    }
+    let mut plan_index = 0usize;
+    for root in roots {
+        let execution =
+            plan_task_execution_with_overrides(contract, root.task.as_str(), overrides)?;
+        for step in execution.steps {
+            let Some(task) = contract.tasks.get(step.task.as_str()) else {
+                continue;
+            };
+            let effective = effective_task_execution(
+                contract,
+                step.task.as_str(),
+                ExecutionOverrides {
+                    backend: Some(step.backend),
+                    ..overrides
+                },
+            );
+            let target_os = target_os_for_declared_backend(
+                step.backend,
+                effective.container,
+                normalized_current_os(),
+            );
+            let Some(selected) = task.resolved_execution_for_backend(step.backend, target_os)
+            else {
+                continue;
+            };
+            let Some(TaskActionSpec::DatabaseSchemaMutation(action)) = selected.action() else {
+                continue;
+            };
+            let plan = plans.get(plan_index).ok_or_else(|| {
+                Box::new(RunError::FileActionFailed {
+                    task: step.task.clone(),
+                    message: String::from(
+                        "archived typed-effect closure omits one selected application plan",
+                    ),
+                })
+            })?;
+            if plan.task != step.task || plan.effect_ref != action.effect {
+                return Err(Box::new(RunError::FileActionFailed {
+                    task: step.task.clone(),
+                    message: String::from(
+                        "archived typed-effect plans do not preserve selected execution order",
+                    ),
+                }));
+            }
+            let effective_working_dir = effective_task_execution_working_dir(
+                task,
+                step.backend,
+                Path::new("/ota-archive-root"),
+            );
+            let relative = effective_working_dir
+                .strip_prefix("/ota-archive-root")
+                .unwrap_or(effective_working_dir.as_path());
+            let canonical = if relative.as_os_str().is_empty() {
+                String::from(".")
+            } else {
+                relative.to_string_lossy().replace('\\', "/")
+            };
+            crate::effect_application_plan::verify_archived_effect_application_plan(
+                contract,
+                plan,
+                canonical.as_str(),
+            )
+            .map_err(|error| {
+                Box::new(RunError::FileActionFailed {
+                    task: plan.task.clone(),
+                    message: error.message,
+                })
+            })?;
+            plan_index += 1;
+        }
+    }
+    if plan_index != plans.len() {
+        return Err(Box::new(RunError::FileActionFailed {
+            task: plans
+                .get(plan_index)
+                .map(|plan| plan.task.clone())
+                .unwrap_or_default(),
+            message: String::from(
+                "archived typed-effect closure carries an unselected application plan",
+            ),
+        }));
+    }
+    Ok(())
 }
 
 pub(crate) fn typed_effect_admission_refusal(admission: &TypedEffectAdmission) -> Option<RunError> {
@@ -444,6 +569,22 @@ pub(crate) fn typed_effect_admission_refusal(admission: &TypedEffectAdmission) -
             first_plan.identity,
         ),
     })
+}
+
+pub(crate) fn typed_effect_policy_refusal_evidence(
+    admission: &TypedEffectAdmission,
+) -> Option<TypedEffectPolicyRefusalEvidence> {
+    let policy_decision = admission.policy_decision.as_ref()?;
+    (policy_decision.aggregate_decision == PolicyEffectDecision::Deny
+        && policy_decision.explicit_typed_deny)
+        .then(|| TypedEffectPolicyRefusalEvidence {
+            schema_version: 1,
+            reason_family: String::from("effect_policy_denied"),
+            execution_started: false,
+            policy_decision: policy_decision.clone(),
+            policy_snapshot_archive: None,
+            refusal_archive_path: None,
+        })
 }
 
 fn normalized_current_os() -> &'static str {

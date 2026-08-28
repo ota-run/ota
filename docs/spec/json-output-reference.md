@@ -3693,6 +3693,36 @@ provider capability evaluation. An allow or warning still does not enable typed 
 workflow task cannot honor an explicit execution option, the preview is blocked before prepare,
 setup, or run phases and `blockers[].identity.code` identifies the refused option family.
 
+For non-dry-run `ota up --json`, an explicit typed policy deny retains an additive
+`receipt.typed_effect_policy_refusal` record. Its schema-v1 payload carries
+`reason_family: "effect_policy_denied"`, `execution_started: false`, and the exact
+command-scoped `policy_decision`. It is absent for typed allow/warn provider-disabled refusal and
+policy unavailability. Ordinary refusal remains non-durable.
+
+`ota up --workflow <name> --archive-effect-refusal --json` explicitly creates a durable negative
+receipt only when the retained command decision is an explicit typed deny. The live output adds
+`policy_snapshot_archive { identity, path }` and `refusal_archive_path`. The archived receipt uses
+`archive_context.kind: "effect_policy_refusal"` and retains the selected roots, ordered invocation
+closure, execution selectors, and application plans. `ota receipt --history --json` accepts the
+archive only after Core re-parses the immutable contract and private policy snapshots and
+independently re-derives the closure, plans, source posture, and exact decision. JSON Schema checks
+local shape; Core performs cross-record identity and semantic reconciliation. The private policy
+snapshot is not a public export profile, and the archive does not prove provider contact, mutation,
+positive execution, or assurance.
+
+If atomic archive publication succeeds but the containing directory cannot be synchronized, the
+command exits nonzero with `code: "effect_refusal_archive_durability_uncertain"`,
+`published: true`, `durability: "uncertain"`, the exact `archive_path`, and recovery guidance. This
+is not an ordinary write failure: the artifact exists and should be retained and verified through
+`ota receipt --history --json` before repository transfer.
+
+If the same post-rename sync failure affects the private policy or contract snapshot before the
+receipt is published, the code is `effect_refusal_snapshot_durability_uncertain`.
+`artifact_kind` identifies `policy_snapshot` or `contract_snapshot`, `published` still describes
+that exact snapshot, and `receipt_published: false` prevents consumers from treating the partial
+transaction as durable refusal evidence. Rerun the same archive command to reuse the
+content-addressed snapshot and complete receipt publication.
+
 Use this when a human or agent needs the selected run plan before execution:
 
 - `resolved` is the selected backend/lifecycle/image/provider plan

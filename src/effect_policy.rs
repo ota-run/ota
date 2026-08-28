@@ -28,6 +28,7 @@
 use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value as JsonValue;
 use sha2::{Digest, Sha256};
 
 use crate::effect_application_plan::{
@@ -128,6 +129,25 @@ pub struct EffectPolicyDecision {
     pub explicit_typed_deny: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EffectPolicySnapshotArchive {
+    pub schema_version: u32,
+    pub identity: String,
+    pub policy_snapshot_identity: String,
+    pub source: PolicyPackSource,
+    pub source_path: String,
+    pub policy: JsonValue,
+}
+
+#[derive(Serialize)]
+struct EffectPolicySnapshotArchiveIdentityPayload<'a> {
+    schema_version: u32,
+    policy_snapshot_identity: &'a str,
+    source: PolicyPackSource,
+    source_path: &'a str,
+    policy: &'a JsonValue,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct EffectPolicyEvaluationScope<'a> {
     pub selected_subject: &'a [String],
@@ -137,10 +157,110 @@ pub struct EffectPolicyEvaluationScope<'a> {
 }
 
 /// A selected execution occurrence, retained even when one task participates in multiple roles.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EffectPolicyInvocation {
     pub task: String,
     pub origin: String,
+}
+
+pub fn archive_effect_policy_snapshot(
+    loaded: &LoadedOrgPolicyPack,
+) -> Result<EffectPolicySnapshotArchive, EffectPolicyError> {
+    loaded
+        .pack
+        .validate()
+        .map_err(|message| EffectPolicyError::new("effect_policy_invalid", message))?;
+    let policy_snapshot_identity = loaded.source_identity.clone().ok_or_else(|| {
+        EffectPolicyError::new(
+            "effect_policy_identity_unavailable",
+            "policy snapshot identity is unavailable",
+        )
+    })?;
+    let policy = serde_json::to_value(&loaded.pack).map_err(|error| {
+        EffectPolicyError::new(
+            "effect_policy_snapshot_serialization_failed",
+            format!("policy snapshot could not be serialized: {error}"),
+        )
+    })?;
+    let source_path = loaded.path.to_string_lossy().to_string();
+    let mut archive = EffectPolicySnapshotArchive {
+        schema_version: 1,
+        identity: String::new(),
+        policy_snapshot_identity,
+        source: loaded.source,
+        source_path,
+        policy,
+    };
+    archive.identity = effect_policy_snapshot_archive_identity(&archive)?;
+    verify_effect_policy_snapshot_archive(&archive)?;
+    Ok(archive)
+}
+
+pub fn verify_effect_policy_snapshot_archive(
+    archive: &EffectPolicySnapshotArchive,
+) -> Result<LoadedOrgPolicyPack, EffectPolicyError> {
+    if archive.schema_version != 1 {
+        return Err(EffectPolicyError::new(
+            "effect_policy_snapshot_archive_version_invalid",
+            "policy snapshot archive uses an unsupported schema version",
+        ));
+    }
+    if archive.source_path.trim().is_empty() {
+        return Err(EffectPolicyError::new(
+            "effect_policy_snapshot_archive_source_invalid",
+            "policy snapshot archive omits its original source path",
+        ));
+    }
+    let pack = serde_json::from_value::<crate::policy_pack::OrgPolicyPack>(archive.policy.clone())
+        .map_err(|error| {
+            EffectPolicyError::new(
+                "effect_policy_snapshot_archive_parse_failed",
+                format!("policy snapshot archive cannot be parsed: {error}"),
+            )
+        })?;
+    pack.validate().map_err(|message| {
+        EffectPolicyError::new("effect_policy_snapshot_archive_invalid", message)
+    })?;
+    let policy_snapshot_identity = crate::semantic_identity::semantic_contract_identity(&pack)
+        .map_err(|error| {
+            EffectPolicyError::new(
+                "effect_policy_snapshot_archive_identity_failed",
+                format!("policy snapshot identity could not be derived: {error}"),
+            )
+        })?;
+    if archive.policy_snapshot_identity != policy_snapshot_identity {
+        return Err(EffectPolicyError::new(
+            "effect_policy_snapshot_archive_content_mismatch",
+            "policy snapshot archive identity does not match its policy bytes",
+        ));
+    }
+    if archive.identity != effect_policy_snapshot_archive_identity(archive)? {
+        return Err(EffectPolicyError::new(
+            "effect_policy_snapshot_archive_envelope_mismatch",
+            "policy snapshot archive identity does not match its envelope",
+        ));
+    }
+    Ok(LoadedOrgPolicyPack {
+        pack,
+        path: std::path::PathBuf::from(&archive.source_path),
+        source: archive.source,
+        source_identity: Some(policy_snapshot_identity),
+    })
+}
+
+fn effect_policy_snapshot_archive_identity(
+    archive: &EffectPolicySnapshotArchive,
+) -> Result<String, EffectPolicyError> {
+    domain_identity(
+        b"ota.effect-policy-snapshot-archive.v1\0",
+        &EffectPolicySnapshotArchiveIdentityPayload {
+            schema_version: archive.schema_version,
+            policy_snapshot_identity: &archive.policy_snapshot_identity,
+            source: archive.source,
+            source_path: &archive.source_path,
+            policy: &archive.policy,
+        },
+    )
 }
 
 #[derive(Serialize)]
@@ -471,9 +591,23 @@ pub fn verify_effect_policy_decision(
     let expected =
         build_typed_effect_policy_decision(contract, scope, loaded_policy, coarse_overrides)?;
     if decision != &expected {
+        let changed_fields = match (
+            serde_json::to_value(decision),
+            serde_json::to_value(&expected),
+        ) {
+            (Ok(JsonValue::Object(actual)), Ok(JsonValue::Object(expected))) => expected
+                .keys()
+                .filter(|key| actual.get(*key) != expected.get(*key))
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", "),
+            _ => String::from("unavailable"),
+        };
         return Err(EffectPolicyError::new(
             "effect_policy_decision_reconciliation_failed",
-            "effect policy decision does not match independent evaluation of the selected closure",
+            format!(
+                "effect policy decision does not match independent evaluation of the selected closure (changed fields: {changed_fields})"
+            ),
         ));
     }
     Ok(())

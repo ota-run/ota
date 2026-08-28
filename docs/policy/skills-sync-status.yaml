@@ -25,8 +25,8 @@
 version: 1
 repository: ota-run/skills
 mode: synced
-reviewed_ota_commit: pending-local-v12-sandbox-capability
+reviewed_ota_commit: pending-local-v12-effect-refusal-archive
 consumer_commit: a25d4c28be041d7c6b11240ec10ccf85db21ee5b
 notes: >
-  The canonical Skill describes mandatory effect-policy capability binding and provider-disabled
-  posture. Both installed mirrors are byte-identical to this revision.
+  Skill authoring and review guidance is unchanged: the blocked receipt is runtime output, not a
+  new contract-authoring surface. Both installed mirrors remain byte-identical to this revision.

@@ -553,6 +553,10 @@ pub struct ExecutionReceipt {
     pub crossing: Option<Box<ExecutionBoundaryCrossing>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub refusal: Option<GovernanceRefusalRecord>,
+    /// Command-scoped typed effect-policy evidence for a blocked pre-execution receipt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) typed_effect_policy_refusal:
+        Option<crate::effect_orchestration::TypedEffectPolicyRefusalEvidence>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) replay_input_policy: Option<crate::replay_input_policy::ReplayInputPolicyEvaluation>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1016,6 +1020,9 @@ impl Serialize for ExecutionReceipt {
         }
         if let Some(refusal) = self.refusal.as_ref() {
             map.serialize_entry("refusal", refusal)?;
+        }
+        if let Some(typed_effect_policy_refusal) = self.typed_effect_policy_refusal.as_ref() {
+            map.serialize_entry("typed_effect_policy_refusal", typed_effect_policy_refusal)?;
         }
         if let Some(replay_input_policy) = self.replay_input_policy.as_ref() {
             map.serialize_entry("replay_input_policy", replay_input_policy)?;
@@ -2700,6 +2707,27 @@ pub struct ReceiptArchiveContext {
     /// History re-derives this from the archived contract before accepting crossing evidence.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) semantic_scope: Option<crate::crossing::CrossingSemanticScope>,
+    /// V12 negative archives retain the exact selected closure needed to re-derive the refusal.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) effect_policy_refusal: Option<EffectPolicyRefusalArchiveContext>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub(crate) struct EffectPolicyRefusalArchiveContext {
+    pub(crate) schema_version: u32,
+    pub(crate) workflow: String,
+    pub(crate) roots: Vec<crate::effect_policy::EffectPolicyInvocation>,
+    pub(crate) invocations: Vec<crate::effect_policy::EffectPolicyInvocation>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) backend: Option<crate::schema::Backend>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) lifecycle: Option<crate::schema::Lifecycle>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) host_port: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) memory: Option<u64>,
+    pub(crate) skip_dependencies: bool,
+    pub(crate) application_plans: Vec<crate::effect_application_plan::EffectApplicationPlan>,
 }
 
 #[derive(Debug, Serialize, Clone)]

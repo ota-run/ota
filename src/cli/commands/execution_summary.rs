@@ -850,6 +850,7 @@ mod tests {
             witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
+            typed_effect_policy_refusal: None,
             replay_input_policy: None,
             workspace: None,
             backend: Some(String::from("container")),

@@ -7,6 +7,15 @@
       "type": "string",
       "pattern": "^sha256:[0-9a-f]{64}$"
     },
+    "effectPolicyInvocation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["task", "origin"],
+      "properties": {
+        "task": { "type": "string", "minLength": 1 },
+        "origin": { "type": "string", "minLength": 1 }
+      }
+    },
     "publicEvidenceLabel": {
       "type": "string",
       "minLength": 1,
@@ -1534,10 +1543,78 @@
       "type": "object",
       "additionalProperties": false,
       "required": ["ok", "path", "mode", "summary", "receipt", "findings"],
+      "allOf": [
+        {
+          "if": {
+            "required": ["archive_context"],
+            "properties": {
+              "archive_context": {
+                "required": ["kind"],
+                "properties": {
+                  "kind": { "const": "effect_policy_refusal" }
+                }
+              }
+            }
+          },
+          "then": {
+            "required": ["archive_path"],
+            "properties": {
+              "ok": { "const": false },
+              "receipt": {
+                "required": ["ok", "status", "blocked", "typed_effect_policy_refusal"],
+                "properties": {
+                  "ok": { "const": false },
+                  "status": { "const": "blocked" },
+                  "blocked": {
+                    "contains": { "const": "OTA_EFFECT_POLICY_DENIED" },
+                    "minContains": 1
+                  },
+                  "typed_effect_policy_refusal": {
+                    "required": ["policy_snapshot_archive", "refusal_archive_path"]
+                  }
+                },
+                "not": {
+                  "anyOf": [
+                    { "required": ["crossing"] },
+                    { "required": ["refusal"] }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "receipt": {
+                "required": ["typed_effect_policy_refusal"],
+                "properties": {
+                  "typed_effect_policy_refusal": {
+                    "required": ["policy_snapshot_archive", "refusal_archive_path"]
+                  }
+                }
+              }
+            },
+            "required": ["receipt"]
+          },
+          "then": {
+            "required": ["archive_context"],
+            "properties": {
+              "archive_context": {
+                "required": ["kind"],
+                "properties": {
+                  "kind": { "const": "effect_policy_refusal" }
+                }
+              }
+            }
+          }
+        }
+      ],
       "properties": {
         "ok": { "type": "boolean" },
         "path": { "type": "string" },
         "mode": { "const": "receipt" },
+        "workflow": { "type": "string", "minLength": 1 },
         "archive_path": { "type": "string" },
         "archive_context": {
           "oneOf": [
@@ -1571,6 +1648,51 @@
                 "lane_kind": { "enum": ["task", "workflow"] },
                 "lane_name": { "type": "string", "minLength": 1 },
                 "semantic_scope": { "$ref": "#/$defs/crossingSemanticScope" }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "schema_version", "kind", "lane_kind", "lane_name", "effect_policy_refusal"
+              ],
+              "properties": {
+                "schema_version": { "const": 1 },
+                "kind": { "const": "effect_policy_refusal" },
+                "lane_kind": { "const": "workflow" },
+                "lane_name": { "type": "string", "minLength": 1 },
+                "effect_policy_refusal": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "schema_version", "workflow", "roots", "invocations",
+                    "skip_dependencies", "application_plans"
+                  ],
+                  "properties": {
+                    "schema_version": { "const": 1 },
+                    "workflow": { "type": "string", "minLength": 1 },
+                    "roots": {
+                      "type": "array",
+                      "minItems": 1,
+                      "items": { "$ref": "#/$defs/effectPolicyInvocation" }
+                    },
+                    "invocations": {
+                      "type": "array",
+                      "minItems": 1,
+                      "items": { "$ref": "#/$defs/effectPolicyInvocation" }
+                    },
+                    "backend": { "enum": ["native", "container", "remote"] },
+                    "lifecycle": { "enum": ["ephemeral", "persistent"] },
+                    "host_port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+                    "memory": { "type": "integer", "minimum": 1 },
+                    "skip_dependencies": { "const": false },
+                    "application_plans": {
+                      "type": "array",
+                      "minItems": 1,
+                      "items": { "$ref": "./run-preview.json#/$defs/effectApplicationPlan" }
+                    }
+                  }
+                }
               }
             }
           ]
@@ -2465,6 +2587,53 @@
               }
             },
             "refusal": { "$ref": "./tasks.json#/$defs/governanceRefusalRecord" },
+            "typed_effect_policy_refusal": {
+              "type": "object",
+              "additionalProperties": false,
+              "dependentRequired": {
+                "policy_snapshot_archive": ["refusal_archive_path"],
+                "refusal_archive_path": ["policy_snapshot_archive"]
+              },
+              "required": [
+                "schema_version",
+                "reason_family",
+                "execution_started",
+                "policy_decision"
+              ],
+              "properties": {
+                "schema_version": { "const": 1 },
+                "reason_family": { "const": "effect_policy_denied" },
+                "execution_started": { "const": false },
+                "policy_decision": {
+                  "allOf": [
+                    { "$ref": "./run-preview.json#/$defs/effectPolicyDecision" },
+                    {
+                      "properties": {
+                        "aggregate_decision": { "const": "deny" },
+                        "explicit_typed_deny": { "const": true }
+                      },
+                      "required": ["aggregate_decision", "explicit_typed_deny"]
+                    }
+                  ]
+                },
+                "policy_snapshot_archive": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["identity", "path"],
+                  "properties": {
+                    "identity": { "$ref": "#/$defs/sha256Identity" },
+                    "path": {
+                      "type": "string",
+                      "pattern": "^\\.ota/effect-policy-snapshots/sha256-[0-9a-f]{64}\\.json$"
+                    }
+                  }
+                },
+                "refusal_archive_path": {
+                  "type": "string",
+                  "pattern": "^\\.ota/receipts/repo-receipt-[0-9]{8}-[0-9]{6}-[0-9]{3}Z\\.json$"
+                }
+              }
+            },
             "replay_input_policy": {
               "$ref": "./doctor.json#/$defs/replayInputPolicy"
             },

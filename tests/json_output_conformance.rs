@@ -3023,6 +3023,372 @@ policies:
         assert!(!fixture.path().join("parent-sentinel").exists());
     }
 
+    let up_refusal = run_ota_json_output(&["up", "--json"], fixture.path());
+    assert_matches_schema("up.json", &up_refusal);
+    assert_eq!(up_refusal["status"], "BLOCKED");
+    assert_eq!(
+        up_refusal["receipt"]["typed_effect_policy_refusal"]["reason_family"],
+        "effect_policy_denied",
+        "{up_refusal}"
+    );
+    assert_eq!(
+        up_refusal["receipt"]["typed_effect_policy_refusal"]["execution_started"],
+        false
+    );
+    assert_eq!(
+        up_refusal["receipt"]["typed_effect_policy_refusal"]["policy_decision"]["aggregate_decision"],
+        "deny"
+    );
+    let mut contradictory_up_refusal = up_refusal.clone();
+    contradictory_up_refusal["receipt"]["typed_effect_policy_refusal"]["execution_started"] =
+        json!(true);
+    assert_rejected_by_schema("up.json", &contradictory_up_refusal);
+    let mut mismatched_reason = up_refusal.clone();
+    mismatched_reason["receipt"]["typed_effect_policy_refusal"]["reason_family"] =
+        json!("provider_execution_disabled");
+    assert_rejected_by_schema("up.json", &mismatched_reason);
+
+    let archived_refusal = run_ota_json_output(
+        &[
+            "up",
+            "--workflow",
+            "release",
+            "--archive-effect-refusal",
+            "--json",
+        ],
+        fixture.path(),
+    );
+    assert_matches_schema("up.json", &archived_refusal);
+    let refusal = &archived_refusal["receipt"]["typed_effect_policy_refusal"];
+    let policy_snapshot_path = refusal["policy_snapshot_archive"]["path"]
+        .as_str()
+        .expect("policy snapshot archive path");
+    let refusal_archive_path = refusal["refusal_archive_path"]
+        .as_str()
+        .expect("refusal archive path");
+    assert!(
+        refusal_archive_path
+            .rsplit('/')
+            .next()
+            .is_some_and(|name| name.starts_with("repo-receipt-")
+                && !name.starts_with("repo-receipt-effect-policy-refusal-")),
+        "{refusal_archive_path}"
+    );
+    assert!(fixture.path().join(policy_snapshot_path).is_file());
+    assert!(fixture.path().join(refusal_archive_path).is_file());
+    assert!(!fixture.path().join("setup-sentinel").exists());
+    assert!(!fixture.path().join("parent-sentinel").exists());
+
+    let refusal_archive = fixture.path().join(refusal_archive_path);
+    let original_refusal_archive = fs::read(&refusal_archive).expect("refusal archive bytes");
+    let refusal_archive_json: Value =
+        serde_json::from_slice(&original_refusal_archive).expect("refusal archive JSON");
+    assert_matches_schema("receipt.json", &refusal_archive_json);
+    let mut missing_policy_snapshot = refusal_archive_json.clone();
+    missing_policy_snapshot["receipt"]["typed_effect_policy_refusal"]
+        .as_object_mut()
+        .unwrap()
+        .remove("policy_snapshot_archive");
+    assert_rejected_by_schema("receipt.json", &missing_policy_snapshot);
+    let mut missing_refusal_path = refusal_archive_json.clone();
+    missing_refusal_path["receipt"]["typed_effect_policy_refusal"]
+        .as_object_mut()
+        .unwrap()
+        .remove("refusal_archive_path");
+    assert_rejected_by_schema("receipt.json", &missing_refusal_path);
+    let mut missing_context = refusal_archive_json.clone();
+    missing_context
+        .as_object_mut()
+        .unwrap()
+        .remove("archive_context");
+    assert_rejected_by_schema("receipt.json", &missing_context);
+    for (field, value) in [
+        ("ok", json!(true)),
+        ("receipt.ok", json!(true)),
+        ("receipt.status", json!("ready")),
+        ("receipt.blocked", json!([])),
+    ] {
+        let mut contradictory = refusal_archive_json.clone();
+        let mut target = &mut contradictory;
+        let mut segments = field.split('.').peekable();
+        while let Some(segment) = segments.next() {
+            if segments.peek().is_none() {
+                target[segment] = value.clone();
+                break;
+            }
+            target = &mut target[segment];
+        }
+        assert_rejected_by_schema("receipt.json", &contradictory);
+    }
+    for forbidden in ["crossing", "refusal"] {
+        let mut contradictory = refusal_archive_json.clone();
+        contradictory["receipt"][forbidden] = json!({});
+        assert_rejected_by_schema("receipt.json", &contradictory);
+    }
+
+    let history = run_ota(&["receipt", "--history", "--json"], fixture.path());
+    assert_eq!(history["summary"]["archive_count"], 1, "{history}");
+    assert_eq!(history["summary"]["invalid_archive_count"], 0, "{history}");
+
+    let policy_snapshot = fixture.path().join(policy_snapshot_path);
+    let original_policy_snapshot = fs::read(&policy_snapshot).expect("policy snapshot bytes");
+    let mut tampered_policy: serde_json::Value =
+        serde_json::from_slice(&original_policy_snapshot).expect("policy snapshot JSON");
+    tampered_policy["policy"]["policies"]["effects"]["mode"] = json!("strict");
+    fs::write(
+        &policy_snapshot,
+        serde_json::to_vec_pretty(&tampered_policy).expect("tampered policy snapshot"),
+    )
+    .expect("tamper policy snapshot");
+    let tampered_history = run_ota(&["receipt", "--history", "--json"], fixture.path());
+    assert_eq!(
+        tampered_history["summary"]["invalid_archive_count"], 1,
+        "{tampered_history}"
+    );
+    fs::write(&policy_snapshot, original_policy_snapshot).expect("restore policy snapshot");
+
+    let mut stripped_context = refusal_archive_json.clone();
+    stripped_context
+        .as_object_mut()
+        .unwrap()
+        .remove("archive_context");
+    fs::write(
+        &refusal_archive,
+        serde_json::to_vec_pretty(&stripped_context).expect("stripped refusal archive"),
+    )
+    .expect("strip refusal replay context");
+    let stripped_history = run_ota(&["receipt", "--history", "--json"], fixture.path());
+    assert_eq!(
+        stripped_history["summary"]["invalid_archive_count"], 1,
+        "{stripped_history}"
+    );
+    fs::write(&refusal_archive, &original_refusal_archive).expect("restore refusal archive");
+
+    let mut omitted_plan = refusal_archive_json.clone();
+    omitted_plan["archive_context"]["effect_policy_refusal"]["application_plans"] = json!([]);
+    fs::write(
+        &refusal_archive,
+        serde_json::to_vec_pretty(&omitted_plan).expect("omitted plan archive"),
+    )
+    .expect("omit archived application plan");
+    let omitted_history = run_ota(&["receipt", "--history", "--json"], fixture.path());
+    assert_eq!(
+        omitted_history["summary"]["invalid_archive_count"], 1,
+        "{omitted_history}"
+    );
+    fs::write(&refusal_archive, &original_refusal_archive).expect("restore refusal archive");
+
+    let mut tampered_closure = refusal_archive_json.clone();
+    tampered_closure["archive_context"]["effect_policy_refusal"]["invocations"][0]["origin"] =
+        json!("workflow:release:tampered");
+    fs::write(
+        &refusal_archive,
+        serde_json::to_vec_pretty(&tampered_closure).expect("tampered refusal archive"),
+    )
+    .expect("tamper refusal archive");
+    let tampered_history = run_ota(&["receipt", "--history", "--json"], fixture.path());
+    assert_eq!(
+        tampered_history["summary"]["invalid_archive_count"], 1,
+        "{tampered_history}"
+    );
+    fs::write(&refusal_archive, &original_refusal_archive).expect("restore refusal archive");
+
+    let mut tampered_manifest: Value =
+        serde_json::from_slice(&original_refusal_archive).expect("refusal archive JSON");
+    tampered_manifest["archive_context"]["effect_policy_refusal"]["application_plans"][0]["migration_manifests"]
+        [0]["files"][0]["path"] = json!("tampered.sql");
+    fs::write(
+        &refusal_archive,
+        serde_json::to_vec_pretty(&tampered_manifest).expect("tampered manifest archive"),
+    )
+    .expect("tamper archived manifest");
+    let tampered_history = run_ota(&["receipt", "--history", "--json"], fixture.path());
+    assert_eq!(
+        tampered_history["summary"]["invalid_archive_count"], 1,
+        "{tampered_history}"
+    );
+    fs::write(&refusal_archive, &original_refusal_archive).expect("restore refusal archive");
+
+    #[cfg(feature = "test-effect-refusal-archive-faults")]
+    {
+        let archive_args = [
+            "up",
+            "--workflow",
+            "release",
+            "--archive-effect-refusal",
+            "--json",
+        ];
+        fs::remove_file(&policy_snapshot).expect("remove policy snapshot for fault injection");
+        let policy_uncertain = run_ota_failure_stdout_json_with_env(
+            &archive_args,
+            fixture.path(),
+            &[(
+                "OTA_TEST_EFFECT_REFUSAL_ARCHIVE_FAULT",
+                "policy_directory_sync",
+            )],
+        );
+        assert_matches_schema("up.json", &policy_uncertain);
+        assert_eq!(
+            policy_uncertain["code"],
+            "effect_refusal_snapshot_durability_uncertain"
+        );
+        assert_eq!(policy_uncertain["artifact_kind"], "policy_snapshot");
+        assert_eq!(policy_uncertain["published"], true);
+        assert_eq!(policy_uncertain["receipt_published"], false);
+        assert!(
+            Path::new(
+                policy_uncertain["archive_path"]
+                    .as_str()
+                    .expect("uncertain policy path")
+            )
+            .is_file()
+        );
+        let policy_retry = run_ota_failure_stdout_json_with_env(
+            &archive_args,
+            fixture.path(),
+            &[(
+                "OTA_TEST_EFFECT_REFUSAL_ARCHIVE_FAULT",
+                "policy_directory_sync",
+            )],
+        );
+        assert_matches_schema("up.json", &policy_retry);
+        assert_eq!(policy_retry["artifact_kind"], "policy_snapshot");
+        assert_eq!(policy_retry["receipt_published"], false);
+        assert_eq!(
+            policy_retry["archive_path"],
+            policy_uncertain["archive_path"]
+        );
+
+        let contract_snapshot_ref = refusal_archive_json["receipt"]["contract_snapshot_ref"]
+            .as_str()
+            .expect("contract snapshot reference");
+        let contract_snapshot = fixture.path().join(contract_snapshot_ref);
+        fs::remove_file(&contract_snapshot).expect("remove contract snapshot for fault injection");
+        let contract_uncertain = run_ota_failure_stdout_json_with_env(
+            &archive_args,
+            fixture.path(),
+            &[(
+                "OTA_TEST_EFFECT_REFUSAL_ARCHIVE_FAULT",
+                "contract_directory_sync",
+            )],
+        );
+        assert_matches_schema("up.json", &contract_uncertain);
+        assert_eq!(
+            contract_uncertain["code"],
+            "effect_refusal_snapshot_durability_uncertain"
+        );
+        assert_eq!(contract_uncertain["artifact_kind"], "contract_snapshot");
+        assert_eq!(contract_uncertain["receipt_published"], false);
+        assert!(
+            Path::new(
+                contract_uncertain["archive_path"]
+                    .as_str()
+                    .expect("uncertain contract path")
+            )
+            .is_file()
+        );
+        let contract_retry = run_ota_failure_stdout_json_with_env(
+            &archive_args,
+            fixture.path(),
+            &[(
+                "OTA_TEST_EFFECT_REFUSAL_ARCHIVE_FAULT",
+                "contract_directory_sync",
+            )],
+        );
+        assert_matches_schema("up.json", &contract_retry);
+        assert_eq!(contract_retry["artifact_kind"], "contract_snapshot");
+        assert_eq!(contract_retry["receipt_published"], false);
+        assert_eq!(
+            contract_retry["archive_path"],
+            contract_uncertain["archive_path"]
+        );
+
+        let receipt_uncertain = run_ota_failure_stdout_json_with_env(
+            &archive_args,
+            fixture.path(),
+            &[(
+                "OTA_TEST_EFFECT_REFUSAL_ARCHIVE_FAULT",
+                "receipt_directory_sync",
+            )],
+        );
+        assert_matches_schema("up.json", &receipt_uncertain);
+        assert_eq!(
+            receipt_uncertain["code"],
+            "effect_refusal_archive_durability_uncertain"
+        );
+        assert_eq!(receipt_uncertain["artifact_kind"], "receipt");
+        assert_eq!(receipt_uncertain["receipt_published"], true);
+        assert!(
+            Path::new(
+                receipt_uncertain["archive_path"]
+                    .as_str()
+                    .expect("uncertain receipt path")
+            )
+            .is_file()
+        );
+        let history = run_ota(&["receipt", "--history", "--json"], fixture.path());
+        assert_eq!(history["summary"]["archive_count"], 2, "{history}");
+        assert_eq!(history["summary"]["invalid_archive_count"], 0, "{history}");
+
+        let mut contradictory = receipt_uncertain.clone();
+        contradictory["published"] = json!(false);
+        assert_rejected_by_schema("up.json", &contradictory);
+        let mut contradictory = receipt_uncertain.clone();
+        contradictory["receipt_published"] = json!(false);
+        assert_rejected_by_schema("up.json", &contradictory);
+        let mut contradictory = policy_uncertain;
+        contradictory["receipt_published"] = json!(true);
+        assert_rejected_by_schema("up.json", &contradictory);
+        let mut contradictory = contract_uncertain;
+        contradictory["artifact_kind"] = json!("policy_snapshot");
+        assert_rejected_by_schema("up.json", &contradictory);
+        let mut contradictory = receipt_uncertain;
+        contradictory["archive_path"] = policy_retry["archive_path"].clone();
+        assert_rejected_by_schema("up.json", &contradictory);
+    }
+
+    let non_denial_policy = matching_policy.replace("production }", "staging }");
+    fs::write(
+        fixture.path().join(".ota/org-policy.yaml"),
+        &non_denial_policy,
+    )
+    .expect("non-denial policy");
+    let non_denial_archive = Command::new(env!("CARGO_BIN_EXE_ota"))
+        .args([
+            "up",
+            "--workflow",
+            "release",
+            "--archive-effect-refusal",
+            "--json",
+        ])
+        .current_dir(fixture.path())
+        .output()
+        .expect("non-denial archive request");
+    assert!(!non_denial_archive.status.success());
+    let non_denial_output = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&non_denial_archive.stdout),
+        String::from_utf8_lossy(&non_denial_archive.stderr)
+    );
+    assert!(
+        non_denial_output
+            .contains("`--archive-effect-refusal` requires an explicit matching typed deny rule"),
+        "{non_denial_output}"
+    );
+    let history = run_ota(&["receipt", "--history", "--json"], fixture.path());
+    let expected_archive_count = if cfg!(feature = "test-effect-refusal-archive-faults") {
+        2
+    } else {
+        1
+    };
+    assert_eq!(
+        history["summary"]["archive_count"], expected_archive_count,
+        "{history}"
+    );
+    assert_eq!(history["summary"]["invalid_archive_count"], 0, "{history}");
+    fs::write(fixture.path().join(".ota/org-policy.yaml"), matching_policy)
+        .expect("restore matching policy");
+
     let proof_refusal = run_ota_json_output(
         &["proof", "runtime", "--workflow", "release", "--json"],
         fixture.path(),
@@ -3094,6 +3460,23 @@ policies:
     assert!(
         strict_output.contains("policies.effects.mode fallback `deny`"),
         "{strict_output}"
+    );
+    let strict_up_execution = Command::new(env!("CARGO_BIN_EXE_ota"))
+        .args(["up", "--json"])
+        .current_dir(fixture.path())
+        .env("OTA_POLICY", &strict_path)
+        .output()
+        .expect("strict fallback up refusal");
+    assert!(!strict_up_execution.status.success());
+    let strict_up = serde_json::from_slice(&strict_up_execution.stdout)
+        .or_else(|_| serde_json::from_slice(&strict_up_execution.stderr))
+        .expect("strict fallback up emits JSON");
+    assert_matches_schema("up.json", &strict_up);
+    assert!(
+        strict_up["receipt"]
+            .get("typed_effect_policy_refusal")
+            .is_none(),
+        "fallback-only denial must not claim explicit typed-denial evidence"
     );
 
     let missing_account_policy = r#"

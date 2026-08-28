@@ -657,7 +657,29 @@ conflicts with an explicit claim, such as a named canary lane executing after th
 
 ## Receipts and Archive Verification
 
-Refusal receipts and successful assurance records bind:
+The first shipped carrier is deliberately narrow. A non-dry-run `ota up` receipt blocked by an
+explicit typed policy deny retains `typed_effect_policy_refusal` with the exact command-scoped
+decision and `execution_started: false`; ordinary refusal remains non-durable. Explicit
+`ota up --workflow <name> --archive-effect-refusal --json` creates one create-new negative receipt
+archive. It retains one private immutable policy snapshot alongside the existing immutable contract
+snapshot. A decision identity alone is insufficient: history parses the retained policy bytes,
+verifies their snapshot identity and source posture, re-derives the selected invocation and typed
+plans from the archived contract, and recomputes the decision. Archive admission refuses when the
+policy bytes cannot be retained and re-read without aliases, when the selected invocation is
+incomplete, or when the record is only a fallback, coarse, unavailable, or provider-disabled
+refusal. This private archive carrier is not a public export profile; later export must apply its own
+disclosure rules. Atomic publication followed by directory-sync failure is a distinct
+`published: true`, durability-uncertain outcome carrying the exact archive path and recovery
+guidance. It must never collapse into an ordinary pre-publication failure.
+Snapshot publication uncertainty is a separate partial-transaction outcome: it names
+`policy_snapshot` or `contract_snapshot`, carries the exact path, and states that no refusal receipt
+was published by that attempt.
+
+Effect-refusal canary output remains execution-free and ephemeral until it can reference that
+verified refusal archive without introducing a second archive format. It must not be archived as a
+standalone `passed` claim or consumed by V11.14 assurance first.
+
+The later durable refusal/archive and successful assurance records must bind:
 
 - effect and effect-set identities;
 - selected invocation, graph, and origin paths;

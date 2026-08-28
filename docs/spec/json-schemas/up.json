@@ -661,6 +661,9 @@
             "replay_input_policy": {
               "$ref": "./receipt.json#/oneOf/0/properties/receipt/properties/replay_input_policy"
             },
+            "typed_effect_policy_refusal": {
+              "$ref": "./receipt.json#/oneOf/0/properties/receipt/properties/typed_effect_policy_refusal"
+            },
             "crossing": {
               "$ref": "./receipt.json#/oneOf/0/properties/receipt/properties/crossing"
             },
@@ -783,10 +786,10 @@
             }
           }
         },
-        "service": { "type": "string" },
+        "service": { "type": ["string", "null"] },
         "task": { "type": "string" },
         "stderr": { "type": "string" },
-        "exit_code": { "type": "integer" },
+        "exit_code": { "type": ["integer", "null"] },
         "members": {
           "type": "array",
           "items": {
@@ -805,7 +808,7 @@
                     "items": { "$ref": "./shared.json#/$defs/finding" }
                   },
                   "stderr": { "type": "string" },
-                  "service": { "type": "string" },
+        "service": { "type": ["string", "null"] },
                   "task": { "type": "string" },
                   "exit_code": { "type": "integer" }
                 }
@@ -1052,6 +1055,67 @@
           }
         }
       }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ok", "path", "code", "published", "durability", "artifact_kind",
+        "receipt_published", "archive_path", "message", "recovery"
+      ],
+      "properties": {
+        "ok": { "const": false },
+        "path": { "type": "string" },
+        "code": {
+          "enum": [
+            "effect_refusal_archive_durability_uncertain",
+            "effect_refusal_snapshot_durability_uncertain"
+          ]
+        },
+        "published": { "const": true },
+        "durability": { "const": "uncertain" },
+        "artifact_kind": { "enum": ["policy_snapshot", "contract_snapshot", "receipt"] },
+        "receipt_published": { "type": "boolean" },
+        "archive_path": { "type": "string", "minLength": 1 },
+        "message": { "type": "string", "minLength": 1 },
+        "recovery": { "type": "string", "minLength": 1 }
+      },
+      "oneOf": [
+        {
+          "properties": {
+            "code": { "const": "effect_refusal_archive_durability_uncertain" },
+            "artifact_kind": { "const": "receipt" },
+            "receipt_published": { "const": true },
+            "archive_path": {
+              "pattern": "^(?:.*[/\\\\])?\\.ota[/\\\\]receipts[/\\\\]repo-receipt-[0-9]{8}-[0-9]{6}-[0-9]{3}Z\\.json$"
+            }
+          }
+        },
+        {
+          "oneOf": [
+            {
+              "properties": {
+                "code": { "const": "effect_refusal_snapshot_durability_uncertain" },
+                "artifact_kind": { "const": "policy_snapshot" },
+                "receipt_published": { "const": false },
+                "archive_path": {
+                  "pattern": "^(?:.*[/\\\\])?\\.ota[/\\\\]effect-policy-snapshots[/\\\\]sha256-[0-9a-f]{64}\\.json$"
+                }
+              }
+            },
+            {
+              "properties": {
+                "code": { "const": "effect_refusal_snapshot_durability_uncertain" },
+                "artifact_kind": { "const": "contract_snapshot" },
+                "receipt_published": { "const": false },
+                "archive_path": {
+                  "pattern": "^(?:.*[/\\\\])?\\.ota[/\\\\]contracts[/\\\\]sha256-[0-9a-f]{64}\\.json$"
+                }
+              }
+            }
+          ]
+        }
+      ]
     },
     {
       "$ref": "./validate.json#/oneOf/1"

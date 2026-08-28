@@ -37,7 +37,7 @@ use std::ffi::{CStr, CString};
 #[cfg(unix)]
 use std::os::fd::{AsRawFd as _, FromRawFd as _};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::effect_domain::{
@@ -85,7 +85,7 @@ impl fmt::Display for EffectApplicationPlanError {
 
 impl std::error::Error for EffectApplicationPlanError {}
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MigrationSetManifest {
     pub schema_version: u32,
     pub root: String,
@@ -93,13 +93,13 @@ pub struct MigrationSetManifest {
     pub files: Vec<MigrationSetManifestFile>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MigrationSetManifestFile {
     pub path: String,
     pub identity: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EffectApplicationPlan {
     pub schema_version: u32,
     pub identity: String,
@@ -335,6 +335,147 @@ pub fn verify_admitted_effect_application(
                 "effect application plan `{}` or its materialized input changed before provider contact",
                 admitted.plan.identity
             ),
+        ));
+    }
+    Ok(())
+}
+
+/// Rebuilds an archived plan from immutable contract truth and retained manifest evidence.
+/// This does not consult the mutable repository or claim that provider execution occurred.
+pub fn verify_archived_effect_application_plan(
+    contract: &Contract,
+    plan: &EffectApplicationPlan,
+    effective_working_directory: &str,
+) -> Result<(), EffectApplicationPlanError> {
+    if plan.schema_version != 1 || plan.effective_working_directory != effective_working_directory {
+        return Err(EffectApplicationPlanError::new(
+            "effect_application_archive_context_mismatch",
+            "archived application plan does not match its selected execution context",
+        ));
+    }
+    let catalog = resolve_declared_effect_catalog(contract)
+        .map_err(|error| EffectApplicationPlanError::new(error.code, error.message))?;
+    let attachment = catalog
+        .attachments
+        .iter()
+        .find(|attachment| {
+            attachment.identity == plan.attachment_identity
+                && attachment.task == plan.task
+                && attachment.definition_ref == plan.effect_ref
+        })
+        .ok_or_else(|| {
+            EffectApplicationPlanError::new(
+                "effect_application_archive_attachment_mismatch",
+                "archived application plan attachment is not declared by the archived contract",
+            )
+        })?;
+    let effect = catalog
+        .effect_definitions
+        .get(plan.effect_ref.as_str())
+        .ok_or_else(|| {
+            EffectApplicationPlanError::new(
+                "effect_application_archive_effect_missing",
+                "archived application plan effect is not declared by the archived contract",
+            )
+        })?;
+    let expected_sets = match &effect.bounds {
+        CanonicalDatabaseSchemaMutationBounds::ApplyMigrationSet { migration_set, .. }
+        | CanonicalDatabaseSchemaMutationBounds::RollbackMigrationSet { migration_set, .. } => {
+            vec![migration_set]
+        }
+        CanonicalDatabaseSchemaMutationBounds::ResetSchema { post_reset, .. } => match post_reset {
+            CanonicalResetPosture::Empty => Vec::new(),
+            CanonicalResetPosture::ApplyMigrationSet { migration_set } => vec![migration_set],
+        },
+    };
+    for manifest in &plan.migration_manifests {
+        verify_archived_migration_manifest(manifest)?;
+    }
+    if expected_sets.len() != plan.migration_manifests.len()
+        || expected_sets
+            .iter()
+            .zip(&plan.migration_manifests)
+            .any(|(expected, manifest)| {
+                expected.root != manifest.root || expected.content_identity != manifest.identity
+            })
+    {
+        return Err(EffectApplicationPlanError::new(
+            "effect_application_archive_manifest_mismatch",
+            "archived migration manifest does not match the archived contract bounds",
+        ));
+    }
+    let contract_snapshot_identity = effect_realization_contract_snapshot_identity(contract)?;
+    let invocation_origin_identity = application_invocation_origin_identity(
+        contract_snapshot_identity.as_str(),
+        attachment.subject.as_slice(),
+    )?;
+    let expected_adapter = postgresql_schema_mutation_adapter_profile_identity();
+    let expected_identity = application_plan_identity(
+        &expected_adapter,
+        plan.task.as_str(),
+        effective_working_directory,
+        invocation_origin_identity.as_str(),
+        attachment,
+        effect,
+        &plan.migration_manifests,
+    )?;
+    if plan.adapter_profile_identity != expected_adapter
+        || plan.invocation_origin_identity != invocation_origin_identity
+        || plan.effect_identity != effect.identity
+        || plan.resource_binding_identity != effect.resource.binding_identity
+        || plan.action != effect.action
+        || plan.bounds != effect.bounds
+        || plan.identity != expected_identity
+    {
+        return Err(EffectApplicationPlanError::new(
+            "effect_application_archive_plan_mismatch",
+            "archived application plan does not re-derive from archived contract truth",
+        ));
+    }
+    Ok(())
+}
+
+fn verify_archived_migration_manifest(
+    manifest: &MigrationSetManifest,
+) -> Result<(), EffectApplicationPlanError> {
+    let canonical_paths = manifest
+        .files
+        .windows(2)
+        .all(|pair| pair[0].path < pair[1].path)
+        && manifest.files.iter().all(|file| {
+            !file.path.is_empty()
+                && file.path == file.path.trim()
+                && !file.path.starts_with('/')
+                && !file.path.contains('\\')
+                && !file.path.chars().any(|character| character.is_control())
+                && file
+                    .path
+                    .split('/')
+                    .all(|component| !component.is_empty() && component != "." && component != "..")
+                && file.identity.len() == 71
+                && file.identity.starts_with("sha256:")
+                && file.identity[7..]
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        });
+    if manifest.schema_version != 1 || !canonical_paths {
+        return Err(EffectApplicationPlanError::new(
+            "effect_application_archive_manifest_invalid",
+            "archived migration manifest is not canonical",
+        ));
+    }
+    let expected_identity = domain_identity(
+        MIGRATION_MANIFEST_DOMAIN,
+        &MigrationManifestIdentityPayload {
+            schema_version: manifest.schema_version,
+            root: manifest.root.as_str(),
+            files: manifest.files.as_slice(),
+        },
+    )?;
+    if expected_identity != manifest.identity {
+        return Err(EffectApplicationPlanError::new(
+            "effect_application_archive_manifest_identity_mismatch",
+            "archived migration manifest identity does not match its file inventory",
         ));
     }
     Ok(())

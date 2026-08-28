@@ -2517,6 +2517,22 @@ Current behavior:
   prepare/setup/run execution instead of treating the request as advisory
 - `ota up --dry-run --json` carries `execution_started: false`; option-admission blockers identify
   the requested flag and selected task before any workflow phase starts
+- when non-dry-run `ota up --json` is blocked by an explicit typed policy deny,
+  `receipt.typed_effect_policy_refusal` retains the exact command-scoped decision with
+  `execution_started: false`; ordinary refusal remains non-durable
+- `ota up --workflow <name> --archive-effect-refusal --json` explicitly archives that negative
+  decision with immutable contract and private policy snapshots; it refuses fallback, coarse,
+  unavailable, allow/warn, or provider-disabled posture and cannot be combined with dry-run,
+  canary, grant, sandbox, replay, member, receipt, stream, attach, detach, or effect-override modes
+- receipt history independently re-derives the archived selected closure, application plans,
+  policy snapshot, and decision; this proves a Core-observed explicit refusal before execution, not
+  provider contact, mutation prevention outside Ota, positive assurance, or export safety
+- if the archive is atomically published but its directory cannot be synchronized, JSON returns
+  `effect_refusal_archive_durability_uncertain` with `published: true`, `durability: "uncertain"`,
+  the exact archive path, and recovery guidance
+- the same failure while publishing the policy or contract snapshot instead returns
+  `effect_refusal_snapshot_durability_uncertain`, identifies `artifact_kind`, and reports
+  `receipt_published: false`; rerun the same archive command to complete the receipt transaction
 - `--effect-override <effect>=<allow|warn|deny>` temporarily overrides one effect-governance
   decision for this `ota up` invocation only using the same selectors as `ota run`
 - `--replay-baseline <latest|promoted|archive-path>` resolves an archived repo receipt baseline
