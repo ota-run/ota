@@ -54,6 +54,160 @@ fn proof_runtime_definition_schema(definition: &str) -> JSONSchema {
         .expect("proof-runtime definition schema should compile")
 }
 
+fn tasks_definition_schema(definition: &str) -> JSONSchema {
+    let schema = load_schema("docs/spec/json-schemas/tasks.json");
+    let mut definition_schema = schema["$defs"][definition].clone();
+    definition_schema["$defs"] = schema["$defs"].clone();
+    JSONSchema::options()
+        .with_draft(Draft::Draft202012)
+        .compile(&definition_schema)
+        .expect("tasks definition schema should compile")
+}
+
+#[test]
+fn tasks_schema_discriminates_effect_policy_capability_bindings() {
+    let schema = tasks_definition_schema("harnessEffectPolicyBinding");
+    let digest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    assert!(schema.is_valid(&json!({
+        "status": "not_applicable",
+        "provider_execution": "not_applicable"
+    })));
+    assert!(schema.is_valid(&json!({
+        "status": "evaluated",
+        "aggregate_decision": "deny",
+        "decision_identity": digest,
+        "policy_snapshot_identity": digest,
+        "execution_graph_identity": digest,
+        "effect_set_identity": digest,
+        "provider_execution": "disabled"
+    })));
+    assert!(schema.is_valid(&json!({
+        "status": "unavailable",
+        "provider_execution": "disabled",
+        "error": "policy snapshot unavailable"
+    })));
+    assert!(!schema.is_valid(&json!({
+        "status": "not_applicable",
+        "aggregate_decision": "allow",
+        "provider_execution": "not_applicable"
+    })));
+    assert!(!schema.is_valid(&json!({
+        "status": "evaluated",
+        "aggregate_decision": "allow",
+        "provider_execution": "disabled"
+    })));
+    assert!(!schema.is_valid(&json!({
+        "status": "unavailable",
+        "decision_identity": digest,
+        "provider_execution": "disabled",
+        "error": "policy snapshot unavailable"
+    })));
+}
+
+#[test]
+fn tasks_schema_refuses_callable_typed_effect_capability_lanes() {
+    let schema = tasks_definition_schema("harnessCapabilityProfile");
+    let digest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let callable_preflight = json!({
+        "state": "allowed",
+        "evidence_classes": {
+            "state": "derived",
+            "receipt_expected": "derived",
+            "proof_expected": "derived"
+        },
+        "receipt_expected": false,
+        "proof_expected": false
+    });
+    let callable = json!({
+        "lane_id": "task:migrate",
+        "lane_kind": "task",
+        "name": "migrate",
+        "command": "ota run migrate --agent",
+        "preflight": callable_preflight,
+        "effect_policy": {
+            "status": "not_applicable",
+            "provider_execution": "not_applicable"
+        }
+    });
+    let mut profile = json!({
+        "actor_mode": "agent",
+        "callable_tasks": [callable.clone()],
+        "callable_workflows": [callable]
+    });
+    assert!(schema.is_valid(&profile));
+
+    let typed = json!({
+        "lane_id": "task:migrate",
+        "lane_kind": "task",
+        "name": "migrate",
+        "command": "ota run migrate --agent",
+        "preflight": {
+            "state": "refused",
+            "refusal_reason_family": "typed_effect_provider_execution_disabled",
+            "evidence_classes": {
+                "state": "derived",
+                "receipt_expected": "derived",
+                "proof_expected": "derived"
+            },
+            "receipt_expected": false,
+            "proof_expected": false
+        },
+        "effect_policy": {
+            "status": "evaluated",
+            "aggregate_decision": "allow",
+            "decision_identity": digest,
+            "policy_snapshot_identity": digest,
+            "execution_graph_identity": digest,
+            "effect_set_identity": digest,
+            "provider_execution": "disabled"
+        }
+    });
+    profile["callable_tasks"] = json!([typed.clone()]);
+    assert!(!schema.is_valid(&profile));
+    profile["callable_tasks"] = json!([]);
+    profile["callable_workflows"] = json!([typed.clone()]);
+    assert!(!schema.is_valid(&profile));
+    profile["callable_workflows"] = json!([]);
+    profile["refused_tasks"] = json!([typed.clone()]);
+    assert!(schema.is_valid(&profile));
+
+    let mut mismatched_provider_disabled = typed.clone();
+    mismatched_provider_disabled["preflight"]["refusal_reason_family"] =
+        json!("effect_policy_denied");
+    assert!(!schema.is_valid(&json!({
+        "actor_mode": "agent",
+        "refused_tasks": [mismatched_provider_disabled]
+    })));
+
+    let mut unavailable = typed.clone();
+    unavailable["effect_policy"] = json!({
+        "status": "unavailable",
+        "provider_execution": "disabled",
+        "error": "policy snapshot unavailable"
+    });
+    unavailable["preflight"]["refusal_reason_family"] = json!("effect_policy_unavailable");
+    profile["refused_tasks"] = json!([unavailable.clone()]);
+    assert!(schema.is_valid(&profile));
+
+    unavailable["preflight"]["refusal_reason_family"] = json!("effect_policy_denied");
+    assert!(!schema.is_valid(&json!({
+        "actor_mode": "agent",
+        "refused_tasks": [unavailable]
+    })));
+
+    let mut denied = typed;
+    denied["effect_policy"]["aggregate_decision"] = json!("deny");
+    assert!(!schema.is_valid(&json!({
+        "actor_mode": "agent",
+        "refused_workflows": [denied.clone()]
+    })));
+    denied["preflight"]["refusal_reason_family"] = json!("effect_policy_denied");
+    assert!(schema.is_valid(&json!({
+        "actor_mode": "agent",
+        "refused_workflows": [denied]
+    })));
+}
+
 #[test]
 fn tasks_schema_includes_agent_and_variant_fields() {
     let schema = load_schema("docs/spec/json-schemas/tasks.json");

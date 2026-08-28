@@ -895,10 +895,63 @@
         "network": { "$ref": "#/$defs/harnessSandboxNetworkPolicy" }
       }
     },
+    "harnessEffectPolicyBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "provider_execution"],
+      "properties": {
+        "status": { "enum": ["not_applicable", "evaluated", "unavailable"] },
+        "aggregate_decision": { "enum": ["allow", "warn", "deny"] },
+        "decision_identity": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+        "policy_snapshot_identity": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+        "execution_graph_identity": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+        "effect_set_identity": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+        "provider_execution": { "enum": ["not_applicable", "disabled"] },
+        "error": { "type": "string", "minLength": 1 }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "status": { "const": "not_applicable" } }, "required": ["status"] },
+          "then": {
+            "properties": { "provider_execution": { "const": "not_applicable" } },
+            "not": { "anyOf": [
+              { "required": ["aggregate_decision"] },
+              { "required": ["decision_identity"] },
+              { "required": ["policy_snapshot_identity"] },
+              { "required": ["execution_graph_identity"] },
+              { "required": ["effect_set_identity"] },
+              { "required": ["error"] }
+            ] }
+          }
+        },
+        {
+          "if": { "properties": { "status": { "const": "evaluated" } }, "required": ["status"] },
+          "then": {
+            "required": ["aggregate_decision", "decision_identity", "policy_snapshot_identity", "execution_graph_identity", "effect_set_identity"],
+            "properties": { "provider_execution": { "const": "disabled" } },
+            "not": { "required": ["error"] }
+          }
+        },
+        {
+          "if": { "properties": { "status": { "const": "unavailable" } }, "required": ["status"] },
+          "then": {
+            "required": ["error"],
+            "properties": { "provider_execution": { "const": "disabled" } },
+            "not": { "anyOf": [
+              { "required": ["aggregate_decision"] },
+              { "required": ["decision_identity"] },
+              { "required": ["policy_snapshot_identity"] },
+              { "required": ["execution_graph_identity"] },
+              { "required": ["effect_set_identity"] }
+            ] }
+          }
+        }
+      ]
+    },
     "harnessLaneCapability": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["lane_id", "lane_kind", "name", "command", "preflight"],
+      "required": ["lane_id", "lane_kind", "name", "command", "preflight", "effect_policy"],
       "properties": {
         "lane_id": { "type": "string" },
         "lane_kind": { "type": "string" },
@@ -907,13 +960,139 @@
         "environment_boundary": { "$ref": "#/$defs/harnessEnvironmentBoundary" },
         "preflight": { "$ref": "#/$defs/governancePreflightEvaluation" },
         "sandbox_policy": { "$ref": "#/$defs/harnessSandboxPolicy" },
+        "effect_policy": { "$ref": "#/$defs/harnessEffectPolicyBinding" },
         "effects": { "$ref": "#/$defs/taskEffects" },
         "blocked_task": { "type": "string" },
         "closure_path": {
           "type": "array",
           "items": { "type": "string" }
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "effect_policy": {
+                "properties": {
+                  "status": { "enum": ["evaluated", "unavailable"] }
+                },
+                "required": ["status"]
+              }
+            },
+            "required": ["effect_policy"]
+          },
+          "then": {
+            "properties": {
+              "preflight": {
+                "properties": { "state": { "const": "refused" } },
+                "required": ["state"]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "effect_policy": {
+                "properties": {
+                  "status": { "const": "evaluated" },
+                  "aggregate_decision": { "const": "deny" }
+                },
+                "required": ["status", "aggregate_decision"]
+              }
+            },
+            "required": ["effect_policy"]
+          },
+          "then": {
+            "properties": {
+              "preflight": {
+                "properties": {
+                  "state": { "const": "refused" },
+                  "refusal_reason_family": { "const": "effect_policy_denied" }
+                },
+                "required": ["state", "refusal_reason_family"]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "effect_policy": {
+                "properties": {
+                  "status": { "const": "evaluated" },
+                  "aggregate_decision": { "enum": ["allow", "warn"] }
+                },
+                "required": ["status", "aggregate_decision"]
+              }
+            },
+            "required": ["effect_policy"]
+          },
+          "then": {
+            "properties": {
+              "preflight": {
+                "properties": {
+                  "state": { "const": "refused" },
+                  "refusal_reason_family": { "const": "typed_effect_provider_execution_disabled" }
+                },
+                "required": ["state", "refusal_reason_family"]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "effect_policy": {
+                "properties": { "status": { "const": "unavailable" } },
+                "required": ["status"]
+              }
+            },
+            "required": ["effect_policy"]
+          },
+          "then": {
+            "properties": {
+              "preflight": {
+                "properties": {
+                  "state": { "const": "refused" },
+                  "refusal_reason_family": { "const": "effect_policy_unavailable" }
+                },
+                "required": ["state", "refusal_reason_family"]
+              }
+            }
+          }
+        }
+      ]
+    },
+    "harnessCallableLaneCapability": {
+      "allOf": [
+        { "$ref": "#/$defs/harnessLaneCapability" },
+        {
+          "properties": {
+            "preflight": {
+              "properties": { "state": { "const": "allowed" } },
+              "required": ["state"]
+            },
+            "effect_policy": {
+              "properties": { "status": { "const": "not_applicable" } },
+              "required": ["status"]
+            }
+          }
+        }
+      ]
+    },
+    "harnessRefusedLaneCapability": {
+      "allOf": [
+        { "$ref": "#/$defs/harnessLaneCapability" },
+        {
+          "properties": {
+            "preflight": {
+              "properties": { "state": { "const": "refused" } },
+              "required": ["state"]
+            }
+          }
+        }
+      ]
     },
     "harnessCapabilityProfile": {
       "type": "object",
@@ -938,19 +1117,19 @@
         },
         "callable_tasks": {
           "type": "array",
-          "items": { "$ref": "#/$defs/harnessLaneCapability" }
+          "items": { "$ref": "#/$defs/harnessCallableLaneCapability" }
         },
         "refused_tasks": {
           "type": "array",
-          "items": { "$ref": "#/$defs/harnessLaneCapability" }
+          "items": { "$ref": "#/$defs/harnessRefusedLaneCapability" }
         },
         "callable_workflows": {
           "type": "array",
-          "items": { "$ref": "#/$defs/harnessLaneCapability" }
+          "items": { "$ref": "#/$defs/harnessCallableLaneCapability" }
         },
         "refused_workflows": {
           "type": "array",
-          "items": { "$ref": "#/$defs/harnessLaneCapability" }
+          "items": { "$ref": "#/$defs/harnessRefusedLaneCapability" }
         }
       }
     }

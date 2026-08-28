@@ -744,9 +744,15 @@ mutation, receipts, archives, and positive assurance remain disabled. The select
 runtime-proof closure branch is separately green on Linux/x64 and macOS in
 [run 33166914327](https://github.com/ota-run/ota/actions/runs/33166914327) against Core
 `0f4db8e2a19367f4cfb6d6a4522ad3b007690bba`: typed denial occurs before proof artifacts, setup,
-workflow environment rendering, durable logs, or child startup. Step 4 is not complete across
-sandbox capability/projection; CI/provider-checkout re-evaluation now binds and re-derives typed
-effect-policy truth before provider setup or execution. Provider execution remains
+workflow environment rendering, durable logs, or child startup. Step 4 now also carries typed
+effect-policy posture through task/workflow harness capability output and live sandbox admission.
+Typed capability output binds the decision, policy snapshot, execution graph, and effect set;
+evaluated or unavailable typed posture is always paired with refused preflight. Live sandbox
+evaluation consumes the exact command admission instead of reconstructing the closure, origin,
+plans, or policy snapshot. Missing policy or denial refuses before provider capability evaluation,
+allow/warn remains provider-disabled, and malformed policy does not contaminate untyped capability
+lanes. CI/provider-checkout re-evaluation binds and re-derives typed effect-policy truth
+before provider setup or execution. Provider execution remains
 disabled, and V12 still requires its independent real-repository pressure bar before closure.
 
 1. Add the provider-neutral effect domain, canonical identities, origins, and derivation posture

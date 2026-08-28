@@ -97,8 +97,10 @@ use crate::doctor::{
     finding_targets_remote_backend, provisioning_installability_finding, resolve_command_path,
 };
 use crate::effect_orchestration::{
-    TypedEffectAdmission, admit_typed_effect_closure, build_typed_effect_closure_admission,
-    typed_effect_admission_refusal, typed_effect_policy_decision,
+    CommandTypedEffectAdmission, TypedEffectAdmission, admit_command_typed_effect_closure,
+    admit_typed_effect_closure, admit_typed_effect_closure_from_loaded_policy,
+    build_typed_effect_closure_admission, typed_effect_admission_refusal,
+    typed_effect_closure_applies, typed_effect_policy_decision,
     typed_effect_policy_decision_from_loaded_policy,
 };
 use crate::effect_policy::EffectPolicyInvocation;
@@ -144,17 +146,17 @@ use crate::output::{
     ExecutionTopologySharedBackendSummary, ExecutionTopologySuccess,
     ExecutionTopologyTargetServiceSummary, ExecutionTopologyTargetSummary,
     ExecutionTopologyTaskSummary, ExplainFailure, ExplainStep, ExplainSuccess, ExplainSummary,
-    HarnessCapabilityProfile, HarnessEnvironmentBoundary, HarnessLaneCapability, InitFailure,
-    InitPackAdvisory, InitPackAdvisorySignal, InitPackCatalogSuccess, InitPackInfo, InitPackOption,
-    InitPackSeeds, InitPreviewCandidate, InitSelectedPackOptions, InitSuccess,
-    LifecycleProofAssertion, LifecycleProofServiceRecord, LifecycleProofStatus,
-    ListedWorkflowSummary, MemberServicesSuccess, MemberTasksSuccess, MemberWorkflowsSuccess,
-    OutputFormat, PolicyInitFailure, PolicyInitSuccess, PolicyReviewSuccess, PolicyReviewSummary,
-    ProofRuntimeArchive, ProofRuntimeArtifacts, ProofRuntimeCrossingEvidence,
-    ProofRuntimeDependencyEvidence, ProofRuntimeDependencyObservation,
-    ProofRuntimeLikelyCauseEvidence, ProofRuntimeNegativeControl,
-    ProofRuntimeNegativeControlOutcome, ProofRuntimeNotProved, ProofRuntimeScope,
-    ProofRuntimeStatus, ReceiptDiffArtifactComparison, ReceiptDiffArtifactTrust,
+    HarnessCapabilityProfile, HarnessEffectPolicyBinding, HarnessEnvironmentBoundary,
+    HarnessLaneCapability, InitFailure, InitPackAdvisory, InitPackAdvisorySignal,
+    InitPackCatalogSuccess, InitPackInfo, InitPackOption, InitPackSeeds, InitPreviewCandidate,
+    InitSelectedPackOptions, InitSuccess, LifecycleProofAssertion, LifecycleProofServiceRecord,
+    LifecycleProofStatus, ListedWorkflowSummary, MemberServicesSuccess, MemberTasksSuccess,
+    MemberWorkflowsSuccess, OutputFormat, PolicyInitFailure, PolicyInitSuccess,
+    PolicyReviewSuccess, PolicyReviewSummary, ProofRuntimeArchive, ProofRuntimeArtifacts,
+    ProofRuntimeCrossingEvidence, ProofRuntimeDependencyEvidence,
+    ProofRuntimeDependencyObservation, ProofRuntimeLikelyCauseEvidence,
+    ProofRuntimeNegativeControl, ProofRuntimeNegativeControlOutcome, ProofRuntimeNotProved,
+    ProofRuntimeScope, ProofRuntimeStatus, ReceiptDiffArtifactComparison, ReceiptDiffArtifactTrust,
     ReceiptDiffArtifactTrustRole, ReceiptDiffBaseline, ReceiptDiffComparison,
     ReceiptDiffCorrelation, ReceiptDiffCounts, ReceiptDiffGate, ReceiptDiffReadinessChange,
     ReceiptDiffReplayHermeticity, ReceiptDiffReplayPosture, ReceiptDiffReplayPostureKind,
@@ -3389,30 +3391,31 @@ pub fn proof_lifecycle_with_grant(
             origin: String::from("lifecycle_assertion"),
         });
     }
-    match typed_effect_closure_refusal(
+    let typed_effect_admission = match admit_command_typed_effect_closure(
         &contract,
         &target.contract_path,
         Some(workflow_key),
         &typed_effect_roots,
         overrides,
+        Some(&current_effect_governance_overrides()),
     ) {
-        Ok(Some(error)) => {
-            return proof_typed_effect_admission_failure_output(
-                format,
-                "ota proof lifecycle",
-                &target.contract_path,
-                error,
-            );
-        }
-        Ok(None) => {}
+        Ok(admission) => admission,
         Err(error) => {
             return proof_typed_effect_admission_failure_output(
                 format,
                 "ota proof lifecycle",
                 &target.contract_path,
-                error,
+                *error,
             );
         }
+    };
+    if let Some(error) = typed_effect_admission_refusal(&typed_effect_admission.typed) {
+        return proof_typed_effect_admission_failure_output(
+            format,
+            "ota proof lifecycle",
+            &target.contract_path,
+            error,
+        );
     }
     let mut proof_task_closure = contract.selected_workflow_task_closure_names(Some(workflow_key));
     if let Some(assertion) = lifecycle.assertion.as_ref() {
@@ -3420,11 +3423,18 @@ pub fn proof_lifecycle_with_grant(
     }
     proof_task_closure.sort();
     proof_task_closure.dedup();
-    let replay_input_preflight = workflow_replay_input_preflight_for_closure(
+    let typed_policy_observed = typed_effect_admission.is_typed();
+    let CommandTypedEffectAdmission {
+        typed: typed_effect_admission,
+        loaded_policy,
+    } = typed_effect_admission;
+    let replay_input_preflight = workflow_replay_input_preflight_for_closure_with_retained_policy(
         &contract,
         &target.contract_path,
         workflow_key,
         proof_task_closure.clone(),
+        typed_policy_observed,
+        loaded_policy,
     );
     if let Err(failure) = evaluate_replay_input_admission(
         &contract,
@@ -3465,6 +3475,7 @@ pub fn proof_lifecycle_with_grant(
             overrides,
             true,
             None,
+            &typed_effect_admission,
             replay_input_preflight.loaded_policy.as_ref(),
         ) {
             Ok(Some(_)) => {
@@ -18401,25 +18412,195 @@ fn task_harness_environment_boundary(task: &TaskSummary<'_>) -> Option<HarnessEn
     })
 }
 
+fn harness_effect_policy_binding(
+    contract: &Contract,
+    contract_path: &Path,
+    workflow_name: Option<&str>,
+    roots: &[EffectPolicyInvocation],
+    loaded_policy: Result<Option<&LoadedOrgPolicyPack>, &str>,
+) -> HarnessEffectPolicyBinding {
+    let typed_applicable =
+        match typed_effect_closure_applies(contract, roots, ExecutionOverrides::default()) {
+            Ok(applicable) => applicable,
+            Err(error) => {
+                return HarnessEffectPolicyBinding {
+                    status: String::from("unavailable"),
+                    aggregate_decision: None,
+                    decision_identity: None,
+                    policy_snapshot_identity: None,
+                    execution_graph_identity: None,
+                    effect_set_identity: None,
+                    provider_execution: String::from("disabled"),
+                    error: Some(error.to_string()),
+                };
+            }
+        };
+    if !typed_applicable {
+        return HarnessEffectPolicyBinding {
+            status: String::from("not_applicable"),
+            aggregate_decision: None,
+            decision_identity: None,
+            policy_snapshot_identity: None,
+            execution_graph_identity: None,
+            effect_set_identity: None,
+            provider_execution: String::from("not_applicable"),
+            error: None,
+        };
+    }
+    let loaded_policy = match loaded_policy {
+        Ok(loaded) => loaded,
+        Err(error) => {
+            return HarnessEffectPolicyBinding {
+                status: String::from("unavailable"),
+                aggregate_decision: None,
+                decision_identity: None,
+                policy_snapshot_identity: None,
+                execution_graph_identity: None,
+                effect_set_identity: None,
+                provider_execution: String::from("disabled"),
+                error: Some(error.to_string()),
+            };
+        }
+    };
+    let admission = match admit_typed_effect_closure_from_loaded_policy(
+        contract,
+        contract_path,
+        workflow_name,
+        roots,
+        ExecutionOverrides::default(),
+        loaded_policy,
+        Some(&current_effect_governance_overrides()),
+    ) {
+        Ok(admission) => admission,
+        Err(error) => {
+            return HarnessEffectPolicyBinding {
+                status: String::from("unavailable"),
+                aggregate_decision: None,
+                decision_identity: None,
+                policy_snapshot_identity: None,
+                execution_graph_identity: None,
+                effect_set_identity: None,
+                provider_execution: String::from("disabled"),
+                error: Some(error.to_string()),
+            };
+        }
+    };
+    if admission.closure.application_plans.is_empty() {
+        return HarnessEffectPolicyBinding {
+            status: String::from("unavailable"),
+            aggregate_decision: None,
+            decision_identity: None,
+            policy_snapshot_identity: None,
+            execution_graph_identity: None,
+            effect_set_identity: None,
+            provider_execution: String::from("disabled"),
+            error: Some(String::from(
+                "typed effect capability did not retain its application plans",
+            )),
+        };
+    }
+    match admission.policy_decision {
+        Some(decision) => HarnessEffectPolicyBinding {
+            status: String::from("evaluated"),
+            aggregate_decision: Some(decision.aggregate_decision.as_str().to_string()),
+            decision_identity: Some(decision.identity),
+            policy_snapshot_identity: Some(decision.policy_snapshot_identity),
+            execution_graph_identity: Some(decision.execution_graph_identity),
+            effect_set_identity: Some(decision.effect_set_identity),
+            provider_execution: String::from("disabled"),
+            error: None,
+        },
+        None => HarnessEffectPolicyBinding {
+            status: String::from("unavailable"),
+            aggregate_decision: None,
+            decision_identity: None,
+            policy_snapshot_identity: None,
+            execution_graph_identity: None,
+            effect_set_identity: None,
+            provider_execution: String::from("disabled"),
+            error: Some(String::from(
+                "typed effect capability did not produce an effect-policy decision",
+            )),
+        },
+    }
+}
+
+fn bind_effect_policy_to_harness_preflight(
+    preflight: &mut crate::output::GovernancePreflightEvaluation,
+    binding: &HarnessEffectPolicyBinding,
+) {
+    if binding.status == "not_applicable" {
+        return;
+    }
+    let reason = if binding.status == "unavailable" {
+        "effect_policy_unavailable"
+    } else if binding.aggregate_decision.as_deref() == Some("deny") {
+        "effect_policy_denied"
+    } else {
+        "typed_effect_provider_execution_disabled"
+    };
+    preflight.state = String::from("refused");
+    preflight.review_required = Some(true);
+    preflight.refusal_reason_family = Some(reason.to_string());
+    preflight
+        .decision_basis
+        .push(crate::output::GovernanceDecisionBasisEntry {
+            id: format!("effect_policy:{reason}"),
+            family: String::from("effect_policy_gate"),
+            evidence_class: String::from("derived"),
+            detail: binding.decision_identity.clone(),
+        });
+    preflight
+        .decision_inputs
+        .push(crate::output::GovernanceDecisionInputEntry {
+            id: binding.decision_identity.as_ref().map_or_else(
+                || format!("effect_policy:{reason}"),
+                |identity| format!("effect_policy_decision:{identity}"),
+            ),
+            family: String::from("effect_policy_decision"),
+            evidence_class: String::from("derived"),
+            replay_class: String::from("pinned"),
+            detail: binding.aggregate_decision.clone(),
+        });
+    preflight.evidence_classes.review_required = Some(String::from("derived"));
+    preflight.evidence_classes.refusal_reason_family = Some(String::from("derived"));
+    preflight.replay = reconcile_preflight_replay(preflight);
+}
+
 fn task_harness_capability(
     contract: &Contract,
+    contract_path: &Path,
     agent: Option<&AgentSummary<'_>>,
     task: &TaskSummary<'_>,
+    loaded_policy: Result<Option<&LoadedOrgPolicyPack>, &str>,
 ) -> HarnessLaneCapability {
     let refusal =
         agent_execution_refusal_for_task(contract, task.name, ExecutionOverrides::default());
     let effects =
         collect_task_closure_effects_summary(contract, task.name, ExecutionOverrides::default());
+    let effect_policy = harness_effect_policy_binding(
+        contract,
+        contract_path,
+        None,
+        &[EffectPolicyInvocation {
+            task: task.name.to_string(),
+            origin: String::from("task_capability"),
+        }],
+        loaded_policy,
+    );
+    let mut preflight = harness_preflight_for_task(task, refusal.as_ref());
+    bind_effect_policy_to_harness_preflight(&mut preflight, &effect_policy);
     HarnessLaneCapability {
         lane_id: format!("task:{}", task.name),
         lane_kind: String::from("task"),
         name: task.name.to_string(),
         command: format!("ota run {} --agent", task.name),
         environment_boundary: task_harness_environment_boundary(task),
-        preflight: harness_preflight_for_task(task, refusal.as_ref()),
+        preflight,
         sandbox_policy: Some(compiled_codex_local_sandbox_policy_for_task(
             contract, agent, task.name, &effects,
         )),
+        effect_policy,
         effects: (!effects.is_empty()).then_some(effects),
         blocked_task: refusal.as_ref().map(|entry| entry.blocked_task.clone()),
         closure_path: refusal.map(|entry| entry.path).unwrap_or_default(),
@@ -18594,25 +18775,37 @@ fn harness_preflight_for_workflow(
 
 fn workflow_harness_capability(
     contract: &Contract,
+    contract_path: &Path,
     agent: Option<&AgentSummary<'_>>,
     workflow: &WorkflowSummary<'_>,
+    loaded_policy: Result<Option<&LoadedOrgPolicyPack>, &str>,
 ) -> HarnessLaneCapability {
     let selector = workflow_selector_from_summary(workflow);
     let refusal = workflow_agent_refusal(contract, workflow.name);
     let effects = workflow_effects_summary(contract, workflow.name);
+    let effect_policy = harness_effect_policy_binding(
+        contract,
+        contract_path,
+        Some(workflow.name),
+        selected_workflow_phase_task_roots(contract, Some(workflow.name)).as_slice(),
+        loaded_policy,
+    );
+    let mut preflight = harness_preflight_for_workflow(contract, workflow, refusal.as_ref());
+    bind_effect_policy_to_harness_preflight(&mut preflight, &effect_policy);
     HarnessLaneCapability {
         lane_id: format!("workflow:{selector}"),
         lane_kind: String::from("workflow"),
         name: selector.clone(),
         command: format!("ota up --workflow {selector} --agent"),
         environment_boundary: workflow_harness_environment_boundary(contract, workflow),
-        preflight: harness_preflight_for_workflow(contract, workflow, refusal.as_ref()),
+        preflight,
         sandbox_policy: Some(compiled_codex_local_sandbox_policy_for_workflow(
             contract,
             agent,
             workflow.name,
             &effects,
         )),
+        effect_policy,
         effects: (!effects.is_empty()).then_some(effects),
         blocked_task: refusal.as_ref().map(|entry| entry.blocked_task.clone()),
         closure_path: refusal.map(|entry| entry.path).unwrap_or_default(),
@@ -18863,14 +19056,31 @@ fn effective_runtime_boundary_for_workflow(
 
 fn harness_capability_profile_for_tasks(
     contract: &Contract,
+    contract_path: &Path,
     agent: Option<&AgentSummary<'_>>,
     tasks: &[TaskSummary<'_>],
 ) -> HarnessCapabilityProfile {
+    let loaded_policy = load_org_policy_pack_auto_details(contract_path);
+    let loaded_policy = loaded_policy
+        .as_ref()
+        .map(|loaded| loaded.as_ref())
+        .map_err(|error| error.to_string());
     let mut callable_tasks = Vec::new();
     let mut refused_tasks = Vec::new();
     for task in tasks {
-        let capability = task_harness_capability(contract, agent, task);
-        if capability.preflight.state == "allowed" {
+        let capability = task_harness_capability(
+            contract,
+            contract_path,
+            agent,
+            task,
+            loaded_policy
+                .as_ref()
+                .map(|loaded| *loaded)
+                .map_err(String::as_str),
+        );
+        if capability.preflight.state == "allowed"
+            && capability.effect_policy.status == "not_applicable"
+        {
             callable_tasks.push(capability);
         } else {
             refused_tasks.push(capability);
@@ -18899,14 +19109,31 @@ fn harness_capability_profile_for_tasks(
 
 fn harness_capability_profile_for_workflows(
     contract: &Contract,
+    contract_path: &Path,
     agent: Option<&AgentSummary<'_>>,
     workflows: &[ListedWorkflowSummary<'_>],
 ) -> HarnessCapabilityProfile {
+    let loaded_policy = load_org_policy_pack_auto_details(contract_path);
+    let loaded_policy = loaded_policy
+        .as_ref()
+        .map(|loaded| loaded.as_ref())
+        .map_err(|error| error.to_string());
     let mut callable_workflows = Vec::new();
     let mut refused_workflows = Vec::new();
     for listed in workflows {
-        let capability = workflow_harness_capability(contract, agent, &listed.workflow);
-        if capability.preflight.state == "allowed" {
+        let capability = workflow_harness_capability(
+            contract,
+            contract_path,
+            agent,
+            &listed.workflow,
+            loaded_policy
+                .as_ref()
+                .map(|loaded| *loaded)
+                .map_err(String::as_str),
+        );
+        if capability.preflight.state == "allowed"
+            && capability.effect_policy.status == "not_applicable"
+        {
             callable_workflows.push(capability);
         } else {
             refused_workflows.push(capability);
@@ -19161,6 +19388,7 @@ pub fn tasks(
                         ));
                         let member_capability_profile = Some(harness_capability_profile_for_tasks(
                             &member_target.contract,
+                            &member_target.contract_path,
                             member_agent.as_ref(),
                             &member_tasks,
                         ));
@@ -19175,6 +19403,7 @@ pub fn tasks(
 
                     let capability_profile = Some(harness_capability_profile_for_tasks(
                         contract,
+                        &target.contract_path,
                         agent_summary.as_ref(),
                         &task_summaries,
                     ));
@@ -19195,6 +19424,7 @@ pub fn tasks(
                 } else {
                     let capability_profile = Some(harness_capability_profile_for_tasks(
                         contract,
+                        &target.contract_path,
                         agent_summary.as_ref(),
                         &task_summaries,
                     ));
@@ -19298,6 +19528,7 @@ pub fn tasks(
                     ));
                     let capability_profile = Some(harness_capability_profile_for_tasks(
                         &target.contract,
+                        &target.contract_path,
                         agent.as_ref(),
                         &tasks,
                     ));
@@ -19888,6 +20119,7 @@ pub fn workflows(
                             default: member_default,
                             capability_profile: Some(harness_capability_profile_for_workflows(
                                 &member_target.contract,
+                                &member_target.contract_path,
                                 member_agent.as_ref(),
                                 &member_workflows,
                             )),
@@ -19910,6 +20142,7 @@ pub fn workflows(
                             default,
                             capability_profile: Some(harness_capability_profile_for_workflows(
                                 &target.contract,
+                                &target.contract_path,
                                 agent.as_ref(),
                                 &workflows,
                             )),
@@ -19936,6 +20169,7 @@ pub fn workflows(
                             default,
                             capability_profile: Some(harness_capability_profile_for_workflows(
                                 &target.contract,
+                                &target.contract_path,
                                 agent.as_ref(),
                                 &workflows,
                             )),
@@ -20025,6 +20259,7 @@ pub fn workflows(
                         default,
                         capability_profile: Some(harness_capability_profile_for_workflows(
                             &target.contract,
+                            &target.contract_path,
                             agent.as_ref(),
                             &workflows,
                         )),
@@ -21930,15 +22165,36 @@ fn workflow_replay_input_preflight_for_closure(
     workflow_name: &str,
     closure: Vec<String>,
 ) -> TaskReplayInputPreflight {
+    workflow_replay_input_preflight_for_closure_with_retained_policy(
+        contract,
+        contract_path,
+        workflow_name,
+        closure,
+        false,
+        None,
+    )
+}
+
+fn workflow_replay_input_preflight_for_closure_with_retained_policy(
+    contract: &Contract,
+    contract_path: &Path,
+    workflow_name: &str,
+    closure: Vec<String>,
+    policy_observed: bool,
+    retained_policy: Option<LoadedOrgPolicyPack>,
+) -> TaskReplayInputPreflight {
     let observations = observe_replay_inputs(
         contract,
         contract_path.parent().unwrap_or_else(|| Path::new(".")),
         closure.clone(),
     );
-    let (loaded_policy, policy_load_error) = match load_org_policy_pack_auto_details(contract_path)
-    {
-        Ok(policy) => (policy, None),
-        Err(error) => (None, Some(error.to_string())),
+    let (loaded_policy, policy_load_error) = if policy_observed {
+        (retained_policy, None)
+    } else {
+        match load_org_policy_pack_auto_details(contract_path) {
+            Ok(policy) => (policy, None),
+            Err(error) => (None, Some(error.to_string())),
+        }
     };
     let policy = loaded_policy.as_ref().map(|loaded| {
         evaluate_replay_input_policy_for_closure_with_observations(
@@ -21964,15 +22220,34 @@ fn task_replay_input_preflight(
     contract_path: &Path,
     task_name: &str,
 ) -> TaskReplayInputPreflight {
+    task_replay_input_preflight_with_retained_policy(
+        contract,
+        contract_path,
+        task_name,
+        false,
+        None,
+    )
+}
+
+fn task_replay_input_preflight_with_retained_policy(
+    contract: &Contract,
+    contract_path: &Path,
+    task_name: &str,
+    policy_observed: bool,
+    retained_policy: Option<LoadedOrgPolicyPack>,
+) -> TaskReplayInputPreflight {
     let observations = observe_replay_inputs(
         contract,
         contract_path.parent().unwrap_or_else(|| Path::new(".")),
         [task_name.to_string()],
     );
-    let (loaded_policy, policy_load_error) = match load_org_policy_pack_auto_details(contract_path)
-    {
-        Ok(policy) => (policy, None),
-        Err(error) => (None, Some(error.to_string())),
+    let (loaded_policy, policy_load_error) = if policy_observed {
+        (retained_policy, None)
+    } else {
+        match load_org_policy_pack_auto_details(contract_path) {
+            Ok(policy) => (policy, None),
+            Err(error) => (None, Some(error.to_string())),
+        }
     };
     let policy = task_replay_input_policy_with_observations(
         contract,
@@ -22935,37 +23210,15 @@ fn render_run_preview_target(
         task: task_name.clone(),
         origin: String::from("run_preview"),
     }];
-    let typed_effect_closure = match build_typed_effect_closure_admission(
-        &target.contract,
-        &target.contract_path,
-        &typed_effect_roots,
-        overrides,
-    ) {
-        Ok(closure) => closure,
-        Err(error) => {
-            let error = render_run_error(*error);
-            return match format {
-                OutputFormat::Text => {
-                    CommandOutput::failure(stylize_text_failure("ota run", &error))
-                }
-                OutputFormat::Json => CommandOutput::failure(run_preview_error_json(
-                    target.contract_path.display().to_string(),
-                    member,
-                    task_name.as_str(),
-                    error,
-                )),
-            };
-        }
-    };
-    let effect_policy_decision = match typed_effect_policy_decision(
+    let typed_effect_admission = match admit_command_typed_effect_closure(
         &target.contract,
         &target.contract_path,
         None,
-        task_name.as_str(),
-        &typed_effect_closure,
+        &typed_effect_roots,
+        overrides,
         Some(&current_effect_governance_overrides()),
     ) {
-        Ok(decision) => decision,
+        Ok(admission) => admission,
         Err(error) => {
             let error = render_run_error(*error);
             return match format {
@@ -22981,8 +23234,19 @@ fn render_run_preview_target(
             };
         }
     };
-    let replay_input_preflight =
-        task_replay_input_preflight(&target.contract, &target.contract_path, task_name.as_str());
+    let typed_policy_observed = typed_effect_admission.is_typed();
+    let CommandTypedEffectAdmission {
+        typed: typed_effect_admission,
+        loaded_policy,
+    } = typed_effect_admission;
+    let effect_policy_decision = typed_effect_admission.policy_decision.clone();
+    let replay_input_preflight = task_replay_input_preflight_with_retained_policy(
+        &target.contract,
+        &target.contract_path,
+        task_name.as_str(),
+        typed_policy_observed,
+        loaded_policy,
+    );
     if let Some(error) = replay_input_preflight.policy_load_error.as_ref() {
         return render_replay_input_policy_unavailable_preview(
             format,
@@ -23054,6 +23318,7 @@ fn render_run_preview_target(
         overrides,
         agent,
         sandbox_target,
+        &typed_effect_admission,
         replay_input_preflight.loaded_policy.as_ref(),
     ) {
         Ok(admission) => admission,
@@ -23178,7 +23443,8 @@ fn render_run_preview_target(
                     persist_logs,
                 )
             };
-            plan.effect_application_plans = typed_effect_closure.application_plans.clone();
+            plan.effect_application_plans =
+                typed_effect_admission.closure.application_plans.clone();
             plan.effect_policy_decision = effect_policy_decision.clone();
             let summary = DoctorSummary {
                 verdict: DoctorVerdict::NotReady,
@@ -23322,7 +23588,7 @@ fn render_run_preview_target(
         &execution_plan,
         persist_logs,
     );
-    plan.effect_application_plans = typed_effect_closure.application_plans;
+    plan.effect_application_plans = typed_effect_admission.closure.application_plans;
     plan.effect_policy_decision = effect_policy_decision;
     let preconditions_report = run_preview_preconditions_report(
         &target.contract,
@@ -78253,6 +78519,245 @@ agent:
             json["capability_profile"]["protected_paths"][0],
             ".github/workflows"
         );
+        assert_eq!(
+            json["capability_profile"]["callable_tasks"][0]["effect_policy"]["status"],
+            "not_applicable"
+        );
+    }
+
+    #[test]
+    fn tasks_json_binds_typed_effect_policy_and_refuses_provider_capability() {
+        use sha2::{Digest as _, Sha256};
+
+        let _guard = crate::test_support::env_mutex_lock();
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        fs::create_dir_all(repo.path().join("migrations")).expect("migration directory");
+        fs::create_dir_all(repo.path().join(".ota")).expect("policy directory");
+        let migration_bytes = b"create table capability_binding ();\n";
+        fs::write(repo.path().join("migrations/001.sql"), migration_bytes)
+            .expect("migration should write");
+        let file_identity = format!("sha256:{:x}", Sha256::digest(migration_bytes));
+        let manifest = serde_json::json!({
+            "schema_version": 1,
+            "root": "migrations",
+            "files": [{ "path": "001.sql", "identity": file_identity }]
+        });
+        let mut manifest_identity_bytes = b"ota.schema-migration-manifest.v1\0".to_vec();
+        manifest_identity_bytes
+            .extend(serde_jcs::to_vec(&manifest).expect("manifest canonicalizes"));
+        let manifest_identity = format!("sha256:{:x}", Sha256::digest(manifest_identity_bytes));
+        fs::write(
+            repo.path().join("ota.yaml"),
+            format!(
+                "version: 1\nproject:\n  name: typed-capability\nresource_bindings:\n  primary:\n    kind: database\n    provider: postgresql\n    namespace: {{ authority: dns:example.org, environment: production }}\neffect_definitions:\n  migration:\n    kind: database_schema_mutation\n    action: apply_migration_set\n    resource: {{ engine: postgresql, target_ref: primary, schema: public }}\n    bounds:\n      migration_set: {{ root: migrations, content_identity: {manifest_identity} }}\n      start_state: any_within_set\ntasks:\n  migrate:\n    safe_for_agent: true\n    action: {{ kind: database_schema_mutation, effect: migration }}\n    effects:\n      declared: [migration]\nworkflows:\n  default: migrate\n  migrate:\n    run:\n      task: migrate\nagent:\n  safe_tasks: [migrate]\n"
+            ),
+        )
+        .expect("contract should write");
+        fs::write(
+            repo.path().join(".ota/org-policy.yaml"),
+            "policies:\n  effects:\n    mode: compatibility\n",
+        )
+        .expect("policy should write");
+
+        let output = super::tasks(
+            Some(repo.path()),
+            None,
+            &[],
+            None,
+            false,
+            false,
+            false,
+            false,
+            None,
+            OutputFormat::Json,
+            false,
+        );
+        assert_eq!(output.exit_code, 0, "{}", output.stdout);
+        let json: serde_json::Value = serde_json::from_str(&output.stdout).expect("tasks json");
+        assert!(json["capability_profile"]["callable_tasks"].is_null());
+        let binding = &json["capability_profile"]["refused_tasks"][0]["effect_policy"];
+        assert_eq!(
+            json["capability_profile"]["refused_tasks"][0]["preflight"]["state"],
+            "refused"
+        );
+        assert_eq!(
+            json["capability_profile"]["refused_tasks"][0]["preflight"]["refusal_reason_family"],
+            "typed_effect_provider_execution_disabled"
+        );
+        assert_eq!(binding["status"], "evaluated");
+        assert_eq!(binding["aggregate_decision"], "warn");
+        assert_eq!(binding["provider_execution"], "disabled");
+        for field in [
+            "decision_identity",
+            "policy_snapshot_identity",
+            "execution_graph_identity",
+            "effect_set_identity",
+        ] {
+            assert!(
+                binding[field]
+                    .as_str()
+                    .is_some_and(|value| value.starts_with("sha256:"))
+            );
+        }
+        let workflows = super::workflows(Some(repo.path()), None, &[], OutputFormat::Json, false);
+        assert_eq!(workflows.exit_code, 0, "{}", workflows.stdout);
+        let workflows: serde_json::Value =
+            serde_json::from_str(&workflows.stdout).expect("workflows json");
+        let workflow = &workflows["capability_profile"]["refused_workflows"][0];
+        assert_eq!(workflow["lane_id"], "workflow:migrate");
+        assert_eq!(workflow["preflight"]["state"], "refused");
+        assert_eq!(workflow["effect_policy"]["status"], "evaluated");
+        assert_eq!(workflow["effect_policy"]["aggregate_decision"], "warn");
+
+        fs::write(
+            repo.path().join(".ota/org-policy.yaml"),
+            "policies:\n  effects:\n    mode: compatibility\n    typed:\n      rules:\n        - id: deny_production_migration\n          selector:\n            kind: database_schema_mutation\n            actions: [apply_migration_set]\n            resource:\n              match: exact\n              engine: postgresql\n              namespace: { authority: dns:example.org, environment: production }\n              schema: public\n          decision: deny\n",
+        )
+        .expect("denying policy should write");
+        let contract_path = repo.path().join("ota.yaml");
+        let contract = parse_contract_str(
+            &contract_path,
+            &fs::read_to_string(&contract_path).expect("contract should read"),
+        )
+        .expect("contract should parse");
+        let loaded_policy = super::load_org_policy_pack_auto_details(&contract_path)
+            .expect("policy should load")
+            .expect("policy should exist");
+        let task_admission = super::admit_typed_effect_closure_from_loaded_policy(
+            &contract,
+            &contract_path,
+            None,
+            &[super::EffectPolicyInvocation {
+                task: String::from("migrate"),
+                origin: String::from("run"),
+            }],
+            ExecutionOverrides::default(),
+            Some(&loaded_policy),
+            Some(&super::current_effect_governance_overrides()),
+        )
+        .expect("task command admission should derive");
+        let retained_decision_identity = task_admission
+            .policy_decision
+            .as_ref()
+            .expect("task command decision")
+            .identity
+            .clone();
+        let sandbox_decision = super::sandbox_typed_effect_policy_decision(&task_admission)
+            .expect_err("the retained denied decision must refuse sandbox admission");
+        assert_eq!(sandbox_decision.kind, "sandbox_effect_policy_denied");
+        assert!(
+            sandbox_decision
+                .message
+                .contains(&retained_decision_identity)
+        );
+        let denied = super::resolve_task_sandbox_admission(
+            &contract,
+            &contract_path,
+            "migrate",
+            ExecutionOverrides::default(),
+            true,
+            Some(crate::sandbox_policy::OCI_LOCAL_TARGET),
+            &task_admission,
+            Some(&loaded_policy),
+        )
+        .expect_err("typed denial must precede sandbox provider evaluation");
+        assert_eq!(denied.kind, "sandbox_effect_policy_denied");
+        assert!(denied.canonical_policy_identity.is_none());
+        assert!(denied.effective_policy_identity.is_none());
+        let workflow_roots = super::selected_workflow_phase_task_roots(&contract, Some("migrate"));
+        let workflow_admission = super::admit_typed_effect_closure_from_loaded_policy(
+            &contract,
+            &contract_path,
+            Some("migrate"),
+            workflow_roots.as_slice(),
+            ExecutionOverrides::default(),
+            Some(&loaded_policy),
+            Some(&super::current_effect_governance_overrides()),
+        )
+        .expect("workflow command admission should derive");
+        let denied_workflow = super::resolve_workflow_sandbox_admission(
+            &contract,
+            &contract_path,
+            Some("migrate"),
+            ExecutionOverrides::default(),
+            true,
+            Some(crate::sandbox_policy::OCI_LOCAL_TARGET),
+            &workflow_admission,
+            Some(&loaded_policy),
+        )
+        .expect_err("workflow denial must precede sandbox provider evaluation");
+        assert_eq!(denied_workflow.kind, "sandbox_effect_policy_denied");
+        assert!(denied_workflow.canonical_policy_identity.is_none());
+
+        fs::write(repo.path().join(".ota/org-policy.yaml"), "policies: [")
+            .expect("malformed policy should write");
+        let unavailable = super::tasks(
+            Some(repo.path()),
+            None,
+            &[],
+            None,
+            false,
+            false,
+            false,
+            false,
+            None,
+            OutputFormat::Json,
+            false,
+        );
+        let unavailable: serde_json::Value =
+            serde_json::from_str(&unavailable.stdout).expect("tasks json");
+        let binding = &unavailable["capability_profile"]["refused_tasks"][0]["effect_policy"];
+        assert_eq!(
+            unavailable["capability_profile"]["refused_tasks"][0]["preflight"]["refusal_reason_family"],
+            "effect_policy_unavailable"
+        );
+        assert_eq!(binding["status"], "unavailable");
+        assert_eq!(binding["provider_execution"], "disabled");
+        assert!(
+            binding["error"]
+                .as_str()
+                .is_some_and(|value| !value.is_empty())
+        );
+        assert!(binding.get("decision_identity").is_none());
+
+        fs::write(
+            repo.path().join("ota.yaml"),
+            "version: 1\nproject:\n  name: untyped-capability\ntasks:\n  verify:\n    safe_for_agent: true\n    run: cargo test\nworkflows:\n  default: verify\n  verify:\n    run:\n      task: verify\nagent:\n  safe_tasks: [verify]\n",
+        )
+        .expect("untyped contract should write");
+        let untyped_tasks = super::tasks(
+            Some(repo.path()),
+            None,
+            &[],
+            None,
+            false,
+            false,
+            false,
+            false,
+            None,
+            OutputFormat::Json,
+            false,
+        );
+        assert_eq!(untyped_tasks.exit_code, 0, "{}", untyped_tasks.stdout);
+        let untyped_tasks: serde_json::Value =
+            serde_json::from_str(&untyped_tasks.stdout).expect("untyped tasks json");
+        assert_eq!(
+            untyped_tasks["capability_profile"]["callable_tasks"][0]["effect_policy"]["status"],
+            "not_applicable"
+        );
+        let untyped_workflows =
+            super::workflows(Some(repo.path()), None, &[], OutputFormat::Json, false);
+        assert_eq!(
+            untyped_workflows.exit_code, 0,
+            "{}",
+            untyped_workflows.stdout
+        );
+        let untyped_workflows: serde_json::Value =
+            serde_json::from_str(&untyped_workflows.stdout).expect("untyped workflows json");
+        assert_eq!(
+            untyped_workflows["capability_profile"]["callable_workflows"][0]["effect_policy"]["status"],
+            "not_applicable"
+        );
     }
 
     #[test]
@@ -108636,16 +109141,23 @@ fn run_single_contract_target(
 ) -> Result<String, RunCommandFailure> {
     let details_footer = task_use_details_footer(Some(&target.contract_path), member);
     let selected_task_name = canonical_declared_task_name(&target.contract, task_name);
-    enforce_typed_effect_pre_execution_boundary(
+    let typed_effect_admission = enforce_typed_effect_pre_execution_boundary(
         &target.contract,
         &target.contract_path,
         selected_task_name.as_str(),
         overrides,
     )?;
-    let replay_input_preflight = task_replay_input_preflight(
+    let typed_policy_observed = typed_effect_admission.is_typed();
+    let CommandTypedEffectAdmission {
+        typed: typed_effect_admission,
+        loaded_policy,
+    } = typed_effect_admission;
+    let replay_input_preflight = task_replay_input_preflight_with_retained_policy(
         &target.contract,
         &target.contract_path,
         selected_task_name.as_str(),
+        typed_policy_observed,
+        loaded_policy,
     );
     enforce_task_replay_input_preflight(
         &target.contract,
@@ -108701,6 +109213,7 @@ fn run_single_contract_target(
         overrides,
         agent,
         sandbox_target,
+        &typed_effect_admission,
         replay_input_preflight.loaded_policy.as_ref(),
     )
     .map_err(|error| {
@@ -108940,19 +109453,26 @@ fn enforce_typed_effect_pre_execution_boundary(
     contract_path: &Path,
     task_name: &str,
     overrides: ExecutionOverrides,
-) -> Result<(), RunCommandFailure> {
+) -> Result<CommandTypedEffectAdmission, RunCommandFailure> {
     let roots = [EffectPolicyInvocation {
         task: task_name.to_string(),
         origin: String::from("run"),
     }];
-    let error = typed_effect_closure_refusal(contract, contract_path, None, &roots, overrides)
-        .map_err(|error| RunCommandFailure {
-            message: stylize_text_failure("ota run", &render_run_error(error)),
-            summary: None,
-            exit_code: 1,
-            receipt: None,
-        })?;
-    if let Some(error) = error {
+    let admission = admit_command_typed_effect_closure(
+        contract,
+        contract_path,
+        None,
+        &roots,
+        overrides,
+        Some(&current_effect_governance_overrides()),
+    )
+    .map_err(|error| RunCommandFailure {
+        message: stylize_text_failure("ota run", &render_run_error(*error)),
+        summary: None,
+        exit_code: 1,
+        receipt: None,
+    })?;
+    if let Some(error) = typed_effect_admission_refusal(&admission.typed) {
         return Err(RunCommandFailure {
             message: stylize_text_failure("ota run", &render_run_error(error)),
             summary: None,
@@ -108960,7 +109480,7 @@ fn enforce_typed_effect_pre_execution_boundary(
             receipt: None,
         });
     }
-    Ok(())
+    Ok(admission)
 }
 
 fn selected_workflow_phase_task_roots(
@@ -109027,6 +109547,7 @@ fn typed_effect_closure_admission(
 
 #[derive(Debug, Clone)]
 struct ResolvedSandboxAdmission {
+    effect_policy_decision: Option<crate::effect_policy::EffectPolicyDecision>,
     policy: crate::sandbox_policy::SandboxPolicy,
     effective: crate::sandbox_policy::EffectiveSandboxPolicy,
     evaluation: crate::sandbox_policy::ProviderApplicationEvaluation,
@@ -109052,12 +109573,53 @@ fn sandbox_admission_json(admission: &ResolvedSandboxAdmission) -> JsonValue {
         "decision": "admitted",
         "resolution": admission.resolution,
         "provider_target": admission.evaluation.provider_target,
+        "effect_policy_decision": admission.effect_policy_decision,
         "canonical_policy": admission.policy,
         "restriction_overlay_identities": admission.effective.restriction_overlay_identities,
         "effective_policy": admission.effective,
         "provider_evaluation": admission.evaluation,
         "application_plan_identity": admission.plan.as_ref().map(|plan| plan.identity.as_str()),
     })
+}
+
+fn sandbox_typed_effect_policy_decision(
+    admission: &TypedEffectAdmission,
+) -> Result<Option<crate::effect_policy::EffectPolicyDecision>, SandboxAdmissionError> {
+    if admission.closure.application_plans.is_empty() {
+        return Ok(None);
+    }
+    let Some(decision) = admission.policy_decision.as_ref() else {
+        return Err(SandboxAdmissionError {
+            kind: "sandbox_effect_policy_unavailable",
+            requested_target: None,
+            resolved_target: None,
+            canonical_policy_identity: None,
+            restriction_overlay_identities: Vec::new(),
+            effective_policy_identity: None,
+            refusals: Vec::new(),
+            supported_alternatives: Vec::new(),
+            message: String::from(
+                "typed sandbox admission requires a command-scoped effect-policy decision",
+            ),
+        });
+    };
+    if decision.aggregate_decision == PolicyEffectDecision::Deny {
+        return Err(SandboxAdmissionError {
+            kind: "sandbox_effect_policy_denied",
+            requested_target: None,
+            resolved_target: None,
+            canonical_policy_identity: None,
+            restriction_overlay_identities: Vec::new(),
+            effective_policy_identity: None,
+            refusals: Vec::new(),
+            supported_alternatives: Vec::new(),
+            message: format!(
+                "typed effect-policy decision `{}` denied provider admission before sandbox capability evaluation",
+                decision.identity
+            ),
+        });
+    }
+    Ok(Some(decision.clone()))
 }
 
 fn render_sandbox_admission_preview(admission: &ResolvedSandboxAdmission) -> String {
@@ -109111,6 +109673,7 @@ fn resolve_task_sandbox_admission(
     overrides: ExecutionOverrides,
     agent: bool,
     requested_target: Option<&str>,
+    typed_effect_admission: &TypedEffectAdmission,
     loaded_policy: Option<&LoadedOrgPolicyPack>,
 ) -> Result<Option<ResolvedSandboxAdmission>, SandboxAdmissionError> {
     let requested_target = requested_target
@@ -109136,6 +109699,7 @@ fn resolve_task_sandbox_admission(
     if !agent && requested_target.is_none() {
         return Ok(None);
     }
+    let effect_policy_decision = sandbox_typed_effect_policy_decision(typed_effect_admission)?;
     let task_has_runtime_boundary = contract
         .execution
         .as_ref()
@@ -109186,6 +109750,7 @@ fn resolve_task_sandbox_admission(
         })?;
     resolve_sandbox_policy_admission(
         policy,
+        effect_policy_decision,
         contract_path,
         overrides,
         agent,
@@ -109201,6 +109766,7 @@ fn resolve_workflow_sandbox_admission(
     overrides: ExecutionOverrides,
     agent: bool,
     requested_target: Option<&str>,
+    typed_effect_admission: &TypedEffectAdmission,
     loaded_policy: Option<&LoadedOrgPolicyPack>,
 ) -> Result<Option<ResolvedSandboxAdmission>, SandboxAdmissionError> {
     let requested_target = requested_target
@@ -109253,6 +109819,7 @@ fn resolve_workflow_sandbox_admission(
     {
         return Ok(None);
     }
+    let effect_policy_decision = sandbox_typed_effect_policy_decision(typed_effect_admission)?;
     let policy =
         crate::sandbox_policy::sandbox_policy_for_workflow(contract, workflow_name, overrides)
             .map_err(|message| SandboxAdmissionError {
@@ -109268,6 +109835,7 @@ fn resolve_workflow_sandbox_admission(
             })?;
     resolve_sandbox_policy_admission(
         policy,
+        effect_policy_decision,
         contract_path,
         overrides,
         agent,
@@ -109278,6 +109846,7 @@ fn resolve_workflow_sandbox_admission(
 
 fn resolve_sandbox_policy_admission(
     policy: crate::sandbox_policy::SandboxPolicy,
+    effect_policy_decision: Option<crate::effect_policy::EffectPolicyDecision>,
     contract_path: &Path,
     overrides: ExecutionOverrides,
     agent: bool,
@@ -109387,6 +109956,7 @@ fn resolve_sandbox_policy_admission(
         });
     }
     Ok(Some(ResolvedSandboxAdmission {
+        effect_policy_decision,
         policy,
         effective,
         evaluation,
@@ -136078,6 +136648,44 @@ fn execute_repo_up_with_behavior_with_agent_and_authority_activation(
             contract.selected_workflow_task_closure_names(workflow_name),
         )
     };
+    let adjusted_contract =
+        contract_adjusted_for_selected_workflow_env_profile(contract, workflow_name);
+    let typed_contract = adjusted_contract.as_ref().unwrap_or(contract);
+    let typed_effect_roots = selected_workflow_phase_task_roots(typed_contract, workflow_name);
+    let typed_effect_admission = match admit_typed_effect_closure_from_loaded_policy(
+        typed_contract,
+        resolved_path,
+        workflow_name,
+        typed_effect_roots.as_slice(),
+        overrides,
+        replay_input_preflight.loaded_policy.as_ref(),
+        Some(&current_effect_governance_overrides()),
+    ) {
+        Ok(admission) => admission,
+        Err(error) => {
+            return Ok(sandbox_admission_up_result(
+                contract,
+                resolved_path,
+                workflow_name,
+                overrides,
+                dry_run,
+                agent,
+                run_behavior_preference,
+                SandboxAdmissionError {
+                    kind: "sandbox_effect_policy_unavailable",
+                    requested_target: sandbox_target.map(str::to_string),
+                    resolved_target: None,
+                    canonical_policy_identity: None,
+                    restriction_overlay_identities: Vec::new(),
+                    effective_policy_identity: None,
+                    refusals: Vec::new(),
+                    supported_alternatives: Vec::new(),
+                    message: error.to_string(),
+                },
+                replay_input_preflight.doctor_policy_snapshot(),
+            ));
+        }
+    };
     let sandbox_admission = resolve_workflow_sandbox_admission(
         contract,
         resolved_path,
@@ -136085,6 +136693,7 @@ fn execute_repo_up_with_behavior_with_agent_and_authority_activation(
         overrides,
         agent,
         sandbox_target,
+        &typed_effect_admission,
         replay_input_preflight.loaded_policy.as_ref(),
     );
     let sandbox_admission = match sandbox_admission {

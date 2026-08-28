@@ -4257,12 +4257,31 @@ pub struct HarnessLaneCapability {
     pub preflight: GovernancePreflightEvaluation,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sandbox_policy: Option<HarnessSandboxPolicy>,
+    pub effect_policy: HarnessEffectPolicyBinding,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub effects: Option<TaskEffectsSummary>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub blocked_task: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub closure_path: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+pub struct HarnessEffectPolicyBinding {
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub aggregate_decision: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub decision_identity: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub policy_snapshot_identity: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub execution_graph_identity: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub effect_set_identity: Option<String>,
+    pub provider_execution: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Serialize, Clone, PartialEq, Eq)]

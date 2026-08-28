@@ -25,9 +25,8 @@
 version: 1
 repository: ota-run/skills
 mode: synced
-reviewed_ota_commit: 0f4db8e2a19367f4cfb6d6a4522ad3b007690bba
-consumer_commit: 610e801c9b32030d888b0c6d0118a5e70af0165a
+reviewed_ota_commit: pending-local-v12-sandbox-capability
+consumer_commit: a25d4c28be041d7c6b11240ec10ccf85db21ee5b
 notes: >
-  The canonical Skill teaches provider-checkout typed-effect policy re-evaluation as a
-  pre-execution refusal boundary without claiming provider mutation, receipts, archives, or
-  assurance. Both installed mirrors are byte-identical to this revision.
+  The canonical Skill describes mandatory effect-policy capability binding and provider-disabled
+  posture. Both installed mirrors are byte-identical to this revision.

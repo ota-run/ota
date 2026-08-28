@@ -66,6 +66,19 @@ durable agent workflow belongs in the canonical Ota skill.
   cannot replace the previewed typed action. Non-dry-run `ota up` emits its ordinary blocked
   readiness receipt with `execution_attempted: false`; the typed adapter emits no positive effect
   or execution receipt, archive, success claim, agent-safe authority, canary, or positive assurance.
+  Task and workflow harness capability JSON now carries mandatory typed effect-policy posture:
+  untyped lanes are `not_applicable`, while typed lanes carry the evaluated decision, policy
+  snapshot, selected execution graph, and effect-set identities or an explicit unavailable state.
+  Only untyped `not_applicable` lanes appear under `callable_tasks` or `callable_workflows`; typed
+  lanes remain under refused capabilities with `provider_execution: disabled`. The published
+  schema requires evaluated deny, allow/warn, and unavailable posture to carry their matching
+  refused preflight reason. Live
+  sandbox admission consumes the exact closure, retained policy snapshot, application plans, and
+  verified decision produced by command admission rather than re-planning under a second origin.
+  Missing policy truth or aggregate denial refuses before canonical sandbox-policy construction and
+  provider-capability evaluation, while allow/warn does not become provider authority. Malformed
+  effect policy does not affect an untyped capability lane. Sandbox application evidence and archive
+  semantics are unchanged because typed provider execution remains disabled.
   Provider execution, independently administered policy admission, provider-side mutation
   semantics, and independent real-repository effect pressure remain unproved. The bounded internal
   carrier is now immutable-hosted on Linux/x64 and macOS in

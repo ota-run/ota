@@ -561,6 +561,7 @@
         "decision",
         "resolution",
         "provider_target",
+        "effect_policy_decision",
         "canonical_policy",
         "restriction_overlay_identities",
         "effective_policy",
@@ -570,6 +571,12 @@
         "decision": { "const": "admitted" },
         "resolution": { "enum": ["explicit", "automatic"] },
         "provider_target": { "const": "oci_local" },
+        "effect_policy_decision": {
+          "oneOf": [
+            { "$ref": "#/$defs/effectPolicyDecision" },
+            { "type": "null" }
+          ]
+        },
         "canonical_policy": { "$ref": "#/$defs/sandboxCanonicalPolicy" },
         "restriction_overlay_identities": {
           "type": "array",

@@ -2239,6 +2239,10 @@ Success:
           "crossing_classification": "routine",
           "receipt_expected": true,
           "proof_expected": true
+        },
+        "effect_policy": {
+          "status": "not_applicable",
+          "provider_execution": "not_applicable"
         }
       }
     ],
@@ -2269,6 +2273,10 @@ Success:
           },
           "receipt_expected": true,
           "proof_expected": false
+        },
+        "effect_policy": {
+          "status": "not_applicable",
+          "provider_execution": "not_applicable"
         }
       }
     ]
@@ -2397,6 +2405,9 @@ contract; a non-empty list means the task must directly depend on each artifact 
 Each task summary now also carries a canonical `use` object:
 
 - `use.human` and `use.agent` remain compatibility projections for the selected default mode
+- `use.agent.callable` reflects contract safety only. When `capability_profile` is present, its
+  policy/provider-aware `preflight` and `effect_policy` fields are authoritative for actual harness
+  callability
 - `use.modes[]` is the canonical task-mode matrix for machine consumers; it lists `container`,
   `native`, and when advertised `remote` in a stable order
 - every `use.modes[]` entry carries `default`, `availability`, and separate human/agent callable
@@ -2535,6 +2546,10 @@ Each task capability entry carries:
 - an additive `environment_boundary`
 - canonical `preflight` governance state
 - an additive `sandbox_policy` for the first compiled runtime target, `codex_local`
+- mandatory `effect_policy` posture. Untyped lanes report `status: "not_applicable"`. Typed lanes
+  report either an identity-bound evaluated decision or `status: "unavailable"`; both retain
+  `provider_execution: "disabled"` while the V12 provider adapter is unavailable, so a generic
+  agent-safety allow cannot make the lane callable
 - additive closure effect posture in `effects` when the selected task path owns network, write,
   adapter, or external-state behavior
 
@@ -2776,6 +2791,12 @@ Notes:
   policy compiles from declared runtime-boundary or derived agent boundary truth when present, and
   network policy currently compiles as either effect-owned `deny/none` / `allow/broad` or
   targeted runtime-boundary `outbound_targets[]`
+- workflow capability entries use the same `effect_policy` binding as task entries. The binding
+  carries decision, policy-snapshot, selected execution-graph, and effect-set identities without
+  claiming provider execution. Only `not_applicable` untyped lanes may appear under
+  `callable_tasks[]` or `callable_workflows[]`; typed lanes remain under the matching refused
+  collection until execution is implemented. Evaluated `deny`, evaluated `allow`/`warn`, and
+  unavailable posture each carry their corresponding refused preflight reason.
 - workflow capability entries publish `preflight.proof_expected: true` because `ota up` is a
   proof-owning lane: the selected workflow is expected to drive readiness or runtime-proof
   evidence when executed
@@ -3387,6 +3408,11 @@ When the selected lane also carries compiled runtime-boundary truth, `governance
 now repeats the same first-target `codex_local` sandbox profile published by `ota tasks --json`,
 so execution-facing preview consumers do not have to call a second command just to recover
 filesystem or outbound boundary posture.
+When live sandbox admission evaluates a typed lane, `sandbox_admission.effect_policy_decision`
+carries the complete non-secret decision retained by that command's typed-effect admission. Sandbox
+evaluation cannot re-plan the closure, replace its invocation origin, or reload policy truth.
+Missing policy truth or aggregate denial refuses before canonical sandbox policy construction or
+provider capability evaluation. An allow or warning still does not enable typed provider execution.
 
 ```json
 {

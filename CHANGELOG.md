@@ -26,6 +26,16 @@
 
 ## Unreleased
 
+- Bound V12 typed effect-policy truth into task and workflow harness capabilities plus live sandbox
+  admission. Capability JSON distinguishes untyped, evaluated, and unavailable policy posture and
+  keeps every typed lane provider-disabled and schema-bound to refused preflight. Only untyped
+  `not_applicable` lanes can appear under callable capability collections, while typed deny,
+  allow/warn, and unavailable posture each bind their exact refusal reason. Sandbox evaluation
+  consumes the exact command admission instead of re-planning with a second origin or reloading
+  policy truth; malformed policy does not contaminate untyped lanes. Missing policy or aggregate
+  denial refuses before canonical sandbox policy construction or provider capability evaluation.
+  This does not enable typed provider execution, receipts, archives, or positive assurance.
+
 - Extended provider-neutral CI projection with identity-bound typed effect-policy decisions. The
   generated provider workflow re-evaluates that decision against its checkout before setup or
   selected execution; explicit typed denial returns inspectable `effect_policy_denied`. This does

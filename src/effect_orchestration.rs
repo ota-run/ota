@@ -49,6 +49,18 @@ pub(crate) struct TypedEffectAdmission {
     pub(crate) policy_decision: Option<EffectPolicyDecision>,
 }
 
+#[derive(Debug)]
+pub(crate) struct CommandTypedEffectAdmission {
+    pub(crate) typed: TypedEffectAdmission,
+    pub(crate) loaded_policy: Option<LoadedOrgPolicyPack>,
+}
+
+impl CommandTypedEffectAdmission {
+    pub(crate) fn is_typed(&self) -> bool {
+        !self.typed.closure.application_plans.is_empty()
+    }
+}
+
 pub(crate) fn build_typed_effect_closure_admission(
     contract: &Contract,
     contract_path: &Path,
@@ -184,6 +196,110 @@ pub(crate) fn admit_typed_effect_closure(
     execution_overrides: ExecutionOverrides,
     effect_overrides: Option<&EffectGovernanceOverrides>,
 ) -> OrchestrationResult<TypedEffectAdmission> {
+    admit_typed_effect_closure_with_policy_source(
+        contract,
+        contract_path,
+        workflow_name,
+        roots,
+        execution_overrides,
+        None,
+        effect_overrides,
+    )
+}
+
+pub(crate) fn admit_typed_effect_closure_from_loaded_policy(
+    contract: &Contract,
+    contract_path: &Path,
+    workflow_name: Option<&str>,
+    roots: &[EffectPolicyInvocation],
+    execution_overrides: ExecutionOverrides,
+    loaded_policy: Option<&LoadedOrgPolicyPack>,
+    effect_overrides: Option<&EffectGovernanceOverrides>,
+) -> OrchestrationResult<TypedEffectAdmission> {
+    admit_typed_effect_closure_with_policy_source(
+        contract,
+        contract_path,
+        workflow_name,
+        roots,
+        execution_overrides,
+        Some(loaded_policy),
+        effect_overrides,
+    )
+}
+
+pub(crate) fn admit_command_typed_effect_closure(
+    contract: &Contract,
+    contract_path: &Path,
+    workflow_name: Option<&str>,
+    roots: &[EffectPolicyInvocation],
+    execution_overrides: ExecutionOverrides,
+    effect_overrides: Option<&EffectGovernanceOverrides>,
+) -> OrchestrationResult<CommandTypedEffectAdmission> {
+    if !typed_effect_closure_applies(contract, roots, execution_overrides)? {
+        return Ok(CommandTypedEffectAdmission {
+            typed: admit_typed_effect_closure_from_loaded_policy(
+                contract,
+                contract_path,
+                workflow_name,
+                roots,
+                execution_overrides,
+                None,
+                effect_overrides,
+            )?,
+            loaded_policy: None,
+        });
+    }
+
+    let loaded_policy = crate::policy_pack::load_org_policy_pack_auto_details(contract_path)
+        .map_err(|error| {
+            Box::new(RunError::FileActionFailed {
+                task: roots
+                    .first()
+                    .map(|root| root.task.clone())
+                    .unwrap_or_default(),
+                message: format!(
+                    "typed effect policy could not be loaded before admission: {error}"
+                ),
+            })
+        })?;
+    let typed = admit_typed_effect_closure_from_loaded_policy(
+        contract,
+        contract_path,
+        workflow_name,
+        roots,
+        execution_overrides,
+        loaded_policy.as_ref(),
+        effect_overrides,
+    )?;
+    Ok(CommandTypedEffectAdmission {
+        typed,
+        loaded_policy,
+    })
+}
+
+pub(crate) fn typed_effect_closure_applies(
+    contract: &Contract,
+    roots: &[EffectPolicyInvocation],
+    overrides: ExecutionOverrides,
+) -> OrchestrationResult<bool> {
+    let invocations = selected_execution_closure_invocations(contract, roots, overrides)?;
+    Ok(selected_execution_closure_declares_typed_effect(
+        contract,
+        &invocations,
+        overrides,
+    ))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn admit_typed_effect_closure_with_policy_source(
+    contract: &Contract,
+    contract_path: &Path,
+    workflow_name: Option<&str>,
+    roots: &[EffectPolicyInvocation],
+    execution_overrides: ExecutionOverrides,
+    loaded_policy: Option<Option<&LoadedOrgPolicyPack>>,
+    effect_overrides: Option<&EffectGovernanceOverrides>,
+) -> OrchestrationResult<TypedEffectAdmission> {
     // Do not route unrelated runner-planning failures through the typed-effect boundary.
     // The full planner remains authoritative once any selected execution-closure member owns a
     // typed action.
@@ -207,17 +323,28 @@ pub(crate) fn admit_typed_effect_closure(
     let policy_decision = if closure.application_plans.is_empty() {
         None
     } else {
-        typed_effect_policy_decision(
-            contract,
-            contract_path,
-            workflow_name,
-            roots
-                .first()
-                .map(|root| root.task.as_str())
-                .unwrap_or_default(),
-            &closure,
-            effect_overrides,
-        )?
+        let selected_task_name = roots
+            .first()
+            .map(|root| root.task.as_str())
+            .unwrap_or_default();
+        match loaded_policy {
+            Some(loaded_policy) => typed_effect_policy_decision_from_loaded_policy(
+                contract,
+                workflow_name,
+                selected_task_name,
+                &closure,
+                loaded_policy,
+                effect_overrides,
+            )?,
+            None => typed_effect_policy_decision(
+                contract,
+                contract_path,
+                workflow_name,
+                selected_task_name,
+                &closure,
+                effect_overrides,
+            )?,
+        }
     };
     Ok(TypedEffectAdmission {
         closure,
@@ -371,6 +498,37 @@ tasks:
         assert_eq!(admission.closure.invocations[0].task, "check");
         assert!(admission.closure.application_plans.is_empty());
         assert!(admission.policy_decision.is_none());
+
+        let capability_admission = admit_typed_effect_closure_from_loaded_policy(
+            &contract,
+            Path::new("ota.yaml"),
+            Some("proof"),
+            &[EffectPolicyInvocation {
+                task: String::from("check"),
+                origin: String::from("capability"),
+            }],
+            ExecutionOverrides::default(),
+            None,
+            None,
+        )
+        .expect("loaded-policy consumers preserve the untyped fast path");
+        assert!(capability_admission.closure.application_plans.is_empty());
+        assert!(capability_admission.policy_decision.is_none());
+
+        let command_admission = admit_command_typed_effect_closure(
+            &contract,
+            Path::new("missing/ota.yaml"),
+            Some("proof"),
+            &[EffectPolicyInvocation {
+                task: String::from("check"),
+                origin: String::from("command"),
+            }],
+            ExecutionOverrides::default(),
+            None,
+        )
+        .expect("untyped command admission must not attempt policy loading");
+        assert!(!command_admission.is_typed());
+        assert!(command_admission.loaded_policy.is_none());
     }
 
     #[test]

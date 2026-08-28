@@ -25,8 +25,8 @@
 version: 1
 repository: ota-run/ota-site
 mode: synced
-reviewed_ota_commit: 0f4db8e2a19367f4cfb6d6a4522ad3b007690bba
-consumer_commit: 7fa71e4dd4a4f1348e9b45af9060acc954ed7034
+reviewed_ota_commit: pending-local-v12-sandbox-capability
+consumer_commit: de5864968d1cdb29197947da475c8a0988b9d12d
 notes: >
-  The Site reference documents provider-checkout typed-effect policy re-evaluation and the
-  pre-execution refusal boundary carried by provider-neutral CI projection.
+  The Site reference documents typed effect-policy capability and retained command-decision sandbox
+  admission without claiming provider mutation, receipts, archives, or assurance.
