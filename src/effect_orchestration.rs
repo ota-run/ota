@@ -27,7 +27,7 @@ use std::path::Path;
 
 use crate::effect_application_plan::EffectApplicationPlan;
 use crate::effect_policy::{EffectPolicyDecision, EffectPolicyInvocation};
-use crate::policy_pack::{EffectGovernanceOverrides, PolicyEffectDecision};
+use crate::policy_pack::{EffectGovernanceOverrides, LoadedOrgPolicyPack, PolicyEffectDecision};
 use crate::runner::{
     ExecutionOverrides, RunError, effective_task_execution, effective_task_execution_working_dir,
     plan_task_execution_structure_with_overrides, plan_task_execution_with_overrides,
@@ -132,6 +132,36 @@ pub(crate) fn typed_effect_policy_decision(
         selected_task_name,
         &closure.invocations,
         &closure.application_plans,
+        overrides,
+    )
+    .map_err(|error| {
+        Box::new(RunError::FileActionFailed {
+            task: closure
+                .invocations
+                .first()
+                .map(|invocation| invocation.task.clone())
+                .unwrap_or_default(),
+            message: error.message,
+        })
+    })
+}
+
+/// Reuses a command-scoped policy snapshot when another governance surface already loaded it.
+pub(crate) fn typed_effect_policy_decision_from_loaded_policy(
+    contract: &Contract,
+    workflow_name: Option<&str>,
+    selected_task_name: &str,
+    closure: &TypedEffectClosureAdmission,
+    loaded: Option<&LoadedOrgPolicyPack>,
+    overrides: Option<&EffectGovernanceOverrides>,
+) -> OrchestrationResult<Option<EffectPolicyDecision>> {
+    crate::effect_admission::typed_effect_policy_decision_from_loaded_policy(
+        contract,
+        workflow_name,
+        selected_task_name,
+        &closure.invocations,
+        &closure.application_plans,
+        loaded,
         overrides,
     )
     .map_err(|error| {

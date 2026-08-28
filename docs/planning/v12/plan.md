@@ -740,10 +740,14 @@ typed denial without starting execution. The bounded internal Linux/x64 and macO
 in [run 33098093213](https://github.com/ota-run/ota/actions/runs/33098093213) against Core
 `dc368fbb2fc298490bfce6de86ea4ed79b493beb`; it proves the exact task/workflow canary, strict
 fallback and unknown-ID refusal, and absence of local setup/environment/log side effects. Provider
-mutation, CI projection, receipts, archives, and positive assurance remain disabled. Step 4 is not
-complete across sandbox capability/projection and CI/provider checkout re-evaluation; provider
-execution remains disabled, and V12 still requires its independent real-repository pressure bar
-before closure.
+mutation, receipts, archives, and positive assurance remain disabled. The selected
+runtime-proof closure branch is separately green on Linux/x64 and macOS in
+[run 33166914327](https://github.com/ota-run/ota/actions/runs/33166914327) against Core
+`0f4db8e2a19367f4cfb6d6a4522ad3b007690bba`: typed denial occurs before proof artifacts, setup,
+workflow environment rendering, durable logs, or child startup. Step 4 is not complete across
+sandbox capability/projection; CI/provider-checkout re-evaluation now binds and re-derives typed
+effect-policy truth before provider setup or execution. Provider execution remains
+disabled, and V12 still requires its independent real-repository pressure bar before closure.
 
 1. Add the provider-neutral effect domain, canonical identities, origins, and derivation posture
    plus strict resource-binding branches without changing execution admission.

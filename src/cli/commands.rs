@@ -99,6 +99,7 @@ use crate::doctor::{
 use crate::effect_orchestration::{
     TypedEffectAdmission, admit_typed_effect_closure, build_typed_effect_closure_admission,
     typed_effect_admission_refusal, typed_effect_policy_decision,
+    typed_effect_policy_decision_from_loaded_policy,
 };
 use crate::effect_policy::EffectPolicyInvocation;
 use crate::execution::{
@@ -2117,6 +2118,54 @@ fn apply_ci_projection_governance(
     } else {
         projection.governance.agent_admission.decision = String::from("allow");
         projection.governance.agent_admission.basis = vec![String::from("agent_closure_admitted")];
+    }
+
+    // Project the same selected phase roots as `ota up`; the typed planner expands their active
+    // dependencies and hooks without admitting an unselected mode's dependency graph.
+    let effect_policy_roots = selected_workflow_phase_task_roots(contract, Some(workflow));
+    let effect_closure = build_typed_effect_closure_admission(
+        contract,
+        contract_path,
+        effect_policy_roots.as_slice(),
+        overrides,
+    )
+    .map_err(|error| {
+        (
+            String::from("effect_policy_evaluation_unavailable"),
+            format!("workflow `{workflow}` typed effect admission could not be derived: {error}"),
+            Some(projection.clone()),
+        )
+    })?;
+    let effect_policy_decision = typed_effect_policy_decision_from_loaded_policy(
+        contract,
+        Some(workflow),
+        projection.task.as_str(),
+        &effect_closure,
+        loaded_policy,
+        Some(&current_effect_governance_overrides()),
+    )
+    .map_err(|error| {
+        (
+            String::from("effect_policy_evaluation_unavailable"),
+            format!("workflow `{workflow}` typed effect policy could not be evaluated: {error}"),
+            Some(projection.clone()),
+        )
+    })?;
+    projection.governance.effect_policy_decision = effect_policy_decision;
+    if projection
+        .governance
+        .effect_policy_decision
+        .as_ref()
+        .is_some_and(|decision| decision.aggregate_decision == PolicyEffectDecision::Deny)
+    {
+        let _ = refresh_ci_projection_identity(&mut projection);
+        return Err((
+            String::from("effect_policy_denied"),
+            format!(
+                "workflow `{workflow}` typed effect policy is denied in this checkout before provider execution"
+            ),
+            Some(projection),
+        ));
     }
 
     if projection.proof_required {
@@ -63385,6 +63434,88 @@ policies:
     }
 
     #[test]
+    fn ci_projection_re_evaluates_typed_effect_policy_on_the_provider_checkout() {
+        use crate::policy_pack::PolicyEffectDecision;
+        use sha2::{Digest as _, Sha256};
+
+        let repo = tempdir().expect("repo tempdir");
+        let contract_path = repo.path().join("ota.yaml");
+        fs::create_dir_all(repo.path().join("migrations")).expect("migration directory");
+        fs::create_dir_all(repo.path().join(".ota")).expect("policy directory");
+        let migration_bytes = b"create table ci_projection_policy ();\n";
+        fs::write(repo.path().join("migrations/001.sql"), migration_bytes)
+            .expect("migration should write");
+        let file_identity = format!("sha256:{:x}", Sha256::digest(migration_bytes));
+        let manifest = serde_json::json!({
+            "schema_version": 1,
+            "root": "migrations",
+            "files": [{ "path": "001.sql", "identity": file_identity }]
+        });
+        let mut manifest_identity_bytes = b"ota.schema-migration-manifest.v1\0".to_vec();
+        manifest_identity_bytes
+            .extend(serde_jcs::to_vec(&manifest).expect("manifest canonicalizes"));
+        let manifest_identity = format!("sha256:{:x}", Sha256::digest(manifest_identity_bytes));
+        let contract_yaml = format!(
+            "version: 1\nproject:\n  name: ci-projection-typed-policy\nresource_bindings:\n  primary:\n    kind: database\n    provider: postgresql\n    namespace: {{ authority: dns:example.org, environment: production }}\neffect_definitions:\n  migration:\n    kind: database_schema_mutation\n    action: apply_migration_set\n    resource: {{ engine: postgresql, target_ref: primary, schema: public }}\n    bounds:\n      migration_set: {{ root: migrations, content_identity: {manifest_identity} }}\n      start_state: any_within_set\ntasks:\n  migrate:\n    safe_for_agent: true\n    action: {{ kind: database_schema_mutation, effect: migration }}\n    effects:\n      declared: [migration]\nworkflows:\n  default: migrate\n  migrate:\n    run:\n      task: migrate\nagent:\n  safe_tasks: [migrate]\n"
+        );
+        fs::write(&contract_path, contract_yaml).expect("contract should write");
+        let contract = parse_contract_str(
+            &contract_path,
+            &fs::read_to_string(&contract_path).expect("contract should read"),
+        )
+        .expect("contract should parse");
+        let policy_path = repo.path().join(".ota/org-policy.yaml");
+        fs::write(
+            &policy_path,
+            "policies:\n  effects:\n    mode: compatibility\n",
+        )
+        .expect("compatibility policy should write");
+
+        let projected = ci_projection_for_contract(
+            &contract,
+            &contract_path,
+            "migrate",
+            Some("native"),
+            "linux",
+        )
+        .expect("compatibility policy should permit projection");
+        assert_eq!(
+            projected
+                .governance
+                .effect_policy_decision
+                .as_ref()
+                .expect("typed decision should be identity-bound")
+                .aggregate_decision,
+            PolicyEffectDecision::Warn
+        );
+
+        fs::write(
+            &policy_path,
+            "policies:\n  effects:\n    mode: compatibility\n    typed:\n      rules:\n        - id: deny_production_migration\n          selector:\n            kind: database_schema_mutation\n            actions: [apply_migration_set]\n            resource:\n              match: exact\n              engine: postgresql\n              namespace: { authority: dns:example.org, environment: production }\n              schema: public\n          decision: deny\n",
+        )
+        .expect("denying policy should write");
+        let denied = ci_projection_for_contract(
+            &contract,
+            &contract_path,
+            "migrate",
+            Some("native"),
+            "linux",
+        )
+        .expect_err("provider checkout must refuse a newly denied typed effect");
+        assert_eq!(denied.0, "effect_policy_denied");
+        assert_eq!(
+            denied
+                .2
+                .expect("denial projection should remain inspectable")
+                .governance
+                .effect_policy_decision
+                .expect("denial decision should be retained")
+                .aggregate_decision,
+            PolicyEffectDecision::Deny
+        );
+    }
+
+    #[test]
     fn run_receipt_preserves_pre_execution_replay_policy_evidence() {
         let repo = tempdir().expect("repo tempdir");
         let contract_path = repo.path().join("ota.yaml");
@@ -108846,6 +108977,10 @@ fn selected_workflow_phase_task_roots(
             contract.selected_setup_task_name_for(workflow_name),
         ),
         ("run", contract.selected_run_task_name_for(workflow_name)),
+        (
+            "attach",
+            contract.selected_attach_task_name_for(workflow_name),
+        ),
     ]
     .into_iter()
     .filter_map(|(origin, task)| {
@@ -135728,15 +135863,7 @@ fn typed_effect_up_pre_execution_result(
     let effective_workflow_name = contract
         .selected_workflow(workflow_name)
         .map(|(name, _)| name);
-    let task_names = contract.selected_workflow_task_closure_names(effective_workflow_name);
-    let roots = task_names
-        .into_iter()
-        .enumerate()
-        .map(|(ordinal, task)| EffectPolicyInvocation {
-            task,
-            origin: format!("up_closure:{ordinal:04}"),
-        })
-        .collect::<Vec<_>>();
+    let roots = selected_workflow_phase_task_roots(contract, effective_workflow_name);
     let error = match typed_effect_closure_refusal(
         contract,
         resolved_path,

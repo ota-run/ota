@@ -26,6 +26,11 @@
 
 ## Unreleased
 
+- Extended provider-neutral CI projection with identity-bound typed effect-policy decisions. The
+  generated provider workflow re-evaluates that decision against its checkout before setup or
+  selected execution; explicit typed denial returns inspectable `effect_policy_denied`. This does
+  not enable provider mutation, receipts, archives, or positive assurance.
+
 - Rejected `database_schema_mutation` under `workflows.<name>.prepare.action`. Typed mutations
   must use a named task with `effects.declared`, so the shared typed-effect admission boundary can
   bind the canonical attachment before workflow preparation begins.
@@ -35,6 +40,9 @@
   admission, proof artifact creation, service work, or child startup. A typed deny returns
   `OTA_EFFECT_POLICY_DENIED` with `execution_started: false`; provider execution, positive proof
   receipts, archives, and assurance remain disabled.
+  Immutable Linux/x64 and macOS pressure in
+  [run 33166914327](https://github.com/ota-run/ota/actions/runs/33166914327) proves that boundary
+  before proof artifacts, setup, workflow environment rendering, durable logs, or child startup.
 
 - Added contract-owned V12 effect-refusal canaries for exact task and workflow lanes.
   `agent.effect_refusal_canaries` binds a local locator to one typed effect and mandatory origin.

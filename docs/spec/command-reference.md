@@ -870,7 +870,10 @@ Current behavior:
   declared proof assurance before rendering; policy-denied or review-required
   lanes fail projection with the same canonical reason the runner would enforce. `--mode` selects its native,
   container, or remote plane; provider adapters consume that exact projection rather than
-  reconstructing contract authority.
+  reconstructing contract authority. When that closure contains a typed V12 effect and an
+  organization policy is present, the projection carries the complete non-secret effect-policy
+  decision and binds it into `projection.identity`; an explicit typed deny refuses before the
+  provider lane can start setup or execution.
 - The projection carries `run_execution` as `finite_task` or `service_runtime`. Generated adapters
   prepare every lane with `ota up`; they execute a finite run task through `ota run --agent` after
   preparation, while service and proof lanes retain their one authoritative runtime path.
@@ -892,7 +895,10 @@ Current behavior:
   only the reusable workflow's default. Ota checks the projection identity rather than
   reconstructing execution commands from caller YAML.
 - The generated workflow verifies identity through `ota ci projection --expect-identity`, not a
-  provider-shell assertion. Runner selection remains provider-owned; target OS is bound explicitly.
+  provider-shell assertion. This re-evaluates the policy and typed-effect decision from the
+  checked-out contract and policy bytes, so a checkout whose decision differs from the rendered
+  identity refuses before provider setup or execution. Runner selection remains provider-owned;
+  target OS is bound explicitly.
   Ota refuses the projection before rendering when any executable member of the selected workflow
   closure or its resolved execution context does not support that target OS and mode.
   `projection.toolchains[]` is provider-neutral contract truth and each entry carries its selected

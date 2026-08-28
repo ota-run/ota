@@ -25,9 +25,8 @@
 version: 1
 repository: ota-run/ota-site
 mode: synced
-reviewed_ota_commit: 2d439f14839acd7abfe5afdc5ced4e51c10c62ab
-consumer_commit: af09d06950754acace48a89dc485f8bc46a8fb3b
+reviewed_ota_commit: 0f4db8e2a19367f4cfb6d6a4522ad3b007690bba
+consumer_commit: 7fa71e4dd4a4f1348e9b45af9060acc954ed7034
 notes: >
-  The Site reference documents proof-runtime and proof-lifecycle typed-effect refusal plus the
-  named-task requirement for typed workflow preparation. The generated cloud.devenv pressure post
-  remains unrelated and is not part of this propagation revision.
+  The Site reference documents provider-checkout typed-effect policy re-evaluation and the
+  pre-execution refusal boundary carried by provider-neutral CI projection.

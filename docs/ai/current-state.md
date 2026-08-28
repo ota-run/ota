@@ -150,6 +150,13 @@ durable agent workflow belongs in the canonical Ota skill.
   required independent real-repository effect-pressure bar. Connected Site, Skills, Examples,
   Learn, schema, and command propagation is committed at Site `f1ef9c9`, Skills `7298340`, and
   Examples `f209c31`; Core implementation and pressure harness are committed at `dc368fbb`.
+  Complete selected runtime-proof closure admission is now immutable-hosted on Linux/x64 and macOS
+  in [run 33166914327](https://github.com/ota-run/ota/actions/runs/33166914327) against Core
+  `0f4db8e2a19367f4cfb6d6a4522ad3b007690bba`. Both retained artifacts prove a typed policy deny
+  before proof artifacts, setup, workflow environment rendering, durable execution logs, or child
+  startup, while the Core-owned ordered-delivery control remains green. This is still internal,
+  execution-disabled evidence; it does not establish provider mutation, positive evidence, or
+  independent real-repository pressure.
 - completed V11.21 enforced sandbox policy application. Core now derives one
   provider-neutral, target-platform-bound segment graph from the selected task/workflow closure,
   applies only identified monotonic policy restrictions, and fails closed before preparation when
@@ -710,10 +717,15 @@ durable agent workflow belongs in the canonical Ota skill.
   contextual policy findings, not contract-validation errors. CI projection carries the exact
   active policy identity, applicable rule identities, canonical execution closure including
   recursive outcome hooks, and unresolved selector identities but
-  no render-host observation; the provider checkout recomputes observed replay-input identities. Core
+  no render-host observation; the provider checkout recomputes observed replay-input identities.
+  Typed-effect CI projection also carries its complete non-secret policy decision in the projection
+  identity and re-evaluates it from checkout bytes before provider setup or selected execution. Core
   unit, real-repo no-execution, JSON-schema, JSON-conformance, and projection
   checkout-re-evaluation regressions pass; copy-ready Core/external examples, canonical skill, and
-  site reference are aligned.
+  site reference are aligned. Connected public guidance is pinned at Site
+  `7fa71e4dd4a4f1348e9b45af9060acc954ed7034` and Skills
+  `610e801c9b32030d888b0c6d0118a5e70af0165a`; Examples require no change because this slice adds
+  no contract-authoring shape.
   Bedrock [run 30413944121](https://github.com/bobaikato/bedrock/actions/runs/30413944121)
   proves strict matching admission for four declared frozen inputs through native and container
   execution. Kylrix [run 30413944203](https://github.com/bobaikato/kylrix/actions/runs/30413944203)

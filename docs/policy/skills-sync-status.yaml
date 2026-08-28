@@ -25,9 +25,9 @@
 version: 1
 repository: ota-run/skills
 mode: synced
-reviewed_ota_commit: 2d439f14839acd7abfe5afdc5ced4e51c10c62ab
-consumer_commit: 729834039379c3e7b033e4ec4b04b932a8b83e25
+reviewed_ota_commit: 0f4db8e2a19367f4cfb6d6a4522ad3b007690bba
+consumer_commit: 610e801c9b32030d888b0c6d0118a5e70af0165a
 notes: >
-  The proof-runtime and proof-lifecycle admission behavior adds no authoring rule, command syntax,
-  or review guidance. The canonical Skill and installed mirrors remain at the recorded immutable
-  revision.
+  The canonical Skill teaches provider-checkout typed-effect policy re-evaluation as a
+  pre-execution refusal boundary without claiming provider mutation, receipts, archives, or
+  assurance. Both installed mirrors are byte-identical to this revision.

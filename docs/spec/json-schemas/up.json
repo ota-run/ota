@@ -669,6 +669,7 @@
             },
             "workspace": { "type": "string" },
             "backend": { "type": "string" },
+            "context": { "type": "string" },
             "lifecycle": { "type": "string" },
             "image": { "type": "string" },
             "target": { "type": "string" },

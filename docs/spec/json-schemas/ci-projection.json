@@ -84,6 +84,9 @@
                 "basis": { "type": "array", "items": { "type": "string" } }
               }
             },
+            "effect_policy_decision": {
+              "$ref": "./run-preview.json#/$defs/effectPolicyDecision"
+            },
             "replay_input_policy": {
               "type": "object",
               "additionalProperties": false,

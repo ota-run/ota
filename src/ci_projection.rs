@@ -24,6 +24,7 @@
 //   limitations under the License.
 
 use crate::contract_drift::{merge_check_id_for_lane_task, merge_check_id_for_refusal_canary};
+use crate::effect_policy::EffectPolicyDecision;
 use crate::schema::{Backend, Contract, TaskRuntimeKind, ToolchainFulfillmentSource};
 use crate::semantic_identity::semantic_contract_identity;
 use serde::Serialize;
@@ -95,6 +96,8 @@ pub(crate) struct CiProjectionOwnership {
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct CiProjectionGovernance {
     pub agent_admission: CiProjectionAdmission,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub effect_policy_decision: Option<EffectPolicyDecision>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub proof_assurance: Option<CiProjectionProofAssurance>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -311,6 +314,7 @@ pub(crate) fn build_ci_projection(
                 decision: String::from("unresolved"),
                 basis: Vec::new(),
             },
+            effect_policy_decision: None,
             proof_assurance: None,
             replay_input_policy: None,
         },

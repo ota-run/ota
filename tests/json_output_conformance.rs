@@ -2562,6 +2562,19 @@ workflows:
     assert_eq!(json["execution_started"], false);
     assert!(!fixture.path().join("native-ran").exists());
     assert!(!fixture.path().join("container-ran").exists());
+
+    let up = run_ota_failure_stdout_json(&["up", "--native", "--json"], fixture.path());
+    assert_matches_schema("up.json", &up);
+    assert_eq!(
+        up["governance"]["preflight"]["refusal_reason_family"], "crossing_grant_required",
+        "{up}"
+    );
+    assert!(
+        !up.to_string().contains("provider execution is disabled"),
+        "the container-only typed dependency must not enter native up admission: {up}"
+    );
+    assert!(!fixture.path().join("native-ran").exists());
+    assert!(!fixture.path().join("container-ran").exists());
 }
 
 #[cfg(unix)]

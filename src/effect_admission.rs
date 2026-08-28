@@ -30,7 +30,9 @@ use crate::effect_application_plan::{
 use crate::effect_policy::{
     EffectPolicyDecision, EffectPolicyEvaluationScope, EffectPolicyInvocation,
 };
-use crate::policy_pack::{EffectGovernanceOverrides, load_org_policy_pack_auto_details};
+use crate::policy_pack::{
+    EffectGovernanceOverrides, LoadedOrgPolicyPack, load_org_policy_pack_auto_details,
+};
 use crate::schema::{Contract, TaskDatabaseSchemaMutationActionSpec};
 
 #[derive(Debug, Clone)]
@@ -54,6 +56,31 @@ pub(crate) fn typed_effect_policy_decision(
         load_org_policy_pack_auto_details(contract_path).map_err(|error| EffectAdmissionError {
             message: format!("typed effect policy could not be loaded before admission: {error}"),
         })?;
+    typed_effect_policy_decision_from_loaded_policy(
+        contract,
+        workflow_name,
+        selected_task_name,
+        invocations,
+        application_plans,
+        loaded.as_ref(),
+        overrides,
+    )
+}
+
+/// Evaluates one already-loaded command-scoped policy snapshot. Callers that compose policy
+/// domains, such as CI projection, must reuse this instead of loading the policy again.
+pub(crate) fn typed_effect_policy_decision_from_loaded_policy(
+    contract: &Contract,
+    workflow_name: Option<&str>,
+    selected_task_name: &str,
+    invocations: &[EffectPolicyInvocation],
+    application_plans: &[EffectApplicationPlan],
+    loaded: Option<&LoadedOrgPolicyPack>,
+    overrides: Option<&EffectGovernanceOverrides>,
+) -> Result<Option<EffectPolicyDecision>, EffectAdmissionError> {
+    if application_plans.is_empty() {
+        return Ok(None);
+    }
     let Some(loaded) = loaded else {
         return Ok(None);
     };

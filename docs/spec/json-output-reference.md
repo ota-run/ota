@@ -603,6 +603,13 @@ When `--task` is set, the payload includes the task name:
 }
 ```
 
+When the selected closure contains a typed V12 effect and an organization policy is available,
+`projection.governance.effect_policy_decision` carries the complete non-secret canonical decision.
+It is part of `projection.identity`. An explicit typed deny returns an inspectable refusal with
+`code: "effect_policy_denied"`; the generated provider workflow re-runs this projection against
+its own checkout and refuses before setup or selected execution when policy or typed-effect truth
+has drifted.
+
 Failure:
 
 ```json
