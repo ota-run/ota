@@ -25,4 +25,4 @@
 version: 1
 repository: ota-run/ota-site
 mode: synced
-reviewed_ota_commit: 785111c
+reviewed_ota_commit: 785111c9c312561cb9225d38e53cad9227b782df
