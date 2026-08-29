@@ -210,6 +210,43 @@ The pending v1.6.27 detector repair addresses the reproduced Ota-owned defects w
 
 These repairs need independent review and release validation. They do not prove BEAM hydration, real MCP runtime loading, provider calls, external effects, or Pythia repository behavior.
 
+### Local Branch Replay
+
+On the source-built `1.6.27-implementation` branch, a fresh clone pinned to
+`17df87775c0d5407c07e86f278455d912ed51305` confirmed the repaired detector/candidate boundary:
+
+-   the site build remains `npm run build` with `cwd: site` in both detected output and the
+    source-bound candidate's identity-bound execution closure;
+-   the MCP syntax step retains its complete ordered multiline body and remains `unknown` rather
+    than becoming a selected one-line task; and
+-   the candidate contains 11 changes, with 5 `applicable` and 6 `unknown`; `apply-candidate
+    --require-complete` refuses with `candidate_incomplete` and writes no contract.
+
+The remaining unknowns include inline shell `cd` worker lanes, heredoc/credentialed workflows,
+and other non-simple command bodies. They are conservative review inputs, not lost or agent-safe
+task truth. This is local unreleased-branch evidence only: it does not replace release validation,
+hosted pressure, task execution, or the eventual draft PR.
+
+### Local Branch Evidence Matrix
+
+This matrix records only the branch-local detector and candidate observations above. It is not an
+immutable hosted-pressure matrix and must not be used as release, upstream, runtime, or execution
+evidence.
+
+| Surface | Exercise and retained observation | Result | Boundary |
+| --- | --- | --- | --- |
+| Source identity | Fresh clone at `17df87775c0d5407c07e86f278455d912ed51305` with source-built Ota `1.6.27-implementation` | Exact local inputs identified | Neither a released binary nor a retained hosted artifact |
+| GitHub Actions working directory | `ota detect --json` recovered the Lighthouse build as `npm run build` with `cwd: site` | Detected command matches the workflow-owned directory | Detects declaration; does not run the build |
+| Candidate closure binding | `ota detect --candidate-out ... --json` retained `cwd: site` in the build change and identity-bound execution closure | Source-bound candidate preserves detected CWD truth | Candidate remains review-only and unexecuted |
+| Multiline MCP verification | The MCP syntax step retained its complete ordered body and was classified `unknown` | No selected one-line task was fabricated | Does not establish a runnable MCP lane or runtime loading |
+| Completeness admission | Candidate contained 11 changes: 5 `applicable`, 6 `unknown`; `apply-candidate --require-complete` returned `candidate_incomplete` | Incomplete discovery cannot write `ota.yaml` | No contract application or repository task execution occurred |
+| Complex and credentialed workflow bodies | Inline `cd`, heredoc, credentialed, and other non-simple bodies remained `unknown` | Conservative refusal of unsupported inference | These lanes need maintainer review or future Ota capability work |
+| Runtime and external authority | No Mix/NIF lane, MCP host session, provider call, credentialed pilot, merge, communication, or Liminal lifecycle was invoked | Not exercised | No claim of runtime enforcement, provider authority, external mutation, or repository-wide governance |
+
+The eventual post-release fork PR needs a separate immutable matrix with the exact released Ota
+version, fork revision, workflow URL, retained artifacts, exercised commands, and the same
+unproved-boundary inventory. It must not overwrite this discovery record.
+
 ## Eventual Draft PR Scope
 
 Do not publish the draft PR until Ota v1.6.27 is released. Before authoring it, review the lane map with Aleksei asynchronously so the contract does not encode false equivalence.

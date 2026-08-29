@@ -1791,7 +1791,7 @@ fn detector_discovery_inventory(root: &Path) -> Result<Vec<DiscoveryInventoryEnt
 }
 
 fn capture_candidate_source_snapshot(root: &Path) -> Result<CandidateSourceSnapshot, DetectError> {
-    capture_source_snapshot(root, detector_discovery_inventory(root)?, None)
+    capture_source_snapshot(root, detector_discovery_inventory(root)?, None, true)
 }
 
 fn capture_init_preview_source_snapshot(
@@ -1839,7 +1839,7 @@ fn capture_init_preview_source_snapshot(
         }
     }
     inventory.sort_by(|left, right| left.path.cmp(&right.path));
-    capture_source_snapshot(root, inventory, Some(&topology))
+    capture_source_snapshot(root, inventory, Some(&topology), false)
 }
 
 fn topology_inventory_entry(
@@ -1960,6 +1960,7 @@ fn capture_source_snapshot(
     root: &Path,
     inventory: Vec<DiscoveryInventoryEntry>,
     topology: Option<&InitStarterTopology>,
+    capture_ci_working_directories: bool,
 ) -> Result<CandidateSourceSnapshot, DetectError> {
     let root = fs::canonicalize(root).map_err(|source| DetectError::Read {
         path: root.display().to_string(),
@@ -2027,11 +2028,66 @@ fn capture_source_snapshot(
             source,
         })?;
     }
+    if capture_ci_working_directories {
+        materialize_ci_working_directories(&root, &snapshot_root)?;
+    }
     Ok(CandidateSourceSnapshot {
         _storage: storage,
         root: snapshot_root,
         inventory,
     })
+}
+
+fn materialize_ci_working_directories(
+    source_root: &Path,
+    snapshot_root: &Path,
+) -> Result<(), DetectError> {
+    let workflows = snapshot_root.join(".github/workflows");
+    let Ok(entries) = fs::read_dir(&workflows) else {
+        return Ok(());
+    };
+    let mut workflow_paths = entries
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            matches!(
+                path.extension().and_then(|extension| extension.to_str()),
+                Some("yml" | "yaml")
+            )
+        })
+        .collect::<Vec<_>>();
+    workflow_paths.sort();
+
+    for workflow_path in workflow_paths {
+        let contents = read_file(&workflow_path)?;
+        let workflow: YamlValue =
+            serde_yaml::from_str(&contents).map_err(|source_error| DetectError::Parse {
+                path: workflow_path.display().to_string(),
+                message: source_error.to_string(),
+            })?;
+        let Some(jobs) = workflow.get("jobs").and_then(YamlValue::as_mapping) else {
+            continue;
+        };
+        for job in jobs.values() {
+            let Some(steps) = job.get("steps").and_then(YamlValue::as_sequence) else {
+                continue;
+            };
+            for step_index in 0..steps.len() {
+                let CiWorkflowWorkingDirectory::RepositoryRelative(directory) =
+                    github_actions_working_directory(source_root, &workflow, job, step_index)?
+                else {
+                    continue;
+                };
+                fs::create_dir_all(snapshot_root.join(&directory)).map_err(|source| {
+                    DetectError::Read {
+                        path: directory,
+                        source,
+                    }
+                })?;
+            }
+        }
+    }
+    Ok(())
 }
 
 fn discovery_source_kind(path: &str) -> &'static str {
@@ -12704,6 +12760,19 @@ jobs:
                 && !report.contract.tasks.contains_key("test:non-string")
                 && !report.contract.tasks.contains_key("test:missing"),
             "noncanonical, non-string, and unobserved working directories must not be promoted"
+        );
+        let captured = report
+            .source_bound_candidate()
+            .expect("source-bound candidate capture");
+        assert_eq!(
+            captured
+                .contract
+                .tasks
+                .get("build")
+                .and_then(|task| task.command.as_ref())
+                .and_then(|command| command.cwd.as_deref()),
+            Some("site"),
+            "candidate capture must retain observed CI working-directory topology"
         );
     }
 
