@@ -83,8 +83,8 @@ durable agent workflow belongs in the canonical Ota skill.
   `effect_refusal_snapshot_durability_uncertain`, its exact `artifact_kind`, and
   `receipt_published: false`.
   The explicit archive carrier is immutable-hosted on Linux/x64 and macOS in
-  [run 33215430688](https://github.com/ota-run/ota/actions/runs/33215430688) against Core
-  `a8a27cbbf9daf7b40d0673e5babc715bed0666b6`. Both retained artifacts record one valid refusal
+  [run 33243471896](https://github.com/ota-run/ota/actions/runs/33243471896) against Core
+  `f8dc16c0eb3d8e5c9d9fda5c2f50674e2ba1b150`. Both retained artifacts record one valid refusal
   archive with `archive_count: 1` and `invalid_archive_count: 0`, then reject an archive with its
   replay context deliberately stripped (`0` valid, `1` invalid), and accept the restored bytes.
   The same fixture confirms workflow setup, environment rendering, and durable logs remain absent.

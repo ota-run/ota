@@ -785,8 +785,8 @@ not independently establish arbitrary child-process absence, provider contact or
 complete repository immutability. It remains execution-disabled internal evidence; V12 still
 requires its independent real-repository pressure bar before closure.
 The explicit durable refusal archive carrier is separately immutable-hosted on Linux/x64 and macOS
-in [run 33215430688](https://github.com/ota-run/ota/actions/runs/33215430688) against Core
-`a8a27cbbf9daf7b40d0673e5babc715bed0666b6`. Both retained artifacts create one negative receipt
+in [run 33243471896](https://github.com/ota-run/ota/actions/runs/33243471896) against Core
+`f8dc16c0eb3d8e5c9d9fda5c2f50674e2ba1b150`. Both retained artifacts create one negative receipt
 archive with private policy and immutable contract snapshots, accept it through independent
 history re-derivation, reject a deliberately stripped replay context, and accept the restored
 bytes. The fixture also observes absent setup, rendered environment, and durable logs. It remains
