@@ -1002,18 +1002,33 @@
             "required": ["applicable_rules"]
           },
           "then": { "properties": { "decision": { "enum": ["warn", "deny"] } } }
+        },
+        {
+          "if": { "properties": { "eligible": { "const": false } }, "required": ["eligible"] },
+          "then": {
+            "properties": {
+              "derivation_posture": { "const": "declared_only" },
+              "applicable_rules": { "maxItems": 0 },
+              "decision": { "enum": ["warn", "deny"] },
+              "decision_basis": { "const": "declared effect attachment lacks an exact typed adapter realization" }
+            }
+          },
+          "else": {
+            "properties": { "derivation_posture": { "const": "declared_and_typed" } }
+          }
         }
       ],
       "required": [
         "effect_identity", "realization_identity", "attachment_identity", "origin_path",
-        "eligible", "applicable_rules", "decision", "decision_basis"
+        "derivation_posture", "eligible", "applicable_rules", "decision", "decision_basis"
       ],
       "properties": {
         "effect_identity": { "$ref": "#/$defs/sha256Identity" },
         "realization_identity": { "$ref": "#/$defs/sha256Identity" },
         "attachment_identity": { "$ref": "#/$defs/sha256Identity" },
         "origin_path": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
-        "eligible": { "const": true },
+        "derivation_posture": { "enum": ["declared_and_typed", "declared_only"] },
+        "eligible": { "type": "boolean" },
         "applicable_rules": {
           "type": "array",
           "items": { "$ref": "#/$defs/applicableEffectPolicyRule" }

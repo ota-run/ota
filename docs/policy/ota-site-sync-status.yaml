@@ -25,9 +25,4 @@
 version: 1
 repository: ota-run/ota-site
 mode: synced
-reviewed_ota_commit: pending-local-v12-effect-refusal-coverage
-consumer_commit: b514a2797861e96a3b0cc5d832c4ed430cd9e1a4
-notes: >
-  The Site reference bounds both source-led CI inference and contract-graph effect-refusal
-  assurance. A declared or ephemeral canary never becomes positive assurance. The connected
-  reference guidance is committed at the recorded immutable Site revision.
+reviewed_ota_commit: 785111c

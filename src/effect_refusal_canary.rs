@@ -174,6 +174,62 @@ pub(crate) fn evaluate_effect_refusal_canary(
             plan.task == challenge.origin.task && plan.effect_ref == challenge.origin.effect
         })
         .collect::<Vec<_>>();
+    let matching_declared_only = closure
+        .declared_only_attachments
+        .iter()
+        .filter(|attachment| {
+            attachment.task == challenge.origin.task
+                && attachment.effect_ref == challenge.origin.effect
+        })
+        .collect::<Vec<_>>();
+    if matching_plans.is_empty() {
+        if matching_declared_only.len() != 1 {
+            let mut outcome = base_outcome(
+                EffectRefusalCanaryStatus::AssuranceGap,
+                canary.id.as_str(),
+                lane_kind,
+                lane_target,
+                if matching_declared_only.is_empty() {
+                    "effect_canary_origin_absent"
+                } else {
+                    "effect_canary_origin_ambiguous"
+                },
+                "the predeclared origin did not resolve one exact effect realization in the selected closure",
+            );
+            outcome.effect_ref = Some(canary.effect.clone());
+            return outcome;
+        }
+        let attachment = matching_declared_only[0];
+        let Some(decision) = decision else {
+            let mut outcome = base_outcome(
+                EffectRefusalCanaryStatus::NotEvaluated,
+                canary.id.as_str(),
+                lane_kind,
+                lane_target,
+                "effect_canary_policy_unavailable",
+                "no typed effect-policy snapshot was available for the challenged realization",
+            );
+            outcome.effect_ref = Some(attachment.effect_ref.clone());
+            return outcome;
+        };
+        let matching_effects = decision
+            .effects
+            .iter()
+            .filter(|effect| effect.attachment_identity == attachment.attachment_identity)
+            .collect::<Vec<_>>();
+        if matching_effects.len() == 1 && !matching_effects[0].eligible {
+            let mut outcome = base_outcome(
+                EffectRefusalCanaryStatus::AssuranceGap,
+                canary.id.as_str(),
+                lane_kind,
+                lane_target,
+                "effect_canary_realization_ineligible",
+                "the exact challenged realization is not eligible for effect-refusal assurance",
+            );
+            bind_declared_only_evaluation(&mut outcome, attachment, decision, matching_effects[0]);
+            return outcome;
+        }
+    }
     if matching_plans.len() != 1 {
         let mut outcome = base_outcome(
             EffectRefusalCanaryStatus::AssuranceGap,
@@ -329,6 +385,24 @@ fn bind_evaluation(
     outcome.actual_decision = Some(effect.decision);
 }
 
+fn bind_declared_only_evaluation(
+    outcome: &mut EffectRefusalCanaryOutcome,
+    attachment: &crate::effect_policy::DeclaredOnlyEffectAttachment,
+    decision: &EffectPolicyDecision,
+    effect: &crate::effect_policy::EffectPolicyEffectEvaluation,
+) {
+    outcome.effect_ref = Some(attachment.effect_ref.clone());
+    outcome.effect_identity = Some(effect.effect_identity.clone());
+    outcome.attachment_identity = Some(effect.attachment_identity.clone());
+    outcome.realization_identity = Some(effect.realization_identity.clone());
+    outcome.selected_invocation_identity = Some(decision.selected_invocation_identity.clone());
+    outcome.policy_decision_identity = Some(decision.identity.clone());
+    outcome.policy_snapshot_identity = Some(decision.policy_snapshot_identity.clone());
+    outcome.policy_source_evidence_identity =
+        Some(decision.policy_source_evidence.identity.clone());
+    outcome.actual_decision = Some(effect.decision);
+}
+
 fn effect_refusal_canary_identity(
     effect_identity: &str,
     attachment_identity: &str,
@@ -383,5 +457,56 @@ fn base_outcome(
         execution_started: false,
         reason_code: reason_code.to_string(),
         reason: reason.into(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::effect_policy::DeclaredOnlyEffectAttachment;
+
+    #[test]
+    fn duplicate_declared_only_origins_are_ambiguous() {
+        let contract: Contract = serde_yaml::from_str(
+            r#"
+version: 1
+project:
+  name: declared-only-canary
+agent:
+  effect_refusal_canaries:
+    - id: declared-only
+      effect: migration
+      challenge_lanes:
+        - task: mixed
+          origin: { task: raw, effect: migration }
+"#,
+        )
+        .expect("contract parses");
+        let resolved =
+            resolve_effect_refusal_challenge(&contract, "declared-only", "task", "mixed")
+                .expect("challenge resolves");
+        let closure = TypedEffectClosureAdmission {
+            invocations: Vec::new(),
+            application_plans: Vec::new(),
+            declared_only_attachments: vec![
+                DeclaredOnlyEffectAttachment {
+                    task: String::from("raw"),
+                    origin: String::from("run:step:0"),
+                    effect_ref: String::from("migration"),
+                    attachment_identity: String::from("sha256:one"),
+                },
+                DeclaredOnlyEffectAttachment {
+                    task: String::from("raw"),
+                    origin: String::from("run:step:1"),
+                    effect_ref: String::from("migration"),
+                    attachment_identity: String::from("sha256:two"),
+                },
+            ],
+            declared_effects_present: true,
+        };
+
+        let outcome = evaluate_effect_refusal_canary(resolved, "task", "mixed", &closure, None);
+        assert_eq!(outcome.status, EffectRefusalCanaryStatus::AssuranceGap);
+        assert_eq!(outcome.reason_code, "effect_canary_origin_ambiguous");
     }
 }

@@ -28,7 +28,8 @@ use crate::effect_application_plan::{
     EffectApplicationPlan, admit_database_schema_mutation_action,
 };
 use crate::effect_policy::{
-    EffectPolicyDecision, EffectPolicyEvaluationScope, EffectPolicyInvocation,
+    DeclaredOnlyEffectAttachment, EffectPolicyDecision, EffectPolicyEvaluationScope,
+    EffectPolicyInvocation,
 };
 use crate::policy_pack::{
     EffectGovernanceOverrides, LoadedOrgPolicyPack, load_org_policy_pack_auto_details,
@@ -47,9 +48,10 @@ pub(crate) fn typed_effect_policy_decision(
     selected_task_name: &str,
     invocations: &[EffectPolicyInvocation],
     application_plans: &[EffectApplicationPlan],
+    declared_only_attachments: &[DeclaredOnlyEffectAttachment],
     overrides: Option<&EffectGovernanceOverrides>,
 ) -> Result<Option<EffectPolicyDecision>, EffectAdmissionError> {
-    if application_plans.is_empty() {
+    if application_plans.is_empty() && declared_only_attachments.is_empty() {
         return Ok(None);
     }
     let loaded =
@@ -62,6 +64,7 @@ pub(crate) fn typed_effect_policy_decision(
         selected_task_name,
         invocations,
         application_plans,
+        declared_only_attachments,
         loaded.as_ref(),
         overrides,
     )
@@ -75,10 +78,11 @@ pub(crate) fn typed_effect_policy_decision_from_loaded_policy(
     selected_task_name: &str,
     invocations: &[EffectPolicyInvocation],
     application_plans: &[EffectApplicationPlan],
+    declared_only_attachments: &[DeclaredOnlyEffectAttachment],
     loaded: Option<&LoadedOrgPolicyPack>,
     overrides: Option<&EffectGovernanceOverrides>,
 ) -> Result<Option<EffectPolicyDecision>, EffectAdmissionError> {
-    if application_plans.is_empty() {
+    if application_plans.is_empty() && declared_only_attachments.is_empty() {
         return Ok(None);
     }
     let Some(loaded) = loaded else {
@@ -95,6 +99,7 @@ pub(crate) fn typed_effect_policy_decision_from_loaded_policy(
             workflow_name,
             ordered_invocations: invocations,
             plans: application_plans,
+            declared_only_attachments,
         },
         &loaded,
         overrides,

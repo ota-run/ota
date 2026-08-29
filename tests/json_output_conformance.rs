@@ -2795,6 +2795,13 @@ tasks:
     action: {{ kind: database_schema_mutation, effect: migration }}
     effects:
       declared: [migration]
+  migrate-declared-only:
+    command: {{ exe: sh, args: [-c, "touch declared-only-sentinel"] }}
+    effects:
+      declared: [migration]
+  mixed:
+    command: {{ exe: sh, args: [-c, "touch mixed-sentinel"] }}
+    depends_on: [migrate, migrate-declared-only]
   parent:
     after_always: [migrate]
     command: {{ exe: sh, args: [-c, "touch parent-sentinel"] }}
@@ -2812,10 +2819,69 @@ agent:
           origin: {{ task: migrate, effect: migration }}
         - workflow: release
           origin: {{ task: migrate, effect: migration }}
+    - id: declared_only_schema_refusal
+      effect: migration
+      challenge_lanes:
+        - task: migrate-declared-only
+          origin: {{ task: migrate-declared-only, effect: migration }}
+        - task: mixed
+          origin: {{ task: migrate-declared-only, effect: migration }}
 "#
         ),
     )
     .expect("contract");
+    let no_policy_declared_only = Command::new(env!("CARGO_BIN_EXE_ota"))
+        .args(["run", "migrate-declared-only"])
+        .current_dir(fixture.path())
+        .output()
+        .expect("declared-only task without policy should run");
+    assert!(!no_policy_declared_only.status.success());
+    assert!(
+        String::from_utf8_lossy(&no_policy_declared_only.stderr)
+            .contains("declared-only effect realization without an exact typed adapter plan",)
+    );
+    assert!(!fixture.path().join("declared-only-sentinel").exists());
+    let no_policy_declared_only_preview = run_ota_failure_stdout_json(
+        &["run", "migrate-declared-only", "--dry-run", "--json"],
+        fixture.path(),
+    );
+    assert_matches_schema("run-preview.json", &no_policy_declared_only_preview);
+    assert_eq!(no_policy_declared_only_preview["ok"], false);
+    assert_eq!(no_policy_declared_only_preview["preview_status"], "BLOCKED");
+    assert_eq!(
+        no_policy_declared_only_preview["summary"]["primary_blocker"]["code"],
+        "typed_effect_admission_refused"
+    );
+    assert!(
+        no_policy_declared_only_preview["summary"]["primary_blocker"]["why"]
+            .as_str()
+            .is_some_and(
+                |why| why.contains("declares an effect without an exact typed adapter realization")
+            )
+    );
+    assert!(
+        no_policy_declared_only_preview["plan"]["effect_policy_decision"].is_null(),
+        "a missing policy must not be fabricated for a structural declared-only refusal"
+    );
+    assert!(
+        no_policy_declared_only_preview["plan"]["actions"]
+            .as_array()
+            .is_some_and(|actions| actions.iter().all(|action| {
+                !action
+                    .as_str()
+                    .is_some_and(|action| action.contains("would execute"))
+            }))
+    );
+    let no_policy_declared_only_text = Command::new(env!("CARGO_BIN_EXE_ota"))
+        .args(["run", "migrate-declared-only", "--dry-run", "--plain"])
+        .current_dir(fixture.path())
+        .output()
+        .expect("declared-only dry-run text preview");
+    assert!(!no_policy_declared_only_text.status.success());
+    let no_policy_declared_only_text =
+        String::from_utf8_lossy(&no_policy_declared_only_text.stdout);
+    assert!(no_policy_declared_only_text.contains("BLOCKED"));
+    assert!(!no_policy_declared_only_text.contains("would execute"));
     let matching_policy = r#"
 policies:
   effects:
@@ -2868,6 +2934,57 @@ policies:
             .as_str()
             .is_some_and(|identity| identity.starts_with("sha256:"))
     );
+    let declared_only_preview = run_ota_failure_stdout_json(
+        &["run", "migrate-declared-only", "--dry-run", "--json"],
+        fixture.path(),
+    );
+    assert_matches_schema("run-preview.json", &declared_only_preview);
+    assert_eq!(declared_only_preview["ok"], false);
+    assert_eq!(declared_only_preview["preview_status"], "BLOCKED");
+    assert_eq!(
+        declared_only_preview["summary"]["primary_blocker"]["code"],
+        "typed_effect_admission_refused"
+    );
+    let declared_only_effect =
+        &declared_only_preview["plan"]["effect_policy_decision"]["effects"][0];
+    assert_eq!(declared_only_effect["eligible"], false);
+    assert_eq!(declared_only_effect["derivation_posture"], "declared_only");
+    assert_eq!(declared_only_effect["applicable_rules"], json!([]));
+    let mixed_preview =
+        run_ota_failure_stdout_json(&["run", "mixed", "--dry-run", "--json"], fixture.path());
+    assert_matches_schema("run-preview.json", &mixed_preview);
+    assert_eq!(mixed_preview["ok"], false);
+    assert_eq!(mixed_preview["preview_status"], "BLOCKED");
+    assert_eq!(
+        mixed_preview["summary"]["primary_blocker"]["code"],
+        "typed_effect_admission_refused"
+    );
+    let mixed_effects = mixed_preview["plan"]["effect_policy_decision"]["effects"]
+        .as_array()
+        .expect("mixed effect policy evaluations");
+    assert_eq!(mixed_effects.len(), 2);
+    let mixed_typed = mixed_effects
+        .iter()
+        .find(|effect| effect["derivation_posture"] == "declared_and_typed")
+        .expect("eligible mixed realization");
+    let mixed_declared_only = mixed_effects
+        .iter()
+        .find(|effect| effect["derivation_posture"] == "declared_only")
+        .expect("ineligible mixed realization");
+    assert_eq!(
+        mixed_typed["effect_identity"],
+        mixed_declared_only["effect_identity"]
+    );
+    assert_ne!(
+        mixed_typed["attachment_identity"],
+        mixed_declared_only["attachment_identity"]
+    );
+    assert_ne!(
+        mixed_typed["realization_identity"],
+        mixed_declared_only["realization_identity"]
+    );
+    assert_eq!(mixed_typed["eligible"], true);
+    assert_eq!(mixed_declared_only["eligible"], false);
     let rules = decision["effects"][0]["applicable_rules"]
         .as_array()
         .expect("applicable rules");
@@ -2878,6 +2995,100 @@ policies:
             .expect("policy is present");
     let contract = ota::parser::load_contract(&fixture.path().join("ota.yaml"))
         .expect("contract loads for independent policy verification");
+    let declared_only_invocations =
+        ota::runner::plan_task_execution(&contract, "migrate-declared-only")
+            .expect("declared-only closure re-derives")
+            .steps
+            .into_iter()
+            .enumerate()
+            .map(
+                |(ordinal, step)| ota::effect_policy::EffectPolicyInvocation {
+                    task: step.task,
+                    origin: format!("run_preview:step:{ordinal}"),
+                },
+            )
+            .collect::<Vec<_>>();
+    let declared_only_attachments = ota::effect_policy::declared_only_effect_attachments(
+        &contract,
+        &declared_only_invocations,
+        &[],
+    )
+    .expect("declared-only attachments derive");
+    let declared_only_decision: ota::effect_policy::EffectPolicyDecision =
+        serde_json::from_value(declared_only_preview["plan"]["effect_policy_decision"].clone())
+            .expect("declared-only decision decodes");
+    let declared_only_subject = vec![String::from("tasks"), String::from("migrate-declared-only")];
+    ota::effect_policy::verify_effect_policy_decision(
+        &declared_only_decision,
+        &contract,
+        ota::effect_policy::EffectPolicyEvaluationScope {
+            selected_subject: &declared_only_subject,
+            workflow_name: None,
+            ordered_invocations: &declared_only_invocations,
+            plans: &[],
+            declared_only_attachments: &declared_only_attachments,
+        },
+        &loaded_policy,
+        None,
+    )
+    .expect("declared-only decision verifies");
+    let mut forged_declared_only_posture = declared_only_decision.clone();
+    forged_declared_only_posture.effects[0].derivation_posture =
+        ota::effect_domain::EffectDerivationPosture::DeclaredAndTyped;
+    assert!(
+        ota::effect_policy::verify_effect_policy_decision(
+            &forged_declared_only_posture,
+            &contract,
+            ota::effect_policy::EffectPolicyEvaluationScope {
+                selected_subject: &declared_only_subject,
+                workflow_name: None,
+                ordered_invocations: &declared_only_invocations,
+                plans: &[],
+                declared_only_attachments: &declared_only_attachments,
+            },
+            &loaded_policy,
+            None,
+        )
+        .is_err()
+    );
+    let mut substituted_declared_only_attachment = declared_only_decision.clone();
+    substituted_declared_only_attachment.effects[0].attachment_identity =
+        String::from("sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    assert!(
+        ota::effect_policy::verify_effect_policy_decision(
+            &substituted_declared_only_attachment,
+            &contract,
+            ota::effect_policy::EffectPolicyEvaluationScope {
+                selected_subject: &declared_only_subject,
+                workflow_name: None,
+                ordered_invocations: &declared_only_invocations,
+                plans: &[],
+                declared_only_attachments: &declared_only_attachments,
+            },
+            &loaded_policy,
+            None,
+        )
+        .is_err()
+    );
+    let mut substituted_declared_only_realization = declared_only_decision.clone();
+    substituted_declared_only_realization.effects[0].realization_identity =
+        String::from("sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+    assert!(
+        ota::effect_policy::verify_effect_policy_decision(
+            &substituted_declared_only_realization,
+            &contract,
+            ota::effect_policy::EffectPolicyEvaluationScope {
+                selected_subject: &declared_only_subject,
+                workflow_name: None,
+                ordered_invocations: &declared_only_invocations,
+                plans: &[],
+                declared_only_attachments: &declared_only_attachments,
+            },
+            &loaded_policy,
+            None,
+        )
+        .is_err()
+    );
     let plans = vec![
         ota::effect_application_plan::admit_database_schema_mutation_action(
             &contract,
@@ -2902,6 +3113,12 @@ policies:
             },
         )
         .collect::<Vec<_>>();
+    let declared_only_attachments = ota::effect_policy::declared_only_effect_attachments(
+        &contract,
+        &ordered_invocations,
+        &plans,
+    )
+    .expect("declared-only attachments derive");
     let verify = |decision| {
         ota::effect_policy::verify_effect_policy_decision(
             decision,
@@ -2911,6 +3128,7 @@ policies:
                 workflow_name: None,
                 ordered_invocations: &ordered_invocations,
                 plans: &plans,
+                declared_only_attachments: &declared_only_attachments,
             },
             &loaded_policy,
             None,
@@ -2925,6 +3143,7 @@ policies:
             workflow_name: None,
             ordered_invocations: &ordered_invocations,
             plans: &plans,
+            declared_only_attachments: &declared_only_attachments,
         },
         &loaded_policy,
         None,
@@ -2978,6 +3197,10 @@ policies:
     let mut ineligible_preview = preview.clone();
     ineligible_preview["plan"]["effect_policy_decision"]["effects"][0]["eligible"] = json!(false);
     assert_rejected_by_schema("run-preview.json", &ineligible_preview);
+    let mut declared_only_allow = declared_only_preview.clone();
+    declared_only_allow["plan"]["effect_policy_decision"]["effects"][0]["decision"] =
+        json!("allow");
+    assert_rejected_by_schema("run-preview.json", &declared_only_allow);
     let mut deny_rule_allowing_effect = preview.clone();
     deny_rule_allowing_effect["plan"]["effect_policy_decision"]["effects"][0]["decision"] =
         json!("allow");
@@ -3078,6 +3301,49 @@ policies:
     assert!(fixture.path().join(refusal_archive_path).is_file());
     assert!(!fixture.path().join("setup-sentinel").exists());
     assert!(!fixture.path().join("parent-sentinel").exists());
+
+    let declared_only_canary = run_ota_failure_stdout_json(
+        &[
+            "run",
+            "--agent",
+            "--expect-effect-refusal",
+            "declared_only_schema_refusal",
+            "--json",
+            "mixed",
+        ],
+        fixture.path(),
+    );
+    assert_matches_schema("effect-refusal-canary.json", &declared_only_canary);
+    assert_eq!(declared_only_canary["status"], "assurance_gap");
+    assert_eq!(
+        declared_only_canary["canary"]["reason_code"],
+        "effect_canary_realization_ineligible"
+    );
+    assert_eq!(declared_only_canary["canary"]["execution_started"], false);
+    assert_eq!(
+        declared_only_canary["canary"]["effect_identity"], decoded.effects[0].effect_identity,
+        "the challenged declared-only attachment must reach the same effect definition"
+    );
+    assert_ne!(
+        declared_only_canary["canary"]["attachment_identity"],
+        decoded.effects[0].attachment_identity,
+        "a declared-only origin must not inherit the typed attachment"
+    );
+    assert!(!fixture.path().join("declared-only-sentinel").exists());
+
+    let declared_only_run = Command::new(env!("CARGO_BIN_EXE_ota"))
+        .args(["run", "mixed"])
+        .current_dir(fixture.path())
+        .output()
+        .expect("declared-only task command should run");
+    assert!(!declared_only_run.status.success());
+    let declared_only_run_stderr = String::from_utf8_lossy(&declared_only_run.stderr);
+    assert!(
+        declared_only_run_stderr.contains("declared-only effect realization"),
+        "{declared_only_run_stderr}"
+    );
+    assert!(!fixture.path().join("declared-only-sentinel").exists());
+    assert!(!fixture.path().join("mixed-sentinel").exists());
 
     let refusal_archive = fixture.path().join(refusal_archive_path);
     let original_refusal_archive = fs::read(&refusal_archive).expect("refusal archive bytes");

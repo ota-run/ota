@@ -3387,7 +3387,14 @@ repository policy as `repository_controlled`, and workspace policy as `workspace
 Matching policy bytes never upgrade that posture. An aggregate deny causes
 `OTA_EFFECT_POLICY_DENIED` before side effects; allow and warn do not enable provider execution,
 which remains disabled. The decision is not a canary, receipt, archive, provider attestation, or
-positive assurance record.
+positive assurance record. Each effect evaluation carries its `derivation_posture`: only
+`declared_and_typed` is eligible for typed-policy admission. A `declared_only` attachment has no
+exact adapter plan, carries no applicable typed rules, and remains an ineligible, fail-closed
+execution boundary even when another attachment reaches the same effect definition. A run preview
+with a declared-only attachment reports `BLOCKED` with
+`typed_effect_admission_refused`; when no policy pack exists, its
+`plan.effect_policy_decision` remains absent because the structural refusal does not invent policy
+evidence.
 
 `ota run --agent --expect-effect-refusal <id> --json <task>` and `ota up --workflow <name>
 --agent --expect-effect-refusal <id> --json` emit the separate

@@ -55,9 +55,15 @@ durable agent workflow belongs in the canonical Ota skill.
   typed deny. `ota doctor --json` now emits contract-graph coverage records for each declared
   typed-refusal canary, including unchallenged exact-equivalent attachments and opaque-path
   boundaries; it remains `unknown` until a later verified archive carries realization and execution
-  evidence. This does not close V12: immutable coverage-honesty pressure, mixed-realization,
-  namespace/posture, CI projection, sandbox, receipt/archive, and archive-backed V11.14 assurance
-  requirements remain open.
+  evidence. A later Linux/macOS matrix against Core `84a988433cb3c0226a3569cdc2ee5202d3d5d375`
+  confirms that those exact-equivalent and opaque paths remain unproved and that a generic caller
+  refusal cannot pass a canary. Local mixed-realization admission now retains a declared-only
+  attachment as an ineligible realization, binds its distinct identity into the decision, refuses
+  ordinary execution and dry-run preview before its command body, reports the preview as `BLOCKED`
+  without fabricating policy evidence when no pack exists, and reports an exact-origin canary as an assurance
+  gap even when another attachment reaches the same effect. Immutable mixed-realization pressure
+  has not run. This does not close V12: namespace/posture, CI projection, sandbox,
+  receipt/archive, and archive-backed V11.14 assurance requirements remain open.
   See `docs/pressure/v12-real-repository-effect-refusal.md`.
 - active version: V12 effect-bound refusal assurance. V11 is reconciled complete and V12 is the sole
   active version as of 2026-08-25. The first local implementation batch adds strict PostgreSQL

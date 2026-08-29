@@ -28,7 +28,9 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use crate::effect_application_plan::EffectApplicationPlan;
-use crate::effect_policy::{EffectPolicyDecision, EffectPolicyInvocation};
+use crate::effect_policy::{
+    DeclaredOnlyEffectAttachment, EffectPolicyDecision, EffectPolicyInvocation,
+};
 use crate::policy_pack::{EffectGovernanceOverrides, LoadedOrgPolicyPack, PolicyEffectDecision};
 use crate::runner::{
     ExecutionOverrides, RunError, effective_task_execution, effective_task_execution_working_dir,
@@ -43,6 +45,8 @@ type OrchestrationResult<T> = Result<T, Box<RunError>>;
 pub(crate) struct TypedEffectClosureAdmission {
     pub(crate) invocations: Vec<EffectPolicyInvocation>,
     pub(crate) application_plans: Vec<EffectApplicationPlan>,
+    pub(crate) declared_only_attachments: Vec<DeclaredOnlyEffectAttachment>,
+    pub(crate) declared_effects_present: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -78,7 +82,7 @@ pub(crate) struct CommandTypedEffectAdmission {
 
 impl CommandTypedEffectAdmission {
     pub(crate) fn is_typed(&self) -> bool {
-        !self.typed.closure.application_plans.is_empty()
+        self.typed.closure.declared_effects_present
     }
 }
 
@@ -91,14 +95,16 @@ pub(crate) fn build_typed_effect_closure_admission(
     let repository_root = contract_working_dir(contract_path);
     let mut invocations = Vec::new();
     let mut application_plans = Vec::new();
+    let mut declared_effects_present = false;
 
     for root in roots {
         let plan = plan_task_execution_with_overrides(contract, root.task.as_str(), overrides)?;
         for (step_ordinal, step) in plan.steps.iter().enumerate() {
-            invocations.push(EffectPolicyInvocation {
+            let invocation = EffectPolicyInvocation {
                 task: step.task.clone(),
                 origin: format!("{}:step:{step_ordinal}", root.origin),
-            });
+            };
+            invocations.push(invocation.clone());
             let Some(task) = contract.tasks.get(step.task.as_str()) else {
                 continue;
             };
@@ -119,6 +125,7 @@ pub(crate) fn build_typed_effect_closure_admission(
             else {
                 continue;
             };
+            declared_effects_present |= !task.effects.declared.is_empty();
             let Some(TaskActionSpec::DatabaseSchemaMutation(spec)) = execution.action() else {
                 continue;
             };
@@ -144,9 +151,25 @@ pub(crate) fn build_typed_effect_closure_admission(
         }
     }
 
+    let declared_only_attachments = crate::effect_policy::declared_only_effect_attachments(
+        contract,
+        &invocations,
+        &application_plans,
+    )
+    .map_err(|error| {
+        Box::new(RunError::FileActionFailed {
+            task: roots
+                .first()
+                .map(|root| root.task.clone())
+                .unwrap_or_default(),
+            message: error.message,
+        })
+    })?;
     Ok(TypedEffectClosureAdmission {
         invocations,
         application_plans,
+        declared_only_attachments,
+        declared_effects_present,
     })
 }
 
@@ -165,6 +188,7 @@ pub(crate) fn typed_effect_policy_decision(
         selected_task_name,
         &closure.invocations,
         &closure.application_plans,
+        &closure.declared_only_attachments,
         overrides,
     )
     .map_err(|error| {
@@ -194,6 +218,7 @@ pub(crate) fn typed_effect_policy_decision_from_loaded_policy(
         selected_task_name,
         &closure.invocations,
         &closure.application_plans,
+        &closure.declared_only_attachments,
         loaded,
         overrides,
     )
@@ -304,11 +329,10 @@ pub(crate) fn typed_effect_closure_applies(
     overrides: ExecutionOverrides,
 ) -> OrchestrationResult<bool> {
     let invocations = selected_execution_closure_invocations(contract, roots, overrides)?;
-    Ok(selected_execution_closure_declares_typed_effect(
-        contract,
-        &invocations,
-        overrides,
-    ))
+    Ok(
+        selected_execution_closure_has_typed_action(contract, &invocations, overrides)
+            || selected_execution_closure_declares_typed_effect(contract, &invocations, overrides),
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -323,25 +347,31 @@ fn admit_typed_effect_closure_with_policy_source(
 ) -> OrchestrationResult<TypedEffectAdmission> {
     // Do not route unrelated runner-planning failures through the typed-effect boundary.
     // The full planner remains authoritative once any selected execution-closure member owns a
-    // typed action.
+    // typed action or contract-declared effect attachment.
     let declared_invocations =
         selected_execution_closure_invocations(contract, roots, execution_overrides)?;
-    if !selected_execution_closure_declares_typed_effect(
+    if !(selected_execution_closure_has_typed_action(
         contract,
         &declared_invocations,
         execution_overrides,
-    ) {
+    ) || selected_execution_closure_declares_typed_effect(
+        contract,
+        &declared_invocations,
+        execution_overrides,
+    )) {
         return Ok(TypedEffectAdmission {
             closure: TypedEffectClosureAdmission {
                 invocations: declared_invocations,
                 application_plans: Vec::new(),
+                declared_only_attachments: Vec::new(),
+                declared_effects_present: false,
             },
             policy_decision: None,
         });
     }
     let closure =
         build_typed_effect_closure_admission(contract, contract_path, roots, execution_overrides)?;
-    let policy_decision = if closure.application_plans.is_empty() {
+    let policy_decision = if !closure.declared_effects_present {
         None
     } else {
         let selected_task_name = roots
@@ -374,6 +404,26 @@ fn admit_typed_effect_closure_with_policy_source(
 }
 
 fn selected_execution_closure_declares_typed_effect(
+    contract: &Contract,
+    invocations: &[EffectPolicyInvocation],
+    overrides: ExecutionOverrides,
+) -> bool {
+    invocations.iter().any(|invocation| {
+        let Some(task) = contract.tasks.get(invocation.task.as_str()) else {
+            return false;
+        };
+        let effective = effective_task_execution(contract, invocation.task.as_str(), overrides);
+        let target_os = target_os_for_declared_backend(
+            effective.backend,
+            effective.container,
+            normalized_current_os(),
+        );
+        task.resolved_execution_for_backend(effective.backend, target_os)
+            .is_some_and(|_| !task.effects.declared.is_empty())
+    })
+}
+
+fn selected_execution_closure_has_typed_action(
     contract: &Contract,
     invocations: &[EffectPolicyInvocation],
     overrides: ExecutionOverrides,
@@ -518,10 +568,37 @@ pub(crate) fn verify_archived_typed_effect_closure(
 }
 
 pub(crate) fn typed_effect_admission_refusal(admission: &TypedEffectAdmission) -> Option<RunError> {
-    let first_plan = admission.closure.application_plans.first()?;
-    if let Some(decision) = admission.policy_decision.as_ref()
-        && decision.aggregate_decision == PolicyEffectDecision::Deny
-    {
+    let task = admission
+        .closure
+        .declared_only_attachments
+        .first()
+        .map(|attachment| attachment.task.clone())
+        .or_else(|| {
+            admission
+                .closure
+                .application_plans
+                .first()
+                .map(|plan| plan.task.clone())
+        })?;
+    if !admission.closure.declared_only_attachments.is_empty() {
+        return Some(RunError::FileActionFailed {
+            task,
+            message: String::from(
+                "selected closure contains a declared-only effect realization without an exact typed adapter plan; refusing before execution",
+            ),
+        });
+    }
+    let decision = admission.policy_decision.as_ref()?;
+    if decision.effects.iter().any(|effect| !effect.eligible) {
+        return Some(RunError::FileActionFailed {
+            task,
+            message: format!(
+                "typed effect decision `{}` contains a declared-only realization without an exact typed adapter plan; refusing before execution",
+                decision.identity,
+            ),
+        });
+    }
+    if decision.aggregate_decision == PolicyEffectDecision::Deny {
         let rule_ids = decision
             .effects
             .iter()
@@ -551,7 +628,7 @@ pub(crate) fn typed_effect_admission_refusal(admission: &TypedEffectAdmission) -
             format!("typed rule(s) `{rule_ids}`")
         };
         return Some(RunError::EffectPolicyDenied {
-            task: first_plan.task.clone(),
+            task,
             message: format!(
                 "decision `{}` denied effect set `{}` through {} with policy source posture `{}` before provider contact or repository mutation",
                 decision.identity,
@@ -561,6 +638,8 @@ pub(crate) fn typed_effect_admission_refusal(admission: &TypedEffectAdmission) -
             ),
         });
     }
+
+    let first_plan = admission.closure.application_plans.first()?;
 
     Some(RunError::FileActionFailed {
         task: first_plan.task.clone(),
@@ -703,7 +782,7 @@ tasks:
         )
         .expect("selected closure");
 
-        assert!(selected_execution_closure_declares_typed_effect(
+        assert!(selected_execution_closure_has_typed_action(
             &contract,
             &closure,
             ExecutionOverrides::default(),
@@ -750,7 +829,7 @@ tasks:
             )
             .expect("selected closure");
             assert!(
-                selected_execution_closure_declares_typed_effect(
+                selected_execution_closure_has_typed_action(
                     &contract,
                     &closure,
                     ExecutionOverrides::default(),

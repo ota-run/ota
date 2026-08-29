@@ -889,17 +889,11 @@ Immutable partial evidence is retained in
 [`docs/pressure/v12-real-repository-effect-refusal.md`](../../pressure/v12-real-repository-effect-refusal.md):
 Plausible Analytics and Outline each pass direct task and workflow explicit-deny canaries on Linux
 and macOS with `execution_started: false`. Those controls establish only Ota's selected-closure
-refusal boundary. They do not satisfy the following coverage-honesty requirements, prove arbitrary
-process absence, or close this pressure bar.
-
-The second repository must prove coverage honesty:
-
-- one named lane contains the typed effect and is refused by effect policy;
-- one known equal-effect path is intentionally left unchallenged and appears as
-  `equivalent_execution_paths_not_proved`;
-- one task omits or obscures the effect and yields `unknown` or an assurance gap rather than a
-  passing protected claim;
-- a generic earlier refusal cannot false-green the effect canary.
+refusal boundary. A second immutable matrix against both repositories additionally proves static
+coverage honesty: one known equal-effect path is intentionally left unchallenged and appears as
+`equivalent_execution_paths_not_proved`, opaque execution remains a gap, and a generic caller
+refusal cannot false-green the canary. These controls do not prove arbitrary process absence or
+close this pressure bar.
 
 An adversarial mixed-realization control attaches one eligible typed realization and one
 ineligible declared-only/opaque realization to the same effect identity. Challenging the ineligible

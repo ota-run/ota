@@ -32,12 +32,13 @@ adoption, or claim that either upstream repository is governed by Ota.
 
 | Repository | Upstream revision | Fork revision | Hosted matrix |
 | --- | --- | --- | --- |
-| [Plausible Analytics](https://github.com/plausible/analytics) | `1cdff8b2d1e310cee731ac648b45875ec1fbd131` | `0f3ab55002240e7cbbb15aa867b292cdc6d84c66` | [33263551116](https://github.com/bobaikato/analytics/actions/runs/33263551116) |
-| [Outline](https://github.com/outline/outline) | `d8d8f2fffed97eaf3e9d48d820c8f1e1facf4008` | `20f576532d027039a280727fe6e26b6e1cc798ad` | [33263549770](https://github.com/bobaikato/outline/actions/runs/33263549770) |
+| [Plausible Analytics](https://github.com/plausible/analytics) | `1cdff8b2d1e310cee731ac648b45875ec1fbd131` | `a3d9ca9ea3d92a0b1a3c8588436076c734665b74` | [33271676531](https://github.com/bobaikato/analytics/actions/runs/33271676531) |
+| [Outline](https://github.com/outline/outline) | `d8d8f2fffed97eaf3e9d48d820c8f1e1facf4008` | `c8c821ced9b7f14b7fdffbc2c737165e21b79653` | [33271681072](https://github.com/bobaikato/outline/actions/runs/33271681072) |
 
-Both fork-only matrices source-build Core `cd99c9abd2c0225b454371e897eca2486319db26` and
-complete on Linux and macOS. They retain contract validation plus direct task and workflow-canary
-JSON for the exact fork revision.
+Both fork-only matrices source-build Core `84a988433cb3c0226a3569cdc2ee5202d3d5d375` and
+complete on Linux and macOS. They retain contract validation, Doctor coverage output, direct task
+and workflow-canary JSON, and one rejected generic caller-selected command for the exact fork
+revision.
 
 ## Observed Controls
 
@@ -51,8 +52,11 @@ For each repository, the retained task and workflow records show:
 - distinct task and workflow selected-invocation identities; and
 - the exact declared `ci_schema_migration` effect reference.
 
-The workflows do not start PostgreSQL, Mix, Yarn, Sequelize, or a provider. They prove Ota's
-execution-free refusal at the selected typed-effect boundary only.
+Both Doctor outputs report `effect_refusal_assurance.status: unknown`, one intentionally
+unchallenged exact-equivalent attachment as `not_proved`, and the fixed opaque-execution-path gap.
+The generic caller-selected command returns `not_evaluated`, never a passed canary. These artifacts
+prove Ota's execution-free refusal and static coverage-honesty behavior at the selected
+typed-effect boundary only.
 
 ## Unproved Boundaries
 
@@ -65,8 +69,9 @@ execution-free refusal at the selected typed-effect boundary only.
 
 ## Remaining V12 Pressure
 
-The V12 pressure bar remains open. The next external control must prove coverage honesty: an
-intentionally unchallenged equal-effect path reports `equivalent_execution_paths_not_proved`, an
-omitted or obscured path remains unknown or an assurance gap, and a generic earlier refusal cannot
-false-green the canary. Mixed-realization, namespace/posture substitution, CI provider-checkout,
-sandbox capability, refusal receipt/archive, and V11.14 assurance pressure also remain required.
+The V12 pressure bar remains open. This matrix closes only the external static
+coverage-honesty control: an intentionally unchallenged equal-effect path reports
+`equivalent_execution_paths_not_proved`, opaque execution remains a gap, and a generic caller
+refusal cannot false-green the canary. Mixed-realization, namespace/posture substitution, CI
+provider-checkout, sandbox capability, refusal receipt/archive, and V11.14 assurance pressure
+also remain required.

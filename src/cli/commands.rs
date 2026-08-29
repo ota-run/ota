@@ -6064,6 +6064,22 @@ fn execution_option_refusal_run_preview_plan(task_name: &str) -> RunPreviewPlan 
     }
 }
 
+fn declared_only_effect_refusal_run_preview_plan(task_name: &str) -> RunPreviewPlan {
+    let action =
+        format!("refuse declared-only effect realization before task `{task_name}` startup");
+    RunPreviewPlan {
+        actions: vec![action.clone()],
+        staged_actions: vec![crate::output::PreviewStageAction {
+            stage_family: String::from("verify"),
+            action,
+        }],
+        notes: vec![String::from(
+            "a declared effect requires an exact typed adapter realization before execution",
+        )],
+        ..RunPreviewPlan::default()
+    }
+}
+
 fn execution_option_refusal_up_preview_plan(task_name: &str) -> UpPreviewPlan {
     let action = format!("refuse unsupported execution option before task `{task_name}` startup");
     UpPreviewPlan {
@@ -18485,7 +18501,7 @@ fn harness_effect_policy_binding(
             };
         }
     };
-    if admission.closure.application_plans.is_empty() {
+    if !admission.closure.declared_effects_present {
         return HarnessEffectPolicyBinding {
             status: String::from("unavailable"),
             aggregate_decision: None,
@@ -18495,7 +18511,7 @@ fn harness_effect_policy_binding(
             effect_set_identity: None,
             provider_execution: String::from("disabled"),
             error: Some(String::from(
-                "typed effect capability did not retain its application plans",
+                "typed effect capability did not retain declared effect admission state",
             )),
         };
     }
@@ -23248,6 +23264,13 @@ fn render_run_preview_target(
         loaded_policy,
     } = typed_effect_admission;
     let effect_policy_decision = typed_effect_admission.policy_decision.clone();
+    let declared_only_effect_refusal = typed_effect_admission_refusal(&typed_effect_admission)
+        .filter(|_| {
+            !typed_effect_admission
+                .closure
+                .declared_only_attachments
+                .is_empty()
+        });
     let replay_input_preflight = task_replay_input_preflight_with_retained_policy(
         &target.contract,
         &target.contract_path,
@@ -23587,15 +23610,19 @@ fn render_run_preview_target(
         current_requirement_platform(),
         false,
     );
-    let mut plan = build_run_preview_plan(
-        &target.contract,
-        &target.contract_path,
-        task_name.as_str(),
-        overrides,
-        &requested_task,
-        &execution_plan,
-        persist_logs,
-    );
+    let mut plan = if declared_only_effect_refusal.is_some() {
+        declared_only_effect_refusal_run_preview_plan(task_name.as_str())
+    } else {
+        build_run_preview_plan(
+            &target.contract,
+            &target.contract_path,
+            task_name.as_str(),
+            overrides,
+            &requested_task,
+            &execution_plan,
+            persist_logs,
+        )
+    };
     plan.effect_application_plans = typed_effect_admission.closure.application_plans;
     plan.effect_policy_decision = effect_policy_decision;
     let preconditions_report = run_preview_preconditions_report(
@@ -23614,6 +23641,24 @@ fn render_run_preview_target(
         &preconditions_report,
         overrides,
     );
+    if declared_only_effect_refusal.is_some() {
+        summary.verdict = DoctorVerdict::NotReady;
+        summary.agent_verdict = DoctorVerdict::NotReady;
+        summary.error_count = summary.error_count.max(1);
+        summary.primary_blocker = Some(DoctorPrimaryBlocker {
+            code: Some(String::from("typed_effect_admission_refused")),
+            severity: FindingSeverity::Error,
+            summary: String::from("Declared-only effect realization is ineligible"),
+            why: String::from(
+                "the selected closure declares an effect without an exact typed adapter realization, so Ota refuses before task startup",
+            ),
+            next: format!(
+                "move the effect to a named typed task with an exact adapter action, then rerun `ota run {task_name} --dry-run`"
+            ),
+            provenance: Some(String::from("typed effect admission")),
+            provenance_key: None,
+        });
+    }
     let _crossing_grant_guard = ActiveCrossingGrantGuard::activate_preview(grant_admission);
     if let Some(refusal) = refusal.as_ref() {
         summary.verdict = DoctorVerdict::AgentBlocked;
@@ -44042,6 +44087,12 @@ fn verify_archived_effect_policy_refusal(
     })?;
     let effect_overrides = EffectGovernanceOverrides::default();
     let selected_subject = vec![String::from("workflows"), context.workflow.clone()];
+    let declared_only_attachments = crate::effect_policy::declared_only_effect_attachments(
+        admission_contract,
+        &context.invocations,
+        &context.application_plans,
+    )
+    .map_err(|error| error.to_string())?;
     crate::effect_policy::verify_effect_policy_decision(
         &evidence.policy_decision,
         admission_contract,
@@ -44050,6 +44101,7 @@ fn verify_archived_effect_policy_refusal(
             workflow_name: Some(context.workflow.as_str()),
             ordered_invocations: &context.invocations,
             plans: &context.application_plans,
+            declared_only_attachments: &declared_only_attachments,
         },
         &loaded_policy,
         Some(&effect_overrides),
@@ -110861,7 +110913,7 @@ fn sandbox_admission_json(admission: &ResolvedSandboxAdmission) -> JsonValue {
 fn sandbox_typed_effect_policy_decision(
     admission: &TypedEffectAdmission,
 ) -> Result<Option<crate::effect_policy::EffectPolicyDecision>, SandboxAdmissionError> {
-    if admission.closure.application_plans.is_empty() {
+    if !admission.closure.declared_effects_present {
         return Ok(None);
     }
     let Some(decision) = admission.policy_decision.as_ref() else {
@@ -137819,6 +137871,12 @@ fn archive_typed_effect_policy_refusal(
         .ok_or_else(|| String::from("typed effect refusal archive omits refusal evidence"))?;
     refusal.policy_snapshot_archive = Some(policy_snapshot.clone());
     let selected_subject = vec![String::from("workflows"), workflow_name.to_string()];
+    let declared_only_attachments = crate::effect_policy::declared_only_effect_attachments(
+        admission_contract,
+        &admission.typed.closure.invocations,
+        &admission.typed.closure.application_plans,
+    )
+    .map_err(|error| error.to_string())?;
     crate::effect_policy::verify_effect_policy_decision(
         &refusal.policy_decision,
         admission_contract,
@@ -137827,6 +137885,7 @@ fn archive_typed_effect_policy_refusal(
             workflow_name: Some(workflow_name),
             ordered_invocations: &admission.typed.closure.invocations,
             plans: &admission.typed.closure.application_plans,
+            declared_only_attachments: &declared_only_attachments,
         },
         loaded_policy,
         Some(&current_effect_governance_overrides()),

@@ -104,6 +104,7 @@ pub struct EffectPolicyEffectEvaluation {
     pub realization_identity: String,
     pub attachment_identity: String,
     pub origin_path: Vec<String>,
+    pub derivation_posture: EffectDerivationPosture,
     pub eligible: bool,
     pub applicable_rules: Vec<ApplicableEffectPolicyRule>,
     pub decision: PolicyEffectDecision,
@@ -154,6 +155,7 @@ pub struct EffectPolicyEvaluationScope<'a> {
     pub workflow_name: Option<&'a str>,
     pub ordered_invocations: &'a [EffectPolicyInvocation],
     pub plans: &'a [EffectApplicationPlan],
+    pub declared_only_attachments: &'a [DeclaredOnlyEffectAttachment],
 }
 
 /// A selected execution occurrence, retained even when one task participates in multiple roles.
@@ -161,6 +163,46 @@ pub struct EffectPolicyEvaluationScope<'a> {
 pub struct EffectPolicyInvocation {
     pub task: String,
     pub origin: String,
+}
+
+/// A contract-declared effect attachment selected by the closure without the exact typed adapter
+/// action required to realize it. It is evidence of scope, never execution authority.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeclaredOnlyEffectAttachment {
+    pub task: String,
+    pub origin: String,
+    pub effect_ref: String,
+    pub attachment_identity: String,
+}
+
+pub fn declared_only_effect_attachments(
+    contract: &Contract,
+    invocations: &[EffectPolicyInvocation],
+    plans: &[EffectApplicationPlan],
+) -> Result<Vec<DeclaredOnlyEffectAttachment>, EffectPolicyError> {
+    let catalog = resolve_declared_effect_catalog(contract)
+        .map_err(|error| EffectPolicyError::new(error.code, error.message))?;
+    let mut attachments = Vec::new();
+    for invocation in invocations {
+        for attachment in catalog
+            .attachments
+            .iter()
+            .filter(|attachment| attachment.task == invocation.task)
+            .filter(|attachment| {
+                !plans.iter().any(|plan| {
+                    plan.task == attachment.task && plan.attachment_identity == attachment.identity
+                })
+            })
+        {
+            attachments.push(DeclaredOnlyEffectAttachment {
+                task: invocation.task.clone(),
+                origin: invocation.origin.clone(),
+                effect_ref: attachment.definition_ref.clone(),
+                attachment_identity: attachment.identity.clone(),
+            });
+        }
+    }
+    Ok(attachments)
 }
 
 pub fn archive_effect_policy_snapshot(
@@ -487,10 +529,77 @@ fn build_typed_effect_policy_decision(
             realization_identity: realization.identity,
             attachment_identity: attachment.identity.clone(),
             origin_path: attachment.subject.clone(),
+            derivation_posture: EffectDerivationPosture::DeclaredAndTyped,
             eligible: true,
             applicable_rules,
             decision,
             decision_basis,
+        });
+    }
+    for declared_only in scope.declared_only_attachments {
+        let attachment = catalog
+            .attachments
+            .iter()
+            .find(|attachment| attachment.identity == declared_only.attachment_identity)
+            .ok_or_else(|| {
+                EffectPolicyError::new(
+                    "effect_policy_attachment_missing",
+                    "declared-only effect attachment is absent from the resolved catalog",
+                )
+            })?;
+        if attachment.task != declared_only.task
+            || attachment.definition_ref != declared_only.effect_ref
+        {
+            return Err(EffectPolicyError::new(
+                "effect_policy_declared_only_attachment_mismatch",
+                "declared-only effect attachment does not match its selected task or effect reference",
+            ));
+        }
+        let effect = catalog
+            .effect_definitions
+            .get(attachment.definition_ref.as_str())
+            .expect("effect attachments are resolved from the catalog");
+        let binding = catalog
+            .resource_bindings
+            .values()
+            .find(|binding| binding.identity == effect.resource.binding_identity)
+            .expect("resolved effects retain one resource binding");
+        let evidence = resource_binding_evidence(
+            &binding.identity,
+            ResourceBindingEvidencePosture::RepositoryDeclared,
+            &contract_identity,
+        )
+        .map_err(|error| EffectPolicyError::new(error.code, error.message))?;
+        let realization = effect_realization_identity(
+            effect,
+            EffectRealizationInput {
+                derivation_posture: EffectDerivationPosture::DeclaredOnly,
+                adapter_profile_identity: None,
+                application_plan_identity: None,
+                resource_binding_evidence: evidence,
+                origin: EffectOrigin {
+                    contract_snapshot_identity: contract_identity.clone(),
+                    invocation_subject: attachment.subject.clone(),
+                    closure_path: vec![
+                        attachment.subject.clone(),
+                        vec![String::from("invocation"), declared_only.origin.clone()],
+                    ],
+                },
+            },
+        )
+        .map_err(|error| EffectPolicyError::new(error.code, error.message))?;
+        effects.push(EffectPolicyEffectEvaluation {
+            effect_identity: effect.identity.clone(),
+            realization_identity: realization.identity,
+            attachment_identity: attachment.identity.clone(),
+            origin_path: attachment.subject.clone(),
+            derivation_posture: EffectDerivationPosture::DeclaredOnly,
+            eligible: false,
+            applicable_rules: Vec::new(),
+            decision: fallback,
+            decision_basis: String::from(
+                "declared effect attachment lacks an exact typed adapter realization",
+            ),
         });
     }
     effects.sort_by(|left, right| left.realization_identity.cmp(&right.realization_identity));
@@ -702,10 +811,30 @@ fn verify_effect_policy_decision_structure(
         })
         .unwrap_or(PolicyEffectDecision::Warn);
     for effect in &decision.effects {
-        if !effect.eligible || effect.origin_path.is_empty() {
+        if effect.origin_path.is_empty() {
             return Err(EffectPolicyError::new(
                 "effect_policy_realization_ineligible",
-                "typed effect policy decision carries an ineligible or origin-less realization",
+                "typed effect policy decision carries an origin-less realization",
+            ));
+        }
+        if !effect.eligible {
+            if effect.derivation_posture != EffectDerivationPosture::DeclaredOnly
+                || !effect.applicable_rules.is_empty()
+                || effect.decision != fallback
+                || effect.decision_basis
+                    != "declared effect attachment lacks an exact typed adapter realization"
+            {
+                return Err(EffectPolicyError::new(
+                    "effect_policy_ineligible_realization_invalid",
+                    "an ineligible realization must retain the canonical declared-only posture",
+                ));
+            }
+            continue;
+        }
+        if effect.derivation_posture != EffectDerivationPosture::DeclaredAndTyped {
+            return Err(EffectPolicyError::new(
+                "effect_policy_realization_posture_invalid",
+                "an eligible realization must retain the canonical declared-and-typed posture",
             ));
         }
         let mut seen_rule_ids = BTreeSet::new();
