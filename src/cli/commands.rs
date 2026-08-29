@@ -34556,6 +34556,26 @@ pub(crate) fn up_with_agent_reason_and_grant_and_effect_canary(
                                     exit_code: 1,
                                 };
                             }
+                            Err(TypedEffectRefusalArchiveError::PostPublicationFailure(
+                                outcome,
+                            )) => {
+                                return CommandOutput {
+                                    stdout: to_json(&json!({
+                                        "ok": false,
+                                        "path": path_display,
+                                        "code": "effect_refusal_archive_post_publication_failed",
+                                        "published": true,
+                                        "durability": "confirmed",
+                                        "artifact_kind": outcome.artifact_kind,
+                                        "receipt_published": true,
+                                        "archive_path": receipt_storage_path_display(&outcome.path),
+                                        "message": outcome.message,
+                                        "recovery": "retain the published receipt, verify it with `ota receipt --history --json`, then resolve the archive maintenance failure before retrying",
+                                    })),
+                                    stderr: None,
+                                    exit_code: 1,
+                                };
+                            }
                         };
                         return CommandOutput {
                             stdout: to_json_value(up_result_json_value(&path_display, &result)),
@@ -42136,6 +42156,7 @@ fn open_private_archive_directory(root: &Path, leaf: &str) -> Result<File, Strin
             compact_path(root, ".")
         )
     })?;
+    let mut display_directory = root.to_path_buf();
     for component in [".ota", leaf] {
         let component_name = CString::new(component).expect("private archive component is static");
         let created =
@@ -42159,14 +42180,17 @@ fn open_private_archive_directory(root: &Path, leaf: &str) -> Result<File, Strin
                 io::Error::last_os_error()
             ));
         }
-        directory = unsafe { File::from_raw_fd(descriptor) };
-        let protected = unsafe { libc::fchmod(directory.as_raw_fd(), 0o700) };
+        let child = unsafe { File::from_raw_fd(descriptor) };
+        let protected = unsafe { libc::fchmod(child.as_raw_fd(), 0o700) };
         if protected != 0 {
             return Err(format!(
                 "failed to protect private archive directory `{component}`: {}",
                 io::Error::last_os_error()
             ));
         }
+        sync_private_archive_directory_entry(&directory, &display_directory, component)?;
+        directory = child;
+        display_directory.push(component);
     }
     Ok(directory)
 }
@@ -42180,6 +42204,19 @@ fn open_private_archive_directory(_root: &Path, _leaf: &str) -> Result<File, Str
 
 #[cfg(unix)]
 fn open_existing_private_archive_directory(root: &Path, leaf: &str) -> Result<File, String> {
+    open_optional_private_archive_directory(root, leaf)?.ok_or_else(|| {
+        format!(
+            "private archive directory `{}` does not exist",
+            compact_path(&root.join(".ota").join(leaf), ".")
+        )
+    })
+}
+
+#[cfg(unix)]
+fn open_optional_private_archive_directory(
+    root: &Path,
+    leaf: &str,
+) -> Result<Option<File>, String> {
     use std::os::unix::fs::OpenOptionsExt as _;
 
     let mut options = OpenOptions::new();
@@ -42202,6 +42239,9 @@ fn open_existing_private_archive_directory(root: &Path, leaf: &str) -> Result<Fi
             )
         };
         if descriptor < 0 {
+            if io::Error::last_os_error().kind() == io::ErrorKind::NotFound {
+                return Ok(None);
+            }
             return Err(format!(
                 "failed to open private archive directory `{component}` without following aliases: {}",
                 io::Error::last_os_error()
@@ -42209,7 +42249,7 @@ fn open_existing_private_archive_directory(root: &Path, leaf: &str) -> Result<Fi
         }
         directory = unsafe { File::from_raw_fd(descriptor) };
     }
-    Ok(directory)
+    Ok(Some(directory))
 }
 
 #[cfg(not(unix))]
@@ -42217,6 +42257,45 @@ fn open_existing_private_archive_directory(_root: &Path, _leaf: &str) -> Result<
     Err(String::from(
         "typed effect refusal archival requires Unix no-follow directory support",
     ))
+}
+
+#[cfg(not(unix))]
+fn open_optional_private_archive_directory(
+    _root: &Path,
+    _leaf: &str,
+) -> Result<Option<File>, String> {
+    Err(String::from(
+        "typed effect refusal archival requires Unix no-follow directory support",
+    ))
+}
+
+fn sync_private_archive_directory_entry(
+    parent: &File,
+    parent_path: &Path,
+    component: &str,
+) -> Result<(), String> {
+    #[cfg(feature = "test-effect-refusal-archive-faults")]
+    let forced_failure = std::env::var("OTA_TEST_EFFECT_REFUSAL_ARCHIVE_FAULT")
+        .ok()
+        .is_some_and(|fault| {
+            (fault == "ota_parent_directory_sync" && component == ".ota")
+                || (fault == "receipt_parent_directory_sync" && component == "receipts")
+        });
+    #[cfg(not(feature = "test-effect-refusal-archive-faults"))]
+    let forced_failure = false;
+    let result = if forced_failure {
+        Err(io::Error::other(
+            "injected private archive parent directory sync failure",
+        ))
+    } else {
+        parent.sync_all()
+    };
+    result.map_err(|error| {
+        format!(
+            "failed to durably attach private archive directory `{component}` under `{}`: {error}",
+            compact_path(parent_path, ".")
+        )
+    })
 }
 
 #[cfg(unix)]
@@ -42244,6 +42323,14 @@ enum PrivateArchivePublication {
 enum TypedEffectRefusalArchiveError {
     Failed(String),
     DurabilityUncertain(PrivateArchiveDurabilityUncertain),
+    PostPublicationFailure(PrivateArchivePostPublicationFailure),
+}
+
+#[derive(Debug)]
+struct PrivateArchivePostPublicationFailure {
+    path: PathBuf,
+    artifact_kind: &'static str,
+    message: String,
 }
 
 impl From<String> for TypedEffectRefusalArchiveError {
@@ -42257,6 +42344,7 @@ impl std::fmt::Display for TypedEffectRefusalArchiveError {
         match self {
             Self::Failed(message) => formatter.write_str(message),
             Self::DurabilityUncertain(outcome) => formatter.write_str(&outcome.message),
+            Self::PostPublicationFailure(outcome) => formatter.write_str(&outcome.message),
         }
     }
 }
@@ -43022,36 +43110,17 @@ fn prune_private_receipt_archives(
     keep: usize,
     preserved_file: Option<&str>,
 ) -> Result<(), String> {
-    let duplicate = unsafe { libc::dup(directory.as_raw_fd()) };
-    if duplicate < 0 {
-        return Err(format!(
-            "failed to duplicate private receipt directory descriptor: {}",
-            io::Error::last_os_error()
+    #[cfg(feature = "test-effect-refusal-archive-faults")]
+    if std::env::var("OTA_TEST_EFFECT_REFUSAL_ARCHIVE_FAULT")
+        .ok()
+        .as_deref()
+        == Some("receipt_prune_read")
+    {
+        return Err(String::from(
+            "injected private receipt pruning read failure",
         ));
     }
-    let stream = unsafe { libc::fdopendir(duplicate) };
-    if stream.is_null() {
-        unsafe { libc::close(duplicate) };
-        return Err(format!(
-            "failed to enumerate private receipt directory: {}",
-            io::Error::last_os_error()
-        ));
-    }
-    let mut entries = Vec::new();
-    loop {
-        let entry = unsafe { libc::readdir(stream) };
-        if entry.is_null() {
-            break;
-        }
-        let name = unsafe { CStr::from_ptr((*entry).d_name.as_ptr()) };
-        let Ok(name) = name.to_str() else {
-            continue;
-        };
-        if name.starts_with(prefix) && name.ends_with(".json") {
-            entries.push(name.to_string());
-        }
-    }
-    unsafe { libc::closedir(stream) };
+    let mut entries = private_archive_entry_names(directory, prefix)?;
 
     if entries.len() <= keep {
         return Ok(());
@@ -43086,6 +43155,16 @@ fn prune_private_receipt_archives(
         if requires_finalization && read_private_archive_entry(directory, &sidecar)?.is_none() {
             continue;
         }
+        #[cfg(feature = "test-effect-refusal-archive-faults")]
+        if std::env::var("OTA_TEST_EFFECT_REFUSAL_ARCHIVE_FAULT")
+            .ok()
+            .as_deref()
+            == Some("receipt_prune_unlink")
+        {
+            return Err(String::from(
+                "injected private receipt pruning unlink failure",
+            ));
+        }
         let name_c = private_archive_entry_name(&name)?;
         if unsafe { libc::unlinkat(directory.as_raw_fd(), name_c.as_ptr(), 0) } != 0 {
             return Err(format!(
@@ -43104,9 +43183,57 @@ fn prune_private_receipt_archives(
         }
         removed += 1;
     }
+    #[cfg(feature = "test-effect-refusal-archive-faults")]
+    if std::env::var("OTA_TEST_EFFECT_REFUSAL_ARCHIVE_FAULT")
+        .ok()
+        .as_deref()
+        == Some("receipt_prune_directory_sync")
+    {
+        return Err(String::from(
+            "injected private receipt pruning directory sync failure",
+        ));
+    }
     directory
         .sync_all()
         .map_err(|error| format!("failed to sync private receipt pruning: {error}"))
+}
+
+#[cfg(unix)]
+fn private_archive_entry_names(directory: &File, prefix: &str) -> Result<Vec<String>, String> {
+    let duplicate = unsafe { libc::dup(directory.as_raw_fd()) };
+    if duplicate < 0 {
+        return Err(format!(
+            "failed to duplicate private receipt directory descriptor: {}",
+            io::Error::last_os_error()
+        ));
+    }
+    let stream = unsafe { libc::fdopendir(duplicate) };
+    if stream.is_null() {
+        unsafe { libc::close(duplicate) };
+        return Err(format!(
+            "failed to enumerate private receipt directory: {}",
+            io::Error::last_os_error()
+        ));
+    }
+    let mut entries = Vec::new();
+    loop {
+        let entry = unsafe { libc::readdir(stream) };
+        if entry.is_null() {
+            break;
+        }
+        let name = unsafe { CStr::from_ptr((*entry).d_name.as_ptr()) };
+        let Ok(name) = name.to_str() else {
+            unsafe { libc::closedir(stream) };
+            return Err(String::from(
+                "private receipt directory contains a non-UTF-8 entry",
+            ));
+        };
+        if name.starts_with(prefix) && name.ends_with(".json") {
+            entries.push(name.to_string());
+        }
+    }
+    unsafe { libc::closedir(stream) };
+    Ok(entries)
 }
 
 #[cfg(not(unix))]
@@ -44099,6 +44226,14 @@ fn verify_archived_crossing_record(
 
 fn scan_repo_receipt_archives(root: &Path) -> Result<RepoReceiptArchiveScan, String> {
     let archive_dir = receipt_archive_dir(root);
+    #[cfg(unix)]
+    let Some(directory) = open_optional_private_archive_directory(root, "receipts")? else {
+        return Ok(RepoReceiptArchiveScan {
+            archives: Vec::new(),
+            invalid_archives: Vec::new(),
+        });
+    };
+    #[cfg(not(unix))]
     if !archive_dir.is_dir() {
         return Ok(RepoReceiptArchiveScan {
             archives: Vec::new(),
@@ -44106,6 +44241,9 @@ fn scan_repo_receipt_archives(root: &Path) -> Result<RepoReceiptArchiveScan, Str
         });
     }
 
+    #[cfg(unix)]
+    let mut entries = private_archive_entry_names(&directory, "repo-receipt")?;
+    #[cfg(not(unix))]
     let mut entries = fs::read_dir(&archive_dir)
         .map_err(|error| {
             format!(
@@ -44116,23 +44254,35 @@ fn scan_repo_receipt_archives(root: &Path) -> Result<RepoReceiptArchiveScan, Str
         .filter_map(|entry| entry.ok())
         .filter_map(|entry| {
             let file_name = entry.file_name().to_string_lossy().to_string();
-            if file_name.starts_with("repo-receipt-") && file_name.ends_with(".json") {
-                Some((file_name, entry.path()))
-            } else {
-                None
-            }
+            (file_name.starts_with("repo-receipt-") && file_name.ends_with(".json"))
+                .then_some(file_name)
         })
         .collect::<Vec<_>>();
-    entries.sort_by(|(left, _), (right, _)| right.cmp(left));
+    entries.sort_by(|left, right| right.cmp(left));
 
     let mut archives = Vec::new();
     let mut invalid_archives = Vec::new();
 
-    for (_, path) in entries {
-        match read_repo_receipt_archive_record(&path) {
+    for name in entries {
+        let path = archive_dir.join(&name);
+        #[cfg(unix)]
+        let bytes = read_private_archive_entry(&directory, &name)?.ok_or_else(|| {
+            format!(
+                "receipt archive `{}` disappeared during history enumeration",
+                compact_path(&path, ".")
+            )
+        })?;
+        #[cfg(unix)]
+        let record = read_repo_receipt_archive_record_from_bytes(&path, &bytes, None, None);
+        #[cfg(not(unix))]
+        let record = read_repo_receipt_archive_record(&path);
+        match record {
             Ok(record) => archives.push(record),
             Err(error) => invalid_archives.push(ReceiptHistoryInvalidArchive {
                 archive_path: receipt_storage_path_display(&path),
+                #[cfg(unix)]
+                posture: receipt_history_invalid_archive_posture_from_bytes(&bytes),
+                #[cfg(not(unix))]
                 posture: receipt_history_invalid_archive_posture(&path),
                 error,
             }),
@@ -44145,6 +44295,7 @@ fn scan_repo_receipt_archives(root: &Path) -> Result<RepoReceiptArchiveScan, Str
     })
 }
 
+#[cfg(not(unix))]
 fn receipt_history_invalid_archive_posture(path: &Path) -> String {
     let Ok(contents) = fs::read(path) else {
         return String::from("invalid");
@@ -63796,6 +63947,40 @@ mod tests {
         );
     }
 
+    #[cfg(all(unix, feature = "test-effect-refusal-archive-faults"))]
+    #[test]
+    fn private_archive_directory_creation_requires_parent_sync() {
+        let _environment = crate::test_support::env_mutex_lock();
+        let root = tempfile::tempdir().expect("ota parent root");
+
+        unsafe {
+            env::set_var(
+                "OTA_TEST_EFFECT_REFUSAL_ARCHIVE_FAULT",
+                "ota_parent_directory_sync",
+            );
+        }
+        let error = super::open_private_archive_directory(root.path(), "receipts")
+            .expect_err("root-to-ota sync failure must refuse");
+        assert!(error.contains("durably attach"), "{error}");
+        unsafe { env::remove_var("OTA_TEST_EFFECT_REFUSAL_ARCHIVE_FAULT") };
+        super::open_private_archive_directory(root.path(), "receipts")
+            .expect("retry must repair root-to-ota directory durability");
+
+        let leaf_root = tempfile::tempdir().expect("receipt parent root");
+        unsafe {
+            env::set_var(
+                "OTA_TEST_EFFECT_REFUSAL_ARCHIVE_FAULT",
+                "receipt_parent_directory_sync",
+            );
+        }
+        let error = super::open_private_archive_directory(leaf_root.path(), "receipts")
+            .expect_err("ota-to-receipts sync failure must refuse");
+        assert!(error.contains("durably attach"), "{error}");
+        unsafe { env::remove_var("OTA_TEST_EFFECT_REFUSAL_ARCHIVE_FAULT") };
+        super::open_private_archive_directory(leaf_root.path(), "receipts")
+            .expect("retry must repair ota-to-receipts directory durability");
+    }
+
     #[cfg(unix)]
     #[test]
     fn typed_effect_private_archives_refuse_aliases_and_publish_single_link_files() {
@@ -63872,6 +64057,21 @@ mod tests {
         let error = super::read_private_archive_entry(&directory, "repo-receipt-control.json")
             .expect_err("hardlinked archive must refuse");
         assert!(error.contains("single-link regular file"), "{error}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn receipt_history_refuses_an_empty_aliased_archive_directory() {
+        use std::os::unix::fs::symlink;
+
+        let root = tempfile::tempdir().expect("archive root");
+        let outside = tempfile::tempdir().expect("outside archive root");
+        fs::create_dir(root.path().join(".ota")).expect("ota directory");
+        symlink(outside.path(), root.path().join(".ota/receipts")).expect("receipt archive alias");
+
+        let error = super::scan_repo_receipt_archives(root.path())
+            .expect_err("aliased empty receipt history must refuse");
+        assert!(error.contains("without following aliases"), "{error}");
     }
 
     #[test]
@@ -137620,26 +137820,38 @@ fn archive_typed_effect_policy_refusal(
         publish_private_archive_entry(&archive_dir, &archive_file, &payload_bytes, &archive_path)?,
         "receipt",
     )?;
-    let persisted = read_private_archive_entry(&archive_dir, &archive_file)?.ok_or_else(|| {
-        format!(
-            "typed-effect refusal archive `{}` disappeared after publication",
-            compact_path(&archive_path, ".")
+    let post_publication_failure = |error: String| {
+        TypedEffectRefusalArchiveError::PostPublicationFailure(
+            PrivateArchivePostPublicationFailure {
+                path: archive_path.clone(),
+                artifact_kind: "receipt",
+                message: error,
+            },
         )
-    })?;
+    };
+    let persisted = read_private_archive_entry(&archive_dir, &archive_file)
+        .map_err(post_publication_failure)?
+        .ok_or_else(|| {
+            post_publication_failure(format!(
+                "typed-effect refusal archive `{}` disappeared after publication",
+                compact_path(&archive_path, ".")
+            ))
+        })?;
     if persisted != payload_bytes {
-        return Err(format!(
+        return Err(post_publication_failure(format!(
             "typed-effect refusal archive `{}` changed during publication",
             compact_path(&archive_path, ".")
-        )
-        .into());
+        )));
     }
-    read_repo_receipt_archive_record(&archive_path)?;
+    read_repo_receipt_archive_record_from_bytes(&archive_path, &persisted, None, None)
+        .map_err(post_publication_failure)?;
     prune_private_receipt_archives(
         &archive_dir,
         "repo-receipt",
         RECEIPT_ARCHIVE_LIMIT,
         Some(&archive_file),
-    )?;
+    )
+    .map_err(post_publication_failure)?;
     Ok(archive_path)
 }
 

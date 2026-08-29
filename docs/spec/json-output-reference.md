@@ -3716,6 +3716,11 @@ command exits nonzero with `code: "effect_refusal_archive_durability_uncertain"`
 is not an ordinary write failure: the artifact exists and should be retained and verified through
 `ota receipt --history --json` before repository transfer.
 
+If receipt verification or retention pruning fails after the receipt directory has synchronized,
+the command returns `effect_refusal_archive_post_publication_failed` with `published: true`,
+`durability: "confirmed"`, and the exact `archive_path`. The receipt remains available for history
+verification; resolve the maintenance failure before retrying archival.
+
 If the same post-rename sync failure affects the private policy or contract snapshot before the
 receipt is published, the code is `effect_refusal_snapshot_durability_uncertain`.
 `artifact_kind` identifies `policy_snapshot` or `contract_snapshot`, `published` still describes

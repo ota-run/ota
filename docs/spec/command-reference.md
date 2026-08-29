@@ -2530,6 +2530,9 @@ Current behavior:
 - if the archive is atomically published but its directory cannot be synchronized, JSON returns
   `effect_refusal_archive_durability_uncertain` with `published: true`, `durability: "uncertain"`,
   the exact archive path, and recovery guidance
+- if receipt verification or retention pruning fails after durable publication, JSON returns
+  `effect_refusal_archive_post_publication_failed` with `published: true`, `durability: "confirmed"`,
+  and the retained archive path; verify history and resolve maintenance before retrying
 - the same failure while publishing the policy or contract snapshot instead returns
   `effect_refusal_snapshot_durability_uncertain`, identifies `artifact_kind`, and reports
   `receipt_published: false`; rerun the same archive command to complete the receipt transaction

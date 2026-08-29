@@ -75,7 +75,10 @@ durable agent workflow belongs in the canonical Ota skill.
   evidence invalidates the archive. This remains negative evidence, not provider execution,
   mutation proof, positive assurance, or a public export profile. Post-publication directory-sync
   failure returns `effect_refusal_archive_durability_uncertain` with `published: true`, the exact
-  archive path, and recovery guidance; it never claims that no artifact was written.
+  archive path, and recovery guidance; it never claims that no artifact was written. Failures
+  after a receipt is durably published, including archive verification or retention pruning, return
+  `effect_refusal_archive_post_publication_failed` with `published: true`, `durability: "confirmed"`,
+  and the retained receipt path.
   Policy or contract snapshot sync uncertainty is separately identified with
   `effect_refusal_snapshot_durability_uncertain`, its exact `artifact_kind`, and
   `receipt_published: false`.

@@ -1069,11 +1069,12 @@
         "code": {
           "enum": [
             "effect_refusal_archive_durability_uncertain",
-            "effect_refusal_snapshot_durability_uncertain"
+            "effect_refusal_snapshot_durability_uncertain",
+            "effect_refusal_archive_post_publication_failed"
           ]
         },
         "published": { "const": true },
-        "durability": { "const": "uncertain" },
+        "durability": { "enum": ["uncertain", "confirmed"] },
         "artifact_kind": { "enum": ["policy_snapshot", "contract_snapshot", "receipt"] },
         "receipt_published": { "type": "boolean" },
         "archive_path": { "type": "string", "minLength": 1 },
@@ -1084,6 +1085,7 @@
         {
           "properties": {
             "code": { "const": "effect_refusal_archive_durability_uncertain" },
+            "durability": { "const": "uncertain" },
             "artifact_kind": { "const": "receipt" },
             "receipt_published": { "const": true },
             "archive_path": {
@@ -1096,6 +1098,7 @@
             {
               "properties": {
                 "code": { "const": "effect_refusal_snapshot_durability_uncertain" },
+                "durability": { "const": "uncertain" },
                 "artifact_kind": { "const": "policy_snapshot" },
                 "receipt_published": { "const": false },
                 "archive_path": {
@@ -1106,6 +1109,7 @@
             {
               "properties": {
                 "code": { "const": "effect_refusal_snapshot_durability_uncertain" },
+                "durability": { "const": "uncertain" },
                 "artifact_kind": { "const": "contract_snapshot" },
                 "receipt_published": { "const": false },
                 "archive_path": {
@@ -1114,6 +1118,17 @@
               }
             }
           ]
+        },
+        {
+          "properties": {
+            "code": { "const": "effect_refusal_archive_post_publication_failed" },
+            "durability": { "const": "confirmed" },
+            "artifact_kind": { "const": "receipt" },
+            "receipt_published": { "const": true },
+            "archive_path": {
+              "pattern": "^(?:.*[/\\\\])?\\.ota[/\\\\]receipts[/\\\\]repo-receipt-[0-9]{8}-[0-9]{6}-[0-9]{3}Z\\.json$"
+            }
+          }
         }
       ]
     },

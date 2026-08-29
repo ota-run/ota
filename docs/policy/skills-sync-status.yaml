@@ -25,8 +25,9 @@
 version: 1
 repository: ota-run/skills
 mode: synced
-reviewed_ota_commit: pending-local-v12-effect-refusal-archive
+reviewed_ota_commit: pending-local-v12-effect-refusal-archive-repair
 consumer_commit: a25d4c28be041d7c6b11240ec10ccf85db21ee5b
 notes: >
-  Skill authoring and review guidance is unchanged: the blocked receipt is runtime output, not a
-  new contract-authoring surface. Both installed mirrors remain byte-identical to this revision.
+  Skill authoring and review guidance is unchanged: the blocked receipt and durable archive remain
+  runtime output, not contract-authoring surfaces. The command-reference update was reviewed
+  against this immutable Skills revision; both installed mirrors remain byte-identical.

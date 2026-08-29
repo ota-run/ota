@@ -39,6 +39,9 @@
   instead of misreporting an ordinary pre-publication failure. Policy or contract snapshot sync
   uncertainty uses `effect_refusal_snapshot_durability_uncertain`, names the published artifact,
   and states `receipt_published: false`.
+  Post-publication verification or receipt-retention failures now preserve the published receipt
+  outcome as `effect_refusal_archive_post_publication_failed` with confirmed durability and its
+  exact archive path.
 
 - Recorded immutable Linux/x64 and macOS pressure for the command-scoped typed effect-policy,
   capability, and sandbox-admission boundary in

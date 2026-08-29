@@ -3147,6 +3147,27 @@ policies:
     );
     fs::write(&policy_snapshot, original_policy_snapshot).expect("restore policy snapshot");
 
+    let contract_snapshot = fixture.path().join(
+        refusal_archive_json["receipt"]["contract_snapshot_ref"]
+            .as_str()
+            .expect("contract snapshot reference"),
+    );
+    let original_contract_snapshot = fs::read(&contract_snapshot).expect("contract snapshot bytes");
+    let mut tampered_contract: Value =
+        serde_json::from_slice(&original_contract_snapshot).expect("contract snapshot JSON");
+    tampered_contract["project"]["name"] = json!("tampered-archive-contract");
+    fs::write(
+        &contract_snapshot,
+        serde_json::to_vec_pretty(&tampered_contract).expect("tampered contract snapshot"),
+    )
+    .expect("tamper contract snapshot");
+    let tampered_history = run_ota(&["receipt", "--history", "--json"], fixture.path());
+    assert_eq!(
+        tampered_history["summary"]["invalid_archive_count"], 1,
+        "{tampered_history}"
+    );
+    fs::write(&contract_snapshot, original_contract_snapshot).expect("restore contract snapshot");
+
     let mut stripped_context = refusal_archive_json.clone();
     stripped_context
         .as_object_mut()
@@ -3161,6 +3182,25 @@ policies:
     assert_eq!(
         stripped_history["summary"]["invalid_archive_count"], 1,
         "{stripped_history}"
+    );
+    fs::write(&refusal_archive, &original_refusal_archive).expect("restore refusal archive");
+
+    let mut duplicate_invocation = refusal_archive_json.clone();
+    let invocation =
+        duplicate_invocation["archive_context"]["effect_policy_refusal"]["invocations"][0].clone();
+    duplicate_invocation["archive_context"]["effect_policy_refusal"]["invocations"]
+        .as_array_mut()
+        .expect("archived invocations")
+        .push(invocation);
+    fs::write(
+        &refusal_archive,
+        serde_json::to_vec_pretty(&duplicate_invocation).expect("duplicate archived invocation"),
+    )
+    .expect("duplicate archived invocation");
+    let duplicate_history = run_ota(&["receipt", "--history", "--json"], fixture.path());
+    assert_eq!(
+        duplicate_history["summary"]["invalid_archive_count"], 1,
+        "{duplicate_history}"
     );
     fs::write(&refusal_archive, &original_refusal_archive).expect("restore refusal archive");
 
@@ -3330,6 +3370,27 @@ policies:
         assert_eq!(history["summary"]["archive_count"], 2, "{history}");
         assert_eq!(history["summary"]["invalid_archive_count"], 0, "{history}");
 
+        let prune_failure = run_ota_failure_stdout_json_with_env(
+            &archive_args,
+            fixture.path(),
+            &[(
+                "OTA_TEST_EFFECT_REFUSAL_ARCHIVE_FAULT",
+                "receipt_prune_read",
+            )],
+        );
+        assert_matches_schema("up.json", &prune_failure);
+        assert_eq!(
+            prune_failure["code"],
+            "effect_refusal_archive_post_publication_failed"
+        );
+        assert_eq!(prune_failure["published"], true);
+        assert_eq!(prune_failure["durability"], "confirmed");
+        assert_eq!(prune_failure["artifact_kind"], "receipt");
+        assert_eq!(prune_failure["receipt_published"], true);
+        let mut contradictory_prune_failure = prune_failure;
+        contradictory_prune_failure["durability"] = json!("uncertain");
+        assert_rejected_by_schema("up.json", &contradictory_prune_failure);
+
         let mut contradictory = receipt_uncertain.clone();
         contradictory["published"] = json!(false);
         assert_rejected_by_schema("up.json", &contradictory);
@@ -3377,7 +3438,7 @@ policies:
     );
     let history = run_ota(&["receipt", "--history", "--json"], fixture.path());
     let expected_archive_count = if cfg!(feature = "test-effect-refusal-archive-faults") {
-        2
+        3
     } else {
         1
     };
