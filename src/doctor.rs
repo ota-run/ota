@@ -11183,7 +11183,7 @@ fn command_version_probe_in_container(
             let (probe_started, resolved_path, combined) =
                 extract_container_probe_output(output.stdout.as_bytes(), output.stderr.as_bytes());
             let outcome = if output.exit_code == 0 {
-                extract_version_token(&combined)
+                crate::runner::extract_probe_version_token(name, &combined)
                     .map(CommandVersionProbeOutcome::Version)
                     .unwrap_or(CommandVersionProbeOutcome::Unparseable)
             } else if probe_started && resolved_path.is_none() {
@@ -11231,7 +11231,7 @@ fn command_version_probe_in_remote(
             let (probe_started, resolved_path, combined) =
                 extract_container_probe_output(output.stdout.as_bytes(), output.stderr.as_bytes());
             let outcome = if output.exit_code == 0 {
-                extract_version_token(&combined)
+                crate::runner::extract_probe_version_token(name, &combined)
                     .map(CommandVersionProbeOutcome::Version)
                     .unwrap_or(CommandVersionProbeOutcome::Unparseable)
             } else if probe_started && resolved_path.is_none() {
@@ -13277,7 +13277,7 @@ fn command_version_probe_in_working_dir(name: &str, working_dir: &Path) -> Comma
                     String::from_utf8_lossy(&output.stdout),
                     String::from_utf8_lossy(&output.stderr)
                 );
-                if let Some(version) = extract_version_token(&combined) {
+                if let Some(version) = crate::runner::extract_probe_version_token(name, &combined) {
                     CommandVersionProbeOutcome::Version(version)
                 } else {
                     parseable_attempt_observed = true;
@@ -14383,19 +14383,6 @@ fn devcontainer_command_entries<'a>(
             .collect(),
         _ => Vec::new(),
     }
-}
-
-fn extract_version_token(output: &str) -> Option<String> {
-    output
-        .split_whitespace()
-        .find(|token| token.chars().any(|ch| ch.is_ascii_digit()))
-        .map(|token| {
-            token
-                .trim_matches(|ch: char| !ch.is_ascii_alphanumeric() && ch != '.' && ch != '-')
-                .trim_start_matches('v')
-                .to_string()
-        })
-        .filter(|token| !token.is_empty())
 }
 
 fn extract_backticked_after(value: &str, marker: &str) -> Option<String> {

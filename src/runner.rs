@@ -19816,7 +19816,7 @@ fn probe_backend_command_version(
         return Ok(None);
     }
     let combined = format!("{} {}", output.stdout, output.stderr);
-    if let Some(version) = extract_probe_version_token(combined.as_str()) {
+    if let Some(version) = extract_probe_version_token(command_name, combined.as_str()) {
         return Ok(Some(version));
     }
     if output.exit_code != 0 {
@@ -19897,7 +19897,9 @@ fn probe_native_backend_command_version(
                         String::from_utf8_lossy(&output.stdout),
                         String::from_utf8_lossy(&output.stderr)
                     );
-                    if let Some(version) = extract_probe_version_token(combined.as_str()) {
+                    if let Some(version) =
+                        extract_probe_version_token(command_name, combined.as_str())
+                    {
                         return Ok(Some(version));
                     }
                     parseable_attempt_observed = true;
@@ -20087,7 +20089,7 @@ fn probe_named_container_command_version(
         return Ok(None);
     }
     let combined = format!("{} {}", output.stdout, output.stderr);
-    if let Some(version) = extract_probe_version_token(combined.as_str()) {
+    if let Some(version) = extract_probe_version_token(command_name, combined.as_str()) {
         return Ok(Some(version));
     }
     if output.exit_code != 0 {
@@ -20154,7 +20156,21 @@ pub(crate) fn tool_runtime_version_probe_commands(
         .join(" || ")
 }
 
-fn extract_probe_version_token(output: &str) -> Option<String> {
+pub(crate) fn extract_probe_version_token(command_name: &str, output: &str) -> Option<String> {
+    if command_name == "elixir" {
+        if let Some(version) = output.lines().find_map(|line| {
+            line.trim()
+                .strip_prefix("Elixir ")
+                .and_then(extract_generic_probe_version_token)
+        }) {
+            return Some(version);
+        }
+    }
+
+    extract_generic_probe_version_token(output)
+}
+
+fn extract_generic_probe_version_token(output: &str) -> Option<String> {
     output
         .split_whitespace()
         .find(|token| token.chars().any(|ch| ch.is_ascii_digit()))
@@ -44822,10 +44838,21 @@ tasks:
 
     #[test]
     fn backend_probe_version_token_normalizes_prefixed_versions() {
-        let version = extract_probe_version_token("go version go1.22.4 linux/amd64")
+        let version = extract_probe_version_token("go", "go version go1.22.4 linux/amd64")
             .expect("version token should parse");
         assert_eq!(version, "1.22.4");
         assert!(version_matches_requirement("1.22", version.as_str()));
+    }
+
+    #[test]
+    fn backend_probe_version_token_prefers_elixir_over_erlang_otp() {
+        let version = extract_probe_version_token(
+            "elixir",
+            "Erlang/OTP 26 [erts-14.2.5]\n\nElixir 1.16.3 (compiled with Erlang/OTP 26)",
+        )
+        .expect("Elixir version should parse");
+        assert_eq!(version, "1.16.3");
+        assert!(version_matches_requirement(">=1.15,<2", version.as_str()));
     }
 
     #[test]
