@@ -234,6 +234,8 @@ impl Inference {
 #[derive(Debug, Default, Clone, Serialize)]
 pub struct DetectContract {
     pub version: u32,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub metadata: BTreeMap<String, YamlValue>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub project: Option<DetectProject>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1189,15 +1191,19 @@ fn source_bound_candidate_foundation_with_existing_contract(
         } else {
             None
         };
+        let mut working_directory = None;
         let closure_resolution = if let Some(command) = command.as_ref() {
             let CandidateTaskClosureContext {
                 platform,
+                working_directory: context_working_directory,
                 requirements,
             } = candidate_task_closure_context(root, inferences, inference, evidence.as_ref())?;
+            working_directory = context_working_directory;
             Some(resolve_candidate_task_closure(CandidateClosureInput {
                 task_name: inference_task_name(&inference.field).unwrap_or("unknown"),
                 task_command: &inference.value,
                 command_body: &command.body,
+                working_directory: working_directory.as_deref().unwrap_or("."),
                 package_manager: command.package_manager.as_deref(),
                 package_scripts: command.package_scripts.as_ref(),
                 root_script_name: command.root_script_name.as_deref(),
@@ -1216,7 +1222,7 @@ fn source_bound_candidate_foundation_with_existing_contract(
         } else {
             None
         };
-        let proposed_value = candidate_semantic_value(inference);
+        let proposed_value = candidate_semantic_value(inference, working_directory.as_deref());
         let subject = candidate_subject(inference, &proposed_value)?;
         let existing_value = existing_contract_semantic_value(existing_contract, &subject);
         if existing_value.as_ref() == Some(&proposed_value) {
@@ -1445,9 +1451,9 @@ fn candidate_field_family(inference: &Inference) -> &'static str {
     }
 }
 
-fn candidate_semantic_value(inference: &Inference) -> JsonValue {
+fn candidate_semantic_value(inference: &Inference, cwd: Option<&str>) -> JsonValue {
     if is_task_command(inference) {
-        return canonical_task_execution(&inference.value);
+        return canonical_task_execution_with_cwd(&inference.value, cwd);
     }
     if inference.field.ends_with(".safe_for_agent")
         || inference.field.ends_with(".internal")
@@ -1471,13 +1477,24 @@ fn candidate_semantic_value(inference: &Inference) -> JsonValue {
 }
 
 fn canonical_task_execution(command: &str) -> JsonValue {
+    canonical_task_execution_with_cwd(command, None)
+}
+
+fn canonical_task_execution_with_cwd(command: &str, cwd: Option<&str>) -> JsonValue {
     let trimmed = command.trim();
     if let Some(tokens) = simple_command_tokens(trimmed) {
-        return serde_json::json!({
+        let mut value = serde_json::json!({
             "kind": "command",
             "exe": tokens[0],
             "args": &tokens[1..],
         });
+        if let Some(cwd) = cwd.filter(|cwd| *cwd != ".") {
+            value
+                .as_object_mut()
+                .expect("command semantic value")
+                .insert(String::from("cwd"), JsonValue::String(cwd.to_string()));
+        }
+        return value;
     }
     serde_json::json!({
         "kind": "run",
@@ -2044,7 +2061,8 @@ fn discovery_source_kind(path: &str) -> &'static str {
 }
 
 fn is_task_command(inference: &Inference) -> bool {
-    inference.field.starts_with("tasks.") && inference.field.ends_with(".run")
+    inference.field.starts_with("tasks.")
+        && (inference.field.ends_with(".run") || inference.field.ends_with(".command"))
 }
 
 fn closure_evidence_from_candidate_evidence(evidence: &CandidateEvidence) -> ClosureEvidence {
@@ -2058,6 +2076,7 @@ fn closure_evidence_from_candidate_evidence(evidence: &CandidateEvidence) -> Clo
 
 struct CandidateTaskClosureContext {
     platform: String,
+    working_directory: Option<String>,
     requirements: Vec<ExecutionClosureNode>,
 }
 
@@ -2076,8 +2095,10 @@ fn candidate_task_closure_context(
     }
 
     let mut platform = String::from("unknown");
+    let mut working_directory = None;
     if let Some(context) = ci_workflow_task_context(root, task, task_evidence)? {
         platform = context.platform;
+        working_directory = context.working_directory;
         for requirement in context.requirements {
             requirements.insert(requirement.id.clone(), requirement);
         }
@@ -2085,6 +2106,7 @@ fn candidate_task_closure_context(
 
     Ok(CandidateTaskClosureContext {
         platform,
+        working_directory,
         requirements: requirements.into_values().collect(),
     })
 }
@@ -2188,6 +2210,7 @@ fn cargo_toolchain_closure_requirement(
 
 struct CiWorkflowTaskContext {
     platform: String,
+    working_directory: Option<String>,
     requirements: Vec<ExecutionClosureNode>,
 }
 
@@ -2273,8 +2296,16 @@ fn ci_workflow_task_context(
         }
     }
 
+    let working_directory =
+        match github_actions_working_directory(root, &workflow, job, step_index)? {
+            CiWorkflowWorkingDirectory::Root => None,
+            CiWorkflowWorkingDirectory::RepositoryRelative(cwd) => Some(cwd),
+            CiWorkflowWorkingDirectory::Unresolved => return Ok(None),
+        };
+
     Ok(Some(CiWorkflowTaskContext {
         platform,
+        working_directory,
         requirements: requirements.into_values().collect(),
     }))
 }
@@ -2285,6 +2316,129 @@ fn ci_workflow_task_source(source: &str) -> Option<(&str, &str, usize)> {
     let (job_name, step) = job_and_step.split_once(".steps[")?;
     let step_index = step.split_once(']')?.0.parse().ok()?;
     Some((workflow_path, job_name, step_index))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum CiWorkflowWorkingDirectory {
+    Root,
+    RepositoryRelative(String),
+    Unresolved,
+}
+
+fn ci_workflow_task_working_directory(
+    root: &Path,
+    source: &str,
+) -> Result<CiWorkflowWorkingDirectory, DetectError> {
+    let Some((workflow_path, job_name, step_index)) = ci_workflow_task_source(source) else {
+        return Ok(CiWorkflowWorkingDirectory::Unresolved);
+    };
+    let Some(exact_path) = candidate_source_path(root, workflow_path)? else {
+        return Ok(CiWorkflowWorkingDirectory::Unresolved);
+    };
+    let contents = read_file(&root.join(exact_path))?;
+    let workflow: YamlValue =
+        serde_yaml::from_str(&contents).map_err(|source_error| DetectError::Parse {
+            path: workflow_path.to_string(),
+            message: source_error.to_string(),
+        })?;
+    let Some(job) = workflow.get("jobs").and_then(|jobs| jobs.get(job_name)) else {
+        return Ok(CiWorkflowWorkingDirectory::Unresolved);
+    };
+    github_actions_working_directory(root, &workflow, job, step_index)
+}
+
+fn github_actions_working_directory(
+    root: &Path,
+    workflow: &YamlValue,
+    job: &YamlValue,
+    step_index: usize,
+) -> Result<CiWorkflowWorkingDirectory, DetectError> {
+    let step = job
+        .get("steps")
+        .and_then(YamlValue::as_sequence)
+        .and_then(|steps| steps.get(step_index));
+    let raw = step
+        .and_then(|step| step.get("working-directory"))
+        .or_else(|| {
+            job.get("defaults")
+                .and_then(|defaults| defaults.get("run"))
+                .and_then(|run| run.get("working-directory"))
+        })
+        .or_else(|| {
+            workflow
+                .get("defaults")
+                .and_then(|defaults| defaults.get("run"))
+                .and_then(|run| run.get("working-directory"))
+        });
+    let Some(raw) = raw else {
+        return Ok(CiWorkflowWorkingDirectory::Root);
+    };
+    let Some(raw) = raw.as_str() else {
+        return Ok(CiWorkflowWorkingDirectory::Unresolved);
+    };
+    let Some(path) = canonical_ci_workflow_working_directory(raw) else {
+        return Ok(CiWorkflowWorkingDirectory::Unresolved);
+    };
+    if ci_workflow_working_directory_has_symlink(root, &path)? {
+        return Ok(CiWorkflowWorkingDirectory::Unresolved);
+    }
+    if path == "." {
+        Ok(CiWorkflowWorkingDirectory::Root)
+    } else {
+        Ok(CiWorkflowWorkingDirectory::RepositoryRelative(path))
+    }
+}
+
+fn canonical_ci_workflow_working_directory(raw: &str) -> Option<String> {
+    let value = raw.trim();
+    if value.is_empty()
+        || value != raw
+        || value.contains("${{")
+        || value.starts_with('~')
+        || value.starts_with('/')
+        || value.as_bytes().get(1).is_some_and(|byte| *byte == b':')
+            && value.as_bytes()[0].is_ascii_alphabetic()
+        || value.contains('\\')
+    {
+        return None;
+    }
+    if value == "." {
+        return Some(String::from("."));
+    }
+    let components = value.split('/').collect::<Vec<_>>();
+    if components.is_empty()
+        || components
+            .iter()
+            .any(|component| component.is_empty() || matches!(*component, "." | ".."))
+    {
+        return None;
+    }
+    Some(components.join("/"))
+}
+
+fn ci_workflow_working_directory_has_symlink(root: &Path, path: &str) -> Result<bool, DetectError> {
+    if path == "." {
+        return Ok(false);
+    }
+    let mut current = root.to_path_buf();
+    for component in path.split('/') {
+        current.push(component);
+        match fs::symlink_metadata(&current) {
+            Ok(metadata) if metadata.file_type().is_symlink() => return Ok(true),
+            Ok(metadata) if !metadata.is_dir() => return Ok(true),
+            Ok(_) => {}
+            // Ota does not model earlier CI steps that create this path. Promoting it would
+            // bind a potentially different later directory than the observed repository truth.
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(true),
+            Err(source) => {
+                return Err(DetectError::Read {
+                    path: current.display().to_string(),
+                    source,
+                });
+            }
+        }
+    }
+    Ok(false)
 }
 
 fn ci_runner_platform(runner: &str) -> &'static str {
@@ -2843,12 +2997,22 @@ fn detect_github_actions_workflows(
         else {
             continue;
         };
-        builder.set_task(
-            task_name.to_string(),
-            signal.command,
-            signal.source,
-            Confidence::Medium,
-        );
+        match ci_workflow_task_working_directory(root, &signal.source)? {
+            CiWorkflowWorkingDirectory::Unresolved => continue,
+            CiWorkflowWorkingDirectory::Root => builder.set_task(
+                task_name.to_string(),
+                signal.command,
+                signal.source,
+                Confidence::Medium,
+            ),
+            CiWorkflowWorkingDirectory::RepositoryRelative(cwd) => builder.set_task_with_cwd(
+                task_name.to_string(),
+                signal.command,
+                cwd,
+                signal.source,
+                Confidence::Medium,
+            ),
+        }
     }
 
     Ok(())
@@ -2902,7 +3066,95 @@ pub(crate) fn collect_github_actions_verification_tasks(
         )?;
     }
 
+    disambiguate_colliding_ci_verification_lanes(&mut tasks);
     Ok(tasks)
+}
+
+fn disambiguate_colliding_ci_verification_lanes(tasks: &mut [CiVerificationTaskSignal]) {
+    let mut identities_by_field = BTreeMap::<String, BTreeSet<(String, String, usize)>>::new();
+    for task in tasks.iter() {
+        let Some((workflow_path, job_name, step_index)) = ci_workflow_task_source(&task.source)
+        else {
+            continue;
+        };
+        identities_by_field
+            .entry(task.field.clone())
+            .or_default()
+            .insert((workflow_path.to_string(), job_name.to_string(), step_index));
+    }
+
+    for task in tasks.iter_mut() {
+        let Some((workflow_path, job_name, step_index)) = ci_workflow_task_source(&task.source)
+        else {
+            continue;
+        };
+        let Some(identities) = identities_by_field.get(&task.field) else {
+            continue;
+        };
+        if identities.len() < 2 {
+            continue;
+        }
+        let Some(task_name) = task
+            .field
+            .strip_prefix("tasks.")
+            .and_then(|field| field.strip_suffix(".run"))
+        else {
+            continue;
+        };
+        let job_is_unique = identities
+            .iter()
+            .filter(|(_, candidate_job, _)| candidate_job == job_name)
+            .count()
+            == 1;
+        let qualifier_source = if job_is_unique {
+            job_name.to_string()
+        } else {
+            let workflow_name = Path::new(workflow_path)
+                .file_stem()
+                .and_then(|name| name.to_str())
+                .unwrap_or("workflow");
+            format!("{workflow_name}-{job_name}-step-{step_index}")
+        };
+        let qualifier = workflow_tokens(&qualifier_source)
+            .map(|token| token.to_ascii_lowercase())
+            .collect::<Vec<_>>();
+        if !qualifier.is_empty() {
+            task.field = format!("tasks.{task_name}:{}.run", qualifier.join("-"));
+        }
+    }
+
+    ensure_ci_verification_lane_fields_are_unique(tasks);
+}
+
+fn ensure_ci_verification_lane_fields_are_unique(tasks: &mut [CiVerificationTaskSignal]) {
+    let mut observations_by_field = BTreeMap::<String, BTreeSet<(String, String)>>::new();
+    for task in tasks.iter() {
+        observations_by_field
+            .entry(task.field.clone())
+            .or_default()
+            .insert((task.source.clone(), task.command.clone()));
+    }
+
+    for task in tasks.iter_mut() {
+        if observations_by_field
+            .get(&task.field)
+            .is_none_or(|observations| observations.len() < 2)
+        {
+            continue;
+        }
+        let Some(field) = task.field.strip_suffix(".run") else {
+            continue;
+        };
+        // Hex is a reversible, identifier-safe encoding of the exact observation rather than a
+        // normalized display label. It keeps task names injective across legal workflow spellings.
+        let identity = format!("{}\0{}", task.source, task.command);
+        let suffix = identity
+            .as_bytes()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        task.field = format!("{field}:ci-{suffix}.run");
+    }
 }
 
 fn collect_github_actions_verification_tasks_from_workflow(
@@ -2965,24 +3217,39 @@ fn collect_github_actions_verification_tasks_from_workflow(
             };
             let step_name = step.get("name").and_then(YamlValue::as_str);
             if let Some(run) = step.get("run").and_then(YamlValue::as_str) {
-                for command in ci_workflow_simple_run_lines(run) {
+                let commands = ci_workflow_simple_run_lines(run);
+                if let Some(commands) = commands.as_ref().filter(|commands| commands.len() == 1) {
+                    let command = &commands[0];
                     let (field, command, exact_command) = if let Some((task_name, command)) =
-                        infer_ci_verification_task_line(&command)
+                        infer_ci_verification_task_line(command)
                     {
                         let task_name = ci_job_scoped_verification_task_name(job_name, &task_name);
                         (format!("tasks.{task_name}.run"), command, true)
                     } else if let Some(task_name) =
                         step_name.and_then(infer_ci_verification_task_name_from_step_name)
                     {
-                        (format!("tasks.{task_name}.run"), command, false)
+                        (format!("tasks.{task_name}.run"), command.to_string(), false)
                     } else {
-                        (String::new(), command, true)
+                        (String::new(), command.to_string(), true)
                     };
                     tasks.push(CiVerificationTaskSignal {
                         field,
                         command,
                         source: format!("{step_source_prefix}.run"),
                         exact_command,
+                        qualifier: None,
+                    });
+                } else if let Some(task_name) =
+                    step_name.and_then(infer_ci_verification_task_name_from_step_name)
+                {
+                    // Retain a named multi-command step as one review-only body. Selecting a
+                    // filtered line would claim an incomplete execution closure.
+                    let task_name = ci_job_scoped_verification_task_name(job_name, &task_name);
+                    tasks.push(CiVerificationTaskSignal {
+                        field: format!("tasks.{task_name}.run"),
+                        command: run.trim().to_string(),
+                        source: format!("{step_source_prefix}.run"),
+                        exact_command: true,
                         qualifier: None,
                     });
                 }
@@ -3005,14 +3272,20 @@ fn collect_github_actions_verification_tasks_from_workflow(
     Ok(())
 }
 
-pub(crate) fn ci_workflow_simple_run_lines(run: &str) -> Vec<String> {
+pub(crate) fn ci_workflow_simple_run_lines(run: &str) -> Option<Vec<String>> {
     if ci_workflow_run_changes_to_external_cwd(run) {
-        return Vec::new();
+        return None;
     }
 
-    run.lines()
-        .filter_map(ci_bounded_shell_command_line)
-        .collect()
+    let mut commands = Vec::new();
+    for raw_line in run.lines() {
+        let trimmed = raw_line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        commands.push(ci_bounded_shell_command_line(raw_line)?);
+    }
+    Some(commands)
 }
 
 pub(crate) fn ci_bounded_shell_command_line(raw_line: &str) -> Option<String> {
@@ -3592,14 +3865,18 @@ fn ci_verification_task_name_from_verifier_label(value: &str) -> Option<String> 
         .filter(|token| !token.is_empty())
         .map(|token| token.to_ascii_lowercase())
         .collect::<Vec<_>>();
-    let verb = raw_tokens.first()?;
-    if !is_verifier_task_name(verb) {
-        return None;
-    }
+    let verifier_index = raw_tokens
+        .iter()
+        .position(|token| is_verifier_task_name(token))?;
+    let verb = raw_tokens.get(verifier_index)?;
     let remainder = raw_tokens
         .iter()
-        .skip(1)
-        .filter(|token| !matches!(token.as_str(), "for" | "the" | "all" | "and" | "to" | "run"))
+        .enumerate()
+        .filter(|(index, token)| {
+            *index != verifier_index
+                && !matches!(token.as_str(), "for" | "the" | "all" | "and" | "to" | "run")
+        })
+        .map(|(_, token)| token)
         .cloned()
         .collect::<Vec<_>>();
     if remainder.is_empty() {
@@ -7497,6 +7774,55 @@ impl DetectBuilder {
             self.record(field, run, source.clone(), confidence);
             if internal {
                 self.set_task_internal(name.clone(), source.clone(), confidence);
+            }
+        }
+    }
+
+    fn set_task_with_cwd(
+        &mut self,
+        name: String,
+        run: String,
+        cwd: String,
+        source: String,
+        confidence: Confidence,
+    ) {
+        let Some(tokens) = simple_command_tokens(&run) else {
+            self.set_task(name, run, source, confidence);
+            return;
+        };
+        let field = format!("tasks.{name}.run");
+        if self.should_replace(&field, &source, confidence) {
+            let notes = task_notes(&name);
+            let description = task_description(&name, &source);
+            let internal = setup_task_is_internal(&name);
+            self.contract.tasks.insert(
+                name.clone(),
+                DetectTask {
+                    description,
+                    run: String::new(),
+                    command: Some(TaskCommandSpec {
+                        exe: tokens[0].to_string(),
+                        args: tokens[1..]
+                            .iter()
+                            .map(|token| (*token).to_string())
+                            .collect(),
+                        cwd: Some(cwd),
+                        runtime_projection: None,
+                        interaction: None,
+                    }),
+                    action: None,
+                    prepare: None,
+                    requirements: TaskRequirementsSpec::default(),
+                    effects: TaskEffectsSpec::default(),
+                    depends_on: Vec::new(),
+                    notes,
+                    internal,
+                    safe_for_agent: false,
+                },
+            );
+            self.record(field, run, source.clone(), confidence);
+            if internal {
+                self.set_task_internal(name, source, confidence);
             }
         }
     }
@@ -12206,9 +12532,17 @@ jobs:
             report
                 .contract
                 .tasks
-                .get("test")
+                .get("test:ci-verify-step-1")
                 .map(|task| task.run.as_str()),
             Some("npm test")
+        );
+        assert_eq!(
+            report
+                .contract
+                .tasks
+                .get("test:ci-verify-step-3")
+                .map(|task| task.run.as_str()),
+            Some("task test")
         );
         assert_eq!(
             report
@@ -12224,6 +12558,314 @@ jobs:
                 && inference.source_class == InferenceSourceClass::CiVerification
                 && inference.confidence == Confidence::Medium
         }));
+    }
+
+    #[test]
+    fn preserves_ci_working_directory_and_multiline_verification_closure() {
+        let fixture = Fixture::new();
+        fixture.write("site/.keep", "");
+        fixture.write(
+            ".github/workflows/ci.yml",
+            r#"
+name: CI
+on: pull_request
+defaults:
+  run:
+    working-directory: site
+jobs:
+  lighthouse:
+    runs-on: ubuntu-latest
+    steps:
+      - run: npm run build
+  mcp:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check MCP
+        run: |
+          node --check integrations/mcp/server.mjs
+          node --check integrations/mcp/smoke.mjs
+  mixed:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check mixed closure
+        run: |
+          setup=$CI_SETUP
+          cargo test
+  windows-path:
+    runs-on: windows-latest
+    steps:
+      - working-directory: C:/outside
+        run: cargo test
+  non-string:
+    runs-on: ubuntu-latest
+    steps:
+      - working-directory: [site]
+        run: cargo test
+  missing:
+    runs-on: ubuntu-latest
+    steps:
+      - working-directory: created-by-setup
+        run: cargo test
+  dynamic:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ matrix.directory }}
+    steps:
+      - run: npm test
+"#,
+        );
+
+        let report = detect_repo(fixture.path()).expect("detect report");
+        let build = report.contract.tasks.get("build").expect("build task");
+        assert!(build.run.is_empty());
+        assert_eq!(
+            build.command.as_ref().map(|command| command.exe.as_str()),
+            Some("npm")
+        );
+        assert_eq!(
+            build
+                .command
+                .as_ref()
+                .map(|command| command.args.as_slice()),
+            Some([String::from("run"), String::from("build")].as_slice())
+        );
+        assert_eq!(
+            build
+                .command
+                .as_ref()
+                .and_then(|command| command.cwd.as_deref()),
+            Some("site")
+        );
+        assert_eq!(
+            report
+                .contract
+                .tasks
+                .get("check:mcp")
+                .map(|task| task.run.as_str()),
+            Some(
+                "node --check integrations/mcp/server.mjs\nnode --check integrations/mcp/smoke.mjs"
+            )
+        );
+        assert!(
+            !report.contract.tasks.contains_key("test"),
+            "dynamic CI working directories must remain unresolved rather than become root tasks"
+        );
+
+        let candidate = source_bound_candidate_foundation(fixture.path(), &report.inferences)
+            .expect("candidate foundation");
+        let build = candidate
+            .changes
+            .iter()
+            .find(|change| change.subject.is_path(&["tasks", "build", "command"]))
+            .expect("build candidate");
+        assert_eq!(
+            build.proposed_value,
+            Some(serde_json::json!({
+                "kind": "command",
+                "exe": "npm",
+                "args": ["run", "build"],
+                "cwd": "site",
+            }))
+        );
+        let mcp = candidate
+            .changes
+            .iter()
+            .find(|change| change.subject.is_path(&["tasks", "check:mcp", "run"]))
+            .expect("multiline candidate");
+        assert_eq!(mcp.disposition, CandidateDisposition::Unknown);
+        let mixed = candidate
+            .changes
+            .iter()
+            .find(|change| {
+                change
+                    .subject
+                    .is_path(&["tasks", "check:mixed-closure", "run"])
+            })
+            .expect("mixed candidate");
+        assert_eq!(mixed.disposition, CandidateDisposition::Unknown);
+        assert_eq!(
+            build
+                .execution_closure
+                .as_ref()
+                .map(|closure| closure.working_directory.as_str()),
+            Some("site")
+        );
+        assert_eq!(
+            report
+                .contract
+                .tasks
+                .get("check:mixed-closure")
+                .map(|task| task.run.as_str()),
+            Some("setup=$CI_SETUP\ncargo test")
+        );
+        assert!(
+            !report.contract.tasks.contains_key("test:windows-path")
+                && !report.contract.tasks.contains_key("test:non-string")
+                && !report.contract.tasks.contains_key("test:missing"),
+            "noncanonical, non-string, and unobserved working directories must not be promoted"
+        );
+    }
+
+    #[test]
+    fn keeps_ci_lanes_distinct_when_job_names_do_not_name_the_verifier() {
+        let fixture = Fixture::new();
+        fixture.write(
+            ".github/workflows/ci.yml",
+            r#"
+name: CI
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - run: cargo test --lib
+  macos:
+    runs-on: macos-latest
+    steps:
+      - run: cargo test --tests
+"#,
+        );
+
+        let report = detect_repo(fixture.path()).expect("detect report");
+        assert_eq!(
+            report
+                .contract
+                .tasks
+                .get("test:linux")
+                .map(|task| task.run.as_str()),
+            Some("cargo test --lib")
+        );
+        assert_eq!(
+            report
+                .contract
+                .tasks
+                .get("test:macos")
+                .map(|task| task.run.as_str()),
+            Some("cargo test --tests")
+        );
+        assert!(!report.contract.tasks.contains_key("test"));
+    }
+
+    #[test]
+    fn keeps_ci_lanes_distinct_across_steps_and_workflows() {
+        let fixture = Fixture::new();
+        fixture.write(
+            ".github/workflows/a.yml",
+            r#"
+name: A
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - run: cargo test --lib
+"#,
+        );
+        fixture.write(
+            ".github/workflows/b.yml",
+            r#"
+name: B
+jobs:
+  verify:
+    runs-on: macos-latest
+    steps:
+      - run: cargo test --tests
+"#,
+        );
+        fixture.write(
+            ".github/workflows/steps.yml",
+            r#"
+name: Steps
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - run: cargo test --doc
+      - run: cargo test --benches
+"#,
+        );
+
+        let report = detect_repo(fixture.path()).expect("detect report");
+        for (name, command) in [
+            ("test:a-verify-step-0", "cargo test --lib"),
+            ("test:b-verify-step-0", "cargo test --tests"),
+            ("test:steps-verify-step-0", "cargo test --doc"),
+            ("test:steps-verify-step-1", "cargo test --benches"),
+        ] {
+            assert_eq!(
+                report
+                    .contract
+                    .tasks
+                    .get(name)
+                    .map(|task| task.run.as_str()),
+                Some(command),
+                "expected distinct CI lane {name}"
+            );
+        }
+    }
+
+    #[test]
+    fn keeps_ci_lanes_injective_when_workflow_stems_collide() {
+        let fixture = Fixture::new();
+        for (path, command) in [
+            (".github/workflows/ci.yml", "cargo test --lib"),
+            (".github/workflows/ci.yaml", "cargo test --tests"),
+        ] {
+            fixture.write(
+                path,
+                &format!(
+                    r#"
+name: CI
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - run: {command}
+"#,
+                ),
+            );
+        }
+
+        let report = detect_repo(fixture.path()).expect("detect report");
+        let test_lanes = report
+            .contract
+            .tasks
+            .iter()
+            .filter(|(name, _)| name.starts_with("test:ci-verify-step-0:ci-"))
+            .map(|(_, task)| task.run.as_str())
+            .collect::<BTreeSet<_>>();
+        assert_eq!(
+            test_lanes,
+            BTreeSet::from(["cargo test --lib", "cargo test --tests"]),
+            "distinct exact observations must not collapse through normalized lane labels"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn refuses_ci_working_directory_symlink_aliases() {
+        let fixture = Fixture::new();
+        let outside = tempfile::tempdir().expect("outside directory");
+        fs::create_dir_all(outside.path().join("nested")).expect("outside nested directory");
+        std::os::unix::fs::symlink(outside.path(), fixture.path().join("alias"))
+            .expect("repository alias");
+        fixture.write(
+            ".github/workflows/ci.yml",
+            r#"
+name: CI
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - working-directory: alias/nested
+        run: cargo build
+"#,
+        );
+
+        let report = detect_repo(fixture.path()).expect("detect report");
+        assert!(
+            !report.contract.tasks.contains_key("build"),
+            "working-directory aliases must not be promoted as repository-relative truth"
+        );
     }
 
     #[test]

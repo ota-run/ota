@@ -32264,7 +32264,11 @@ name = "fastapi"
         assert!(preview_stdout.contains(
             "Ota only writes an inferred `agent` block when at least one safe task is present"
         ));
-        assert!(preview_stdout.contains(&format!("run `ota agents --write {}", fixture.path())));
+        let canonical_root = fs::canonicalize(fixture.path()).expect("canonical fixture root");
+        assert!(preview_stdout.contains(&format!(
+            "run `ota agents --write {}",
+            canonical_root.display()
+        )));
         assert!(!preview_stdout.contains("\nagent:\n"));
     }
 

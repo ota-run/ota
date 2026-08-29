@@ -26,6 +26,15 @@
 
 ## Unreleased
 
+- Hardened detector-led starter and CI inference. GitHub Actions verification commands now retain
+  repository-relative job or step working directories as structured task commands; dynamic,
+  noncanonical, or escaping working directories are not promoted. Named multiline verification
+  steps retain their complete ordered body and remain unresolved rather than selecting one line as
+  task truth. Newly authored starters declare `metadata.ota.minimum_version` for the running Ota
+  version, while heuristic agent-boundary output is explicitly `Partially inferred` unless both
+  writable and protected paths came from an explicit boundary source. These are review inputs, not
+  inferred agent-safe authority or runtime/provider evidence.
+
 - Non-dry-run `ota up --json` now retains `receipt.typed_effect_policy_refusal` when an explicit
   typed rule denies the selected closure. The additive schema-v1 record binds the exact
   command-scoped effect-policy decision and `execution_started: false`; it is absent for typed

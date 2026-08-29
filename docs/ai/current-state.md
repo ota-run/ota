@@ -35,6 +35,12 @@ durable agent workflow belongs in the canonical Ota skill.
 
 - branch: `1.6.27-implementation`
 - released baseline: `v1.6.26`
+- current surface repair: detector-led starters now declare the running Ota minimum-version floor;
+  GitHub Actions verification inference binds canonical repository-relative working directories,
+  retains named multiline steps as unresolved ordered bodies, and refuses dynamic or noncanonical
+  directory truth. Heuristic agent boundaries with inferred safe tasks remain `Partially inferred`
+  until both writable and protected paths originate from explicit boundary evidence. This repair
+  does not add agent-safe authority, provider/runtime attestation, or a Pythia-specific adapter.
 - active version: V12 effect-bound refusal assurance. V11 is reconciled complete and V12 is the sole
   active version as of 2026-08-25. The first local implementation batch adds strict PostgreSQL
   resource bindings, discriminated database schema-mutation definitions, exact task attachment

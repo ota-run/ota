@@ -25,9 +25,9 @@
 version: 1
 repository: ota-run/ota-site
 mode: synced
-reviewed_ota_commit: pending-local-v12-effect-refusal-archive
-consumer_commit: 2a39c51d7c4c2d82ac8eda6fed0131847869089e
+reviewed_ota_commit: pending-local-detector-fidelity-repair
+consumer_commit: 9851280f05daf586e74449c86cc515c6816b30a3
 notes: >
-  The Site reference documents the ordinary blocked receipt, explicit durable refusal archive,
-  post-publication maintenance outcome, history re-derivation, and the provider-mutation,
-  assurance, and export boundaries.
+  The Site reference now also bounds source-bound CI inference: canonical repository-relative
+  working directories become task cwd truth, while dynamic directories and named multiline steps
+  remain review-only rather than becoming agent-safe authority.

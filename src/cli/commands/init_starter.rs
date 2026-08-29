@@ -25,6 +25,7 @@ use std::fs;
 use std::path::Path;
 
 use serde_json::Value as JsonValue;
+use serde_yaml::Value as YamlValue;
 
 use crate::detector::{
     DetectCheck, DetectCheckKind, DetectCheckSeverity, DetectContract, DetectProject, DetectReport,
@@ -674,6 +675,7 @@ fn inferred_init_env_sources(root: &Path) -> Vec<EnvSource> {
 }
 
 pub(super) fn apply_starter_contract_defaults(contract: &mut DetectContract, root: &Path) {
+    set_starter_minimum_version(contract);
     add_detected_env_copy_setup(contract, root);
     mark_setup_task_internal(contract);
     if contract.project.is_none()
@@ -728,6 +730,7 @@ pub(super) fn apply_detected_starter_contract_defaults(
     contract: &mut DetectContract,
     report: &DetectReport,
 ) {
+    set_starter_minimum_version(contract);
     normalize_detected_starter_surfaces(contract, &report.root);
     add_detected_env_copy_setup(contract, &report.root);
     mark_setup_task_internal(contract);
@@ -743,6 +746,18 @@ pub(super) fn apply_detected_starter_contract_defaults(
     } else {
         contract.agent = starter_agent_from_detected_candidate(contract, report);
     }
+}
+
+fn set_starter_minimum_version(contract: &mut DetectContract) {
+    let ota = contract
+        .metadata
+        .entry(String::from("ota"))
+        .or_insert_with(|| YamlValue::Mapping(serde_yaml::Mapping::new()));
+    let Some(ota) = ota.as_mapping_mut() else {
+        return;
+    };
+    ota.entry(YamlValue::String(String::from("minimum_version")))
+        .or_insert_with(|| YamlValue::String(env!("CARGO_PKG_VERSION").to_string()));
 }
 
 fn normalize_detected_starter_surfaces(contract: &mut DetectContract, root: &Path) {
@@ -1504,9 +1519,9 @@ fn starter_agent_boundary_outcome_from_parts(
     safe_tasks: Vec<String>,
     boundary: StarterAgentBoundaryInference,
 ) -> StarterAgentBoundaryOutcome {
-    let kind = if !safe_tasks.is_empty() {
+    let kind = if boundary.explicit && !safe_tasks.is_empty() {
         StarterAgentBoundaryOutcomeKind::Inferred
-    } else if !boundary.writable_paths.is_empty() {
+    } else if !safe_tasks.is_empty() || !boundary.writable_paths.is_empty() {
         StarterAgentBoundaryOutcomeKind::PartiallyInferred
     } else {
         StarterAgentBoundaryOutcomeKind::Omitted
@@ -1522,6 +1537,7 @@ fn starter_agent_boundary_outcome_from_parts(
 
 #[derive(Debug, Default)]
 struct StarterAgentBoundaryInference {
+    explicit: bool,
     writable_paths: Vec<String>,
     protected_paths: Vec<String>,
     writable_provenance: Vec<String>,
@@ -1609,6 +1625,7 @@ fn starter_agent_boundary_inference(
     let protected_paths =
         starter_agent_protected_paths(contract, root, "init", &mut protected_provenance);
     StarterAgentBoundaryInference {
+        explicit: false,
         writable_paths,
         protected_paths,
         writable_provenance: writable_provenance.into_iter().collect(),
@@ -1621,6 +1638,7 @@ fn starter_agent_boundary_inference_for_detect_report(
 ) -> StarterAgentBoundaryInference {
     let explicit_writable_paths = detect_report_agent_list(report, "agent.writable_paths.");
     let explicit_protected_paths = detect_report_agent_list(report, "agent.protected_paths.");
+    let explicit = !explicit_writable_paths.is_empty() && !explicit_protected_paths.is_empty();
     let semantic_roots = starter_agent_semantic_roots_from_detect_report(report);
     let mut writable_provenance = BTreeSet::new();
     let mut protected_provenance = BTreeSet::new();
@@ -1643,6 +1661,7 @@ fn starter_agent_boundary_inference_for_detect_report(
         explicit_protected_paths
     };
     StarterAgentBoundaryInference {
+        explicit,
         writable_paths,
         protected_paths,
         writable_provenance: writable_provenance.into_iter().collect(),
@@ -3422,8 +3441,10 @@ fn node_root_package_json_has_script(root: &Path, script: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        StarterPack, StarterPackConfig, StarterPackOptions, apply_starter_contract_defaults,
-        bootstrap_init_contract, starter_agent_exceptions_for_boundary, starter_pack_contract,
+        StarterAgentBoundaryOutcomeKind, StarterPack, StarterPackConfig, StarterPackOptions,
+        apply_starter_contract_defaults, bootstrap_init_contract,
+        starter_agent_boundary_outcome_from_detect_report, starter_agent_exceptions_for_boundary,
+        starter_pack_contract,
     };
     use crate::detector::{DetectContract, DetectReport, DetectTask};
     use crate::schema::{
@@ -3431,6 +3452,7 @@ mod tests {
         TaskMavenHydrationMode, TaskNodePackageManagerHydrationMode, TaskNodePackageManagerKind,
         TaskPrepareSpec,
     };
+    use serde_yaml::Value as YamlValue;
     use std::collections::BTreeMap;
     use tempfile::TempDir;
 
@@ -3877,6 +3899,16 @@ java {
         assert!(contract.tasks.contains_key("test"));
         assert_eq!(
             contract
+                .metadata
+                .get("ota")
+                .and_then(YamlValue::as_mapping)
+                .and_then(|ota| ota.get(YamlValue::String(String::from("minimum_version"))))
+                .and_then(YamlValue::as_str),
+            Some(env!("CARGO_PKG_VERSION")),
+            "every newly authored starter contract must declare its Ota floor"
+        );
+        assert_eq!(
+            contract
                 .tasks
                 .get("dev")
                 .and_then(|task| task.command.as_ref())
@@ -3951,6 +3983,34 @@ java {
                 .any(|entry| entry == "init:ci_topology_default"),
             "starter contracts should record CI topology protection provenance"
         );
+    }
+
+    #[test]
+    fn detected_agent_boundary_with_safe_tasks_remains_partially_inferred_without_docs() {
+        let fixture = TempDir::new().expect("fixture");
+        std::fs::create_dir_all(fixture.path().join("src")).expect("create src");
+        std::fs::write(fixture.path().join("src/main.ts"), "export {};\n").expect("write source");
+        std::fs::write(
+            fixture.path().join("package.json"),
+            r#"{"name":"boundary-demo","scripts":{"test":"vitest run"}}"#,
+        )
+        .expect("write package manifest");
+
+        let mut report = crate::detector::detect_repo(fixture.path()).expect("detect report");
+        report
+            .contract
+            .tasks
+            .get_mut("test")
+            .expect("detected test task")
+            .safe_for_agent = true;
+
+        let outcome = starter_agent_boundary_outcome_from_detect_report(&report);
+        assert_eq!(
+            outcome.kind,
+            StarterAgentBoundaryOutcomeKind::PartiallyInferred
+        );
+        assert_eq!(outcome.safe_tasks, vec![String::from("test")]);
+        assert!(outcome.writable_paths.contains(&String::from("src")));
     }
 
     #[test]

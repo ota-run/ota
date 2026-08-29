@@ -75449,6 +75449,9 @@ project:
             .source_bound_init_preview_candidate()
             .expect("init preview source capture");
         let snapshot_root = capture.snapshot_root().to_path_buf();
+        let operator_root = fs::canonicalize(repo.path()).expect("canonical repo root");
+        let canonical_snapshot_root =
+            fs::canonicalize(&snapshot_root).expect("canonical snapshot root");
         let report = crate::detector::DetectReport {
             root: snapshot_root.clone(),
             contract: capture.contract.clone(),
@@ -75472,13 +75475,15 @@ project:
         assert!(
             stdout.contains(&format!(
                 "run `ota agents --write {}",
-                repo.path().display()
+                operator_root.display()
             )),
             "{stdout}"
         );
         assert!(
-            !stdout.contains(&snapshot_root.display().to_string()),
-            "snapshot root escaped into operator guidance: {stdout}"
+            !stdout.contains(&canonical_snapshot_root.display().to_string()),
+            "snapshot root `{}` escaped into operator guidance for repo `{}`: {stdout}",
+            canonical_snapshot_root.display(),
+            operator_root.display(),
         );
     }
 
