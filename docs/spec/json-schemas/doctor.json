@@ -20,7 +20,7 @@
             "name": { "type": "string" }
           }
         },
-        "family": { "enum": ["agent_safety", "declared_effects", "proof_breadth"] },
+        "family": { "enum": ["agent_safety", "declared_effects", "proof_breadth", "effect_refusal_assurance"] },
         "declaration": {
           "type": "object",
           "additionalProperties": false,
@@ -52,6 +52,57 @@
             "coverage": {
               "type": "array",
               "items": { "type": "string" }
+            },
+            "contract_snapshot_identity": {
+              "type": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$"
+            },
+            "discovery_scope": { "type": "string", "minLength": 1 },
+            "coverage_records": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["kind", "status", "path", "evidence_class"],
+                "properties": {
+                  "kind": { "enum": ["declared_challenge_lane", "equivalent_execution_path", "opaque_execution_paths"] },
+                  "status": { "enum": ["not_verified", "not_proved", "incomplete"] },
+                  "path": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": { "type": "string", "minLength": 1 }
+                  },
+                  "effect_identity": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+                  "attachment_identity": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+                  "evidence_class": { "enum": ["derived"] }
+                },
+                "allOf": [
+                  {
+                    "if": { "properties": { "kind": { "const": "declared_challenge_lane" } }, "required": ["kind"] },
+                    "then": {
+                      "required": ["effect_identity", "attachment_identity"],
+                      "properties": { "status": { "const": "not_verified" } }
+                    }
+                  },
+                  {
+                    "if": { "properties": { "kind": { "const": "equivalent_execution_path" } }, "required": ["kind"] },
+                    "then": {
+                      "required": ["effect_identity", "attachment_identity"],
+                      "properties": { "status": { "const": "not_proved" } }
+                    }
+                  },
+                  {
+                    "if": { "properties": { "kind": { "const": "opaque_execution_paths" } }, "required": ["kind"] },
+                    "then": {
+                      "properties": {
+                        "status": { "const": "not_proved" },
+                        "effect_identity": false,
+                        "attachment_identity": false
+                      }
+                    }
+                  }
+                ]
+              }
             },
             "gaps": {
               "type": "array",
@@ -98,7 +149,88 @@
             "evidence_class": { "enum": ["derived"] }
           }
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "family": { "const": "effect_refusal_assurance" } }, "required": ["family"] },
+          "then": {
+            "properties": {
+              "subject": {
+                "properties": { "kind": { "const": "effect_refusal_canary" } },
+                "required": ["kind"]
+              },
+              "declaration": {
+                "properties": {
+                  "value": { "const": "explicit_typed_deny" },
+                  "evidence_class": { "const": "asserted" }
+                },
+                "required": ["value", "evidence_class"]
+              },
+              "closure": {
+                "properties": {
+                  "status": { "const": "unavailable" },
+                  "blockers": { "contains": { "const": "verified_effect_refusal_archive" } }
+                },
+                "required": ["status", "blockers"]
+              },
+              "assurance": {
+                "required": ["contract_snapshot_identity", "discovery_scope", "coverage_records", "gaps"],
+                "properties": {
+                  "status": { "const": "unknown" },
+                  "coverage": {
+                    "allOf": [
+                      { "contains": { "const": "contract_effect_graph" } },
+                      { "contains": { "const": "declared_challenge_lanes" } }
+                    ]
+                  },
+                  "discovery_scope": { "const": "typed_contract_graph_v1" },
+                  "coverage_records": {
+                    "minItems": 2,
+                    "allOf": [
+                      { "contains": { "properties": { "kind": { "const": "declared_challenge_lane" } }, "required": ["kind"] } },
+                      { "contains": { "properties": { "kind": { "const": "opaque_execution_paths" } }, "required": ["kind"] } }
+                    ]
+                  },
+                  "gaps": {
+                    "allOf": [
+                      { "contains": { "const": "verified_effect_refusal_archive" } },
+                      { "contains": { "const": "effect_realization_not_verified" } },
+                      { "contains": { "const": "opaque_execution_paths_not_enumerated" } }
+                    ]
+                  }
+                },
+                "allOf": [
+                  {
+                    "if": {
+                      "properties": {
+                        "coverage_records": {
+                          "contains": {
+                            "properties": { "kind": { "const": "equivalent_execution_path" } },
+                            "required": ["kind"]
+                          }
+                        }
+                      },
+                      "required": ["coverage_records"]
+                    },
+                    "then": {
+                      "properties": {
+                        "gaps": {
+                          "contains": {
+                            "type": "string",
+                            "pattern": "^equivalent_execution_paths_not_proved:sha256:[0-9a-f]{64}$"
+                          }
+                        }
+                      },
+                      "required": ["gaps"]
+                    }
+                  }
+                ],
+                "required": ["status", "coverage", "contract_snapshot_identity", "discovery_scope", "coverage_records", "gaps"]
+              }
+            }
+          }
+        }
+      ]
     },
     "replayInputPolicy": {
       "type": "object",

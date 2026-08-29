@@ -26,6 +26,13 @@
 
 ## Unreleased
 
+- `ota doctor --json` now emits additive `effect_refusal_assurance` claim records for declared
+  typed effect-refusal canaries. The initial carrier enumerates declared challenge lanes and exact
+  equal-effect attachments, emits `equivalent_execution_paths_not_proved` for known unchallenged
+  paths, and retains an opaque-path boundary rather than inferring shell or provider behavior.
+  These records remain `unknown` until later verified archive evidence binds execution and
+  realization truth; a declared or ephemeral passing canary is not positive assurance.
+
 - Hardened detector-led starter and CI inference. GitHub Actions verification commands now retain
   repository-relative job or step working directories as structured task commands; dynamic,
   noncanonical, or escaping working directories are not promoted. Named multiline verification

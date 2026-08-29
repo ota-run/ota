@@ -22287,6 +22287,14 @@ fn doctor_claim_assurance_with_overrides(
             })
         })
         .collect::<Vec<_>>();
+    records.extend(
+        crate::claim_assurance::effect_refusal_assurance_claims(contract)
+            .into_iter()
+            .map(|mut record| {
+                apply_claim_assurance_policy(&mut record, policy_pack);
+                record
+            }),
+    );
 
     let root = contract_working_dir(contract_path);
     let contract_snapshot_hash = build_contract_snapshot_artifact(root, contract, false)
@@ -108480,6 +108488,63 @@ policies:
         super::apply_claim_assurance_policy(&mut policy_bound_proof, Some(&policy_pack));
         assert_eq!(policy_bound_proof.policy.decision, "allow");
         assert_eq!(policy_bound_proof.policy.basis, ["default_compatibility"]);
+
+        let effect_policy_pack: OrgPolicyPack = serde_yaml::from_str(
+            r#"
+policies:
+  agent:
+    claim_assurance:
+      effect_refusal_assurance:
+        minimum_status: supported
+        on_insufficient: review
+"#,
+        )
+        .unwrap();
+        let effect_contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project: { name: effect-refusal-policy }
+resource_bindings:
+  primary:
+    kind: database
+    provider: postgresql
+    namespace: { authority: dns:example.org, environment: production }
+effect_definitions:
+  migration:
+    kind: database_schema_mutation
+    action: apply_migration_set
+    resource: { engine: postgresql, target_ref: primary, schema: public }
+    bounds:
+      migration_set:
+        root: migrations
+        content_identity: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      start_state: any_within_set
+tasks:
+  migrate:
+    action: { kind: database_schema_mutation, effect: migration }
+    effects: { declared: [migration] }
+agent:
+  effect_refusal_canaries:
+    - id: production_schema_refusal
+      effect: migration
+      challenge_lanes:
+        - task: migrate
+          origin: { task: migrate, effect: migration }
+"#,
+        )
+        .expect("effect-refusal contract parses");
+        let mut effect_claim =
+            crate::claim_assurance::effect_refusal_assurance_claims(&effect_contract)
+                .pop()
+                .expect("effect-refusal assurance claim");
+        super::apply_claim_assurance_policy(&mut effect_claim, Some(&effect_policy_pack));
+        assert_eq!(effect_claim.assurance.status, "unknown");
+        assert_eq!(effect_claim.policy.decision, "review");
+        assert_eq!(
+            effect_claim.policy.basis,
+            ["claim_assurance:effect_refusal_assurance:minimum_status=supported"]
+        );
 
         fs::write(
             snapshot_artifact.archive_path.unwrap(),

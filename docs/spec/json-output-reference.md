@@ -3153,6 +3153,19 @@ identity, resolved execution scope, and `replay_posture: witness_only`. A matchi
 `contradicted`; absent, stale, changed-source, or scope-mismatched archives remain `unknown`.
 Consumers must not infer absent declared-effects records as support or contradiction.
 
+V12 adds `effect_refusal_assurance` records for declared `agent.effect_refusal_canaries`. This
+initial contract-graph carrier is intentionally `unknown`: it binds the current semantic contract
+snapshot and `typed_contract_graph_v1` enumeration scope, then enumerates the declared challenge
+lanes, exact effect and attachment identities, and every other declared attachment with the same
+canonical effect identity. An unchallenged equivalent attachment is emitted as
+`equivalent_execution_paths_not_proved:<attachment-identity>`. Every record also retains
+`opaque_execution_paths_not_enumerated`, because Ota does not infer effects from shell, scripts,
+or provider configuration. JSON Schema validates the snapshot digest's local shape only; Core
+re-derives and reconciles its equality with the current semantic contract. A declaration or
+ephemeral canary result cannot make this record
+`supported`; that requires a later verified refusal archive that binds the selected invocation,
+realization, policy, and execution-attempted evidence.
+
 When an active org policy pack declares `policies.agent.claim_assurance.<family>`, `policy` is
 derived from that requirement. For example, a policy requiring `agent_safety.minimum_status:
 supported` changes an otherwise `unknown` record to `policy.decision: deny`; it does not relabel

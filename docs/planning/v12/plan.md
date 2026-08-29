@@ -885,6 +885,13 @@ two real selected lanes with different task/workflow names that resolve to the s
 `database_schema_mutation` effect. Both must refuse through the same effect-policy rule before any
 database, provider, worktree, service, hook, or child-process mutation.
 
+Immutable partial evidence is retained in
+[`docs/pressure/v12-real-repository-effect-refusal.md`](../../pressure/v12-real-repository-effect-refusal.md):
+Plausible Analytics and Outline each pass direct task and workflow explicit-deny canaries on Linux
+and macOS with `execution_started: false`. Those controls establish only Ota's selected-closure
+refusal boundary. They do not satisfy the following coverage-honesty requirements, prove arbitrary
+process absence, or close this pressure bar.
+
 The second repository must prove coverage honesty:
 
 - one named lane contains the typed effect and is refused by effect policy;

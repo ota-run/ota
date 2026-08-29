@@ -41,6 +41,24 @@ durable agent workflow belongs in the canonical Ota skill.
   directory truth. Heuristic agent boundaries with inferred safe tasks remain `Partially inferred`
   until both writable and protected paths originate from explicit boundary evidence. This repair
   does not add agent-safe authority, provider/runtime attestation, or a Pythia-specific adapter.
+- PythiaLabs pre-release fork pressure has reviewable declaration, native execution, and an
+  Ota-owned Linux Node-container matrix. The declaration run passed; native execution passed ten
+  of eleven lanes and retained Pythia's existing site-format failure as a repository finding; the
+  container run passed the bounded MCP and site hydration/build closures using a digest-pinned Node
+  image rather than Pythia's mutable Dockerfile. That exercise repaired Elixir version parsing when
+  `elixir --version` also prints Erlang/OTP. Credentialed CAEP, merge, communications, and the
+  Liminal lifecycle remain unmodeled. See `docs/pressure/pythialabs-discovery.md` for exact
+  revisions, hosted evidence, and limits.
+- V12 has partial immutable real-repository refusal evidence: Linux/macOS fork matrices against
+  Plausible Analytics and Outline each validate a committed PostgreSQL migration root, then pass
+  direct task and workflow effect-refusal canaries with `execution_started: false` and an explicit
+  typed deny. `ota doctor --json` now emits contract-graph coverage records for each declared
+  typed-refusal canary, including unchallenged exact-equivalent attachments and opaque-path
+  boundaries; it remains `unknown` until a later verified archive carries realization and execution
+  evidence. This does not close V12: immutable coverage-honesty pressure, mixed-realization,
+  namespace/posture, CI projection, sandbox, receipt/archive, and archive-backed V11.14 assurance
+  requirements remain open.
+  See `docs/pressure/v12-real-repository-effect-refusal.md`.
 - active version: V12 effect-bound refusal assurance. V11 is reconciled complete and V12 is the sole
   active version as of 2026-08-25. The first local implementation batch adds strict PostgreSQL
   resource bindings, discriminated database schema-mutation definitions, exact task attachment

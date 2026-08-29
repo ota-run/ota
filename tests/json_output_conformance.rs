@@ -6530,6 +6530,220 @@ agent:
 }
 
 #[test]
+fn doctor_effect_refusal_assurance_reports_unproved_equivalent_paths() {
+    let fixture = TempDir::new().expect("fixture");
+    write_contract(
+        &fixture,
+        r#"
+version: 1
+project: { name: effect-refusal-assurance }
+resource_bindings:
+  primary:
+    kind: database
+    provider: postgresql
+    namespace: { authority: dns:example.org, environment: production }
+effect_definitions:
+  migration:
+    kind: database_schema_mutation
+    action: apply_migration_set
+    resource: { engine: postgresql, target_ref: primary, schema: public }
+    bounds:
+      migration_set:
+        root: migrations
+        content_identity: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      start_state: any_within_set
+tasks:
+  migrate:
+    action: { kind: database_schema_mutation, effect: migration }
+    effects: { declared: [migration] }
+  alternate-migrate:
+    action: { kind: database_schema_mutation, effect: migration }
+    effects: { declared: [migration] }
+agent:
+  effect_refusal_canaries:
+    - id: production_schema_refusal
+      effect: migration
+      challenge_lanes:
+        - task: migrate
+          origin: { task: migrate, effect: migration }
+"#,
+    );
+
+    let output = run_ota(
+        &[
+            "doctor",
+            "--json",
+            fixture.path().to_str().expect("UTF-8 path"),
+        ],
+        fixture.path(),
+    );
+    assert_matches_schema("doctor.json", &output);
+    let claim = output["claim_assurance"]
+        .as_array()
+        .expect("claim assurance array")
+        .iter()
+        .find(|claim| claim["family"] == "effect_refusal_assurance")
+        .expect("effect-refusal assurance claim");
+    assert_eq!(claim["assurance"]["status"], "unknown");
+    let contract = ota::parser::load_contract(&fixture.path().join("ota.yaml"))
+        .expect("fixture contract loads");
+    assert_eq!(
+        claim["assurance"]["contract_snapshot_identity"],
+        independently_derive_contract_identity(&contract),
+        "the snapshot identity must bind the current semantic contract"
+    );
+    let mut changed_contract = contract.clone();
+    changed_contract.project.name = String::from("changed-effect-refusal-assurance");
+    assert_ne!(
+        claim["assurance"]["contract_snapshot_identity"],
+        independently_derive_contract_identity(&changed_contract),
+        "a changed contract must not retain the observed snapshot identity"
+    );
+    assert_eq!(
+        claim["assurance"]["discovery_scope"],
+        "typed_contract_graph_v1"
+    );
+    assert!(
+        claim["assurance"]["gaps"]
+            .as_array()
+            .expect("assurance gaps")
+            .iter()
+            .any(|gap| gap.as_str().is_some_and(|gap| {
+                gap.starts_with("equivalent_execution_paths_not_proved:sha256:")
+            }))
+    );
+    assert!(
+        claim["assurance"]["coverage_records"]
+            .as_array()
+            .expect("coverage records")
+            .iter()
+            .any(|record| {
+                record["kind"] == "equivalent_execution_path" && record["status"] == "not_proved"
+            })
+    );
+
+    let mut contradictory_subject = output.clone();
+    let claim = contradictory_subject["claim_assurance"]
+        .as_array_mut()
+        .expect("claim assurance array")
+        .iter_mut()
+        .find(|claim| claim["family"] == "effect_refusal_assurance")
+        .expect("effect-refusal assurance claim");
+    claim["subject"]["kind"] = json!("task");
+    assert_rejected_by_schema("doctor.json", &contradictory_subject);
+
+    let mut missing_snapshot = output.clone();
+    let claim = missing_snapshot["claim_assurance"]
+        .as_array_mut()
+        .expect("claim assurance array")
+        .iter_mut()
+        .find(|claim| claim["family"] == "effect_refusal_assurance")
+        .expect("effect-refusal assurance claim");
+    claim["assurance"]
+        .as_object_mut()
+        .expect("assurance object")
+        .remove("contract_snapshot_identity");
+    assert_rejected_by_schema("doctor.json", &missing_snapshot);
+
+    let mut forged_snapshot = output.clone();
+    effect_refusal_claim_mut(&mut forged_snapshot)["assurance"]["contract_snapshot_identity"] =
+        json!("sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+    assert_matches_schema("doctor.json", &forged_snapshot);
+    assert_ne!(
+        effect_refusal_claim_mut(&mut forged_snapshot)["assurance"]["contract_snapshot_identity"],
+        independently_derive_contract_identity(&contract),
+        "JSON Schema validates digest shape only; Core must reconcile digest equality"
+    );
+
+    let mut forged_supported = output.clone();
+    effect_refusal_claim_mut(&mut forged_supported)["assurance"]["status"] = json!("supported");
+    assert_rejected_by_schema("doctor.json", &forged_supported);
+
+    let mut missing_records = output.clone();
+    effect_refusal_claim_mut(&mut missing_records)["assurance"]["coverage_records"] = json!([]);
+    assert_rejected_by_schema("doctor.json", &missing_records);
+
+    let mut missing_gaps = output.clone();
+    effect_refusal_claim_mut(&mut missing_gaps)["assurance"]
+        .as_object_mut()
+        .expect("assurance object")
+        .remove("gaps");
+    assert_rejected_by_schema("doctor.json", &missing_gaps);
+
+    let mut changed_scope = output.clone();
+    effect_refusal_claim_mut(&mut changed_scope)["assurance"]["discovery_scope"] = json!("other");
+    assert_rejected_by_schema("doctor.json", &changed_scope);
+
+    let mut changed_declaration = output.clone();
+    effect_refusal_claim_mut(&mut changed_declaration)["declaration"]["value"] = json!("other");
+    assert_rejected_by_schema("doctor.json", &changed_declaration);
+
+    let mut invalid_opaque_status = output.clone();
+    let opaque =
+        effect_refusal_claim_mut(&mut invalid_opaque_status)["assurance"]["coverage_records"]
+            .as_array_mut()
+            .expect("coverage records")
+            .iter_mut()
+            .find(|record| record["kind"] == "opaque_execution_paths")
+            .expect("opaque coverage record");
+    opaque["status"] = json!("not_verified");
+    assert_rejected_by_schema("doctor.json", &invalid_opaque_status);
+
+    let mut empty_coverage_path = output.clone();
+    let equivalent =
+        effect_refusal_claim_mut(&mut empty_coverage_path)["assurance"]["coverage_records"]
+            .as_array_mut()
+            .expect("coverage records")
+            .iter_mut()
+            .find(|record| record["kind"] == "equivalent_execution_path")
+            .expect("equivalent coverage record");
+    equivalent["path"] = json!([]);
+    assert_rejected_by_schema("doctor.json", &empty_coverage_path);
+
+    let mut empty_coverage_component = output.clone();
+    let equivalent =
+        effect_refusal_claim_mut(&mut empty_coverage_component)["assurance"]["coverage_records"]
+            .as_array_mut()
+            .expect("coverage records")
+            .iter_mut()
+            .find(|record| record["kind"] == "equivalent_execution_path")
+            .expect("equivalent coverage record");
+    equivalent["path"] = json!([""]);
+    assert_rejected_by_schema("doctor.json", &empty_coverage_component);
+
+    let mut missing_equivalent_gap = output.clone();
+    effect_refusal_claim_mut(&mut missing_equivalent_gap)["assurance"]["gaps"] = json!([
+        "verified_effect_refusal_archive",
+        "effect_realization_not_verified",
+        "opaque_execution_paths_not_enumerated"
+    ]);
+    assert_rejected_by_schema("doctor.json", &missing_equivalent_gap);
+
+    let mut missing_declared_identity = output.clone();
+    let declared =
+        effect_refusal_claim_mut(&mut missing_declared_identity)["assurance"]["coverage_records"]
+            .as_array_mut()
+            .expect("coverage records")
+            .iter_mut()
+            .find(|record| record["kind"] == "declared_challenge_lane")
+            .expect("declared coverage record");
+    declared
+        .as_object_mut()
+        .expect("declared coverage object")
+        .remove("attachment_identity");
+    assert_rejected_by_schema("doctor.json", &missing_declared_identity);
+}
+
+fn effect_refusal_claim_mut(output: &mut Value) -> &mut Value {
+    output["claim_assurance"]
+        .as_array_mut()
+        .expect("claim assurance array")
+        .iter_mut()
+        .find(|claim| claim["family"] == "effect_refusal_assurance")
+        .expect("effect-refusal assurance claim")
+}
+
+#[test]
 fn replay_input_identity_policy_matches_doctor_preview_receipt_and_projection_schemas() {
     let fixture = TempDir::new().expect("fixture");
     write_contract(

@@ -1,6 +1,8 @@
 # PythiaLabs Design-Partner Discovery
 
-Status: discovery only. This is not V12 completion evidence, an upstream endorsement, or a proposed contract. No fork, branch, issue, workflow, or pull request was created during this review.
+Status: bounded pre-release fork pressure. This is not V12 completion evidence, an upstream
+endorsement, or an upstream pull request. The fork remains a review artifact until Ota v1.6.27 is
+released and Aleksei reviews a draft PR in writing.
 
 ## Subject
 
@@ -8,7 +10,10 @@ Status: discovery only. This is not V12 completion evidence, an upstream endorse
 -   Default branch: `main`
 -   Reviewed revision: `17df87775c0d5407c07e86f278455d912ed51305`
 -   Review date: 2026-08-29
--   Ota probe: source-built Ota v1.6.27 at Core `ca259389b05767ff37bd0072d29446f4054d31b6`
+-   Fork: `bobaikato/pythiaLabs`, branch `bobai/ota-pre-release-pressure`
+-   Native-pressure revision: `bf51a0b4c93128522226cf977895f54c6603d33d`
+-   Container-pressure revision: `916f9f127c9d76580e8f5efa8f4f0af497019fff`, hosted in [run 33258442106](https://github.com/bobaikato/pythiaLabs/actions/runs/33258442106)
+-   Ota probe: source-built Ota v1.6.27 at Core `cd99c9abd2c0225b454371e897eca2486319db26`
 -   Upstream posture: Aleksei requested asynchronous written review through a draft PR from a fork, with a proposed `ota.yaml`, a separate non-blocking workflow, exercised assumptions, and explicit unproved boundaries.
 
 This revision combines an Elixir core, a Rust NIF with an Elixir fallback, a Rust port worker, a Node MCP bridge, a generated Node site, Python conformance suites, credentialed provider pilots, and pinned multi-repository evidence workflows. The repository is a high-signal design-partner candidate because its important boundary is not language count. It is the difference between declared decision logic, selected execution posture, effective runtime use, and external authority.
@@ -31,6 +36,32 @@ Locally observed:
 -   current `main` hosted CI, security, ACI, and VCE runs are green at the reviewed revision.
 
 The local Rust run generated an untracked `workers/solver_port/Cargo.lock`, confirming that the reviewed revision does not retain that resolution identity. Generated build and Python cache files were confined to the temporary clone.
+
+## Pre-release Fork Pressure
+
+The fork carries a reviewable `ota.yaml` and two separate visible workflows. They are not required
+upstream CI checks and do not execute credentialed CAEP, GitHub merge, communications, or the
+Liminal multi-repository lifecycle.
+
+-   [Declaration and discovery pressure run 33256380938](https://github.com/bobaikato/pythiaLabs/actions/runs/33256380938) passed at the fork revision above. It validates the contract, exports declared task posture, runs Doctor, and emits a review-only detection candidate.
+-   [Non-credentialed execution matrix 33256380935](https://github.com/bobaikato/pythiaLabs/actions/runs/33256380935) ran the reviewed native lanes with the exact Core revision above. Ten of eleven lanes passed: Elixir format/test, MCP smoke, Rust worker build/test, site build, and Action Envelope, VCE, ACI, and local CAEP conformance.
+-   `verify:site-format` failed because Pythia's existing `prettier --check .` reports 13 unformatted site files. This is a repository-quality finding, not an Ota failure. The fork does not rewrite upstream source or downgrade the verification lane without maintainer review.
+-   An earlier fork execution attempt exposed an Ota parser defect: the generic version parser read `Erlang/OTP 26` as the Elixir version. Core `cd99c9ab` now extracts the explicit `Elixir 1.16.3` line, with a regression. The contract also replaced unsupported `~> 1.15` syntax with the supported equivalent `>=1.15,<2`.
+
+### Container Decision
+
+Pythia's Dockerfile remains outside Ota authority: it installs Rust through a mutable network
+bootstrap and is not a reviewed image, platform, mount, or hydration carrier. That does not remove
+the value of Ota-owned container execution. The fork now declares a bounded container pressure slice
+using an explicit, digest-pinned Linux Node context for the portable MCP and site closures, with
+each task selecting it through `--mode container` and retaining separate artifacts. The
+[hosted container matrix](https://github.com/bobaikato/pythiaLabs/actions/runs/33258442106) passed
+that bounded Linux Node slice and retains Ota's selected-context summary plus child output.
+
+This proves only Ota's declared context selection, closure execution, working-directory handling,
+and the selected site hydration/build path. It does not validate the Dockerfile, establish a
+multi-language container image, prove image provenance beyond the pinned digest, establish
+macOS/Windows parity, or upgrade any lane to agent-safe authority.
 
 ## Ota Probe
 
