@@ -813,6 +813,13 @@ history re-derivation, reject a deliberately stripped replay context, and accept
 bytes. The fixture also observes absent setup, rendered environment, and durable logs. It remains
 internal, provider-disabled negative evidence: it does not prove provider contact, database
 mutation prevention outside Ota, positive assurance, or public export safety.
+Archive-backed Doctor assurance is separately immutable-hosted on Linux/x64 and macOS in
+[run 33309358828](https://github.com/ota-run/ota/actions/runs/33309358828) against Core
+`81c25e09c833559312e9cd43ce04a1c63f27d6fa`. Both retained artifacts promote one exact
+workflow-only challenge to `supported` only through verified private archive reconciliation, then
+return it to `unknown` after archive tampering. This remains internal, provider-disabled negative
+evidence: it does not prove provider contact, database mutation prevention outside Ota, positive
+assurance, or public export safety.
 
 1. Add the provider-neutral effect domain, canonical identities, origins, and derivation posture
    plus strict resource-binding branches without changing execution admission.

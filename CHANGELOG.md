@@ -26,6 +26,14 @@
 
 ## Unreleased
 
+- Recorded immutable Linux/x64 and macOS pressure for private archive-backed workflow refusal
+  assurance in [run 33309358828](https://github.com/ota-run/ota/actions/runs/33309358828)
+  against exact Core `81c25e09c833559312e9cd43ce04a1c63f27d6fa`. Both retained artifacts promote
+  one exact workflow challenge to `supported` only after reconciliation of the current contract,
+  workflow closure, typed realization, explicit deny, and private archive. Tampering the archive
+  returns that claim to `unknown`. This remains internal, provider-disabled negative evidence: it
+  does not prove provider contact, mutation, positive assurance, or export safety.
+
 - `ota doctor --json` now consumes the existing verified private workflow refusal archive for
   additive `effect_refusal_assurance` claim records. It promotes only an exact current-contract
   workflow challenge with matching eligible effect attachment, realization, explicit typed deny,

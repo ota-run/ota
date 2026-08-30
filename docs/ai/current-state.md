@@ -93,8 +93,12 @@ durable agent workflow belongs in the canonical Ota skill.
   authoritative sandbox enforcement. The existing private workflow refusal archive now upgrades
   Doctor's V11.14 `effect_refusal_assurance` only for an exact current-contract workflow challenge
   with matching eligible attachment, realization, explicit typed deny, and pre-execution posture;
-  task-only, stale, invalid, or mismatched evidence remains `unknown`. Hosted evidence for that
-  archive-backed assurance path remains open.
+  task-only, stale, invalid, ambiguous, or mismatched evidence remains `unknown`. Immutable
+  Linux/macOS [run 33309358828](https://github.com/ota-run/ota/actions/runs/33309358828) against
+  Core `81c25e09c833559312e9cd43ce04a1c63f27d6fa` now proves that exact workflow-only promotion
+  from a verified private archive and its fallback to `unknown` after archive tampering. It remains
+  internal, provider-disabled negative evidence, not provider contact, mutation, positive
+  assurance, or export safety.
   See `docs/pressure/v12-real-repository-effect-refusal.md`.
 - active version: V12 effect-bound refusal assurance. V11 is reconciled complete and V12 is the sole
   active version as of 2026-08-25. The first local implementation batch adds strict PostgreSQL
@@ -151,6 +155,13 @@ durable agent workflow belongs in the canonical Ota skill.
   The same fixture confirms workflow setup, environment rendering, and durable logs remain absent.
   It does not establish provider contact or mutation prevention outside Ota, positive assurance,
   or export safety.
+  Archive-backed Doctor assurance is separately immutable-hosted on Linux/x64 and macOS in
+  [run 33309358828](https://github.com/ota-run/ota/actions/runs/33309358828) against Core
+  `81c25e09c833559312e9cd43ce04a1c63f27d6fa`. Both retained artifacts promote one exact
+  workflow-only challenge to `supported` through private archive reconciliation, then return it
+  to `unknown` after archive tampering. This remains internal, provider-disabled negative evidence;
+  it does not prove provider contact, mutation prevention outside Ota, positive assurance, or
+  export safety.
   Task and workflow harness capability JSON now carries mandatory typed effect-policy posture:
   untyped lanes are `not_applicable`, while typed lanes carry the evaluated decision, policy
   snapshot, selected execution graph, and effect-set identities or an explicit unavailable state.
