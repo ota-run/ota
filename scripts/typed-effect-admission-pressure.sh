@@ -38,6 +38,8 @@ core_root=$3
 fixture="$proof_root/fixture"
 preview_fixture="$proof_root/preview-fixture"
 ci_fixture="$proof_root/ci-fixture"
+namespace_fixture="$proof_root/namespace-fixture"
+invalid_namespace_fixture="$proof_root/invalid-namespace-fixture"
 stage=initialization
 
 record_stage() {
@@ -65,12 +67,13 @@ test -z "$(find "$proof_root" -mindepth 1 -maxdepth 1 -print -quit)" \
   || fail "Evidence root must be empty: $proof_root"
 stage=fixture_creation
 mkdir -p "$fixture/migrations" "$fixture/.ota" "$preview_fixture/migrations" \
-  "$preview_fixture/.ota" "$ci_fixture/migrations" "$ci_fixture/.ota"
+  "$preview_fixture/.ota" "$ci_fixture/migrations" "$ci_fixture/.ota" \
+  "$namespace_fixture/migrations" "$namespace_fixture/.ota"
 printf 'create table example ();\n' > "$fixture/migrations/001.sql"
 cp "$fixture/migrations/001.sql" "$preview_fixture/migrations/001.sql"
 cp "$fixture/migrations/001.sql" "$ci_fixture/migrations/001.sql"
 
-python3 - "$fixture" "$preview_fixture" "$ci_fixture" <<'PY'
+python3 - "$fixture" "$preview_fixture" "$ci_fixture" "$namespace_fixture" <<'PY'
 import hashlib
 import json
 import pathlib
@@ -80,6 +83,7 @@ import textwrap
 fixture = pathlib.Path(sys.argv[1])
 preview_fixture = pathlib.Path(sys.argv[2])
 ci_fixture = pathlib.Path(sys.argv[3])
+namespace_fixture = pathlib.Path(sys.argv[4])
 migration = fixture / "migrations" / "001.sql"
 file_identity = "sha256:" + hashlib.sha256(migration.read_bytes()).hexdigest()
 manifest = {
@@ -217,6 +221,70 @@ policies:
   effects:
     mode: compatibility
 """))
+(namespace_fixture / "migrations/001.sql").write_bytes(migration.read_bytes())
+(namespace_fixture / "ota.yaml").write_text(textwrap.dedent(f"""\
+version: 1
+metadata:
+  ota:
+    minimum_version: "1.6.27"
+project:
+  name: typed-effect-namespace-pressure
+resource_bindings:
+  primary:
+    kind: database
+    provider: postgresql
+    namespace: {{ authority: dns:example.org, environment: pressure, account: primary }}
+  secondary:
+    kind: database
+    provider: postgresql
+    namespace: {{ authority: dns:example.org, environment: pressure, account: secondary }}
+effect_definitions:
+  migration-primary:
+    kind: database_schema_mutation
+    action: apply_migration_set
+    resource: {{ engine: postgresql, target_ref: primary, schema: public }}
+    bounds:
+      migration_set: {{ root: migrations, content_identity: {manifest_identity} }}
+      start_state: any_within_set
+  migration-secondary:
+    kind: database_schema_mutation
+    action: apply_migration_set
+    resource: {{ engine: postgresql, target_ref: secondary, schema: public }}
+    bounds:
+      migration_set: {{ root: migrations, content_identity: {manifest_identity} }}
+      start_state: any_within_set
+tasks:
+  migrate-primary:
+    action: {{ kind: database_schema_mutation, effect: migration-primary }}
+    effects:
+      declared: [migration-primary]
+  migrate-secondary:
+    action: {{ kind: database_schema_mutation, effect: migration-secondary }}
+    effects:
+      declared: [migration-secondary]
+workflows:
+  default: primary
+  primary:
+    run:
+      task: migrate-primary
+"""))
+(namespace_fixture / ".ota/org-policy.yaml").write_text(textwrap.dedent("""\
+policies:
+  effects:
+    mode: compatibility
+    typed:
+      rules:
+        - id: deny_primary_namespace
+          selector:
+            kind: database_schema_mutation
+            actions: [apply_migration_set]
+            resource:
+              match: exact
+              engine: postgresql
+              namespace: { authority: dns:example.org, environment: pressure, account: primary }
+              schema: public
+          decision: deny
+"""))
 PY
 record_stage fixture_created
 printf '%s\n' \
@@ -229,6 +297,25 @@ git -C "$core_root" rev-parse HEAD > "$proof_root/core-revision.txt"
 "$ota" validate "$fixture" --plain 2>&1 | tee "$proof_root/validate.txt"
 "$ota" validate "$preview_fixture" --plain 2>&1 | tee "$proof_root/preview-validate.txt"
 "$ota" validate "$ci_fixture" --plain 2>&1 | tee "$proof_root/ci-validate.txt"
+"$ota" validate "$namespace_fixture" --plain 2>&1 | tee "$proof_root/namespace-validate.txt"
+cp -R "$namespace_fixture" "$invalid_namespace_fixture"
+python3 - "$invalid_namespace_fixture/ota.yaml" <<'PY'
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+path.write_text(path.read_text().replace(
+    "authority: dns:example.org, environment: pressure, account: secondary",
+    'authority: "", environment: pressure, account: secondary',
+))
+PY
+if "$ota" validate "$invalid_namespace_fixture" --json \
+  > "$proof_root/invalid-namespace-validate.json" 2>&1; then
+  fail "unresolved namespace authority validated"
+fi
+grep -Fq 'resource_namespace_authority_invalid' \
+  "$proof_root/invalid-namespace-validate.json" \
+  || fail "unresolved namespace authority did not report the canonical refusal"
 record_stage contracts_validated
 
 stage=preview_validation
@@ -285,6 +372,138 @@ test ! -e "$fixture/declared-only-sentinel" \
 test ! -e "$fixture/mixed-sentinel" \
   || fail "mixed command executed before mixed realization refusal"
 record_stage mixed_realization_refusal_verified
+
+stage=namespace_and_policy_posture
+"$ota" json validate --schema run-preview.json \
+  --assert-eq ok=true --assert-eq preview_status=RUNNABLE \
+  --assert-eq plan.effect_policy_decision.aggregate_decision=deny \
+  --assert-eq plan.effect_policy_decision.policy_source_evidence.authority_posture=repository_controlled \
+  --write-payload "$proof_root/namespace-primary-preview.json" \
+  -- "$ota" run migrate-primary --dry-run --json "$namespace_fixture"
+"$ota" json validate --schema run-preview.json \
+  --assert-eq ok=true --assert-eq preview_status=RUNNABLE \
+  --assert-eq plan.effect_policy_decision.aggregate_decision=warn \
+  --assert-eq plan.effect_policy_decision.policy_source_evidence.authority_posture=repository_controlled \
+  --write-payload "$proof_root/namespace-secondary-preview.json" \
+  -- "$ota" run migrate-secondary --dry-run --json "$namespace_fixture"
+cp "$namespace_fixture/.ota/org-policy.yaml" "$proof_root/caller-policy.yaml"
+"$ota" json validate --schema run-preview.json \
+  --assert-eq ok=true --assert-eq preview_status=RUNNABLE \
+  --assert-eq plan.effect_policy_decision.aggregate_decision=deny \
+  --assert-eq plan.effect_policy_decision.policy_source_evidence.authority_posture=caller_selected \
+  --write-payload "$proof_root/caller-policy-primary-preview.json" \
+  -- env OTA_POLICY="$proof_root/caller-policy.yaml" "$ota" run migrate-primary --dry-run --json "$namespace_fixture"
+python3 - "$proof_root/namespace-primary-preview.json" \
+  "$proof_root/namespace-secondary-preview.json" \
+  "$proof_root/caller-policy-primary-preview.json" <<'PY'
+import json
+import pathlib
+import sys
+
+primary, secondary, caller = [json.loads(pathlib.Path(path).read_text()) for path in sys.argv[1:]]
+primary_decision = primary["plan"]["effect_policy_decision"]
+secondary_decision = secondary["plan"]["effect_policy_decision"]
+caller_decision = caller["plan"]["effect_policy_decision"]
+primary_effect = primary_decision["effects"][0]
+secondary_effect = secondary_decision["effects"][0]
+if primary_effect["effect_identity"] == secondary_effect["effect_identity"]:
+    raise SystemExit("distinct canonical namespaces collapsed into one effect identity")
+if primary_effect["attachment_identity"] == secondary_effect["attachment_identity"]:
+    raise SystemExit("distinct canonical namespaces collapsed into one attachment identity")
+if primary_decision["aggregate_decision"] != "deny" or secondary_decision["aggregate_decision"] != "warn":
+    raise SystemExit("exact namespace policy selection did not distinguish primary and secondary")
+for decision, expected_kind, expected_posture in [
+    (primary_decision, "repository_policy", "repository_controlled"),
+    (caller_decision, "env_override", "caller_selected"),
+]:
+    source = decision["policy_source_evidence"]
+    if source["source_kind"] != expected_kind or source["authority_posture"] != expected_posture:
+        raise SystemExit(f"unexpected policy source posture: {source}")
+if (
+    primary_decision["policy_source_evidence"]["policy_snapshot_identity"]
+    != caller_decision["policy_source_evidence"]["policy_snapshot_identity"]
+):
+    raise SystemExit("identical policy bytes did not retain one policy snapshot identity")
+if primary_decision["policy_source_evidence"]["identity"] == caller_decision["policy_source_evidence"]["identity"]:
+    raise SystemExit("distinct policy source postures collapsed into one source-evidence identity")
+if primary_decision["identity"] == caller_decision["identity"]:
+    raise SystemExit("policy source-posture substitution did not change the decision identity")
+PY
+"$ota" json validate --schema up.json --allow-exit 1 \
+  --assert-eq receipt.typed_effect_policy_refusal.execution_started=false \
+  --assert-eq receipt.typed_effect_policy_refusal.policy_decision.policy_source_evidence.authority_posture=caller_selected \
+  --write-payload "$proof_root/caller-policy-refusal-archive-up.json" \
+  -- env OTA_POLICY="$proof_root/caller-policy.yaml" \
+    "$ota" up --workflow primary --archive-effect-refusal --json "$namespace_fixture"
+python3 - "$proof_root/caller-policy-refusal-archive-up.json" "$namespace_fixture" "$proof_root" <<'PY'
+import json
+import pathlib
+import sys
+
+payload = json.loads(pathlib.Path(sys.argv[1]).read_text())
+fixture = pathlib.Path(sys.argv[2])
+proof_root = pathlib.Path(sys.argv[3])
+refusal = payload["receipt"]["typed_effect_policy_refusal"]
+archive_path = fixture / refusal["refusal_archive_path"]
+if refusal["policy_decision"]["policy_source_evidence"]["authority_posture"] != "caller_selected":
+    raise SystemExit("caller policy archive did not retain caller-selected posture")
+proof_root.joinpath("caller-policy-refusal-archive-path.txt").write_text(str(archive_path) + "\n")
+proof_root.joinpath("caller-policy-refusal-archive-original.json").write_bytes(archive_path.read_bytes())
+PY
+"$ota" receipt --history --json "$namespace_fixture" \
+  > "$proof_root/caller-policy-refusal-archive-history-valid.json"
+python3 - "$proof_root/caller-policy-refusal-archive-history-valid.json" <<'PY'
+import json
+import pathlib
+import sys
+
+summary = json.loads(pathlib.Path(sys.argv[1]).read_text())["summary"]
+if summary["archive_count"] != 1 or summary["invalid_archive_count"] != 0:
+    raise SystemExit(f"caller-policy archive was not valid: {summary}")
+PY
+python3 - "$proof_root/caller-policy-refusal-archive-path.txt" <<'PY'
+import json
+import pathlib
+import sys
+
+archive_path = pathlib.Path(pathlib.Path(sys.argv[1]).read_text().strip())
+archive = json.loads(archive_path.read_text())
+source = archive["receipt"]["typed_effect_policy_refusal"]["policy_decision"]["policy_source_evidence"]
+source["source_kind"] = "repository_policy"
+source["authority_posture"] = "repository_controlled"
+archive_path.write_text(json.dumps(archive, indent=2) + "\n")
+PY
+"$ota" receipt --history --json "$namespace_fixture" \
+  > "$proof_root/caller-policy-refusal-archive-history-substituted.json"
+python3 - "$proof_root/caller-policy-refusal-archive-history-substituted.json" <<'PY'
+import json
+import pathlib
+import sys
+
+summary = json.loads(pathlib.Path(sys.argv[1]).read_text())["summary"]
+if summary["archive_count"] != 0 or summary["invalid_archive_count"] != 1:
+    raise SystemExit(f"policy source-posture substitution was accepted: {summary}")
+PY
+python3 - "$proof_root/caller-policy-refusal-archive-path.txt" \
+  "$proof_root/caller-policy-refusal-archive-original.json" <<'PY'
+import pathlib
+import sys
+
+archive_path = pathlib.Path(pathlib.Path(sys.argv[1]).read_text().strip())
+archive_path.write_bytes(pathlib.Path(sys.argv[2]).read_bytes())
+PY
+"$ota" receipt --history --json "$namespace_fixture" \
+  > "$proof_root/caller-policy-refusal-archive-history-restored.json"
+python3 - "$proof_root/caller-policy-refusal-archive-history-restored.json" <<'PY'
+import json
+import pathlib
+import sys
+
+summary = json.loads(pathlib.Path(sys.argv[1]).read_text())["summary"]
+if summary["archive_count"] != 1 or summary["invalid_archive_count"] != 0:
+    raise SystemExit(f"restored caller-policy archive did not reconcile: {summary}")
+PY
+record_stage namespace_and_policy_posture_verified
 
 stage=ci_projection_policy_reconciliation
 "$ota" json validate --schema ci-projection.json --assert-eq ok=true \
@@ -587,6 +806,9 @@ printf '%s\n' \
   'proof_inherited_up_precondition_refusal' \
   'mixed_realization_refused_before_side_effects' \
   'mixed_realization_identity_bound' \
+  'namespace_identity_separation_verified' \
+  'policy_source_posture_identity_bound' \
+  'policy_source_posture_archive_substitution_rejected' \
   'policy_decision_published' \
   'policy_denial_code_published' \
   'ci_projection_warn_identity_bound' \
