@@ -552,9 +552,32 @@ deny = json.loads(pathlib.Path(sys.argv[2]).read_text())
 if warn["projection"]["identity"] == deny["projection"]["identity"]:
     raise SystemExit("typed effect-policy drift did not change CI projection identity")
 PY
+stage=ci_provider_checkout_re_evaluation
+expected_projection_identity=$(jq -r '.projection.identity' "$proof_root/ci-projection-warn.json")
+"$ota" json validate --schema ci-projection.json --allow-exit 1 \
+  --assert-eq ok=false --assert-eq code=effect_policy_denied \
+  --assert-eq projection.governance.effect_policy_decision.aggregate_decision=deny \
+  --assert-eq projection.governance.effect_policy_decision.explicit_typed_deny=true \
+  --write-payload "$proof_root/ci-provider-checkout-refusal.json" \
+  -- "$ota" ci projection --workflow typed --mode native \
+    --target-os "${OTA_PRESSURE_TARGET_OS:-linux}" \
+    --expect-identity "$expected_projection_identity" --json "$ci_fixture"
+python3 - "$proof_root/ci-projection-warn.json" \
+  "$proof_root/ci-provider-checkout-refusal.json" <<'PY'
+import json
+import pathlib
+import sys
+
+expected, observed = [json.loads(pathlib.Path(path).read_text()) for path in sys.argv[1:]]
+if expected["projection"]["identity"] == observed["projection"]["identity"]:
+    raise SystemExit("provider checkout accepted the stale projected identity")
+if observed["code"] != "effect_policy_denied":
+    raise SystemExit(f"provider checkout did not return typed policy refusal: {observed}")
+PY
 test ! -e "$ci_fixture/setup-sentinel" || fail "CI projection executed workflow setup"
 test ! -e "$ci_fixture/.ota/state/logs" || fail "CI projection created durable execution logs"
 record_stage ci_projection_policy_reconciled
+record_stage ci_provider_checkout_re_evaluated
 
 stage=execution_refusal
 if "$ota" run migrate --plain "$fixture" > "$proof_root/run-refusal.txt" 2>&1; then
@@ -809,6 +832,7 @@ printf '%s\n' \
   'namespace_identity_separation_verified' \
   'policy_source_posture_identity_bound' \
   'policy_source_posture_archive_substitution_rejected' \
+  'ci_provider_checkout_re_evaluation_refused' \
   'policy_decision_published' \
   'policy_denial_code_published' \
   'ci_projection_warn_identity_bound' \
