@@ -332,3 +332,15 @@
   or absence, rather than legacy human text or files the stronger boundary intentionally removed.
 - Rule: A hosted pressure workflow is part of the acceptance surface; its local carrier must pass
   against the exact release binary before the implementing revision is pushed.
+
+## 2026-08-30
+
+- Pattern: Treating retained pressure evidence as generic editorial cards buries provenance,
+  exercised scope, limits, and the primary artifact link in one undifferentiated content block.
+- Correction: Reuse the established schema-card composition with an evidence-specific variant:
+  provenance in the eyebrow, one proven fact as the headline body, an explicitly labeled evidence
+  boundary, and a direct hosted-evidence action. Use masonry for uneven limit text and generate
+  every card from the Core-owned registry.
+- Rule: Public pressure cards must optimize for evidence navigation and bounded interpretation, not
+  promotional summarization; visual variants may change semantics and labels, never duplicate the
+  canonical evidence source.

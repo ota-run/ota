@@ -26,6 +26,12 @@
 
 ## Unreleased
 
+- Added the Core-owned pressure-evidence registry at
+  `docs/pressure/evidence-manifest.json` and a generated Site discovery projection. Each retained
+  case records exact repository and Ota revisions, hosted matrices, exercised surfaces, proven
+  facts, explicit `not_proved` boundaries, and engineering-note status. This is evidence
+  accounting, not repository certification, maintainer endorsement, or a green-badge scorecard.
+
 - Added `ota contract effect-refusal-candidate` as the first review-only bridge from verified
   private refusal evidence back to contract authoring. It accepts one verified workflow archive
   with exactly one eligible explicit typed denial, captures `ota.yaml` once through a retained

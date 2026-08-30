@@ -323,6 +323,20 @@ tasks:
     command:
       exe: ./scripts/check-first-party-sync.sh
     safe_for_agent: true
+  pressure:evidence:site:check:
+    description: Verify the generated Site pressure-evidence projection against Core
+    notes: |
+      Use this from the coordinated Ota workspace after changing docs/pressure evidence.
+      Core owns the manifest; the Site commits only its generated discovery projection.
+      This refuses a stale projection rather than allowing the Site to restate pressure claims.
+    category: test
+    script: |
+      set -e
+      test -f ../ota-site/lib/sync-pressure-evidence.mjs
+      OTA_CORE_ROOT="$PWD" node ../ota-site/lib/sync-pressure-evidence.mjs --check
+    execution:
+      default_mode: native
+    safe_for_agent: true
   skills:sync:check:
     description: Compatibility alias for the first-party consumer sync governance check
     notes: |

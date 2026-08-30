@@ -464,23 +464,19 @@
           "discovery_inventory": {
             "minItems": 2,
             "maxItems": 2,
-            "allOf": [
+            "prefixItems": [
               {
-                "contains": {
-                  "properties": {
-                    "source_kind": { "const": "ota_contract" },
-                    "path": { "const": "ota.yaml" }
-                  },
-                  "required": ["source_kind", "path"]
-                }
+                "properties": {
+                  "source_kind": { "const": "ota_contract" },
+                  "path": { "const": "ota.yaml" }
+                },
+                "required": ["source_kind", "path"]
               },
               {
-                "contains": {
-                  "properties": {
-                    "source_kind": { "const": "effect_refusal_archive" }
-                  },
-                  "required": ["source_kind"]
-                }
+                "properties": {
+                  "source_kind": { "const": "effect_refusal_archive" }
+                },
+                "required": ["source_kind"]
               }
             ]
           },

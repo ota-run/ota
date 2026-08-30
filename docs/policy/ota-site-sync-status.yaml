@@ -25,5 +25,5 @@
 version: 1
 repository: ota-run/ota-site
 mode: synced
-consumer_commit: 4df120af5a92ae4fb2a6bebae5fdfcc20b9a7353
-reviewed_ota_commit: 9e6330e43a5719069191c05289cf3da5b8292b0e
+consumer_commit: 122bf98a5f4cbf48e970ba41b92e3a68cc9a4bb1
+reviewed_ota_commit: 5912a946ef53069bf2805b963654eadc08f4feab

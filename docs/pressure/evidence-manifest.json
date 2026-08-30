@@ -1,0 +1,130 @@
+{
+  "schema_version": "1.0",
+  "title": "Ota pressure evidence registry",
+  "description": "Canonical retained pressure evidence. A green case proves only its listed facts; every other material behavior remains bounded by not_proved.",
+  "cases": [
+    {
+      "id": "eventcatalog-generated-lineage",
+      "status": "immutable_pressure",
+      "repository": {"name": "EventCatalog", "type": "TypeScript monorepo", "url": "https://github.com/eventcatalog/eventcatalog", "revision": "b593861fc84147884dcfcaf03898e490596927a0"},
+      "ota": {"version": "v1.6.26", "core_revision": "released"},
+      "evidence": [{"platforms": ["linux", "macos", "windows"], "run_url": "https://github.com/bobaikato/eventcatalog/actions/runs/33167453142"}],
+      "exercised_surfaces": ["generated language-server source", "sibling VS Code extension consumer", "pnpm hydration", "workflow proof"],
+      "proven_facts": ["The declared consumer closure built after its generator and sibling prerequisites.", "Generated-artifact lineage remained visible at consumer admission."],
+      "not_proved": ["Repository-wide generated-artifact correctness", "package publishing or deployment", "registry availability beyond the selected hydration lane"],
+      "engineering_note": {"status": "published", "url": "https://ota.run/blog/pressure-testing-ota-on-eventcatalog-generated-lineage-5m2b"},
+      "core_note": "docs/ai/current-state.md"
+    },
+    {
+      "id": "caddy-candidate-application",
+      "status": "immutable_pressure",
+      "repository": {"name": "Caddy", "type": "Go server", "url": "https://github.com/caddyserver/caddy", "revision": "e9f45dbb0b9bdd2c3ff598b3667f49c3ba44c9dd"},
+      "ota": {"version": "pre-release v1.6.27", "core_revision": "850ac767c8be582fc5a804b89f5ed2a781bbbbee"},
+      "evidence": [{"platforms": ["linux", "macos", "windows"], "run_url": "https://github.com/bobaikato/caddy/actions/runs/32742495306"}],
+      "exercised_surfaces": ["source-bound candidate", "create-new application", "Git carrier", "Windows read-only refusal"],
+      "proven_facts": ["Ordinary writes did not replace an existing contract.", "The Git carrier committed only ota.yaml after reviewing current truth."],
+      "not_proved": ["Caddy build, test, server, or runtime behavior", "network, release, or repository-global governance"],
+      "engineering_note": {"status": "draft", "url": null},
+      "core_note": "docs/ai/current-state.md"
+    },
+    {
+      "id": "gitbutler-source-identity",
+      "status": "immutable_pressure",
+      "repository": {"name": "GitButler", "type": "Rust desktop monorepo", "url": "https://github.com/gitbutlerapp/gitbutler", "revision": "2068a7811629950c05bd6f17429c5f2454f8ef4f"},
+      "ota": {"version": "pre-release v1.6.27", "core_revision": "996090390d8544908bbb222614ece28f4dca8b4c"},
+      "evidence": [{"platforms": ["linux", "macos", "windows"], "run_url": "https://github.com/bobaikato/gitbutler/actions/runs/32749052846"}],
+      "exercised_surfaces": ["candidate identity", "case-sensitive source inventory", "strict completeness refusal"],
+      "proven_facts": ["Linux and macOS converged on byte-identical candidate evidence after exact path-spelling repair.", "Unresolved closures did not become runnable or agent-safe."],
+      "not_proved": ["Rust, Turbo, Tauri, Playwright, desktop, packaging, or release behavior"],
+      "engineering_note": {"status": "draft", "url": null},
+      "core_note": "docs/ai/current-state.md"
+    },
+    {
+      "id": "baml-incomplete-acquisition",
+      "status": "immutable_pressure",
+      "repository": {"name": "BAML", "type": "multi-language AI tooling", "url": "https://github.com/BoundaryML/baml", "revision": "a50430fba33012bea9a740ab0466c10697050678"},
+      "ota": {"version": "pre-release v1.6.27", "core_revision": "996090390d8544908bbb222614ece28f4dca8b4c"},
+      "evidence": [{"platforms": ["linux", "macos", "windows"], "run_url": "https://github.com/bobaikato/baml/actions/runs/32749052420"}],
+      "exercised_surfaces": ["candidate capture", "reusable workflow inputs", "Git LFS acquisition posture"],
+      "proven_facts": ["Caller-owned reusable-workflow inputs remained unresolved.", "Pointer-only LFS acquisition did not become complete runnable truth."],
+      "not_proved": ["Complete LFS content", "generators, language clients, release, or runtime behavior"],
+      "engineering_note": {"status": "draft", "url": null},
+      "core_note": "docs/ai/current-state.md"
+    },
+    {
+      "id": "atuin-distinct-lanes",
+      "status": "immutable_pressure",
+      "repository": {"name": "Atuin", "type": "Rust CLI and service", "url": "https://github.com/atuinsh/atuin", "revision": "824c8716d82bed774ee6a83c683087ae77715814"},
+      "ota": {"version": "pre-release v1.6.27", "core_revision": "a4c38c7224fcc49efc5eb2c0b4e89881c9236d23"},
+      "evidence": [{"platforms": ["linux", "macos", "windows"], "run_url": "https://github.com/bobaikato/atuin/actions/runs/32753440076"}],
+      "exercised_surfaces": ["CI lane detection", "toolchain selection", "service requirements", "strict candidate refusal"],
+      "proven_facts": ["Check, formatting, unit, and PostgreSQL integration lanes remained distinct.", "CI observations did not become execution or agent-safe authority."],
+      "not_proved": ["Compilation, formatting, tests, PostgreSQL state, shell integration, runtime, or release behavior"],
+      "engineering_note": {"status": "draft", "url": null},
+      "core_note": "docs/ai/current-state.md"
+    },
+    {
+      "id": "buzz-create-new",
+      "status": "immutable_pressure",
+      "repository": {"name": "Buzz", "type": "application repository", "url": "https://github.com/block/buzz", "revision": "2d280376ad36134cec1f23bead6d866d30bed147"},
+      "ota": {"version": "pre-release v1.6.27", "core_revision": "source-built"},
+      "evidence": [{"platforms": ["linux", "macos"], "run_url": "https://github.com/bobaikato/buzz/actions/runs/32795701879"}],
+      "exercised_surfaces": ["source-bound candidate", "create-new contract application", "semantic no-op"],
+      "proven_facts": ["Creation left only ota.yaml as repository residue.", "Matching reapplication was a no-op while unresolved review truth remained visible."],
+      "not_proved": ["Repository task execution", "candidate approval", "runtime or release behavior"],
+      "engineering_note": {"status": "draft", "url": null},
+      "core_note": "docs/ai/current-state.md"
+    },
+    {
+      "id": "flowise-legacy-upgrade",
+      "status": "immutable_pressure",
+      "repository": {"name": "Flowise", "type": "TypeScript application", "url": "https://github.com/FlowiseAI/Flowise", "revision": "90121fac54e234ca83e2a85c435354af1df8ac8f"},
+      "ota": {"version": "pre-release v1.6.27", "core_revision": "source-built"},
+      "evidence": [{"platforms": ["linux", "macos"], "run_url": "https://github.com/bobaikato/Flowise/actions/runs/32794430600"}],
+      "exercised_surfaces": ["registered legacy upgrade", "Git-carrier application", "semantic no-op"],
+      "proven_facts": ["The registered representation-only upgrade preserved semantic contract identity.", "The carrier commit changed only ota.yaml."],
+      "not_proved": ["Repository task execution", "runtime, provider, or release behavior"],
+      "engineering_note": {"status": "draft", "url": null},
+      "core_note": "docs/ai/current-state.md"
+    },
+    {
+      "id": "plausible-effect-refusal-archive",
+      "status": "immutable_pressure",
+      "repository": {"name": "Plausible Analytics", "type": "Elixir analytics application", "url": "https://github.com/plausible/analytics", "revision": "1cdff8b2d1e310cee731ac648b45875ec1fbd131"},
+      "ota": {"version": "pre-release v1.6.27", "core_revision": "9b2ff4bd0ed760a506d35539477441b3899e924f"},
+      "evidence": [{"platforms": ["linux", "macos"], "run_url": "https://github.com/bobaikato/analytics/actions/runs/33327820048"}],
+      "exercised_surfaces": ["typed migration refusal", "private archive", "workflow-only assurance", "review-only candidate"],
+      "proven_facts": ["One exact workflow refusal archive promoted only its matching workflow claim.", "Context stripping returned the claim to unknown."],
+      "not_proved": ["Database correctness", "provider behavior", "complete migration coverage", "repository-wide readiness"],
+      "engineering_note": {"status": "draft", "url": null},
+      "core_note": "docs/pressure/v12-real-repository-effect-refusal.md"
+    },
+    {
+      "id": "outline-effect-refusal-archive",
+      "status": "immutable_pressure",
+      "repository": {"name": "Outline", "type": "TypeScript collaboration application", "url": "https://github.com/outline/outline", "revision": "d8d8f2fffed97eaf3e9d48d820c8f1e1facf4008"},
+      "ota": {"version": "pre-release v1.6.27", "core_revision": "9b2ff4bd0ed760a506d35539477441b3899e924f"},
+      "evidence": [{"platforms": ["linux", "macos"], "run_url": "https://github.com/bobaikato/outline/actions/runs/33327824518"}],
+      "exercised_surfaces": ["typed migration refusal", "private archive", "workflow-only assurance", "review-only candidate"],
+      "proven_facts": ["One exact workflow refusal archive promoted only its matching workflow claim.", "Migration drift and a contract alias refused before candidate publication."],
+      "not_proved": ["Database correctness", "provider behavior", "complete migration coverage", "repository-wide readiness"],
+      "engineering_note": {"status": "draft", "url": null},
+      "core_note": "docs/pressure/v12-real-repository-effect-refusal.md"
+    },
+    {
+      "id": "pythialabs-design-partner-discovery",
+      "status": "pre_release_design_partner",
+      "repository": {"name": "PythiaLabs", "type": "Elixir, Rust, Node, and Python decision system", "url": "https://github.com/safal207/pythiaLabs", "revision": "17df87775c0d5407c07e86f278455d912ed51305"},
+      "ota": {"version": "pre-release v1.6.27", "core_revision": "cd99c9abd2c0225b454371e897eca2486319db26"},
+      "evidence": [
+        {"platforms": ["linux"], "run_url": "https://github.com/bobaikato/pythiaLabs/actions/runs/33256380935"},
+        {"platforms": ["linux"], "run_url": "https://github.com/bobaikato/pythiaLabs/actions/runs/33258442106"}
+      ],
+      "exercised_surfaces": ["selected native verification lanes", "digest-pinned Node container context", "detection and candidate review"],
+      "proven_facts": ["Selected native lanes exposed one existing site-format failure without Ota weakening the verifier.", "Container pressure covered the bounded MCP and site closure, not Pythia's Dockerfile."],
+      "not_proved": ["MCP runtime loading", "credentialed CAEP", "GitHub merge", "communications", "Liminal lifecycle", "Pythia ALLOW as execution authority"],
+      "engineering_note": {"status": "draft", "url": null},
+      "core_note": "docs/pressure/pythialabs-discovery.md"
+    }
+  ]
+}

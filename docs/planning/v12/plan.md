@@ -710,9 +710,9 @@ same-user rewrite. Stronger storage or signer claims require their own authority
 A receipt or incident artifact may propose an effect definition or effect-refusal canary. It never
 edits a contract or policy directly.
 
-V12 must reuse V11.22's shared reviewed-candidate envelope, identity, source re-observation,
-re-derivation, collision protection, dry-run, and atomic application path. It must not create a
-second mutation authority. Because candidate schema versions 1–4 admit only detection, upgrade,
+V12 reuses V11.22's shared reviewed-candidate envelope, identity, source re-observation,
+re-derivation, collision protection, and dry-run path. It does not create a second mutation
+authority or enable this candidate kind to use the V11.22 writer. Because candidate schema versions 1–4 admit only detection, upgrade,
 conservative first-contract, and starter-preview profiles, V12 introduces an explicit additive
 schema-version 5 branch:
 
@@ -724,8 +724,8 @@ allowed operation: add
 
 Earlier candidate artifacts retain their original identity and behavior. Pre-v5 readers reject
 the new kind as unsupported; they never reinterpret it as detection or upgrade. The v5 branch
-shares V11.22 admission/application internals but has its own strict schema, derivation profile,
-and add-only operation rules.
+shares V11.22 envelope and reconciliation internals, but has its own strict schema, derivation
+profile, add-only operation rules, and a review-only application boundary.
 
 The effect/canary candidate is add-only in this slice and binds:
 
@@ -749,13 +749,18 @@ untrusted context unless independently signed by a supported authority; it may s
 review candidate but cannot establish that an effect occurred. Re-observing the same incident
 narrative establishes reproducibility only, not authority or an `applicable` disposition.
 
-An incident-only candidate remains `unknown`, review-only, and ineligible for contract write.
-V11.22 application may write a proposed effect or canary only when each written subject is
-`applicable` because independently deterministic typed repository evidence re-derives it, or a
-verified archive already carries those exact canonical fields and the current typed graph
-reconciles them. Candidate application re-verifies the source archive where available,
-re-observes repository evidence, re-derives the current effect graph, and refuses stale,
-conflicting, incomplete, non-reproducible, or incident-only proposals.
+Every V12 `effect_assurance` candidate remains `unknown`, review-only, and ineligible for contract
+write, including one seeded by an exactly reconciled verified archive. The archive establishes a
+bounded negative-evidence review basis; it does not make the proposed contract change
+`applicable` in this version. `apply-candidate` rejects this kind as `candidate_read_only` before
+writer, platform, lock, or repository admission.
+
+Writable archive-derived incident ratcheting is deferred to the planned inactive
+[Incident Ratchet Application](../incident-ratchet-application/plan.md) owner. That owner must
+define the exact `applicable` derivation, source and current-graph reconciliation, projection
+semantics, no-op/conflict behavior, V11.22 writer reuse, and real-repository mutation pressure
+before it can activate. It may not reinterpret a V12 review artifact as writable without that
+separate activation and evidence.
 
 Candidates never propose effect-policy `allow`, approval, grant, or trust-root changes. Removal or
 weakening requires a separately reviewed semantic migration or maintainer-authored change outside
@@ -779,8 +784,11 @@ re-derives every proposed field.
 
 ## Implementation Order
 
-Current implementation boundary: steps 1-3, the proof-closure branch of step 4, and the local
-task/workflow branch of step 5 are implemented. The shared evaluator can produce an effect-caused
+Completed V12 boundary: implementation-order steps 1-10 are complete for the bounded,
+provider-disabled effect-refusal assurance surface. Step 8 is deliberately limited to the
+review-only `effect_assurance` candidate described above; writable incident ratcheting is not an
+unfinished V12 branch and is owned by the inactive
+[Incident Ratchet Application](../incident-ratchet-application/plan.md) plan. The shared evaluator can produce an effect-caused
 refusal for repo-level `run`, non-dry-run `up`, `proof runtime`, and `proof lifecycle`; proof
 commands admit their complete selected closure before replay, authority or sandbox admission,
 artifacts, service work, or child startup. Admission preserves the selected phase and proof-helper
@@ -875,8 +883,9 @@ immutability, database correctness, positive assurance, or export safety.
 6. Project semantic requirements into CI and require provider-checkout re-evaluation.
 7. Publish governance JSON, receipt, archive, and V11.14 assurance carriers with coverage
    boundaries.
-8. Add V11.22-backed incident/effect-canary candidates only after the read-only assurance path is
-   stable.
+8. Add review-only incident/effect-canary candidates only after the read-only assurance path is
+   stable. Writable archive-derived ratcheting is deferred to the inactive
+   [Incident Ratchet Application](../incident-ratchet-application/plan.md) plan.
 9. Propagate the public schema, command behavior, JSON references, examples, canonical skill,
    installed skill mirrors, and site reference before pressure.
 10. Complete independent real-repository pressure before marking V12 complete.
@@ -932,11 +941,13 @@ immutability, database correctness, positive assurance, or export safety.
 - receipts and archives reject removed effects, changed bounds, substituted policy/refusal
   evidence, incomplete origin graphs, and stripped coverage boundaries;
 - `effect_assurance` candidates use a strict additive candidate-schema v5 branch and registered
-  derivation profile while reusing V11.22 admission/application authority;
-- incident-derived candidates are reviewable, add-only, stale-safe, reproducible, and applied only
-  through the V11.22 candidate authority;
-- incident-only proposals remain `unknown` and non-writable; write eligibility requires V11.22
-  `applicable` evidence from deterministic typed truth or an exactly reconciled verified archive;
+  derivation profile while reusing V11.22 candidate-envelope and reconciliation authority, not
+  its writer;
+- archive- and incident-derived candidates are reviewable, add-only, stale-safe, reproducible,
+  `unknown`, and non-writable in V12; exact archive reconciliation does not establish
+  `applicable` write eligibility;
+- writable archive-derived ratcheting is deferred to the inactive
+  [Incident Ratchet Application](../incident-ratchet-application/plan.md) owner;
 - no candidate can alter policy, approval, grant, issuer, or trust-root truth;
 - schemas and JSON conformance reject contradictory decision, coverage, derivation, and archive
   states;

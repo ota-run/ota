@@ -62,6 +62,13 @@ durable agent workflow belongs in the canonical Ota skill.
   regression rejecting a rehashed substituted proposal. This is internal, provider-disabled
   evidence only; it does not prove provider contact or mutation, arbitrary child-process absence,
   repository-wide immutability, positive assurance, or export safety.
+- Core now owns `docs/pressure/evidence-manifest.json`, a machine-readable registry that binds
+  retained pressure cases to exact revisions, matrices, exercised surfaces, proven facts, and
+  explicit limits. The Site commits a generated discovery projection and validates it against Core
+  through `ota run pressure:evidence:site:check`; it is not a certification, endorsement, or
+  green-badge surface. The public index, Glossary, FAQ, Skills protocol, and engineering notes
+  follow the same source-of-truth rule. Learn and Examples are unaffected because this is evidence
+  accounting, not an operator contract workflow.
 - PythiaLabs pre-release fork pressure has reviewable declaration, native execution, and an
   Ota-owned Linux Node-container matrix. The declaration run passed; native execution passed ten
   of eleven lanes and retained Pythia's existing site-format failure as a repository finding; the
@@ -1603,6 +1610,11 @@ V11.22 did not implicitly activate V12; the explicit V11 parent reconciliation a
 activation record did. V12 activation does not activate any later slice. One successor may activate
 only after its predecessor completes or is formally deferred and its own feasibility, pressure, and
 independent-review gates are met.
+The completed V12 `effect_assurance` candidate remains archive-bound, `unknown`, and review-only
+even when its private archive and current typed graph reconcile exactly. Its writable ratchet is
+owned separately by the planned inactive
+[Incident Ratchet Application](../planning/incident-ratchet-application/plan.md) plan; V12's
+review artifact cannot acquire write authority by reinterpretation.
 The platform plans do not claim parity in advance: Linux/systemd remains the completed V11.7
 hardened carrier, provider attestation remains unimplemented, and macOS/Windows containment and
 recovery remain unproved. Enterprise approvals, organization policy distribution, provider

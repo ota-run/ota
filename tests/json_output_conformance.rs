@@ -3426,12 +3426,17 @@ policies:
         effect_candidate["candidate"]["application_projection"].is_null(),
         "review-only effect assurance must not carry an application projection"
     );
-    let effect_candidate_artifact: Value = serde_json::from_slice(
+    let mut effect_candidate_artifact: Value = serde_json::from_slice(
         &fs::read(fixture.path().join(effect_candidate_path)).expect("candidate artifact bytes"),
     )
     .expect("candidate artifact JSON");
     assert_matches_schema("contract-candidate.json", &effect_candidate_artifact);
     assert_eq!(effect_candidate_artifact, effect_candidate["candidate"]);
+    effect_candidate_artifact["discovery_inventory"]
+        .as_array_mut()
+        .expect("effect-assurance inventory")
+        .swap(0, 1);
+    assert_rejected_by_schema("contract-candidate.json", &effect_candidate_artifact);
 
     for extra in [
         &[][..],

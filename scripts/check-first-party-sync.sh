@@ -156,7 +156,7 @@ check_batch() {
     "ota-site" \
     "ota-run/ota-site" \
     "docs/policy/ota-site-sync-status.yaml" \
-    '^(src/published_docs_manifest\.rs|docs/spec/published-docs\.md|docs/spec/published-docs/canonical-docs\.json|docs/spec/contract-reference\.md|docs/spec/workspace-reference\.md|docs/spec/command-reference\.md|docs/spec/json-output-reference\.md|docs/spec/execution-topology\.md|docs/spec/local-service-topology\.md|docs/spec/toolchains-runtimes-tools\.md)'
+    '^(src/published_docs_manifest\.rs|docs/spec/published-docs\.md|docs/spec/published-docs/canonical-docs\.json|docs/spec/contract-reference\.md|docs/spec/workspace-reference\.md|docs/spec/command-reference\.md|docs/spec/json-output-reference\.md|docs/spec/execution-topology\.md|docs/spec/local-service-topology\.md|docs/spec/toolchains-runtimes-tools\.md|docs/pressure/)'
   if [ "${triggered_any}" = "true" ]; then
     batches_triggered="true"
   fi
