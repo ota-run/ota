@@ -124,6 +124,18 @@
       "core_note": "docs/planning/v12/plan.md"
     },
     {
+      "id": "ota-core-typed-up-preview-admission",
+      "status": "immutable_pressure",
+      "repository": {"name": "Ota Core V12 fixture", "type": "Rust CLI internal control", "url": "https://github.com/ota-run/ota", "revision": "d4e3bef699022c77211349ac0634377697f9d070"},
+      "ota": {"version": "pre-release v1.6.27", "core_revision": "d4e3bef699022c77211349ac0634377697f9d070"},
+      "evidence": [{"platforms": ["linux", "macos"], "run_url": "https://github.com/ota-run/ota/actions/runs/33341297026"}],
+      "exercised_surfaces": ["typed up dry-run admission", "blocked preview envelope", "Core plan-to-executor continuity", "sandbox admission continuity"],
+      "proven_facts": ["An explicit typed deny blocked the selected up preview before the fixture's setup, environment-rendering, proof, durable-log, and command-sentinel paths.", "The blocked preview retained one admitted application plan and its explicit deny decision without rendering ordinary workflow actions."],
+      "not_proved": ["Provider contact or mutation", "arbitrary child-process absence", "repository-wide immutability", "database correctness", "positive assurance", "archive export safety"],
+      "engineering_note": {"status": "draft", "url": null},
+      "core_note": "docs/ai/current-state.md"
+    },
+    {
       "id": "pythialabs-design-partner-discovery",
       "status": "pre_release_design_partner",
       "repository": {"name": "PythiaLabs", "type": "Elixir, Rust, Node, and Python decision system", "url": "https://github.com/safal207/pythiaLabs", "revision": "17df87775c0d5407c07e86f278455d912ed51305"},
