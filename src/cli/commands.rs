@@ -86755,6 +86755,8 @@ tasks:
                     staged_skipped: Vec::new(),
                     dependency_chain: Vec::new(),
                     dependency_steps: Vec::new(),
+                    effect_application_plans: Vec::new(),
+                    effect_policy_decision: None,
                 },
                 governance: crate::output::GovernanceEvaluation {
                     preflight: crate::output::GovernancePreflightEvaluation {
