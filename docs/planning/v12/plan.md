@@ -784,6 +784,14 @@ task/workflow canary outcomes, and the Core-owned delivery-continuity control. T
 not independently establish arbitrary child-process absence, provider contact or mutation, or
 complete repository immutability. It remains execution-disabled internal evidence; V12 still
 requires its independent real-repository pressure bar before closure.
+The exact provider-checkout re-evaluation command is separately immutable-hosted on Linux/x64 and
+macOS in [run 33302123045](https://github.com/ota-run/ota/actions/runs/33302123045) against Core
+`d0178b2013efd3d12f6baa0a94bb572f162c70a7`. Both retained artifacts pass a compatibility-policy
+projection, then change policy truth and run `ota ci projection --expect-identity` against that
+checkout. The stale identity is refused as `effect_policy_denied` with an explicit typed deny
+before fixture setup or durable logs; the provider-disabled plan-to-executor substitution control
+also passes. This does not establish provider execution, provider contact, a third-party checkout,
+or real-repository behavior.
 The explicit durable refusal archive carrier is separately immutable-hosted on Linux/x64 and macOS
 in [run 33243471896](https://github.com/ota-run/ota/actions/runs/33243471896) against Core
 `f8dc16c0eb3d8e5c9d9fda5c2f50674e2ba1b150`. Both retained artifacts create one negative receipt

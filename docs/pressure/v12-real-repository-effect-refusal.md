@@ -84,6 +84,19 @@ valid (`1` valid, `0` invalid); rewriting that receipt to repository-controlled 
 provider-disabled source-provenance evidence only. It does not attest a provider, independent
 policy administration, arbitrary process absence, or real-repository behavior.
 
+## Internal CI Provider-Checkout Re-evaluation Control
+
+Separate immutable internal pressure in [run 33302123045](https://github.com/ota-run/ota/actions/runs/33302123045)
+binds Core `d0178b2013efd3d12f6baa0a94bb572f162c70a7` on Linux/x64 and macOS. It creates the
+compatibility-policy projection identity that a rendered provider workflow would carry, changes the
+checkout policy to an exact typed deny, then executes the same
+`ota ci projection --expect-identity <rendered-identity>` command. Both artifacts retain a changed
+projection identity, `effect_policy_denied`, explicit typed deny, repository-controlled source
+posture, and absent fixture setup and durable-log paths. The same jobs also pass Core's
+plan-to-executor source/plan/materialized-input substitution regression. This verifies Ota's local
+provider-checkout re-evaluation boundary only; it does not prove third-party provider execution,
+contact, mutation, arbitrary child-process absence, or real-repository coverage.
+
 ## Unproved Boundaries
 
 - provider contact, authority, re-evaluation, or mutation;
@@ -99,6 +112,6 @@ The V12 pressure bar remains open. This matrix closes only the external static
 coverage-honesty control: an intentionally unchallenged equal-effect path reports
 `equivalent_execution_paths_not_proved`, opaque execution remains a gap, and a generic caller
 refusal cannot false-green the canary. The separate internal mixed-realization and
-namespace/policy-source controls are complete; CI provider-checkout, sandbox capability,
+namespace/policy-source and CI provider-checkout controls are complete; sandbox capability,
 refusal receipt/archive beyond source-posture reconciliation, and V11.14 assurance pressure also
 remain required.
