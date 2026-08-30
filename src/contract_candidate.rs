@@ -42,8 +42,12 @@ use std::os::unix::io::{AsRawFd as _, FromRawFd as _};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
+use crate::effect_domain::resolve_declared_effect_catalog;
 use crate::parser::parse_contract_str;
-use crate::schema::Contract;
+use crate::schema::{
+    AgentEffectRefusalCanaryChallengeConfig, AgentEffectRefusalCanaryConfig,
+    AgentEffectRefusalCanaryOriginConfig, Contract,
+};
 use crate::semantic_identity::semantic_contract_identity;
 use crate::validator::validate_contract_with_path;
 
@@ -51,6 +55,7 @@ pub(crate) const CONTRACT_CANDIDATE_SCHEMA_VERSION: u32 = 1;
 pub(crate) const CONTRACT_UPGRADE_CANDIDATE_SCHEMA_VERSION: u32 = 2;
 pub(crate) const CONSERVATIVE_FIRST_CONTRACT_CANDIDATE_SCHEMA_VERSION: u32 = 3;
 pub(crate) const INIT_STARTER_PREVIEW_CANDIDATE_SCHEMA_VERSION: u32 = 4;
+pub(crate) const EFFECT_ASSURANCE_CANDIDATE_SCHEMA_VERSION: u32 = 5;
 pub(crate) const LEGACY_FLAT_TOOLCHAIN_FULFILLMENT_V1: &str =
     "legacy_flat_toolchain_fulfillment_v1";
 
@@ -84,6 +89,7 @@ impl CandidateArtifactPublicationError {
 pub(crate) enum CandidateKind {
     Detection,
     Upgrade,
+    EffectAssurance,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -91,6 +97,7 @@ pub(crate) enum CandidateKind {
 pub(crate) enum CandidateProfile {
     DetectConservativeFirstContractV1,
     InitStarterPreviewV1,
+    EffectAssuranceV1,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -132,6 +139,69 @@ pub(crate) struct CandidateMigration {
     pub after_semantic_identity: String,
     pub resulting_content_identity: String,
     pub formatting_impact: CandidateFormattingImpact,
+}
+
+/// Exact verified refusal context that seeded a review-only effect-assurance candidate.
+///
+/// This is source binding, not approval or application authority. The first V12 carrier cannot
+/// write a contract until a later candidate evaluator re-derives an applicable proposal.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct CandidateAssuranceSource {
+    pub archive_identity: String,
+    pub contract_snapshot_identity: String,
+    pub canary_id: String,
+    pub workflow: String,
+    pub effect_ref: String,
+    pub origin_task: String,
+    pub effect_identity: String,
+    pub attachment_identity: String,
+    pub realization_identity: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct EffectAssuranceCandidateReconciliation {
+    pub schema_version: u32,
+    pub identity: String,
+    pub archive_identity: String,
+    pub contract_snapshot_identity: String,
+    pub canary_id: String,
+    pub workflow: String,
+    pub effect_identity: String,
+    pub attachment_identity: String,
+    pub realization_identity: String,
+}
+
+#[derive(Serialize)]
+struct EffectAssuranceCandidateReconciliationPayload<'a> {
+    schema_version: u32,
+    archive_identity: &'a str,
+    contract_snapshot_identity: &'a str,
+    canary_id: &'a str,
+    workflow: &'a str,
+    effect_identity: &'a str,
+    attachment_identity: &'a str,
+    realization_identity: &'a str,
+}
+
+/// Inputs retained only after private archive verification has established one exact typed refusal.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct EffectAssuranceCandidateInput {
+    pub archive_path: String,
+    pub archive_identity: String,
+    pub contract_snapshot_identity: String,
+    pub workflow: String,
+    pub effect_identity: String,
+    pub attachment_identity: String,
+    pub realization_identity: String,
+    pub current_realization_identity: String,
+    pub current_contract_content_identity: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum EffectAssuranceCandidateDerivation {
+    Candidate(ContractCandidate),
+    AlreadyDeclared,
+    Conflict,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -264,6 +334,8 @@ pub(crate) struct ContractCandidate {
     pub implementation_identity: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub migration: Option<CandidateMigration>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub assurance_source: Option<CandidateAssuranceSource>,
     pub changes: Vec<CandidateChange>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub application_projection: Option<CandidateApplicationProjection>,
@@ -287,6 +359,253 @@ pub(crate) enum CandidateError {
     Application(String),
     #[error("candidate serialization failed: {0}")]
     Serialization(String),
+}
+
+/// Derives a review-only canary proposal from one already verified private refusal archive.
+///
+/// This intentionally does not create an application projection: a refusal archive proves a
+/// bounded negative event, not authority to alter the repository contract.
+pub(crate) fn derive_effect_assurance_candidate(
+    contract: &Contract,
+    input: &EffectAssuranceCandidateInput,
+    canary_id: &str,
+) -> Result<EffectAssuranceCandidateDerivation, CandidateError> {
+    if !is_canonical_effect_canary_id(canary_id) {
+        return Err(CandidateError::InvalidPath(String::from(
+            "effect-refusal canary id",
+        )));
+    }
+    for (identity, label) in [
+        (&input.archive_identity, "effect-assurance archive identity"),
+        (
+            &input.contract_snapshot_identity,
+            "effect-assurance contract snapshot identity",
+        ),
+        (&input.effect_identity, "effect-assurance effect identity"),
+        (
+            &input.attachment_identity,
+            "effect-assurance attachment identity",
+        ),
+        (
+            &input.realization_identity,
+            "effect-assurance realization identity",
+        ),
+        (
+            &input.current_realization_identity,
+            "effect-assurance current realization identity",
+        ),
+        (
+            &input.current_contract_content_identity,
+            "effect-assurance current contract content identity",
+        ),
+    ] {
+        validate_identity(identity, label)?;
+    }
+    if input.realization_identity != input.current_realization_identity {
+        return Err(CandidateError::IdentityMismatch);
+    }
+    validate_root_relative_path(&input.archive_path)?;
+    if input.workflow.trim().is_empty()
+        || !contract
+            .workflows
+            .as_ref()
+            .is_some_and(|workflows| workflows.items.contains_key(&input.workflow))
+    {
+        return Err(CandidateError::InvalidPath(String::from(
+            "effect-assurance workflow",
+        )));
+    }
+    let current_contract_identity =
+        semantic_contract_identity(contract).map_err(CandidateError::Serialization)?;
+    if current_contract_identity != input.contract_snapshot_identity {
+        return Err(CandidateError::IdentityMismatch);
+    }
+    let catalog = resolve_declared_effect_catalog(contract)
+        .map_err(|error| CandidateError::Application(error.to_string()))?;
+    let effect = catalog
+        .effect_definitions
+        .values()
+        .find(|effect| effect.identity == input.effect_identity)
+        .ok_or(CandidateError::IdentityMismatch)?;
+    let attachment = catalog
+        .attachments
+        .iter()
+        .find(|attachment| attachment.identity == input.attachment_identity)
+        .ok_or(CandidateError::IdentityMismatch)?;
+    if attachment.effect_identity != effect.identity {
+        return Err(CandidateError::IdentityMismatch);
+    }
+
+    let proposed_canary = AgentEffectRefusalCanaryConfig {
+        id: canary_id.to_string(),
+        effect: attachment.definition_ref.clone(),
+        challenge_lanes: vec![AgentEffectRefusalCanaryChallengeConfig {
+            task: None,
+            workflow: Some(input.workflow.clone()),
+            origin: AgentEffectRefusalCanaryOriginConfig {
+                task: attachment.task.clone(),
+                effect: attachment.definition_ref.clone(),
+            },
+        }],
+    };
+    if let Some(existing) = contract.agent.as_ref().and_then(|agent| {
+        agent
+            .effect_refusal_canaries
+            .iter()
+            .find(|canary| canary.id == canary_id)
+    }) {
+        return Ok(if existing == &proposed_canary {
+            EffectAssuranceCandidateDerivation::AlreadyDeclared
+        } else {
+            EffectAssuranceCandidateDerivation::Conflict
+        });
+    }
+
+    let canary_index = contract
+        .agent
+        .as_ref()
+        .map_or(0, |agent| agent.effect_refusal_canaries.len());
+    let archive_evidence = CandidateEvidence {
+        source_kind: String::from("effect_refusal_archive"),
+        path: input.archive_path.clone(),
+        content_identity: input.archive_identity.clone(),
+        extraction: String::from("verified_explicit_typed_refusal"),
+    };
+    let mut candidate = ContractCandidate {
+        schema_version: EFFECT_ASSURANCE_CANDIDATE_SCHEMA_VERSION,
+        identity: String::new(),
+        kind: CandidateKind::EffectAssurance,
+        profile: Some(CandidateProfile::EffectAssuranceV1),
+        logical_root: String::from("."),
+        discovery_inventory_identity: String::new(),
+        discovery_inventory: vec![
+            DiscoveryInventoryEntry {
+                source_kind: String::from("ota_contract"),
+                path: String::from("ota.yaml"),
+                content_identity: input.current_contract_content_identity.clone(),
+            },
+            DiscoveryInventoryEntry {
+                source_kind: String::from("effect_refusal_archive"),
+                path: input.archive_path.clone(),
+                content_identity: input.archive_identity.clone(),
+            },
+        ],
+        evidence_manifest_identity: String::new(),
+        evidence_manifest: vec![archive_evidence.clone()],
+        existing_contract_snapshot_identity: Some(current_contract_identity),
+        implementation_identity: semantic_contract_identity(&(
+            "ota.contract-effect-refusal-candidate",
+            "effect_assurance_v1",
+        ))
+        .map_err(CandidateError::Serialization)?,
+        migration: None,
+        assurance_source: Some(CandidateAssuranceSource {
+            archive_identity: input.archive_identity.clone(),
+            contract_snapshot_identity: input.contract_snapshot_identity.clone(),
+            canary_id: canary_id.to_string(),
+            workflow: input.workflow.clone(),
+            effect_ref: attachment.definition_ref.clone(),
+            origin_task: attachment.task.clone(),
+            effect_identity: input.effect_identity.clone(),
+            attachment_identity: input.attachment_identity.clone(),
+            realization_identity: input.realization_identity.clone(),
+        }),
+        changes: vec![CandidateChange {
+            subject: CandidateSubject::new([
+                "agent".to_string(),
+                "effect_refusal_canaries".to_string(),
+                canary_index.to_string(),
+            ]),
+            field_family: String::from("effect_refusal_canary"),
+            operation: CandidateOperation::Add,
+            proposed_value: Some(
+                serde_json::to_value(proposed_canary)
+                    .map_err(|error| CandidateError::Serialization(error.to_string()))?,
+            ),
+            evidence: vec![archive_evidence],
+            execution_closure: None,
+            confidence: CandidateConfidence::High,
+            disposition: CandidateDisposition::Unknown,
+        }],
+        application_projection: None,
+    };
+    candidate.finalize_identities()?;
+    Ok(EffectAssuranceCandidateDerivation::Candidate(candidate))
+}
+
+pub(crate) fn effect_assurance_candidate_reconciliation(
+    input: &EffectAssuranceCandidateInput,
+    canary_id: &str,
+) -> Result<EffectAssuranceCandidateReconciliation, CandidateError> {
+    if !is_canonical_effect_canary_id(canary_id) {
+        return Err(CandidateError::InvalidPath(String::from(
+            "effect-refusal canary id",
+        )));
+    }
+    if input.workflow.trim().is_empty() {
+        return Err(CandidateError::InvalidPath(String::from(
+            "effect-assurance workflow",
+        )));
+    }
+    for (identity, label) in [
+        (&input.archive_identity, "effect-assurance archive identity"),
+        (
+            &input.contract_snapshot_identity,
+            "effect-assurance contract snapshot identity",
+        ),
+        (&input.effect_identity, "effect-assurance effect identity"),
+        (
+            &input.attachment_identity,
+            "effect-assurance attachment identity",
+        ),
+        (
+            &input.realization_identity,
+            "effect-assurance realization identity",
+        ),
+        (
+            &input.current_realization_identity,
+            "effect-assurance current realization identity",
+        ),
+    ] {
+        validate_identity(identity, label)?;
+    }
+    if input.realization_identity != input.current_realization_identity {
+        return Err(CandidateError::IdentityMismatch);
+    }
+    let payload = EffectAssuranceCandidateReconciliationPayload {
+        schema_version: 1,
+        archive_identity: &input.archive_identity,
+        contract_snapshot_identity: &input.contract_snapshot_identity,
+        canary_id,
+        workflow: &input.workflow,
+        effect_identity: &input.effect_identity,
+        attachment_identity: &input.attachment_identity,
+        realization_identity: &input.current_realization_identity,
+    };
+    Ok(EffectAssuranceCandidateReconciliation {
+        schema_version: 1,
+        identity: semantic_contract_identity(&(
+            "ota.effect-assurance-candidate-reconciliation.v1",
+            &payload,
+        ))
+        .map_err(CandidateError::Serialization)?,
+        archive_identity: input.archive_identity.clone(),
+        contract_snapshot_identity: input.contract_snapshot_identity.clone(),
+        canary_id: canary_id.to_string(),
+        workflow: input.workflow.clone(),
+        effect_identity: input.effect_identity.clone(),
+        attachment_identity: input.attachment_identity.clone(),
+        realization_identity: input.current_realization_identity.clone(),
+    })
+}
+
+fn is_canonical_effect_canary_id(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 128
+        && value.as_bytes()[0].is_ascii_lowercase()
+        && value.bytes().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'_' | b'-')
+        })
 }
 
 /// Re-derives the only application projection currently supported by the detection carrier.
@@ -579,6 +898,97 @@ impl ContractCandidate {
                     )));
                 }
             }
+            (
+                EFFECT_ASSURANCE_CANDIDATE_SCHEMA_VERSION,
+                CandidateKind::EffectAssurance,
+                Some(CandidateProfile::EffectAssuranceV1),
+                None,
+            ) => {
+                let Some(source) = self.assurance_source.as_ref() else {
+                    return Err(CandidateError::InvalidPath(String::from(
+                        "effect-assurance candidate source",
+                    )));
+                };
+                for (identity, label) in [
+                    (
+                        &source.archive_identity,
+                        "effect-assurance archive identity",
+                    ),
+                    (
+                        &source.contract_snapshot_identity,
+                        "effect-assurance contract snapshot identity",
+                    ),
+                    (&source.effect_identity, "effect-assurance effect identity"),
+                    (
+                        &source.attachment_identity,
+                        "effect-assurance attachment identity",
+                    ),
+                    (
+                        &source.realization_identity,
+                        "effect-assurance realization identity",
+                    ),
+                ] {
+                    validate_identity(identity, label)?;
+                }
+                if source.workflow.trim().is_empty()
+                    || !is_canonical_effect_canary_id(&source.canary_id)
+                    || source.effect_ref.trim().is_empty()
+                    || source.origin_task.trim().is_empty()
+                    || self.existing_contract_snapshot_identity.as_deref()
+                        != Some(source.contract_snapshot_identity.as_str())
+                    || self.application_projection.is_some()
+                    || self.discovery_inventory.len() != 2
+                    || self.discovery_inventory[0].source_kind != "ota_contract"
+                    || self.discovery_inventory[0].path != "ota.yaml"
+                    || self.discovery_inventory[1].source_kind != "effect_refusal_archive"
+                    || self.discovery_inventory[1].content_identity != source.archive_identity
+                    || self.changes.len() != 1
+                {
+                    return Err(CandidateError::InvalidPath(String::from(
+                        "effect-assurance candidate branch",
+                    )));
+                }
+                let change = &self.changes[0];
+                if change.subject.path.len() != 3
+                    || change.subject.path[0] != "agent"
+                    || change.subject.path[1] != "effect_refusal_canaries"
+                    || change.subject.path[2].parse::<usize>().is_err()
+                    || change.field_family != "effect_refusal_canary"
+                    || change.operation != CandidateOperation::Add
+                    || change.disposition != CandidateDisposition::Unknown
+                    || change.confidence != CandidateConfidence::High
+                    || change.proposed_value.is_none()
+                    || change.evidence.len() != 1
+                    || change.evidence[0].source_kind != "effect_refusal_archive"
+                    || change.evidence[0].content_identity != source.archive_identity
+                {
+                    return Err(CandidateError::InvalidPath(String::from(
+                        "effect-assurance candidate change",
+                    )));
+                }
+                let proposed: AgentEffectRefusalCanaryConfig = serde_json::from_value(
+                    change
+                        .proposed_value
+                        .clone()
+                        .expect("effect-assurance change requires proposed value"),
+                )
+                .map_err(|error| CandidateError::Application(error.to_string()))?;
+                let expected = AgentEffectRefusalCanaryConfig {
+                    id: source.canary_id.clone(),
+                    effect: source.effect_ref.clone(),
+                    challenge_lanes: vec![AgentEffectRefusalCanaryChallengeConfig {
+                        task: None,
+                        workflow: Some(source.workflow.clone()),
+                        origin: AgentEffectRefusalCanaryOriginConfig {
+                            task: source.origin_task.clone(),
+                            effect: source.effect_ref.clone(),
+                        },
+                    }],
+                };
+                if proposed != expected {
+                    return Err(CandidateError::IdentityMismatch);
+                }
+            }
             _ => {
                 return Err(CandidateError::InvalidPath(String::from(
                     "candidate schema, kind, and migration branch",
@@ -633,7 +1043,14 @@ impl ContractCandidate {
                         "upgrade candidate operation",
                     )));
                 }
-                CandidateKind::Detection | CandidateKind::Upgrade => {}
+                CandidateKind::EffectAssurance if change.operation != CandidateOperation::Add => {
+                    return Err(CandidateError::InvalidPath(String::from(
+                        "effect-assurance candidate operation",
+                    )));
+                }
+                CandidateKind::Detection
+                | CandidateKind::Upgrade
+                | CandidateKind::EffectAssurance => {}
             }
             if change.disposition == CandidateDisposition::Applicable
                 && change.evidence.is_empty()
@@ -1529,9 +1946,15 @@ mod tests {
         CONTRACT_CANDIDATE_SCHEMA_VERSION, CandidateChange, CandidateConfidence,
         CandidateDisposition, CandidateError, CandidateEvidence, CandidateKind, CandidateOperation,
         CandidateSubject, ClosureEvidence, ContractCandidate, DiscoveryInventoryEntry,
-        ExecutionClosureEdge, ExecutionClosureNode, derive_candidate_application_projection,
+        EffectAssuranceCandidateDerivation, EffectAssuranceCandidateInput, ExecutionClosureEdge,
+        ExecutionClosureNode, derive_candidate_application_projection,
+        derive_effect_assurance_candidate, effect_assurance_candidate_reconciliation,
         verify_candidate_application_projection, write_candidate_create_new,
     };
+    use crate::effect_domain::resolve_declared_effect_catalog;
+    use crate::parser::parse_contract_str;
+    use crate::semantic_identity::semantic_contract_identity;
+    use std::path::Path;
 
     fn identity(value: char) -> String {
         format!("sha256:{}", value.to_string().repeat(64))
@@ -1560,6 +1983,7 @@ mod tests {
             existing_contract_snapshot_identity: None,
             implementation_identity: identity('b'),
             migration: None,
+            assurance_source: None,
             changes: vec![CandidateChange {
                 subject: CandidateSubject::new(["tasks", "test", "command"]),
                 field_family: String::from("task_command"),
@@ -1581,6 +2005,122 @@ mod tests {
             }],
             application_projection: None,
         }
+    }
+
+    fn typed_effect_contract() -> crate::schema::Contract {
+        parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: effect-assurance
+resource_bindings:
+  primary:
+    kind: database
+    provider: postgresql
+    namespace:
+      authority: dns:example.test
+      repository: effect-assurance
+effect_definitions:
+  schema_change:
+    kind: database_schema_mutation
+    action: apply_migration_set
+    resource:
+      engine: postgresql
+      target_ref: primary
+      schema: public
+    bounds:
+      migration_set:
+        root: migrations
+        content_identity: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      start_state: any_within_set
+tasks:
+  migrate:
+    command:
+      exe: echo
+      args: [migration]
+    effects:
+      declared: [schema_change]
+workflows:
+  default: verify
+  verify:
+    run:
+      task: migrate
+agent: {}
+"#,
+        )
+        .expect("typed effect contract")
+    }
+
+    #[test]
+    fn effect_assurance_candidate_is_archive_bound_and_read_only() {
+        let contract = typed_effect_contract();
+        let catalog = resolve_declared_effect_catalog(&contract).expect("effect catalog");
+        let attachment = catalog.attachments.first().expect("effect attachment");
+        let input = EffectAssuranceCandidateInput {
+            archive_path: String::from(".ota/receipts/repo-receipt-20260830.json"),
+            archive_identity: identity('a'),
+            contract_snapshot_identity: semantic_contract_identity(&contract).expect("snapshot"),
+            workflow: String::from("verify"),
+            effect_identity: attachment.effect_identity.clone(),
+            attachment_identity: attachment.identity.clone(),
+            realization_identity: identity('b'),
+            current_realization_identity: identity('b'),
+            current_contract_content_identity: identity('c'),
+        };
+        let candidate =
+            match derive_effect_assurance_candidate(&contract, &input, "production-schema-refusal")
+                .expect("candidate derivation")
+            {
+                EffectAssuranceCandidateDerivation::Candidate(candidate) => candidate,
+                _ => panic!("expected a candidate"),
+            };
+        candidate.verify_identities().expect("candidate verifies");
+        assert!(candidate.application_projection.is_none());
+        assert_eq!(
+            candidate.changes[0].disposition,
+            CandidateDisposition::Unknown
+        );
+        assert_eq!(candidate.discovery_inventory.len(), 2);
+        let reconciliation =
+            effect_assurance_candidate_reconciliation(&input, "production-schema-refusal")
+                .expect("reconciliation identity");
+        let differently_named = effect_assurance_candidate_reconciliation(&input, "other-refusal")
+            .expect("renamed reconciliation identity");
+        assert_ne!(reconciliation.identity, differently_named.identity);
+        assert_eq!(reconciliation.archive_identity, input.archive_identity);
+        assert_eq!(
+            reconciliation.realization_identity,
+            input.current_realization_identity
+        );
+
+        let mut substituted = candidate.clone();
+        substituted.changes[0].proposed_value = Some(serde_json::json!({
+            "id": "production-schema-refusal",
+            "effect": "different-effect",
+            "challenge_lanes": [{
+                "workflow": "different-workflow",
+                "origin": { "task": "migrate", "effect": "different-effect" }
+            }]
+        }));
+        substituted.identity.clear();
+        substituted.identity = semantic_contract_identity(&substituted)
+            .expect("substituted candidate identity rehashes");
+        assert_eq!(
+            substituted.verify_identities(),
+            Err(CandidateError::IdentityMismatch),
+            "a rehashed proposal substitution must not self-verify"
+        );
+
+        assert!(matches!(
+            derive_effect_assurance_candidate(&contract, &input, "production-schema-refusal")
+                .expect("repeat derivation"),
+            EffectAssuranceCandidateDerivation::Candidate(_)
+        ));
+
+        let mut stale = input.clone();
+        stale.contract_snapshot_identity = identity('d');
+        assert!(derive_effect_assurance_candidate(&contract, &stale, "other-refusal").is_err());
     }
 
     #[test]

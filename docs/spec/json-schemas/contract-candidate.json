@@ -17,10 +17,10 @@
     "changes"
   ],
   "properties": {
-    "schema_version": { "enum": [1, 2, 3, 4] },
+    "schema_version": { "enum": [1, 2, 3, 4, 5] },
     "identity": { "$ref": "#/$defs/identity" },
-    "kind": { "enum": ["detection", "upgrade"] },
-    "profile": { "enum": ["detect_conservative_first_contract_v1", "init_starter_preview_v1"] },
+    "kind": { "enum": ["detection", "upgrade", "effect_assurance"] },
+    "profile": { "enum": ["detect_conservative_first_contract_v1", "init_starter_preview_v1", "effect_assurance_v1"] },
     "logical_root": { "const": "." },
     "discovery_inventory_identity": { "$ref": "#/$defs/identity" },
     "discovery_inventory": {
@@ -36,6 +36,7 @@
     "existing_contract_snapshot_identity": { "$ref": "#/$defs/identity" },
     "implementation_identity": { "$ref": "#/$defs/identity" },
     "migration": { "$ref": "#/$defs/migration" },
+    "assurance_source": { "$ref": "#/$defs/assuranceSource" },
     "changes": {
       "type": "array",
       "items": { "$ref": "#/$defs/change" }
@@ -46,6 +47,22 @@
     "identity": {
       "type": "string",
       "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "assuranceSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["archive_identity", "contract_snapshot_identity", "canary_id", "workflow", "effect_ref", "origin_task", "effect_identity", "attachment_identity", "realization_identity"],
+      "properties": {
+        "archive_identity": { "$ref": "#/$defs/identity" },
+        "contract_snapshot_identity": { "$ref": "#/$defs/identity" },
+        "canary_id": { "type": "string", "maxLength": 128, "pattern": "^[a-z][a-z0-9_-]*$" },
+        "workflow": { "type": "string", "minLength": 1 },
+        "effect_ref": { "type": "string", "minLength": 1 },
+        "origin_task": { "type": "string", "minLength": 1 },
+        "effect_identity": { "$ref": "#/$defs/identity" },
+        "attachment_identity": { "$ref": "#/$defs/identity" },
+        "realization_identity": { "$ref": "#/$defs/identity" }
+      }
     },
     "rootRelativePath": {
       "type": "string",
@@ -425,6 +442,123 @@
                   "required": ["subject", "operation", "value"]
                 }
               }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "kind": { "const": "effect_assurance" } }, "required": ["kind"] },
+      "then": {
+        "required": ["profile", "existing_contract_snapshot_identity", "assurance_source"],
+        "not": {
+          "anyOf": [
+            { "required": ["migration"] },
+            { "required": ["application_projection"] }
+          ]
+        },
+        "properties": {
+          "schema_version": { "const": 5 },
+          "profile": { "const": "effect_assurance_v1" },
+          "existing_contract_snapshot_identity": { "$ref": "#/$defs/identity" },
+          "discovery_inventory": {
+            "minItems": 2,
+            "maxItems": 2,
+            "allOf": [
+              {
+                "contains": {
+                  "properties": {
+                    "source_kind": { "const": "ota_contract" },
+                    "path": { "const": "ota.yaml" }
+                  },
+                  "required": ["source_kind", "path"]
+                }
+              },
+              {
+                "contains": {
+                  "properties": {
+                    "source_kind": { "const": "effect_refusal_archive" }
+                  },
+                  "required": ["source_kind"]
+                }
+              }
+            ]
+          },
+          "evidence_manifest": {
+            "minItems": 1,
+            "maxItems": 1,
+            "items": {
+              "properties": { "source_kind": { "const": "effect_refusal_archive" } },
+              "required": ["source_kind"]
+            }
+          },
+          "changes": {
+            "minItems": 1,
+            "maxItems": 1,
+            "items": {
+              "not": { "required": ["execution_closure"] },
+              "properties": {
+                "subject": {
+                  "properties": {
+                    "path": {
+                      "prefixItems": [
+                        { "const": "agent" },
+                        { "const": "effect_refusal_canaries" },
+                        { "type": "string", "pattern": "^[0-9]+$" }
+                      ],
+                      "minItems": 3,
+                      "maxItems": 3
+                    }
+                  }
+                },
+                "field_family": { "const": "effect_refusal_canary" },
+                "operation": { "const": "add" },
+                "confidence": { "const": "high" },
+                "disposition": { "const": "unknown" },
+                "proposed_value": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["id", "effect", "challenge_lanes"],
+                  "properties": {
+                    "id": { "type": "string", "maxLength": 128, "pattern": "^[a-z][a-z0-9_-]*$" },
+                    "effect": { "type": "string", "minLength": 1 },
+                    "challenge_lanes": {
+                      "type": "array",
+                      "minItems": 1,
+                      "maxItems": 1,
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": ["workflow", "origin"],
+                        "properties": {
+                          "workflow": { "type": "string", "minLength": 1 },
+                          "origin": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": ["task", "effect"],
+                            "properties": {
+                              "task": { "type": "string", "minLength": 1 },
+                              "effect": { "type": "string", "minLength": 1 }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                "evidence": {
+                  "minItems": 1,
+                  "maxItems": 1,
+                  "items": {
+                    "properties": {
+                      "source_kind": { "const": "effect_refusal_archive" },
+                      "content_identity": { "$ref": "#/$defs/identity" }
+                    },
+                    "required": ["source_kind", "content_identity"]
+                  }
+                }
+              },
+              "required": ["subject", "field_family", "operation", "proposed_value", "evidence", "confidence", "disposition"]
             }
           }
         }

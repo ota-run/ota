@@ -3190,6 +3190,27 @@ Candidate review behavior:
 - candidate changes remain review input. This command does not apply, replace, or remove contract
   fields, and unresolved closure/effect facts never establish agent safety
 
+## `ota contract effect-refusal-candidate`
+
+```bash
+ota contract effect-refusal-candidate \
+  --archive .ota/receipts/repo-receipt-<timestamp>.json \
+  --canary-id production-schema-refusal \
+  --candidate-out .ota/candidates/effect-refusal.json [PATH]
+```
+
+Use this to turn one verified private workflow typed-policy refusal into a reviewable canary
+proposal. It verifies the archive, requires exactly one eligible explicit typed denial, captures
+one regular `ota.yaml` through retained no-follow descriptors, and re-derives the current
+workflow/effect/attachment, migration plan, and realization before publishing an `unknown`,
+add-only candidate. It rechecks the exact contract bytes before publication or no-op. Both success
+branches return one versioned reconciliation identity and the exact source identities it binds.
+It never changes `ota.yaml`; `ota contract apply-candidate` refuses this candidate kind with
+platform-stable `candidate_read_only` before writer platform or lock admission. Existing exact
+declarations return a successful non-publishing no-op and divergent declarations return a conflict.
+It does not infer policy, grants, provider authority, new effect definitions, or execution
+approval from archive or incident text.
+
 ## `ota contract upgrade`
 
 Produce a versioned, lossless upgrade candidate for an existing contract without changing
@@ -3275,8 +3296,10 @@ Current behavior:
   `candidate_write_committed_worktree_unsynced`
 - does not grant agent-safe status or authorize unreviewed candidate application
 - admits an upgrade `--write` only through `--carrier git`; a matching reapplication is a no-op
-- on unsupported writer platforms, refuses before candidate loading, repository locking, Git
-  invocation, or mutation with `candidate_write_unsupported_platform`
+- validates and classifies the candidate before writer platform or lock admission, so review-only
+  kinds return `candidate_read_only` consistently; writable kinds on unsupported platforms then
+  refuse before repository locking, Git invocation, or mutation with
+  `candidate_write_unsupported_platform`
 
 Candidate artifact output from `ota detect --candidate-out` uses the same separate publication
 posture. `candidate_published` describes the review artifact; `written` continues to describe

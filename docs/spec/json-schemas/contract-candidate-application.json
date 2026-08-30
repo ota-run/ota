@@ -84,6 +84,7 @@
             "candidate_contract_mismatch",
             "candidate_conflict",
             "candidate_incomplete",
+            "candidate_read_only",
             "candidate_unsupported",
             "candidate_write_unsupported_platform",
             "candidate_write_failed",

@@ -3466,6 +3466,35 @@ pub struct ContractUpgradeFailure<'a> {
     pub next: Option<&'a str>,
 }
 
+#[derive(Debug, Serialize)]
+pub struct EffectAssuranceCandidateSuccess<'a> {
+    pub ok: bool,
+    pub path: &'a str,
+    pub written: bool,
+    pub candidate_path: &'a str,
+    pub candidate_published: bool,
+    pub candidate_publication: &'static str,
+    pub disposition: &'static str,
+    pub no_op: bool,
+    pub reconciliation: JsonValue,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub candidate: Option<JsonValue>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct EffectAssuranceCandidateFailure<'a> {
+    pub ok: bool,
+    pub path: &'a str,
+    pub written: bool,
+    pub candidate_path: &'a str,
+    pub candidate_published: bool,
+    pub candidate_publication: &'static str,
+    pub code: &'static str,
+    pub error: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next: Option<&'a str>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ContractFieldProvenance {
     pub field: String,

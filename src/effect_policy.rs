@@ -130,6 +130,79 @@ pub struct EffectPolicyDecision {
     pub explicit_typed_deny: bool,
 }
 
+/// Re-derives one typed realization from the current contract and materialized application plan.
+pub(crate) fn typed_effect_realization_identity(
+    contract: &Contract,
+    plan: &EffectApplicationPlan,
+) -> Result<String, EffectPolicyError> {
+    let contract_identity =
+        effect_realization_contract_snapshot_identity(contract).map_err(|error| {
+            EffectPolicyError::new("effect_policy_contract_identity_failed", error.message)
+        })?;
+    let catalog = resolve_declared_effect_catalog(contract)
+        .map_err(|error| EffectPolicyError::new(error.code, error.message))?;
+    let effect = catalog
+        .effect_definitions
+        .get(plan.effect_ref.as_str())
+        .ok_or_else(|| {
+            EffectPolicyError::new(
+                "effect_policy_effect_missing",
+                format!(
+                    "effect `{}` is not in the resolved catalog",
+                    plan.effect_ref
+                ),
+            )
+        })?;
+    let attachment = catalog
+        .attachments
+        .iter()
+        .find(|attachment| attachment.identity == plan.attachment_identity)
+        .ok_or_else(|| {
+            EffectPolicyError::new(
+                "effect_policy_attachment_missing",
+                format!(
+                    "attachment `{}` is not in the resolved catalog",
+                    plan.attachment_identity
+                ),
+            )
+        })?;
+    let binding = catalog
+        .resource_bindings
+        .values()
+        .find(|binding| binding.identity == plan.resource_binding_identity)
+        .ok_or_else(|| {
+            EffectPolicyError::new(
+                "effect_policy_resource_missing",
+                format!(
+                    "resource `{}` is not in the resolved catalog",
+                    plan.resource_binding_identity
+                ),
+            )
+        })?;
+    let evidence = resource_binding_evidence(
+        &binding.identity,
+        ResourceBindingEvidencePosture::RepositoryDeclared,
+        &contract_identity,
+    )
+    .map_err(|error| EffectPolicyError::new(error.code, error.message))?;
+    effect_realization_identity(
+        effect,
+        EffectRealizationInput {
+            derivation_posture: EffectDerivationPosture::DeclaredAndTyped,
+            adapter_profile_identity: Some(plan.adapter_profile_identity.clone()),
+            application_plan_identity: Some(plan.identity.clone()),
+            resource_binding_evidence: evidence,
+            origin: EffectOrigin {
+                contract_snapshot_identity: contract_identity,
+                invocation_subject: attachment.subject.clone(),
+                closure_path: vec![attachment.subject.clone()],
+            },
+        },
+    )
+    .map(|realization| realization.identity)
+    .map_err(|error| EffectPolicyError::new(error.code, error.message))
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EffectPolicySnapshotArchive {
     pub schema_version: u32,
@@ -473,27 +546,7 @@ fn build_typed_effect_policy_decision(
                     ),
                 )
             })?;
-        let evidence = resource_binding_evidence(
-            &binding.identity,
-            ResourceBindingEvidencePosture::RepositoryDeclared,
-            &contract_identity,
-        )
-        .map_err(|error| EffectPolicyError::new(error.code, error.message))?;
-        let realization = effect_realization_identity(
-            effect,
-            EffectRealizationInput {
-                derivation_posture: EffectDerivationPosture::DeclaredAndTyped,
-                adapter_profile_identity: Some(plan.adapter_profile_identity.clone()),
-                application_plan_identity: Some(plan.identity.clone()),
-                resource_binding_evidence: evidence,
-                origin: EffectOrigin {
-                    contract_snapshot_identity: contract_identity.clone(),
-                    invocation_subject: attachment.subject.clone(),
-                    closure_path: vec![attachment.subject.clone()],
-                },
-            },
-        )
-        .map_err(|error| EffectPolicyError::new(error.code, error.message))?;
+        let realization_identity = typed_effect_realization_identity(contract, plan)?;
 
         let mut applicable_rules = typed_rules
             .iter()
@@ -526,7 +579,7 @@ fn build_typed_effect_policy_decision(
         };
         effects.push(EffectPolicyEffectEvaluation {
             effect_identity: effect.identity.clone(),
-            realization_identity: realization.identity,
+            realization_identity,
             attachment_identity: attachment.identity.clone(),
             origin_path: attachment.subject.clone(),
             derivation_posture: EffectDerivationPosture::DeclaredAndTyped,

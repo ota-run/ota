@@ -26,6 +26,20 @@
 
 ## Unreleased
 
+- Added `ota contract effect-refusal-candidate` as the first review-only bridge from verified
+  private refusal evidence back to contract authoring. It accepts one verified workflow archive
+  with exactly one eligible explicit typed denial, captures `ota.yaml` once through a retained
+  no-follow descriptor, re-derives current contract, workflow, effect, attachment, migration-plan,
+  and realization truth, rechecks the exact contract bytes before completion, and durably publishes
+  a schema-v5 `effect_assurance`
+  candidate proposing one `agent.effect_refusal_canaries` addition as `unknown`. The candidate has
+  no application projection and `apply-candidate` returns `candidate_read_only`; an exact existing
+  declaration is a successful non-publishing no-op, while stale or conflicting truth refuses.
+  Both success branches carry one versioned reconciliation identity plus the archive, contract,
+  effect, attachment, realization, workflow, and canary identities that produced the result.
+  This does not infer effect definitions, policy, grants, provider authority, execution approval,
+  or positive assurance from archive or incident evidence.
+
 - Recorded immutable Linux/x64 and macOS pressure for private archive-backed workflow refusal
   assurance in [run 33309358828](https://github.com/ota-run/ota/actions/runs/33309358828)
   against exact Core `81c25e09c833559312e9cd43ce04a1c63f27d6fa`. Both retained artifacts promote

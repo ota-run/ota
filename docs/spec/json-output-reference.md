@@ -48,6 +48,7 @@ Canonical JSON Schema files for the current shipped shapes live in:
 - [json-schemas/contract-candidate.json](json-schemas/contract-candidate.json)
 - [json-schemas/contract-candidate-application.json](json-schemas/contract-candidate-application.json)
 - [json-schemas/contract-upgrade.json](json-schemas/contract-upgrade.json)
+- [json-schemas/effect-refusal-candidate.json](json-schemas/effect-refusal-candidate.json)
 - [json-schemas/policy-review.json](json-schemas/policy-review.json)
 - [json-schemas/workspace-init.json](json-schemas/workspace-init.json)
 - [json-schemas/workspace-tasks.json](json-schemas/workspace-tasks.json)
@@ -6283,7 +6284,7 @@ ordinary refusal returns `ok: false`, `written: false`, one stable `code`, and a
 `error`; current codes are `candidate_malformed`, `candidate_identity_invalid`,
 `candidate_implementation_incompatible`, `candidate_not_reproducible`, `candidate_stale`,
 `candidate_contract_mismatch`, `candidate_conflict`, `candidate_incomplete`,
-`candidate_unsupported`, `candidate_write_unsupported_platform`,
+`candidate_read_only`, `candidate_unsupported`, `candidate_write_unsupported_platform`,
 `candidate_write_failed`, and
 `candidate_write_durability_uncertain`, and `candidate_write_committed_worktree_unsynced`. A
 durability-uncertain or committed-but-worktree-unsynced failure has `written: true`, so
@@ -6294,9 +6295,10 @@ dispositions remain visible as review state and become a refusal only with `--re
 Both writers currently require Linux or macOS no-follow directory-descriptor support; the
 create-new writer additionally uses Linux `renameat2(RENAME_NOREPLACE)` or macOS
 `renameatx_np(RENAME_EXCL)`. Other platforms refuse rather than weaken publication guarantees.
-Git-carrier write requests on those platforms return
-`candidate_write_unsupported_platform` before candidate loading, repository locking, Git
-invocation, or mutation; dry-run candidate admission remains available.
+Candidate identity and kind are validated before writer platform or lock admission, so read-only
+candidate kinds return `candidate_read_only` consistently. Writable Git-carrier requests on
+unsupported platforms then return `candidate_write_unsupported_platform` before repository
+locking, Git invocation, or mutation; dry-run candidate admission remains available.
 Removed repo-level legacy mutation flags return `detect_legacy_mutation_removed`; workspace
 mutation remains a separate surface until it has its own candidate/apply model.
 
@@ -6309,6 +6311,23 @@ whether the artifact became visible, `candidate_publication` is `durable`, `not_
 `durability_uncertain` result means the candidate may exist but its directory-entry durability
 was not proved; failure output retains `candidate_path` so automation can inspect the exact path
 before retrying.
+
+`ota contract effect-refusal-candidate --archive ARCHIVE --canary-id ID --candidate-out PATH
+--json [PATH]` writes a schema-v5 `effect_assurance` review artifact from one verified private
+workflow refusal archive. It requires exactly one eligible effect carrying an explicit typed deny,
+captures one regular `ota.yaml` through retained no-follow descriptors, then re-derives its current
+workflow, effect, attachment, migration plan, realization, and semantic contract snapshot. The
+exact contract bytes are rechecked before publication or no-op. A
+success uses `effect-refusal-candidate.json`, returns `written: false`,
+`candidate_published: true`, `candidate_publication: "durable"`, and `disposition: "unknown"`.
+The candidate has no application projection: it cannot be admitted by `apply-candidate` and does
+not grant policy, provider, execution, or contract-write authority. An exact existing canary is a
+successful no-op with `candidate_published: false`, `candidate_publication: "not_published"`,
+`disposition: "already_declared"`, `no_op: true`, and no candidate payload. Both success branches
+carry `reconciliation.schema_version: 1`, its content identity, and the bound archive, contract,
+workflow, canary, effect, attachment, and realization identities. A different existing declaration
+is a conflict. This carrier cannot infer a new effect
+definition or turn free-form incident text into contract truth.
 
 `ota contract upgrade --candidate-out PATH --json [PATH]` produces the schema-v2 upgrade branch of
 `contract-candidate.json` and never changes `ota.yaml`. Its first registered migration is

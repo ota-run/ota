@@ -1,0 +1,115 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dist.ota.run/spec/json-schemas/latest/effect-refusal-candidate.json",
+  "title": "ota contract effect-refusal-candidate --json",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ok", "path", "written", "candidate_path", "candidate_published", "candidate_publication", "disposition", "no_op", "reconciliation"],
+      "properties": {
+        "ok": { "const": true },
+        "path": { "type": "string", "minLength": 1 },
+        "written": { "const": false },
+        "candidate_path": { "type": "string", "minLength": 1 },
+        "candidate_published": { "type": "boolean" },
+        "candidate_publication": { "enum": ["durable", "not_published"] },
+        "disposition": { "enum": ["unknown", "already_declared"] },
+        "no_op": { "type": "boolean" },
+        "reconciliation": { "$ref": "#/$defs/reconciliation" },
+        "candidate": {
+          "allOf": [
+            { "$ref": "./contract-candidate.json" },
+            {
+              "properties": {
+                "schema_version": { "const": 5 },
+                "kind": { "const": "effect_assurance" },
+                "profile": { "const": "effect_assurance_v1" }
+              },
+              "required": ["schema_version", "kind", "profile"]
+            }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "no_op": { "const": true } }, "required": ["no_op"] },
+          "then": {
+            "properties": {
+              "candidate_published": { "const": false },
+              "candidate_publication": { "const": "not_published" },
+              "disposition": { "const": "already_declared" }
+            },
+            "not": { "required": ["candidate"] }
+          },
+          "else": {
+            "properties": {
+              "candidate_published": { "const": true },
+              "candidate_publication": { "const": "durable" },
+              "disposition": { "const": "unknown" }
+            },
+            "required": ["candidate"]
+          }
+        }
+      ]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ok", "path", "written", "candidate_path", "candidate_published", "candidate_publication", "code", "error"],
+      "properties": {
+        "ok": { "const": false },
+        "path": { "type": "string", "minLength": 1 },
+        "written": { "const": false },
+        "candidate_path": { "type": "string", "minLength": 1 },
+        "candidate_published": { "type": "boolean" },
+        "candidate_publication": { "enum": ["not_published", "durability_uncertain"] },
+        "code": {
+          "enum": [
+            "effect_refusal_archive_invalid",
+            "effect_refusal_archive_inapplicable",
+            "effect_refusal_archive_ambiguous",
+            "effect_refusal_candidate_failed",
+            "effect_refusal_candidate_stale",
+            "effect_refusal_candidate_conflict",
+            "effect_refusal_candidate_write_failed"
+          ]
+        },
+        "error": { "type": "string", "minLength": 1 },
+        "next": { "type": "string", "minLength": 1 }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "candidate_publication": { "const": "not_published" } }, "required": ["candidate_publication"] },
+          "then": { "properties": { "candidate_published": { "const": false } } }
+        },
+        {
+          "if": { "properties": { "candidate_publication": { "const": "durability_uncertain" } }, "required": ["candidate_publication"] },
+          "then": { "properties": { "candidate_published": { "const": true } } }
+        }
+      ]
+    }
+  ],
+  "$defs": {
+    "identity": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "reconciliation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "identity", "archive_identity", "contract_snapshot_identity", "canary_id", "workflow", "effect_identity", "attachment_identity", "realization_identity"],
+      "properties": {
+        "schema_version": { "const": 1 },
+        "identity": { "$ref": "#/$defs/identity" },
+        "archive_identity": { "$ref": "#/$defs/identity" },
+        "contract_snapshot_identity": { "$ref": "#/$defs/identity" },
+        "canary_id": { "type": "string", "maxLength": 128, "pattern": "^[a-z][a-z0-9_-]*$" },
+        "workflow": { "type": "string", "minLength": 1 },
+        "effect_identity": { "$ref": "#/$defs/identity" },
+        "attachment_identity": { "$ref": "#/$defs/identity" },
+        "realization_identity": { "$ref": "#/$defs/identity" }
+      }
+    }
+  }
+}

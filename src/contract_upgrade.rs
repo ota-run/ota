@@ -173,6 +173,7 @@ fn build_contract_upgrade_candidate_with_capture_hook(
             resulting_content_identity: contract_snapshot_hash(b"pending"),
             formatting_impact: CandidateFormattingImpact::RepresentationOnly,
         }),
+        assurance_source: None,
         changes,
         application_projection: None,
     };

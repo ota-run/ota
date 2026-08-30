@@ -66,8 +66,10 @@ use crate::ci_projection::{
 use crate::contract_candidate::{
     CONSERVATIVE_FIRST_CONTRACT_CANDIDATE_SCHEMA_VERSION, CandidateChange, CandidateConfidence,
     CandidateDisposition, CandidateError, CandidateKind, CandidateOperation, CandidateProfile,
-    CandidateSubject, ContractCandidate, INIT_STARTER_PREVIEW_CANDIDATE_SCHEMA_VERSION,
+    CandidateSubject, ContractCandidate, EffectAssuranceCandidateDerivation,
+    EffectAssuranceCandidateInput, INIT_STARTER_PREVIEW_CANDIDATE_SCHEMA_VERSION,
     derive_candidate_application_document, derive_candidate_application_projection,
+    derive_effect_assurance_candidate, effect_assurance_candidate_reconciliation,
     verify_candidate_application_projection, write_candidate_create_new,
 };
 use crate::contract_drift::{
@@ -103,7 +105,7 @@ use crate::effect_orchestration::{
     typed_effect_closure_applies, typed_effect_policy_decision,
     typed_effect_policy_decision_from_loaded_policy, typed_effect_policy_refusal_evidence,
 };
-use crate::effect_policy::EffectPolicyInvocation;
+use crate::effect_policy::{EffectPolicyInvocation, typed_effect_realization_identity};
 use crate::execution::{
     container_backend_probe_failure, container_engine_candidates,
     container_engine_candidates_from_backend, ephemeral_container_target, execution_image,
@@ -128,8 +130,9 @@ use crate::output::{
     DetectComparisonChange, DetectComparisonRemoval, DetectFailure, DetectSuccess,
     DetectWriteCandidate, DiffChange, DiffFailure, DiffSuccess, DiffSummary,
     DoctorFindingGroupSummary, DoctorFixActionSummary, DoctorFixSummary, DoctorPrimaryBlocker,
-    DoctorSuccess, DoctorSummary, DoctorVerdict, EnvEntry, EnvEntryKind, EnvEntryStatus,
-    EnvFailure, EnvRenderedArtifactEntry, EnvSourceEntry, EnvSourceStatus, EnvSuccess, EnvSummary,
+    DoctorSuccess, DoctorSummary, DoctorVerdict, EffectAssuranceCandidateFailure,
+    EffectAssuranceCandidateSuccess, EnvEntry, EnvEntryKind, EnvEntryStatus, EnvFailure,
+    EnvRenderedArtifactEntry, EnvSourceEntry, EnvSourceStatus, EnvSuccess, EnvSummary,
     ExecutionContextSummary, ExecutionEnvSummary, ExecutionEvidenceClass, ExecutionPlanFailure,
     ExecutionPlanOverrides, ExecutionPlanResolved, ExecutionPlanSuccess, ExecutionReceipt,
     ExecutionReceiptArtifactLineage, ExecutionReceiptEnvSource, ExecutionReceiptEvaluatedInput,
@@ -279,6 +282,7 @@ use crate::workspace::{
     parse_workspace_contract_str, validate_workspace_contract,
 };
 
+mod effect_assurance_candidate;
 mod effect_refusal;
 mod execution_summary;
 mod explain_output;
@@ -286,6 +290,7 @@ mod init_starter;
 mod workspace_diagnostics;
 mod workspace_output;
 
+pub(super) use self::effect_assurance_candidate::effect_refusal_archive_candidate;
 use self::effect_refusal::{run_effect_refusal_canary_command, up_effect_refusal_canary_command};
 use self::execution_summary::{
     append_runtime_listener_lines, execution_receipt_next_steps, primary_runtime_endpoint,
@@ -36844,6 +36849,36 @@ pub fn apply_contract_candidate(
         finalize_debug(output, debug, debug_lines.clone())
     };
 
+    let candidate = match fs::read(&candidate_file)
+        .map_err(|error| format!("failed to read candidate artifact: {error}"))
+        .and_then(|bytes| {
+            serde_json::from_slice::<ContractCandidate>(&bytes)
+                .map_err(|error| format!("failed to parse candidate artifact: {error}"))
+        }) {
+        Ok(candidate) => candidate,
+        Err(error) => return failure("candidate_malformed", error, None),
+    };
+    if let Err(error) = candidate.verify_identities() {
+        let code = match error {
+            CandidateError::IdentityMismatch | CandidateError::ClosureIdentityMismatch => {
+                "candidate_identity_invalid"
+            }
+            _ => "candidate_malformed",
+        };
+        return failure(code, error.to_string(), None);
+    }
+    if candidate.kind == CandidateKind::EffectAssurance {
+        return failure(
+            "candidate_read_only",
+            String::from(
+                "effect-assurance candidates are review-only and cannot apply contract changes",
+            ),
+            Some(
+                "review the archive-bound proposal; a later V12 evaluator must independently derive write eligibility",
+            ),
+        );
+    }
+
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     if write && matches!(carrier, Some(ContractCandidateUpdateCarrier::Git)) {
         return failure(
@@ -36871,25 +36906,6 @@ pub fn apply_contract_candidate(
     } else {
         None
     };
-
-    let candidate = match fs::read(&candidate_file)
-        .map_err(|error| format!("failed to read candidate artifact: {error}"))
-        .and_then(|bytes| {
-            serde_json::from_slice::<ContractCandidate>(&bytes)
-                .map_err(|error| format!("failed to parse candidate artifact: {error}"))
-        }) {
-        Ok(candidate) => candidate,
-        Err(error) => return failure("candidate_malformed", error, None),
-    };
-    if let Err(error) = candidate.verify_identities() {
-        let code = match error {
-            CandidateError::IdentityMismatch | CandidateError::ClosureIdentityMismatch => {
-                "candidate_identity_invalid"
-            }
-            _ => "candidate_malformed",
-        };
-        return failure(code, error.to_string(), None);
-    }
     if write
         && matches!(carrier, Some(ContractCandidateUpdateCarrier::Git))
         && git_text(&root, &["symbolic-ref", "-q", "HEAD"]).is_err()

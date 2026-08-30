@@ -712,8 +712,9 @@ edits a contract or policy directly.
 
 V12 must reuse V11.22's shared reviewed-candidate envelope, identity, source re-observation,
 re-derivation, collision protection, dry-run, and atomic application path. It must not create a
-second mutation authority. Because V11.22 v1 admits only `detection | upgrade`, V12 introduces an
-explicit additive candidate-schema v2 branch:
+second mutation authority. Because candidate schema versions 1–4 admit only detection, upgrade,
+conservative first-contract, and starter-preview profiles, V12 introduces an explicit additive
+schema-version 5 branch:
 
 ```text
 candidate kind: effect_assurance
@@ -721,8 +722,8 @@ registered derivation profile: effect_assurance_v1
 allowed operation: add
 ```
 
-V1 detection/upgrade artifacts retain their original identity and behavior. Pre-V12 readers reject
-the new kind as unsupported; they never reinterpret it as detection or upgrade. The v2 branch
+Earlier candidate artifacts retain their original identity and behavior. Pre-v5 readers reject
+the new kind as unsupported; they never reinterpret it as detection or upgrade. The v5 branch
 shares V11.22 admission/application internals but has its own strict schema, derivation profile,
 and add-only operation rules.
 
@@ -730,11 +731,18 @@ The effect/canary candidate is add-only in this slice and binds:
 
 - source receipt/archive or incident-artifact identity and provenance posture;
 - contract snapshot and selected invocation identity;
+- one retained no-follow current-contract byte snapshot, rechecked before publication or no-op;
+- the current materialized application plan and realization identity, including migration bytes;
 - proposed effect definition and typed origins;
 - proposed resource binding plus its evidence and authority posture;
 - proposed challenge lanes;
 - residual unknown, opaque, and equivalent-path gaps;
 - exact candidate derivation implementation identity.
+
+Published and already-declared success both expose one versioned reconciliation identity binding
+the exact archive, contract snapshot, workflow, canary, effect, attachment, and current realization.
+Proposal validation reconstructs the exact workflow-only canary from those source fields; rehashing
+a contradictory proposal does not make it self-verifying.
 
 Receipts are evidence only for fields they actually carry. An operator-authored incident is
 untrusted context unless independently signed by a supported authority; it may still seed a
@@ -752,6 +760,22 @@ conflicting, incomplete, non-reproducible, or incident-only proposals.
 Candidates never propose effect-policy `allow`, approval, grant, or trust-root changes. Removal or
 weakening requires a separately reviewed semantic migration or maintainer-authored change outside
 the incident ratchet.
+
+### First implementation boundary
+
+The first implementation is deliberately narrower than the full ratchet: one verified private
+workflow refusal archive may derive one add-only `agent.effect_refusal_canaries` proposal from its
+already re-derived workflow, eligible effect attachment, realization, and explicit typed deny. It
+re-observes the current contract graph before classifying that proposal. An exact existing canary
+is omitted; a divergent existing canary is a conflict; stale or unverifiable archive truth is
+unknown and non-writable. This path never proposes a policy, grant, or effect definition because
+the archived typed realization already depends on a declared effect definition.
+
+An operator-authored incident remains a later sub-slice of this V12 item until Ota publishes a
+versioned incident-artifact schema with canonical proposal fields and source identity. A free-form
+narrative cannot safely derive a typed effect definition or origin. When added, that source will
+produce an explicitly `unknown`, review-only candidate unless independent typed repository evidence
+re-derives every proposed field.
 
 ## Implementation Order
 
@@ -888,7 +912,7 @@ assurance, or public export safety.
 - V11.14 machine output uses only `supported | contradicted | unknown` for the new claim family;
 - receipts and archives reject removed effects, changed bounds, substituted policy/refusal
   evidence, incomplete origin graphs, and stripped coverage boundaries;
-- `effect_assurance` candidates use a strict additive candidate-schema v2 branch and registered
+- `effect_assurance` candidates use a strict additive candidate-schema v5 branch and registered
   derivation profile while reusing V11.22 admission/application authority;
 - incident-derived candidates are reviewable, add-only, stale-safe, reproducible, and applied only
   through the V11.22 candidate authority;
@@ -944,7 +968,7 @@ source-posture substitution invalidates archived assurance. The internal Linux/m
 [run 33301627289](https://github.com/ota-run/ota/actions/runs/33301627289), bound to Core
 `e7682a62287b173edaa8e2a18f57fc1593359dec`, retains those checks as synthetic,
 provider-disabled evidence. Schema conformance rejects every cross-action bounds combination and
-every attempt to reinterpret candidate v1 detection/upgrade as v2 `effect_assurance`.
+every attempt to reinterpret earlier detection/upgrade candidates as v5 `effect_assurance`.
 
 The hosted matrix must exercise human and JSON output, `run`, workflow-backed `up`, CI projection
 with provider-checkout re-evaluation, sandbox capability output, refusal receipts, archive

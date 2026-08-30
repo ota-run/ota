@@ -827,6 +827,7 @@ impl DetectReport {
                 existing_contract_snapshot_identity: None,
                 implementation_identity,
                 migration: None,
+                assurance_source: None,
                 changes: Vec::new(),
                 application_projection: None,
             },
@@ -864,6 +865,7 @@ impl DetectReport {
                 existing_contract_snapshot_identity: None,
                 implementation_identity,
                 migration: None,
+                assurance_source: None,
                 changes: Vec::new(),
                 application_projection: None,
             },
@@ -1270,6 +1272,7 @@ fn source_bound_candidate_foundation_with_existing_contract(
         existing_contract_snapshot_identity: None,
         implementation_identity,
         migration: None,
+        assurance_source: None,
         changes,
         application_projection: None,
     };

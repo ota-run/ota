@@ -1823,7 +1823,7 @@ fn detect_schema_includes_comparison_preview() {
     );
     assert_eq!(
         candidate["properties"]["schema_version"]["enum"],
-        json!([1, 2, 3, 4])
+        json!([1, 2, 3, 4, 5])
     );
     assert!(candidate["properties"].get("identity").is_some());
     assert!(candidate["properties"].get("evidence_manifest").is_some());

@@ -784,6 +784,23 @@ enum AuthorityCommands {
 
 #[derive(Debug, Clone, Subcommand)]
 enum ContractCommands {
+    /// Derive a review-only effect-refusal canary candidate from one verified private archive.
+    EffectRefusalCandidate {
+        /// Verified private workflow refusal archive under `.ota/receipts`.
+        #[arg(long, value_name = "PATH")]
+        archive: PathBuf,
+        /// Canonical ID for the proposed effect-refusal canary.
+        #[arg(long, value_name = "ID")]
+        canary_id: String,
+        /// Write the review-only candidate artifact without changing ota.yaml.
+        #[arg(long, value_name = "PATH")]
+        candidate_out: PathBuf,
+        /// Print machine-readable JSON output.
+        #[arg(long, action = ArgAction::SetTrue)]
+        json: bool,
+        /// Path to the repository root containing ota.yaml.
+        path: Option<PathBuf>,
+    },
     /// Produce a versioned, lossless contract-upgrade review candidate.
     Upgrade {
         /// Write the upgrade candidate artifact without changing ota.yaml.
@@ -4964,7 +4981,8 @@ fn dispatch(cli: Cli) -> CommandOutput {
             }
             | Commands::Contract {
                 command: ContractCommands::ApplyCandidate { json: true, .. }
-                    | ContractCommands::Upgrade { json: true, .. },
+                    | ContractCommands::Upgrade { json: true, .. }
+                    | ContractCommands::EffectRefusalCandidate { json: true, .. },
             }
             | Commands::Doctor { json: true, .. }
             | Commands::Explain { json: true, .. }
@@ -5061,6 +5079,34 @@ fn dispatch(cli: Cli) -> CommandOutput {
                 )
             } else {
                 commands::authority_inspect(format_from_json(json))
+            }
+        }
+        Commands::Contract {
+            command:
+                ContractCommands::EffectRefusalCandidate {
+                    archive,
+                    canary_id,
+                    candidate_out,
+                    json,
+                    path,
+                },
+        } => {
+            if file.is_some() {
+                CommandOutput::failure_with_code(
+                    String::from(
+                        "`ota contract effect-refusal-candidate` reads only repository ota.yaml and does not accept `--file`",
+                    ),
+                    2,
+                )
+            } else {
+                commands::effect_refusal_archive_candidate(
+                    path.as_deref(),
+                    &archive,
+                    &canary_id,
+                    &candidate_out,
+                    format_from_json(json),
+                    debug,
+                )
             }
         }
         Commands::Contract {
@@ -6540,6 +6586,11 @@ fn append_try_footer(stderr: String, command: &Commands) -> String {
             "have the runner administrator repair the fixed prebound-file boundary, then rerun `ota authority inspect --json`"
         }
         Commands::Contract {
+            command: ContractCommands::EffectRefusalCandidate { .. },
+        } => {
+            "review the archive-bound candidate; it is intentionally read-only and cannot apply ota.yaml"
+        }
+        Commands::Contract {
             command: ContractCommands::Upgrade { .. },
         } => {
             "review the candidate, then run `ota contract apply-candidate <path> --json` to re-derive the lossless migration"
@@ -6774,7 +6825,9 @@ fn command_requests_json(command: &Commands) -> bool {
         }
         | Commands::Contract {
             command:
-                ContractCommands::ApplyCandidate { json, .. } | ContractCommands::Upgrade { json, .. },
+                ContractCommands::ApplyCandidate { json, .. }
+                | ContractCommands::Upgrade { json, .. }
+                | ContractCommands::EffectRefusalCandidate { json, .. },
         }
         | Commands::Env { json, .. }
         | Commands::Proof {
@@ -6898,6 +6951,9 @@ fn command_where_label(command: &Commands) -> &'static str {
             command: AuthorityCommands::Inspect { .. },
         } => "ota authority inspect",
         Commands::Contract { command } => match command {
+            ContractCommands::EffectRefusalCandidate { .. } => {
+                "ota contract effect-refusal-candidate"
+            }
             ContractCommands::Upgrade { .. } => "ota contract upgrade",
             ContractCommands::ApplyCandidate { .. } => "ota contract apply-candidate",
         },
@@ -20545,6 +20601,18 @@ tasks:
                 },
             ),
             (
+                "contract effect-refusal-candidate",
+                super::Commands::Contract {
+                    command: super::ContractCommands::EffectRefusalCandidate {
+                        archive: PathBuf::from(".ota/receipts/refusal.json"),
+                        canary_id: String::from("reviewed_refusal"),
+                        candidate_out: PathBuf::from(".ota/candidates/refusal.json"),
+                        json: true,
+                        path: None,
+                    },
+                },
+            ),
+            (
                 "contract upgrade",
                 super::Commands::Contract {
                     command: super::ContractCommands::Upgrade {
@@ -20677,6 +20745,42 @@ tasks:
                         vec!["ota", "workspace", "tasks", "--json"],
                     ),
                     ("workspace list", vec!["ota", "workspace", "list", "--json"]),
+                    (
+                        "contract effect-refusal-candidate",
+                        vec![
+                            "ota",
+                            "contract",
+                            "effect-refusal-candidate",
+                            "--archive",
+                            ".ota/receipts/refusal.json",
+                            "--canary-id",
+                            "reviewed_refusal",
+                            "--candidate-out",
+                            ".ota/candidates/refusal.json",
+                            "--json",
+                        ],
+                    ),
+                    (
+                        "contract upgrade",
+                        vec![
+                            "ota",
+                            "contract",
+                            "upgrade",
+                            "--candidate-out",
+                            ".ota/candidates/upgrade.json",
+                            "--json",
+                        ],
+                    ),
+                    (
+                        "contract apply-candidate",
+                        vec![
+                            "ota",
+                            "contract",
+                            "apply-candidate",
+                            ".ota/candidates/detect.json",
+                            "--json",
+                        ],
+                    ),
                     (
                         "workspace execution plan",
                         vec!["ota", "workspace", "execution", "plan", "--json"],

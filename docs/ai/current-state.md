@@ -35,12 +35,25 @@ durable agent workflow belongs in the canonical Ota skill.
 
 - branch: `1.6.27-implementation`
 - released baseline: `v1.6.26`
-- current surface repair: detector-led starters now declare the running Ota minimum-version floor;
-  GitHub Actions verification inference binds canonical repository-relative working directories,
-  retains named multiline steps as unresolved ordered bodies, and refuses dynamic or noncanonical
-  directory truth. Heuristic agent boundaries with inferred safe tasks remain `Partially inferred`
-  until both writable and protected paths originate from explicit boundary evidence. This repair
-  does not add agent-safe authority, provider/runtime attestation, or a Pythia-specific adapter.
+- current V12 slice: `ota contract effect-refusal-candidate` turns one verified private workflow
+  refusal archive with exactly one eligible explicit typed denial into a schema-v5, archive-bound
+  `unknown` proposal for one `agent.effect_refusal_canaries` entry. It freezes one regular
+  `ota.yaml` through retained no-follow descriptors, parses those exact bytes, re-derives current
+  contract, workflow, effect, attachment, migration-plan, and realization truth, and rechecks the
+  contract before publication or no-op; stale, aliased, or conflicting inputs refuse, an
+  exact existing declaration is a non-publishing no-op, and the artifact has no application
+  projection. Both success branches expose one versioned reconciliation identity and its exact
+  source identities. `apply-candidate` returns platform-stable `candidate_read_only` before writer
+  platform or lock admission. This closes only the reviewed
+  evidence-to-authoring handoff; it does not infer effect definitions, policy, grants, provider
+  authority, execution approval, or positive assurance. Core command/JSON references, the Site
+  command/schema references, and the canonical Skill carry that boundary. Examples remain
+  unchanged because the command requires a real private archive rather than a static copy-ready
+  fixture. Learn remains unchanged until typed provider execution is operator-usable; the existing
+  Effect refusal canary Glossary entry already owns the term, and this specialist review command
+  does not add a new general FAQ question. CLI orchestration lives in the focused
+  `cli/commands/effect_assurance_candidate` module; candidate identity and derivation remain in the
+  shared candidate domain.
 - PythiaLabs pre-release fork pressure has reviewable declaration, native execution, and an
   Ota-owned Linux Node-container matrix. The declaration run passed; native execution passed ten
   of eleven lanes and retained Pythia's existing site-format failure as a repository finding; the

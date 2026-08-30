@@ -3307,6 +3307,280 @@ policies:
     assert!(!fixture.path().join("setup-sentinel").exists());
     assert!(!fixture.path().join("parent-sentinel").exists());
 
+    fs::create_dir_all(fixture.path().join(".ota/candidates")).expect("candidate output directory");
+
+    let contract_path = fixture.path().join("ota.yaml");
+    let retained_contract = fixture.path().join("ota.yaml.retained");
+    let outside_contract = tempfile::tempdir().expect("outside contract directory");
+    fs::write(
+        outside_contract.path().join("ota.yaml"),
+        fs::read(&contract_path).expect("contract bytes"),
+    )
+    .expect("outside contract bytes");
+    fs::rename(&contract_path, &retained_contract).expect("retain regular contract");
+    std::os::unix::fs::symlink(outside_contract.path().join("ota.yaml"), &contract_path)
+        .expect("symlink current contract outside repository");
+    let aliased_contract = run_ota_with_env(
+        &[
+            "contract",
+            "effect-refusal-candidate",
+            "--archive",
+            refusal_archive_path,
+            "--canary-id",
+            "aliased_contract_schema_refusal",
+            "--candidate-out",
+            ".ota/candidates/aliased-contract.json",
+            "--json",
+        ],
+        fixture.path(),
+        &[],
+        false,
+    );
+    assert_matches_schema("effect-refusal-candidate.json", &aliased_contract);
+    assert_eq!(aliased_contract["code"], "effect_refusal_candidate_failed");
+    assert!(
+        !fixture
+            .path()
+            .join(".ota/candidates/aliased-contract.json")
+            .exists()
+    );
+    fs::remove_file(&contract_path).expect("remove contract symlink");
+    fs::rename(&retained_contract, &contract_path).expect("restore regular contract");
+
+    let migration_path = fixture.path().join("migrations/001.sql");
+    let original_migration = fs::read(&migration_path).expect("migration bytes");
+    fs::write(&migration_path, b"create table candidate_drift ();\n")
+        .expect("drift current realization");
+    for (canary_id, output_path) in [
+        (
+            "drifted_archive_schema_refusal",
+            ".ota/candidates/drifted-realization.json",
+        ),
+        (
+            "workflow_archive_schema_refusal",
+            ".ota/candidates/drifted-no-op.json",
+        ),
+    ] {
+        let stale_realization = run_ota_with_env(
+            &[
+                "contract",
+                "effect-refusal-candidate",
+                "--archive",
+                refusal_archive_path,
+                "--canary-id",
+                canary_id,
+                "--candidate-out",
+                output_path,
+                "--json",
+            ],
+            fixture.path(),
+            &[],
+            false,
+        );
+        assert_matches_schema("effect-refusal-candidate.json", &stale_realization);
+        assert_eq!(
+            stale_realization["code"], "effect_refusal_candidate_stale",
+            "current realization drift must refuse publication and no-op: {stale_realization}"
+        );
+        assert!(!fixture.path().join(output_path).exists());
+    }
+    fs::write(&migration_path, original_migration).expect("restore current realization");
+
+    let effect_candidate_path = ".ota/candidates/effect-refusal.json";
+    let effect_candidate = run_ota(
+        &[
+            "contract",
+            "effect-refusal-candidate",
+            "--archive",
+            refusal_archive_path,
+            "--canary-id",
+            "reviewed_archive_schema_refusal",
+            "--candidate-out",
+            effect_candidate_path,
+            "--json",
+        ],
+        fixture.path(),
+    );
+    assert_matches_schema("effect-refusal-candidate.json", &effect_candidate);
+    assert_eq!(effect_candidate["written"], false);
+    assert_eq!(effect_candidate["candidate_published"], true);
+    assert_eq!(effect_candidate["candidate_publication"], "durable");
+    assert_eq!(effect_candidate["disposition"], "unknown");
+    assert_eq!(effect_candidate["no_op"], false);
+    assert_eq!(effect_candidate["reconciliation"]["schema_version"], 1);
+    assert_eq!(
+        effect_candidate["reconciliation"]["archive_identity"],
+        effect_candidate["candidate"]["assurance_source"]["archive_identity"]
+    );
+    assert_eq!(
+        effect_candidate["reconciliation"]["realization_identity"],
+        effect_candidate["candidate"]["assurance_source"]["realization_identity"]
+    );
+    assert_eq!(effect_candidate["candidate"]["schema_version"], 5);
+    assert_eq!(effect_candidate["candidate"]["kind"], "effect_assurance");
+    assert_eq!(
+        effect_candidate["candidate"]["profile"],
+        "effect_assurance_v1"
+    );
+    assert!(
+        effect_candidate["candidate"]["application_projection"].is_null(),
+        "review-only effect assurance must not carry an application projection"
+    );
+    let effect_candidate_artifact: Value = serde_json::from_slice(
+        &fs::read(fixture.path().join(effect_candidate_path)).expect("candidate artifact bytes"),
+    )
+    .expect("candidate artifact JSON");
+    assert_matches_schema("contract-candidate.json", &effect_candidate_artifact);
+    assert_eq!(effect_candidate_artifact, effect_candidate["candidate"]);
+
+    for extra in [
+        &[][..],
+        &["--write"][..],
+        &["--write", "--carrier", "git"][..],
+    ] {
+        let mut args = vec![
+            "contract",
+            "apply-candidate",
+            effect_candidate_path,
+            "--json",
+        ];
+        args.extend_from_slice(extra);
+        let read_only_application = run_ota_with_env(&args, fixture.path(), &[], false);
+        assert_matches_schema(
+            "contract-candidate-application.json",
+            &read_only_application,
+        );
+        assert_eq!(read_only_application["code"], "candidate_read_only");
+        assert_eq!(read_only_application["written"], false);
+    }
+
+    let no_op_candidate = run_ota(
+        &[
+            "contract",
+            "effect-refusal-candidate",
+            "--archive",
+            refusal_archive_path,
+            "--canary-id",
+            "workflow_archive_schema_refusal",
+            "--candidate-out",
+            ".ota/candidates/no-op.json",
+            "--json",
+        ],
+        fixture.path(),
+    );
+    assert_matches_schema("effect-refusal-candidate.json", &no_op_candidate);
+    assert_eq!(no_op_candidate["candidate_published"], false);
+    assert_eq!(no_op_candidate["candidate_publication"], "not_published");
+    assert_eq!(no_op_candidate["disposition"], "already_declared");
+    assert_eq!(no_op_candidate["no_op"], true);
+    assert_eq!(no_op_candidate["reconciliation"]["schema_version"], 1);
+    assert_eq!(
+        no_op_candidate["reconciliation"]["canary_id"],
+        "workflow_archive_schema_refusal"
+    );
+    assert!(
+        no_op_candidate["reconciliation"]["identity"]
+            .as_str()
+            .is_some_and(|identity| identity.starts_with("sha256:"))
+    );
+    assert!(no_op_candidate.get("candidate").is_none());
+    assert!(!fixture.path().join(".ota/candidates/no-op.json").exists());
+    let mut contradictory_no_op = no_op_candidate.clone();
+    contradictory_no_op["candidate_published"] = json!(true);
+    assert_rejected_by_schema("effect-refusal-candidate.json", &contradictory_no_op);
+    let mut unbound_no_op = no_op_candidate.clone();
+    unbound_no_op
+        .as_object_mut()
+        .expect("no-op output object")
+        .remove("reconciliation");
+    assert_rejected_by_schema("effect-refusal-candidate.json", &unbound_no_op);
+    let mut incomplete_publication = effect_candidate.clone();
+    incomplete_publication
+        .as_object_mut()
+        .expect("candidate publication object")
+        .remove("candidate");
+    assert_rejected_by_schema("effect-refusal-candidate.json", &incomplete_publication);
+
+    let conflicting_candidate = run_ota_with_env(
+        &[
+            "contract",
+            "effect-refusal-candidate",
+            "--archive",
+            refusal_archive_path,
+            "--canary-id",
+            "production_schema_refusal",
+            "--candidate-out",
+            ".ota/candidates/conflict.json",
+            "--json",
+        ],
+        fixture.path(),
+        &[],
+        false,
+    );
+    assert_matches_schema("effect-refusal-candidate.json", &conflicting_candidate);
+    assert_eq!(
+        conflicting_candidate["code"],
+        "effect_refusal_candidate_conflict"
+    );
+    assert_eq!(conflicting_candidate["candidate_published"], false);
+    assert!(
+        !fixture
+            .path()
+            .join(".ota/candidates/conflict.json")
+            .exists()
+    );
+
+    for mutate in [
+        |value: &mut Value| value["candidate"]["changes"][0]["disposition"] = json!("applicable"),
+        |value: &mut Value| value["candidate"]["application_projection"] = json!({}),
+        |value: &mut Value| {
+            value["candidate"]
+                .as_object_mut()
+                .expect("candidate object")
+                .remove("assurance_source");
+        },
+        |value: &mut Value| {
+            value["candidate"]["changes"][0]["proposed_value"]["challenge_lanes"][0]["task"] =
+                json!("migrate");
+        },
+    ] {
+        let mut contradictory = effect_candidate.clone();
+        mutate(&mut contradictory);
+        assert_rejected_by_schema("effect-refusal-candidate.json", &contradictory);
+    }
+
+    let live_contract_path = fixture.path().join("ota.yaml");
+    let original_live_contract = fs::read_to_string(&live_contract_path).expect("live contract");
+    fs::write(
+        &live_contract_path,
+        original_live_contract.replace(
+            "typed-effect-policy-refusal",
+            "typed-effect-policy-refusal-candidate-drift",
+        ),
+    )
+    .expect("drift live contract before candidate derivation");
+    let stale_candidate = run_ota_with_env(
+        &[
+            "contract",
+            "effect-refusal-candidate",
+            "--archive",
+            refusal_archive_path,
+            "--canary-id",
+            "stale_archive_schema_refusal",
+            "--candidate-out",
+            ".ota/candidates/stale.json",
+            "--json",
+        ],
+        fixture.path(),
+        &[],
+        false,
+    );
+    assert_matches_schema("effect-refusal-candidate.json", &stale_candidate);
+    assert_eq!(stale_candidate["code"], "effect_refusal_candidate_stale");
+    assert_eq!(stale_candidate["candidate_published"], false);
+    assert!(!fixture.path().join(".ota/candidates/stale.json").exists());
+    fs::write(&live_contract_path, &original_live_contract).expect("restore live contract");
+
     let declared_only_canary = run_ota_failure_stdout_json(
         &[
             "run",
@@ -3584,7 +3858,6 @@ policies:
         }));
     assert_rejected_by_schema("doctor.json", &forged_supported_derived_evidence);
 
-    let live_contract_path = fixture.path().join("ota.yaml");
     let original_live_contract = fs::read_to_string(&live_contract_path).expect("live contract");
     fs::write(
         &live_contract_path,
