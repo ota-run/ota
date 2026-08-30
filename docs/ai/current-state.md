@@ -53,7 +53,15 @@ durable agent workflow belongs in the canonical Ota skill.
   Effect refusal canary Glossary entry already owns the term, and this specialist review command
   does not add a new general FAQ question. CLI orchestration lives in the focused
   `cli/commands/effect_assurance_candidate` module; candidate identity and derivation remain in the
-  shared candidate domain.
+  shared candidate domain. Immutable Linux/x64 and macOS pressure in
+  [run 33323426885](https://github.com/ota-run/ota/actions/runs/33323426885), bound to Core
+  `9b2ff4bd0ed760a506d35539477441b3899e924f`, directly invokes the command: both retained
+  artifacts publish one bounded candidate, reject `apply-candidate --write --carrier git` as
+  `candidate_read_only`, produce a reconciliation-bound exact-existing no-op, and refuse
+  migration drift and a symlinked contract without publication. The carrier also runs the Core
+  regression rejecting a rehashed substituted proposal. This is internal, provider-disabled
+  evidence only; it does not prove provider contact or mutation, arbitrary child-process absence,
+  repository-wide immutability, positive assurance, or export safety.
 - PythiaLabs pre-release fork pressure has reviewable declaration, native execution, and an
   Ota-owned Linux Node-container matrix. The declaration run passed; native execution passed ten
   of eleven lanes and retained Pythia's existing site-format failure as a repository finding; the
@@ -111,7 +119,18 @@ durable agent workflow belongs in the canonical Ota skill.
   Core `81c25e09c833559312e9cd43ce04a1c63f27d6fa` now proves that exact workflow-only promotion
   from a verified private archive and its fallback to `unknown` after archive tampering. It remains
   internal, provider-disabled negative evidence, not provider contact, mutation, positive
-  assurance, or export safety.
+  assurance, or export safety. The next fork-only Linux/macOS matrices against Plausible and
+  Outline are immutable-hosted in [run 33327820048](https://github.com/bobaikato/analytics/actions/runs/33327820048)
+  and [run 33327824518](https://github.com/bobaikato/outline/actions/runs/33327824518) at fork
+  revisions `0e01e63cbeb44ee8e8bbb6f3231478050739dcd0` and
+  `1ca4a64089b7eefa74783d9e51a31d7cf398d484`. Every retained artifact binds clean source-built
+  Core `9b2ff4bd0ed760a506d35539477441b3899e924f`. Both create and verify one private workflow
+  archive, promote only its exact workflow-only claim to `supported`, return it to `unknown` after
+  context stripping, publish a projection-free `unknown` candidate, refuse its write attempt,
+  emit a reconciliation-bound existing-declaration no-op, and refuse migration drift and a
+  symlinked contract without publication. This is still selected-lane, provider-disabled evidence:
+  it does not prove repository-wide readiness, provider behavior, database correctness, arbitrary
+  child-process absence, complete repository immutability, positive assurance, or export safety.
   See `docs/pressure/v12-real-repository-effect-refusal.md`.
 - active version: V12 effect-bound refusal assurance. V11 is reconciled complete and V12 is the sole
   active version as of 2026-08-25. The first local implementation batch adds strict PostgreSQL

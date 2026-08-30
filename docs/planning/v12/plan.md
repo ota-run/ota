@@ -844,6 +844,25 @@ workflow-only challenge to `supported` only through verified private archive rec
 return it to `unknown` after archive tampering. This remains internal, provider-disabled negative
 evidence: it does not prove provider contact, database mutation prevention outside Ota, positive
 assurance, or public export safety.
+The first archive-derived effect-refusal candidate is separately immutable-hosted on Linux/x64 and
+macOS in [run 33323426885](https://github.com/ota-run/ota/actions/runs/33323426885) against Core
+`9b2ff4bd0ed760a506d35539477441b3899e924f`. Both retained artifacts directly invoke the
+review-only command, durably publish its `unknown` candidate, reject its Git-carrier write attempt
+as `candidate_read_only`, produce an exact-existing reconciliation-bound no-op, and refuse current
+migration drift plus a symlinked contract without publication. The carrier also runs Core's
+rehashed substituted-proposal regression. This is internal, provider-disabled evidence only; it
+does not prove provider contact or mutation, arbitrary child-process absence, repository-wide
+immutability, positive assurance, or export safety.
+The same archive, assurance, and candidate-reconciliation controls are now immutable-hosted on
+Linux/x64 and macOS against two forked real repositories: Plausible in
+[run 33327820048](https://github.com/bobaikato/analytics/actions/runs/33327820048) and Outline in
+[run 33327824518](https://github.com/bobaikato/outline/actions/runs/33327824518). Both retain a
+clean source-built Core `9b2ff4bd0ed760a506d35539477441b3899e924f` identity, one valid private
+workflow archive, exact workflow-only Doctor promotion to `supported` with fallback to `unknown`
+after context stripping, a projection-free `unknown` candidate, read-only write refusal,
+reconciliation-bound no-op, and migration-drift plus contract-alias refusal. This remains
+provider-disabled selected-lane evidence; it does not prove provider behavior, repository-wide
+immutability, database correctness, positive assurance, or export safety.
 
 1. Add the provider-neutral effect domain, canonical identities, origins, and derivation posture
    plus strict resource-binding branches without changing execution admission.

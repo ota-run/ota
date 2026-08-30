@@ -40,6 +40,28 @@
   This does not infer effect definitions, policy, grants, provider authority, execution approval,
   or positive assurance from archive or incident evidence.
 
+- Recorded immutable Linux/x64 and macOS pressure for `ota contract effect-refusal-candidate` in
+  [run 33323426885](https://github.com/ota-run/ota/actions/runs/33323426885) against exact Core
+  `9b2ff4bd0ed760a506d35539477441b3899e924f`. Both retained artifacts publish the bounded
+  archive-derived candidate, reject its `--write --carrier git` application as
+  `candidate_read_only`, report exact-existing declaration as a reconciliation-bound no-op, and
+  refuse migration drift and a symlinked `ota.yaml` without publication. The carrier also runs the
+  Core regression rejecting a rehashed substituted proposal. This is internal, provider-disabled
+  evidence; it does not prove provider contact or mutation, arbitrary child-process absence,
+  repository-wide immutability, positive assurance, or export safety.
+
+- Recorded the same archive, assurance, and review-only candidate controls against forked
+  Plausible and Outline repositories on Linux/x64 and macOS in
+  [run 33327820048](https://github.com/bobaikato/analytics/actions/runs/33327820048) and
+  [run 33327824518](https://github.com/bobaikato/outline/actions/runs/33327824518). Both retained
+  artifacts bind clean source-built Core `9b2ff4bd0ed760a506d35539477441b3899e924f`, verify one
+  private workflow archive, promote only its exact workflow claim to `supported`, return it to
+  `unknown` after retained-context stripping, and exercise durable projection-free candidate,
+  read-only write refusal, reconciliation no-op, migration drift, and contract-alias refusal.
+  This is selected-lane, provider-disabled evidence only; it does not prove repository-wide
+  readiness, provider behavior, database correctness, arbitrary child-process absence, complete
+  repository immutability, positive assurance, or export safety.
+
 - Recorded immutable Linux/x64 and macOS pressure for private archive-backed workflow refusal
   assurance in [run 33309358828](https://github.com/ota-run/ota/actions/runs/33309358828)
   against exact Core `81c25e09c833559312e9cd43ce04a1c63f27d6fa`. Both retained artifacts promote

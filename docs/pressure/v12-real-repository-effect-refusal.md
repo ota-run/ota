@@ -30,15 +30,20 @@ adoption, or claim that either upstream repository is governed by Ota.
 
 ## Evidence Matrix
 
-| Repository | Upstream revision | Fork revision | Hosted matrix |
+| Repository | Upstream revision | Static-control fork / matrix | Archive-candidate fork / matrix |
 | --- | --- | --- | --- |
-| [Plausible Analytics](https://github.com/plausible/analytics) | `1cdff8b2d1e310cee731ac648b45875ec1fbd131` | `a3d9ca9ea3d92a0b1a3c8588436076c734665b74` | [33271676531](https://github.com/bobaikato/analytics/actions/runs/33271676531) |
-| [Outline](https://github.com/outline/outline) | `d8d8f2fffed97eaf3e9d48d820c8f1e1facf4008` | `c8c821ced9b7f14b7fdffbc2c737165e21b79653` | [33271681072](https://github.com/bobaikato/outline/actions/runs/33271681072) |
+| [Plausible Analytics](https://github.com/plausible/analytics) | `1cdff8b2d1e310cee731ac648b45875ec1fbd131` | `a3d9ca9ea3d92a0b1a3c8588436076c734665b74` / [33271676531](https://github.com/bobaikato/analytics/actions/runs/33271676531) | `0e01e63cbeb44ee8e8bbb6f3231478050739dcd0` / [33327820048](https://github.com/bobaikato/analytics/actions/runs/33327820048) |
+| [Outline](https://github.com/outline/outline) | `d8d8f2fffed97eaf3e9d48d820c8f1e1facf4008` | `c8c821ced9b7f14b7fdffbc2c737165e21b79653` / [33271681072](https://github.com/bobaikato/outline/actions/runs/33271681072) | `1ca4a64089b7eefa74783d9e51a31d7cf398d484` / [33327824518](https://github.com/bobaikato/outline/actions/runs/33327824518) |
 
 Both fork-only matrices source-build Core `84a988433cb3c0226a3569cdc2ee5202d3d5d375` and
 complete on Linux and macOS. They retain contract validation, Doctor coverage output, direct task
 and workflow-canary JSON, and one rejected generic caller-selected command for the exact fork
 revision.
+
+The archive-candidate matrices source-build Core `9b2ff4bd0ed760a506d35539477441b3899e924f`
+on Linux and macOS. Each retained artifact includes `ota-version.json`, binding `v1.6.27`, that
+exact commit, `source_build: true`, and `dirty: false` before it validates the contract or creates
+local Ota state.
 
 ## Observed Controls
 
@@ -57,6 +62,27 @@ unchallenged exact-equivalent attachment as `not_proved`, and the fixed opaque-e
 The generic caller-selected command returns `not_evaluated`, never a passed canary. These artifacts
 prove Ota's execution-free refusal and static coverage-honesty behavior at the selected
 typed-effect boundary only.
+
+## Archive, Assurance, And Candidate Reconciliation
+
+Each archive-candidate matrix creates one workflow-scoped private refusal archive through the
+selected committed migration lane. History first reports `1` valid archive and `0` invalid
+archives. The matching workflow-only `ci_schema_archive_refusal` claim is then `supported` from
+that verified archive; removing its retained archive context changes history to `0` valid and `1`
+invalid and returns that claim to `unknown`. The original task-and-workflow canary remains
+`unknown`, because it is not the exact workflow-only subject supported by the archive.
+
+Both matrices then derive one schema-v5 `unknown` candidate with no application projection, reject
+`apply-candidate --write --carrier git` as `candidate_read_only`, and emit a
+reconciliation-bound `already_declared` no-op for the predeclared workflow-only canary. Changing
+the selected migration bytes returns `effect_refusal_candidate_stale`; replacing `ota.yaml` with a
+symlink returns `effect_refusal_candidate_failed`. Neither condition publishes a candidate.
+
+Plausible's overall Doctor envelope remains `not_ready` in these hosted jobs because `mix` is not
+available on the runner, while the exact archived effect-refusal claim is `supported`. Outline's
+overall Doctor envelope remains `risky` because local Ota artifacts are not ignored. Those are
+separate readiness findings, not evidence of repository-wide readiness or a qualification of the
+archive reconciliation result.
 
 ## Internal Mixed-Realization Control
 
@@ -114,15 +140,14 @@ real-repository coverage.
 - database correctness, migration success, rollback, or data integrity;
 - arbitrary child-process absence or complete repository immutability;
 - independently administered policy authority;
-- positive receipt, archive, export, or assurance; and
+- positive effect receipt/archive, export, or assurance; and
 - complete coverage of either repository's migration, deployment, or raw-shell paths.
 
 ## Remaining V12 Pressure
 
-The V12 pressure bar remains open. This matrix closes only the external static
-coverage-honesty control: an intentionally unchallenged equal-effect path reports
-`equivalent_execution_paths_not_proved`, opaque execution remains a gap, and a generic caller
-refusal cannot false-green the canary. The separate internal mixed-realization and
-namespace/policy-source, CI provider-checkout, and sandbox-capability controls are complete;
-refusal receipt/archive beyond source-posture reconciliation and V11.14 assurance pressure remain
-required.
+The V12 pressure set now covers the external selected-lane refusal, static coverage-honesty,
+private archive integrity, exact workflow-only assurance promotion and fallback, and review-only
+candidate-reconciliation controls across both repositories. It does not prove provider contact,
+provider mutation, arbitrary child-process absence, repository-wide immutability, database
+correctness, independently administered policy, positive assurance, or full repository coverage.
+V12 remains active pending an independent closure review against its full acceptance bar.
