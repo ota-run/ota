@@ -900,6 +900,15 @@ ineligible declared-only/opaque realization to the same effect identity. Challen
 origin must remain an assurance gap even though the eligible realization is reachable elsewhere;
 attachment or realization substitution must invalidate the evidence.
 
+This control is immutable-hosted on Linux/x64 and macOS in
+[run 33300446201](https://github.com/ota-run/ota/actions/runs/33300446201) against Core
+`974caf686a45093587058ea140b82f1a81c0fa70`. Both retained artifacts show a blocked mixed preview,
+one shared effect identity with distinct typed and declared-only attachment/realization identities,
+and an `effect_canary_realization_ineligible` assurance gap with `execution_started: false`.
+Neither fixture sentinel exists. This proves the internal selected-closure negative control only;
+it does not establish provider behavior, independently administered policy, positive evidence, or
+real-repository coverage.
+
 The pressure set also proves that two equal local target labels under different canonical resource
 namespaces do not alias, unresolved namespace authority is ineligible, identical policy content
 loaded through different source postures retains distinct authority evidence, and source-posture

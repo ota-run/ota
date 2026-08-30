@@ -57,12 +57,18 @@ durable agent workflow belongs in the canonical Ota skill.
   boundaries; it remains `unknown` until a later verified archive carries realization and execution
   evidence. A later Linux/macOS matrix against Core `84a988433cb3c0226a3569cdc2ee5202d3d5d375`
   confirms that those exact-equivalent and opaque paths remain unproved and that a generic caller
-  refusal cannot pass a canary. Local mixed-realization admission now retains a declared-only
+  refusal cannot pass a canary. Mixed-realization admission retains a declared-only
   attachment as an ineligible realization, binds its distinct identity into the decision, refuses
   ordinary execution and dry-run preview before its command body, reports the preview as `BLOCKED`
   without fabricating policy evidence when no pack exists, and reports an exact-origin canary as an assurance
-  gap even when another attachment reaches the same effect. Immutable mixed-realization pressure
-  has not run. This does not close V12: namespace/posture, CI projection, sandbox,
+  gap even when another attachment reaches the same effect. The internal mixed-realization carrier
+  is immutable-hosted on Linux/x64 and macOS in
+  [run 33300446201](https://github.com/ota-run/ota/actions/runs/33300446201) against Core
+  `974caf686a45093587058ea140b82f1a81c0fa70`: both retained artifacts bind one shared effect
+  identity, distinct eligible and ineligible attachment/realization identities, a blocked preview,
+  and a declared-only `effect_canary_realization_ineligible` assurance gap with
+  `execution_started: false`; neither command sentinel exists. This remains an internal,
+  provider-disabled control. It does not close V12: namespace/posture, CI projection, sandbox,
   receipt/archive, and archive-backed V11.14 assurance requirements remain open.
   See `docs/pressure/v12-real-repository-effect-refusal.md`.
 - active version: V12 effect-bound refusal assurance. V11 is reconciled complete and V12 is the sole

@@ -58,6 +58,17 @@ The generic caller-selected command returns `not_evaluated`, never a passed cana
 prove Ota's execution-free refusal and static coverage-honesty behavior at the selected
 typed-effect boundary only.
 
+## Internal Mixed-Realization Control
+
+Separate immutable internal pressure in [run 33300446201](https://github.com/ota-run/ota/actions/runs/33300446201)
+binds Core `974caf686a45093587058ea140b82f1a81c0fa70` on Linux/x64 and macOS. Its selected closure
+contains an eligible `declared_and_typed` migration realization and an ineligible `declared_only`
+realization for the same effect. Both artifacts retain a blocked preview, one shared effect identity,
+distinct attachment and realization identities, absent command sentinels, and an
+`effect_canary_realization_ineligible` assurance gap with `execution_started: false` for the
+declared-only origin. It is a synthetic, provider-disabled control and does not extend the
+real-repository claims above.
+
 ## Unproved Boundaries
 
 - provider contact, authority, re-evaluation, or mutation;
@@ -72,6 +83,7 @@ typed-effect boundary only.
 The V12 pressure bar remains open. This matrix closes only the external static
 coverage-honesty control: an intentionally unchallenged equal-effect path reports
 `equivalent_execution_paths_not_proved`, opaque execution remains a gap, and a generic caller
-refusal cannot false-green the canary. Mixed-realization, namespace/posture substitution, CI
+refusal cannot false-green the canary. The separate internal mixed-realization control is complete;
+namespace/posture substitution, CI
 provider-checkout, sandbox capability, refusal receipt/archive, and V11.14 assurance pressure
 also remain required.
