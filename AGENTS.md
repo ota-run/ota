@@ -53,9 +53,16 @@ work complete:
 - `ota-site` when public reference, onboarding, or product claims change
 - `ota-site` Learn curriculum when canonical concepts, operator workflows, examples, or proof
   boundaries change
+- `ota-site` Glossary and FAQ when a feature adds or changes a public term, command, workflow,
+  policy, proof boundary, or common operator question
 
 Update each surface that is affected. If one is not affected, state that decision in the handoff or
 completion summary; do not silently assume core code alone is enough.
+
+**Public vocabulary gate:** every new user-visible feature must assess the canonical Glossary at
+`ota-site/app/docs/glossary/glossary-page.ts` and FAQ at `ota-site/lib/site.ts` (`slug: "faq"`).
+Add or revise entries when the feature introduces a term, command, boundary, limitation, or likely
+adoption question. If neither page needs a change, record why in the completion summary.
 
 **Command-reference gate:** every public CLI command or subcommand addition, removal, rename, flag
 surface, or semantic change must update both `docs/spec/command-reference.md` and the rendered
