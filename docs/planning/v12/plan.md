@@ -871,6 +871,15 @@ after context stripping, a projection-free `unknown` candidate, read-only write 
 reconciliation-bound no-op, and migration-drift plus contract-alias refusal. This remains
 provider-disabled selected-lane evidence; it does not prove provider behavior, repository-wide
 immutability, database correctness, positive assurance, or export safety.
+The final consolidated V12 internal control is immutable-hosted on Linux/x64 and macOS in
+[run 33335973677](https://github.com/ota-run/ota/actions/runs/33335973677), bound to exact Core
+`25afb2b510a13ce149a2e9aa8ed5418a7af69482`. Both retained artifacts complete the selected typed
+`run`, `up`, and proof refusal, policy/CI/sandbox, canary, private archive, Doctor assurance,
+review-only candidate, stale-input, and contract-alias stages. The observed setup,
+environment-rendering, proof-artifact, and durable-log controls remained absent on refused paths.
+This remains internal provider-disabled evidence: it does not establish provider contact or
+mutation, arbitrary child-process absence, repository-wide immutability, database correctness,
+positive assurance, or export safety.
 
 1. Add the provider-neutral effect domain, canonical identities, origins, and derivation posture
    plus strict resource-binding branches without changing execution admission.

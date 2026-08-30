@@ -69,6 +69,14 @@ durable agent workflow belongs in the canonical Ota skill.
   green-badge surface. The public index, Glossary, FAQ, Skills protocol, and engineering notes
   follow the same source-of-truth rule. Learn and Examples are unaffected because this is evidence
   accounting, not an operator contract workflow.
+- Final V12 internal Linux/x64 and macOS pressure is green in
+  [run 33335973677](https://github.com/ota-run/ota/actions/runs/33335973677), bound to Core
+  `25afb2b510a13ce149a2e9aa8ed5418a7af69482`. Both retained artifacts complete the selected typed
+  refusal, policy/CI/sandbox, canary, archive, Doctor assurance, review-only candidate, stale-input,
+  and contract-alias stages. They observe absent fixture setup, environment-rendering, proof-artifact,
+  and durable-log paths after refusal. This does not prove provider contact or mutation, arbitrary
+  child-process absence, repository-wide immutability, database correctness, positive assurance, or
+  export safety.
 - PythiaLabs pre-release fork pressure has reviewable declaration, native execution, and an
   Ota-owned Linux Node-container matrix. The declaration run passed; native execution passed ten
   of eleven lanes and retained Pythia's existing site-format failure as a repository finding; the
