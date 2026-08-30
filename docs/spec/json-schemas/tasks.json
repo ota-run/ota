@@ -16,6 +16,8 @@
         "prepare_task": { "type": "string" },
         "setup_task": { "type": "string" },
         "run_task": { "type": "string" },
+        "declared_safe_for_agent": { "type": "boolean" },
+        "effective_safe_for_agent": { "type": "boolean" },
         "run_task_launch": { "$ref": "#/$defs/taskLaunch" },
         "required_services": {
           "type": "array",

@@ -505,6 +505,73 @@ if summary["archive_count"] != 1 or summary["invalid_archive_count"] != 0:
 PY
 record_stage namespace_and_policy_posture_verified
 
+stage=sandbox_capability
+"$ota" json validate --schema tasks.json --assert-eq ok=true \
+  --write-payload "$proof_root/sandbox-capability-tasks-deny.json" \
+  -- "$ota" tasks --json "$fixture"
+"$ota" workflows --json "$fixture" > "$proof_root/sandbox-capability-workflows-deny.json"
+"$ota" json validate --schema tasks.json --assert-eq ok=true \
+  --write-payload "$proof_root/sandbox-capability-tasks-warn.json" \
+  -- "$ota" tasks --json "$namespace_fixture"
+python3 - "$proof_root/sandbox-capability-tasks-deny.json" \
+  "$proof_root/sandbox-capability-workflows-deny.json" \
+  "$proof_root/sandbox-capability-tasks-warn.json" <<'PY'
+import json
+import pathlib
+import sys
+
+tasks_deny, workflows_deny, tasks_warn = [
+    json.loads(pathlib.Path(path).read_text()) for path in sys.argv[1:]
+]
+
+def refused_lane(payload, field, lane_id):
+    profile = payload["capability_profile"]
+    callable_lanes = profile.get(f"callable_{field}") or []
+    if any(lane["lane_id"] == lane_id for lane in callable_lanes):
+        raise SystemExit(f"typed lane was advertised as callable: {lane_id}")
+    for lane in profile.get(f"refused_{field}") or []:
+        if lane["lane_id"] == lane_id:
+            return lane
+    raise SystemExit(f"missing refused typed lane: {lane_id}")
+
+def require_typed_refusal(lane, expected_decision, expected_reason):
+    preflight = lane["preflight"]
+    policy = lane["effect_policy"]
+    if preflight["state"] != "refused":
+        raise SystemExit(f"typed lane preflight was not refused: {preflight}")
+    if preflight.get("refusal_reason_family") != expected_reason:
+        raise SystemExit(f"unexpected typed refusal reason: {preflight}")
+    if policy["status"] != "evaluated" or policy["aggregate_decision"] != expected_decision:
+        raise SystemExit(f"unexpected typed decision posture: {policy}")
+    if policy["provider_execution"] != "disabled":
+        raise SystemExit(f"typed capability enabled provider execution: {policy}")
+    for field in [
+        "decision_identity",
+        "policy_snapshot_identity",
+        "execution_graph_identity",
+        "effect_set_identity",
+    ]:
+        if not str(policy.get(field, "")).startswith("sha256:"):
+            raise SystemExit(f"missing identity-bound typed decision field {field}: {policy}")
+
+require_typed_refusal(
+    refused_lane(tasks_deny, "tasks", "task:migrate"),
+    "deny",
+    "effect_policy_denied",
+)
+require_typed_refusal(
+    refused_lane(workflows_deny, "workflows", "workflow:typed"),
+    "deny",
+    "effect_policy_denied",
+)
+require_typed_refusal(
+    refused_lane(tasks_warn, "tasks", "task:migrate-secondary"),
+    "warn",
+    "typed_effect_provider_execution_disabled",
+)
+PY
+record_stage sandbox_capability_profile_verified
+
 stage=ci_projection_policy_reconciliation
 "$ota" json validate --schema ci-projection.json --assert-eq ok=true \
   --assert-eq projection.governance.effect_policy_decision.aggregate_decision=warn \
@@ -832,6 +899,7 @@ printf '%s\n' \
   'namespace_identity_separation_verified' \
   'policy_source_posture_identity_bound' \
   'policy_source_posture_archive_substitution_rejected' \
+  'sandbox_capability_typed_lanes_refused' \
   'ci_provider_checkout_re_evaluation_refused' \
   'policy_decision_published' \
   'policy_denial_code_published' \

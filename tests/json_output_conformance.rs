@@ -6253,6 +6253,36 @@ tasks:
 }
 
 #[test]
+fn tasks_json_output_with_default_workflow_capability_matches_published_schema() {
+    let fixture = TempDir::new().expect("fixture");
+    write_contract(
+        &fixture,
+        r#"
+version: 1
+project:
+  name: workflow-capability-demo
+tasks:
+  verify:
+    run: cargo test
+workflows:
+  default: verify
+  verify:
+    run:
+      task: verify
+"#,
+    );
+
+    let json = run_ota(
+        &["tasks", "--json", fixture.path().to_str().unwrap()],
+        fixture.path(),
+    );
+    assert_matches_schema("tasks.json", &json);
+    assert_eq!(json["workflow"]["name"], "verify");
+    assert_eq!(json["workflow"]["declared_safe_for_agent"], false);
+    assert_eq!(json["workflow"]["effective_safe_for_agent"], false);
+}
+
+#[test]
 fn tasks_json_output_with_compose_volume_reset_matches_published_schema() {
     let fixture = TempDir::new().expect("fixture");
     write_contract(
