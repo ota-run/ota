@@ -158,6 +158,17 @@ tasks:
     action: { kind: database_schema_mutation, effect: migration }
     effects:
       declared: [migration]
+  migrate-declared-only:
+    command:
+      exe: sh
+      args: [-c, "touch declared-only-sentinel"]
+    effects:
+      declared: [migration]
+  mixed:
+    command:
+      exe: sh
+      args: [-c, "touch mixed-sentinel"]
+    depends_on: [migrate, migrate-declared-only]
 workflows:
   default: typed
   typed:
@@ -178,6 +189,11 @@ agent:
           origin: { task: migrate, effect: migration }
         - workflow: typed
           origin: { task: migrate, effect: migration }
+    - id: pressure_declared_only_refusal
+      effect: migration
+      challenge_lanes:
+        - task: mixed
+          origin: { task: migrate-declared-only, effect: migration }
 """))
 policy = textwrap.dedent("""\
 policies:
@@ -226,6 +242,49 @@ stage=preview_validation
   --assert-eq phase=preview --write-payload "$proof_root/up-dry-run.json" \
   -- "$ota" up --dry-run --json "$preview_fixture"
 record_stage previews_validated
+
+stage=mixed_realization_refusal
+"$ota" json validate --schema run-preview.json --allow-exit 1 \
+  --assert-eq ok=false --assert-eq preview_status=BLOCKED \
+  --assert-eq summary.primary_blocker.code=typed_effect_admission_refused \
+  --assert-eq plan.effect_policy_decision.aggregate_decision=deny \
+  --write-payload "$proof_root/mixed-realization-preview.json" \
+  -- "$ota" run mixed --dry-run --json "$fixture"
+python3 - "$proof_root/mixed-realization-preview.json" <<'PY'
+import json
+import pathlib
+import sys
+
+payload = json.loads(pathlib.Path(sys.argv[1]).read_text())
+effects = payload["plan"]["effect_policy_decision"]["effects"]
+if len(effects) != 2:
+    raise SystemExit(f"expected two mixed realizations, got {len(effects)}")
+typed = next((effect for effect in effects if effect["derivation_posture"] == "declared_and_typed"), None)
+declared = next((effect for effect in effects if effect["derivation_posture"] == "declared_only"), None)
+if typed is None or declared is None:
+    raise SystemExit(f"missing mixed realization posture: {effects}")
+if typed["effect_identity"] != declared["effect_identity"]:
+    raise SystemExit("mixed realizations did not bind the same effect")
+if typed["attachment_identity"] == declared["attachment_identity"]:
+    raise SystemExit("mixed realizations collapsed their attachment identities")
+if typed["realization_identity"] == declared["realization_identity"]:
+    raise SystemExit("mixed realizations collapsed their realization identities")
+if typed["eligible"] is not True or declared["eligible"] is not False:
+    raise SystemExit(f"mixed realization eligibility is incorrect: {effects}")
+PY
+if "$ota" run mixed --plain "$fixture" > "$proof_root/mixed-realization-refusal.txt" 2>&1; then
+  mixed_status=0
+else
+  mixed_status=$?
+fi
+[ "$mixed_status" -eq 1 ] || fail "mixed realization run returned $mixed_status, expected 1"
+grep -Fq 'declared-only effect realization' "$proof_root/mixed-realization-refusal.txt" \
+  || fail "mixed realization run did not report structural declared-only refusal"
+test ! -e "$fixture/declared-only-sentinel" \
+  || fail "declared-only command executed before mixed realization refusal"
+test ! -e "$fixture/mixed-sentinel" \
+  || fail "mixed command executed before mixed realization refusal"
+record_stage mixed_realization_refusal_verified
 
 stage=ci_projection_policy_reconciliation
 "$ota" json validate --schema ci-projection.json --assert-eq ok=true \
@@ -362,9 +421,38 @@ fi
   --assert-eq canary.reason_code=effect_canary_unknown \
   --write-payload "$proof_root/effect-canary-unknown.json" \
   -- "$ota" run --agent --expect-effect-refusal unknown_pressure_refusal --json migrate "$fixture"
+"$ota" json validate --schema effect-refusal-canary.json --allow-exit 1 \
+  --assert-eq ok=false --assert-eq status=assurance_gap \
+  --assert-eq canary.reason_code=effect_canary_realization_ineligible \
+  --assert-eq canary.execution_started=false \
+  --assert-non-empty-string canary.effect_identity \
+  --assert-non-empty-string canary.attachment_identity \
+  --assert-non-empty-string canary.realization_identity \
+  --write-payload "$proof_root/effect-canary-declared-only.json" \
+  -- "$ota" run --agent --expect-effect-refusal pressure_declared_only_refusal --json mixed "$fixture"
+python3 - "$proof_root/mixed-realization-preview.json" "$proof_root/effect-canary-declared-only.json" <<'PY'
+import json
+import pathlib
+import sys
+
+preview = json.loads(pathlib.Path(sys.argv[1]).read_text())
+canary = json.loads(pathlib.Path(sys.argv[2]).read_text())["canary"]
+declared = next(
+    effect
+    for effect in preview["plan"]["effect_policy_decision"]["effects"]
+    if effect["derivation_posture"] == "declared_only"
+)
+if canary["effect_identity"] != declared["effect_identity"]:
+    raise SystemExit("declared-only canary did not bind the selected effect identity")
+if canary["attachment_identity"] != declared["attachment_identity"]:
+    raise SystemExit("declared-only canary did not bind the selected attachment identity")
+PY
 test ! -e "$fixture/setup-sentinel" || fail "effect-refusal canary executed workflow setup"
 test ! -e "$fixture/.env.typed" || fail "effect-refusal canary rendered workflow environment"
 test ! -e "$fixture/.ota/state/logs" || fail "effect-refusal canary created durable execution logs"
+test ! -e "$fixture/declared-only-sentinel" \
+  || fail "declared-only canary executed the declared-only command"
+test ! -e "$fixture/mixed-sentinel" || fail "declared-only canary executed the mixed command"
 record_stage effect_refusal_canary_verified
 
 stage=refusal_schema_validation
@@ -497,6 +585,8 @@ printf '%s\n' \
   'run_refused_before_side_effects' \
   'up_refused_before_side_effects' \
   'proof_inherited_up_precondition_refusal' \
+  'mixed_realization_refused_before_side_effects' \
+  'mixed_realization_identity_bound' \
   'policy_decision_published' \
   'policy_denial_code_published' \
   'ci_projection_warn_identity_bound' \
@@ -506,6 +596,7 @@ printf '%s\n' \
   'effect_refusal_canary_workflow_passed' \
   'effect_refusal_canary_strict_fallback_failed' \
   'effect_refusal_canary_unknown_failed' \
+  'effect_refusal_canary_declared_only_assurance_gap' \
   'effect_refusal_canary_plain_output_icon_free' \
   'durable_refusal_archive_created' \
   'durable_refusal_archive_history_rederived' \
