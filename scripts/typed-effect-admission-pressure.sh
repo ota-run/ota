@@ -193,6 +193,11 @@ agent:
           origin: { task: migrate, effect: migration }
         - workflow: typed
           origin: { task: migrate, effect: migration }
+    - id: pressure_workflow_archive_refusal
+      effect: migration
+      challenge_lanes:
+        - workflow: typed
+          origin: { task: migrate, effect: migration }
     - id: pressure_declared_only_refusal
       effect: migration
       challenge_lanes:
@@ -805,6 +810,29 @@ summary = json.loads(pathlib.Path(sys.argv[1]).read_text())["summary"]
 if summary["archive_count"] != 1 or summary["invalid_archive_count"] != 0:
     raise SystemExit(f"unexpected valid archive history: {summary}")
 PY
+"$ota" doctor --json "$fixture" > "$proof_root/refusal-archive-doctor-supported.json"
+python3 - "$proof_root/refusal-archive-doctor-supported.json" <<'PY'
+import json
+import pathlib
+import sys
+
+claims = json.loads(pathlib.Path(sys.argv[1]).read_text())["claim_assurance"]
+by_name = {claim["subject"]["name"]: claim for claim in claims}
+supported = by_name["pressure_workflow_archive_refusal"]
+if supported["assurance"]["status"] != "supported":
+    raise SystemExit(f"workflow archive assurance was not supported: {supported}")
+if supported["closure"]["status"] != "resolved":
+    raise SystemExit(f"workflow archive closure was not resolved: {supported}")
+if not any(
+    evidence["id"].startswith("effect_refusal_archive:sha256:")
+    and evidence["evidence_class"] == "attested"
+    for evidence in supported["assurance"]["evidence"]
+):
+    raise SystemExit(f"workflow archive assurance lacks attested evidence: {supported}")
+if by_name["pressure_schema_refusal"]["assurance"]["status"] != "unknown":
+    raise SystemExit("mixed task/workflow assurance was promoted from a workflow-only archive")
+PY
+record_stage archive_backed_workflow_assurance_supported
 python3 - "$proof_root/refusal-archive-path.txt" <<'PY'
 import json
 import pathlib
@@ -825,6 +853,21 @@ summary = json.loads(pathlib.Path(sys.argv[1]).read_text())["summary"]
 if summary["archive_count"] != 0 or summary["invalid_archive_count"] != 1:
     raise SystemExit(f"tampered archive was accepted: {summary}")
 PY
+"$ota" doctor --json "$fixture" > "$proof_root/refusal-archive-doctor-tampered.json"
+python3 - "$proof_root/refusal-archive-doctor-tampered.json" <<'PY'
+import json
+import pathlib
+import sys
+
+claims = json.loads(pathlib.Path(sys.argv[1]).read_text())["claim_assurance"]
+claim = next(
+    claim for claim in claims
+    if claim["subject"]["name"] == "pressure_workflow_archive_refusal"
+)
+if claim["assurance"]["status"] != "unknown":
+    raise SystemExit(f"tampered archive still supported assurance: {claim}")
+PY
+record_stage archive_backed_assurance_tamper_refused
 python3 - "$proof_root/refusal-archive-path.txt" "$proof_root/refusal-archive-original.json" <<'PY'
 import pathlib
 import sys
@@ -915,6 +958,8 @@ printf '%s\n' \
   'durable_refusal_archive_created' \
   'durable_refusal_archive_history_rederived' \
   'durable_refusal_archive_tamper_rejected' \
+  'archive_backed_workflow_assurance_supported' \
+  'archive_backed_assurance_tamper_refused' \
   'durable_refusal_archive_restored' \
   'setup_sentinel_absent' \
   'workflow_env_artifact_absent' \
