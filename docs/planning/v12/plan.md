@@ -792,6 +792,14 @@ checkout. The stale identity is refused as `effect_policy_denied` with an explic
 before fixture setup or durable logs; the provider-disabled plan-to-executor substitution control
 also passes. This does not establish provider execution, provider contact, a third-party checkout,
 or real-repository behavior.
+Sandbox-capability output is separately immutable-hosted on Linux/x64 and macOS in
+[run 33303689321](https://github.com/ota-run/ota/actions/runs/33303689321) against Core
+`49a1a486a4431749ff33ec50ea4265afbc2a64f2`. Both retained artifacts show an evaluated typed deny
+for one task and one workflow with refused preflight, and an evaluated typed warn that remains
+refused with `provider_execution: disabled`; neither is advertised as callable. Both also pass the
+Core task/workflow retained command-admission sandbox regression. This proves Ota's local
+capability and no-reconstruction boundary only, not provider contact, provider mutation, or
+authoritative sandbox enforcement.
 The explicit durable refusal archive carrier is separately immutable-hosted on Linux/x64 and macOS
 in [run 33243471896](https://github.com/ota-run/ota/actions/runs/33243471896) against Core
 `f8dc16c0eb3d8e5c9d9fda5c2f50674e2ba1b150`. Both retained artifacts create one negative receipt

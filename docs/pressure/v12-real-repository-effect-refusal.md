@@ -97,6 +97,17 @@ plan-to-executor source/plan/materialized-input substitution regression. This ve
 provider-checkout re-evaluation boundary only; it does not prove third-party provider execution,
 contact, mutation, arbitrary child-process absence, or real-repository coverage.
 
+## Internal Sandbox Capability Control
+
+Separate immutable internal pressure in [run 33303689321](https://github.com/ota-run/ota/actions/runs/33303689321)
+binds Core `49a1a486a4431749ff33ec50ea4265afbc2a64f2` on Linux/x64 and macOS. Both retained artifacts
+show a typed-deny task and workflow with refused preflight and `provider_execution: disabled`, and a
+typed-warn task that remains refused as provider-disabled rather than becoming callable. The same
+jobs pass Core's task/workflow retained command-admission sandbox control. This proves only Ota's
+local capability projection and command-admission reuse; it does not establish authoritative
+sandbox enforcement, provider contact, provider mutation, arbitrary child-process absence, or
+real-repository coverage.
+
 ## Unproved Boundaries
 
 - provider contact, authority, re-evaluation, or mutation;
@@ -112,6 +123,6 @@ The V12 pressure bar remains open. This matrix closes only the external static
 coverage-honesty control: an intentionally unchallenged equal-effect path reports
 `equivalent_execution_paths_not_proved`, opaque execution remains a gap, and a generic caller
 refusal cannot false-green the canary. The separate internal mixed-realization and
-namespace/policy-source and CI provider-checkout controls are complete; sandbox capability,
-refusal receipt/archive beyond source-posture reconciliation, and V11.14 assurance pressure also
-remain required.
+namespace/policy-source, CI provider-checkout, and sandbox-capability controls are complete;
+refusal receipt/archive beyond source-posture reconciliation and V11.14 assurance pressure remain
+required.

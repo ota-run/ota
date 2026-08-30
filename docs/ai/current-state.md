@@ -84,9 +84,14 @@ durable agent workflow belongs in the canonical Ota skill.
   policy makes the current projection identity differ from the rendered compatibility projection
   and returns `effect_policy_denied` with an explicit typed deny before workflow setup or durable
   logs. Both retained artifacts also pass the Core plan-to-executor substitution regression. This
-  is still an internal, provider-disabled control. It does not close V12: sandbox, refusal
-  receipt/archive beyond the covered source-posture control, and archive-backed V11.14 assurance
-  requirements remain open.
+  is still an internal, provider-disabled control. A subsequent immutable Linux/macOS
+  [run 33303689321](https://github.com/ota-run/ota/actions/runs/33303689321) against Core
+  `49a1a486a4431749ff33ec50ea4265afbc2a64f2` retains task and workflow typed-deny capability
+  lanes with refused preflight and `provider_execution: disabled`, plus a typed-warn lane that
+  remains refused as provider-disabled. Both artifacts pass the Core task/workflow retained
+  command-admission sandbox control. This proves neither provider contact or mutation nor
+  authoritative sandbox enforcement. Refusal receipt/archive beyond the covered source-posture
+  control and archive-backed V11.14 assurance requirements remain open.
   See `docs/pressure/v12-real-repository-effect-refusal.md`.
 - active version: V12 effect-bound refusal assurance. V11 is reconciled complete and V12 is the sole
   active version as of 2026-08-25. The first local implementation batch adds strict PostgreSQL
