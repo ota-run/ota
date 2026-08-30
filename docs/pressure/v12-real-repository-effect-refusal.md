@@ -69,6 +69,21 @@ distinct attachment and realization identities, absent command sentinels, and an
 declared-only origin. It is a synthetic, provider-disabled control and does not extend the
 real-repository claims above.
 
+## Internal Namespace And Policy-Source Control
+
+Separate immutable internal pressure in [run 33301627289](https://github.com/ota-run/ota/actions/runs/33301627289)
+binds Core `e7682a62287b173edaa8e2a18f57fc1593359dec` on Linux/x64 and macOS. It declares two
+identical local migration sets against resource bindings that differ only by canonical namespace
+account. Both artifacts retain distinct effect and attachment identities, an exact primary-only
+deny while the secondary remains compatibility `warn`, and validation refusal for an empty
+namespace authority. The same policy bytes loaded from the repository versus `OTA_POLICY` retain
+one policy snapshot identity but distinct repository-controlled and caller-selected source-evidence
+and decision identities. A create-new refusal receipt archived under the caller-selected posture is
+valid (`1` valid, `0` invalid); rewriting that receipt to repository-controlled is invalid (`0`,
+`1`); restoring its exact bytes returns it to valid (`1`, `0`). This is synthetic,
+provider-disabled source-provenance evidence only. It does not attest a provider, independent
+policy administration, arbitrary process absence, or real-repository behavior.
+
 ## Unproved Boundaries
 
 - provider contact, authority, re-evaluation, or mutation;
@@ -83,7 +98,7 @@ real-repository claims above.
 The V12 pressure bar remains open. This matrix closes only the external static
 coverage-honesty control: an intentionally unchallenged equal-effect path reports
 `equivalent_execution_paths_not_proved`, opaque execution remains a gap, and a generic caller
-refusal cannot false-green the canary. The separate internal mixed-realization control is complete;
-namespace/posture substitution, CI
-provider-checkout, sandbox capability, refusal receipt/archive, and V11.14 assurance pressure
-also remain required.
+refusal cannot false-green the canary. The separate internal mixed-realization and
+namespace/policy-source controls are complete; CI provider-checkout, sandbox capability,
+refusal receipt/archive beyond source-posture reconciliation, and V11.14 assurance pressure also
+remain required.

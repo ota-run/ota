@@ -68,8 +68,18 @@ durable agent workflow belongs in the canonical Ota skill.
   identity, distinct eligible and ineligible attachment/realization identities, a blocked preview,
   and a declared-only `effect_canary_realization_ineligible` assurance gap with
   `execution_started: false`; neither command sentinel exists. This remains an internal,
-  provider-disabled control. It does not close V12: namespace/posture, CI projection, sandbox,
-  receipt/archive, and archive-backed V11.14 assurance requirements remain open.
+  provider-disabled control. A later immutable Linux/macOS run
+  [33301627289](https://github.com/ota-run/ota/actions/runs/33301627289) against Core
+  `e7682a62287b173edaa8e2a18f57fc1593359dec` adds two equal local migration sets under distinct
+  canonical resource namespaces: their effect and attachment identities remain distinct, an empty
+  namespace authority refuses validation, and an exact primary-only policy deny does not select the
+  secondary namespace. The same policy bytes retain one snapshot identity but produce distinct
+  repository-controlled and caller-selected source evidence and decision identities. Rewriting an
+  archived caller-selected decision as repository-controlled changes history from `1` valid / `0`
+  invalid to `0` / `1`; restoring its original bytes returns it to `1` / `0`. This remains an
+  internal, provider-disabled control. It does not close V12: CI projection, sandbox,
+  refusal receipt/archive beyond this source-posture control, and archive-backed V11.14 assurance
+  requirements remain open.
   See `docs/pressure/v12-real-repository-effect-refusal.md`.
 - active version: V12 effect-bound refusal assurance. V11 is reconciled complete and V12 is the sole
   active version as of 2026-08-25. The first local implementation batch adds strict PostgreSQL

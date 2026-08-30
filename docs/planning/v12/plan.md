@@ -909,12 +909,14 @@ Neither fixture sentinel exists. This proves the internal selected-closure negat
 it does not establish provider behavior, independently administered policy, positive evidence, or
 real-repository coverage.
 
-The pressure set also proves that two equal local target labels under different canonical resource
-namespaces do not alias, unresolved namespace authority is ineligible, identical policy content
-loaded through different source postures retains distinct authority evidence, and source-posture
-substitution invalidates archived assurance. Schema conformance rejects every cross-action bounds
-combination and every attempt to reinterpret candidate v1 detection/upgrade as v2
-`effect_assurance`.
+The pressure set proves that two equal local target labels under different canonical resource
+namespaces do not alias, unresolved namespace authority refuses before planning, identical policy
+content loaded through different source postures retains distinct authority evidence, and
+source-posture substitution invalidates archived assurance. The internal Linux/macOS control in
+[run 33301627289](https://github.com/ota-run/ota/actions/runs/33301627289), bound to Core
+`e7682a62287b173edaa8e2a18f57fc1593359dec`, retains those checks as synthetic,
+provider-disabled evidence. Schema conformance rejects every cross-action bounds combination and
+every attempt to reinterpret candidate v1 detection/upgrade as v2 `effect_assurance`.
 
 The hosted matrix must exercise human and JSON output, `run`, workflow-backed `up`, CI projection
 with provider-checkout re-evaluation, sandbox capability output, refusal receipts, archive
