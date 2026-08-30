@@ -5481,6 +5481,10 @@ Current preview JSON fields:
   `host_port` when selected
 - `plan.actions`
 - `plan.skipped`
+- `plan.effect_application_plans` for a selected typed-effect closure, with the exact non-secret
+  application plans admitted before preview; absent for an untyped closure
+- `plan.effect_policy_decision` when an active policy evaluates the selected typed closure; absent
+  when no typed closure or policy decision exists, rather than fabricated for preview
 - `blockers`
 
 Use `ota up --dry-run --json` when you need the selected backend and lifecycle plus the action and

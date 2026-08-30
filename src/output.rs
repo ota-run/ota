@@ -3807,6 +3807,10 @@ pub struct UpPreviewPlan {
     pub dependency_chain: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub dependency_steps: Vec<RunPreviewDependencyStep>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub effect_application_plans: Vec<crate::effect_application_plan::EffectApplicationPlan>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub effect_policy_decision: Option<crate::effect_policy::EffectPolicyDecision>,
 }
 
 #[derive(Debug, Serialize)]

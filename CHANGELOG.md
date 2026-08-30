@@ -26,6 +26,12 @@
 
 ## Unreleased
 
+- `ota up --dry-run --json` now derives selected typed-effect admission before rendering a
+  workflow preview. A typed refusal is `BLOCKED` without setup or other workflow work, and retains
+  the admitted non-secret `plan.effect_application_plans` plus active
+  `plan.effect_policy_decision`; untyped closures and missing policy decisions omit those fields
+  rather than fabricating effect evidence.
+
 - Added the Core-owned pressure-evidence registry at
   `docs/pressure/evidence-manifest.json` and a generated Site discovery projection. Each retained
   case records exact repository and Ota revisions, hosted matrices, exercised surfaces, proven

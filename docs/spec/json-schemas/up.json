@@ -112,6 +112,11 @@
                 }
               }
             },
+            "effect_application_plans": {
+              "type": "array",
+              "items": { "$ref": "./run-preview.json#/$defs/effectApplicationPlan" }
+            },
+            "effect_policy_decision": { "$ref": "./run-preview.json#/$defs/effectPolicyDecision" },
             "actions": {
               "type": "array",
               "items": { "type": "string" }
@@ -347,6 +352,11 @@
                       }
                     }
                   },
+                  "effect_application_plans": {
+                    "type": "array",
+                    "items": { "$ref": "./run-preview.json#/$defs/effectApplicationPlan" }
+                  },
+                  "effect_policy_decision": { "$ref": "./run-preview.json#/$defs/effectPolicyDecision" },
                   "actions": {
                     "type": "array",
                     "items": { "type": "string" }
@@ -475,7 +485,21 @@
             }
           }
         }
-      }
+      },
+      "allOf": [
+        { "$ref": "#/$defs/typedEffectPreviewWithStatus" },
+        {
+          "properties": {
+            "members": {
+              "items": {
+                "allOf": [
+                  { "$ref": "#/$defs/typedEffectPreviewWithStatus" }
+                ]
+              }
+            }
+          }
+        }
+      ]
     },
     {
       "type": "object",
@@ -902,7 +926,12 @@
                       "skipped": {
                         "type": "array",
                         "items": { "type": "string" }
-                      }
+                      },
+                      "effect_application_plans": {
+                        "type": "array",
+                        "items": { "$ref": "./run-preview.json#/$defs/effectApplicationPlan" }
+                      },
+                      "effect_policy_decision": { "$ref": "./run-preview.json#/$defs/effectPolicyDecision" }
                     }
                   },
                   "blockers": {
@@ -914,7 +943,20 @@
             ]
           }
         }
-      }
+      },
+      "allOf": [
+        {
+          "properties": {
+            "members": {
+              "items": {
+                "allOf": [
+                  { "$ref": "#/$defs/typedEffectPreview" }
+                ]
+              }
+            }
+          }
+        }
+      ]
     },
     {
       "type": "object",
@@ -1042,7 +1084,12 @@
                       "skipped": {
                         "type": "array",
                         "items": { "type": "string" }
-                      }
+                      },
+                      "effect_application_plans": {
+                        "type": "array",
+                        "items": { "$ref": "./run-preview.json#/$defs/effectApplicationPlan" }
+                      },
+                      "effect_policy_decision": { "$ref": "./run-preview.json#/$defs/effectPolicyDecision" }
                     }
                   },
                   "blockers": {
@@ -1054,7 +1101,20 @@
             ]
           }
         }
-      }
+      },
+      "allOf": [
+        {
+          "properties": {
+            "members": {
+              "items": {
+                "allOf": [
+                  { "$ref": "#/$defs/typedEffectPreview" }
+                ]
+              }
+            }
+          }
+        }
+      ]
     },
     {
       "type": "object",
@@ -1135,5 +1195,128 @@
     {
       "$ref": "./validate.json#/oneOf/1"
     }
-  ]
+  ],
+  "$defs": {
+    "typedEffectPreview": {
+      "allOf": [
+        {
+          "if": {
+            "required": ["plan"],
+            "properties": {
+              "plan": {
+                "required": ["effect_policy_decision"],
+                "properties": {
+                  "effect_policy_decision": {
+                    "required": ["explicit_typed_deny"],
+                    "properties": {
+                      "explicit_typed_deny": { "const": true }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "plan": {
+                "required": ["effect_application_plans"],
+                "properties": {
+                  "effect_application_plans": { "minItems": 1 }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": ["plan"],
+            "properties": {
+              "plan": {
+                "required": ["effect_application_plans"],
+                "properties": {
+                  "effect_application_plans": { "minItems": 1 }
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "ok": { "const": false },
+              "status": { "const": "BLOCKED" }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": ["plan"],
+            "properties": {
+              "plan": {
+                "required": ["effect_policy_decision"],
+                "properties": {
+                  "effect_policy_decision": {
+                    "required": ["aggregate_decision"],
+                    "properties": {
+                      "aggregate_decision": { "const": "deny" }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "ok": { "const": false },
+              "status": { "const": "BLOCKED" }
+            }
+          }
+        }
+      ]
+    },
+    "typedEffectPreviewWithStatus": {
+      "allOf": [
+        { "$ref": "#/$defs/typedEffectPreview" },
+        {
+          "if": {
+            "required": ["plan"],
+            "properties": {
+              "plan": {
+                "required": ["effect_application_plans"],
+                "properties": {
+                  "effect_application_plans": { "minItems": 1 }
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "preview_status": { "const": "BLOCKED" }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": ["plan"],
+            "properties": {
+              "plan": {
+                "required": ["effect_policy_decision"],
+                "properties": {
+                  "effect_policy_decision": {
+                    "required": ["aggregate_decision"],
+                    "properties": {
+                      "aggregate_decision": { "const": "deny" }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "preview_status": { "const": "BLOCKED" }
+            }
+          }
+        }
+      ]
+    }
+  }
 }

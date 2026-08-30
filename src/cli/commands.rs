@@ -6097,6 +6097,8 @@ fn execution_option_refusal_up_preview_plan(task_name: &str) -> UpPreviewPlan {
         staged_skipped: Vec::new(),
         dependency_chain: Vec::new(),
         dependency_steps: Vec::new(),
+        effect_application_plans: Vec::new(),
+        effect_policy_decision: None,
     }
 }
 
@@ -135231,6 +135233,8 @@ fn build_up_preview_with_actor(
         staged_skipped: Vec::new(),
         dependency_chain: Vec::new(),
         dependency_steps: Vec::new(),
+        effect_application_plans: Vec::new(),
+        effect_policy_decision: None,
     };
     plan.actions = actions;
     plan.staged_actions = staged_actions;
@@ -137867,9 +137871,6 @@ fn typed_effect_up_pre_execution_result(
     dry_run: bool,
     archive_effect_refusal: bool,
 ) -> Result<Option<RepoUpResult>, TypedEffectRefusalArchiveError> {
-    if dry_run {
-        return Ok(None);
-    }
     if let Some(workflow_name) = workflow_name
         && !selected_workflow_selector_is_valid(contract, workflow_name)
     {
@@ -137892,15 +137893,28 @@ fn typed_effect_up_pre_execution_result(
     ) {
         Ok(admission) => admission,
         Err(error) => {
-            return Ok(Some(typed_effect_up_refusal_result(
-                contract,
-                resolved_path,
-                workflow_name,
-                overrides,
-                agent,
-                *error,
-                None,
-            )));
+            return Ok(Some(if dry_run {
+                typed_effect_up_dry_run_refusal_result(
+                    contract,
+                    resolved_path,
+                    workflow_name,
+                    overrides,
+                    agent,
+                    *error,
+                    None,
+                    None,
+                )
+            } else {
+                typed_effect_up_refusal_result(
+                    contract,
+                    resolved_path,
+                    workflow_name,
+                    overrides,
+                    agent,
+                    *error,
+                    None,
+                )
+            }));
         }
     };
     let Some(error) = typed_effect_admission_refusal(&command_admission.typed) else {
@@ -137917,15 +137931,28 @@ fn typed_effect_up_pre_execution_result(
             "`--archive-effect-refusal` requires an explicit matching typed deny rule; generic effect-policy refusal is not archival authority",
         ).into());
     }
-    let mut result = typed_effect_up_refusal_result(
-        contract,
-        resolved_path,
-        workflow_name,
-        overrides,
-        agent,
-        error,
-        evidence,
-    );
+    let mut result = if dry_run {
+        typed_effect_up_dry_run_refusal_result(
+            contract,
+            resolved_path,
+            workflow_name,
+            overrides,
+            agent,
+            error,
+            evidence,
+            Some(&command_admission),
+        )
+    } else {
+        typed_effect_up_refusal_result(
+            contract,
+            resolved_path,
+            workflow_name,
+            overrides,
+            agent,
+            error,
+            evidence,
+        )
+    };
     if archive_effect_refusal {
         archive_typed_effect_policy_refusal(
             contract,
@@ -138180,6 +138207,66 @@ fn typed_effect_up_refusal_result(
         stdout: String::new(),
         stderr: String::new(),
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn typed_effect_up_dry_run_refusal_result(
+    contract: &Contract,
+    resolved_path: &Path,
+    workflow_name: Option<&str>,
+    overrides: ExecutionOverrides,
+    agent: bool,
+    error: RunError,
+    typed_effect_policy_refusal: Option<
+        crate::effect_orchestration::TypedEffectPolicyRefusalEvidence,
+    >,
+    admission: Option<&CommandTypedEffectAdmission>,
+) -> RepoUpResult {
+    let mut result = typed_effect_up_refusal_result(
+        contract,
+        resolved_path,
+        workflow_name,
+        overrides,
+        agent,
+        error,
+        typed_effect_policy_refusal,
+    );
+    let mut preview = build_up_preview_with_actor(
+        contract,
+        resolved_path,
+        overrides,
+        workflow_name,
+        UpRunBehaviorPreference::Auto,
+        &result.report,
+        agent,
+    );
+    preview.summary = doctor_summary(&result.report, DoctorVerdict::NotReady);
+    preview.governance = governance_evaluation_for_workflow_preview(
+        contract,
+        workflow_name,
+        overrides,
+        UpRunBehaviorPreference::Auto,
+        &preview.summary,
+        agent,
+        None,
+    );
+    let action = String::from("refuse selected typed-effect closure before workflow preparation");
+    preview.plan.actions = vec![action.clone()];
+    preview.plan.staged_actions = vec![crate::output::PreviewStageAction {
+        stage_family: String::from("verify"),
+        action,
+    }];
+    preview.plan.skipped.clear();
+    preview.plan.staged_skipped.clear();
+    preview.plan.dependency_chain.clear();
+    preview.plan.dependency_steps.clear();
+    if let Some(admission) = admission {
+        preview.plan.effect_application_plans = admission.typed.closure.application_plans.clone();
+        preview.plan.effect_policy_decision = admission.typed.policy_decision.clone();
+    }
+    result.phase = "preview";
+    result.preview = Some(preview);
+    result
 }
 
 #[allow(clippy::too_many_arguments)]

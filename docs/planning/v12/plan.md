@@ -1009,11 +1009,14 @@ source-posture substitution invalidates archived assurance. The internal Linux/m
 provider-disabled evidence. Schema conformance rejects every cross-action bounds combination and
 every attempt to reinterpret earlier detection/upgrade candidates as v5 `effect_assurance`.
 
-The hosted matrix must exercise human and JSON output, `run`, workflow-backed `up`, CI projection
-with provider-checkout re-evaluation, sandbox capability output, refusal receipts, archive
-verification, and the V11.14 assurance view. Evidence must include provider/repository sentinels
-proving zero mutation and one deliberately dishonest archive/control for every identity-bearing
-layer.
+The hosted matrix must exercise human and JSON output, `run`, workflow-backed `up` including its
+read-only admission preview, CI projection with provider-checkout re-evaluation, sandbox capability
+output, refusal receipts, archive verification, and the V11.14 assurance view. Evidence must retain
+the named fixture controls: absent setup sentinel, rendered workflow environment, proof artifacts,
+durable execution logs, and selected command sentinels after refusal; it must also retain deliberate
+substitution or stripping controls for every identity-bearing layer that the fixture exercises. These
+controls do not establish provider contact or mutation absence, arbitrary child-process absence, or
+complete repository immutability.
 
 Each pressure result includes the uncovered-material-behavior inventory. Green selected lanes do
 not prove direct shell, unmodeled migration tools, deployment systems, database transaction

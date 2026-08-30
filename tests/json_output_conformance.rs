@@ -2315,6 +2315,34 @@ workflows:
     )
     .expect("contract");
 
+    let preview = run_ota_failure_stdout_json(&["up", "--dry-run", "--json"], fixture.path());
+    assert_matches_schema("up.json", &preview);
+    assert_eq!(preview["phase"], "preview", "{preview}");
+    assert_eq!(preview["preview_status"], "BLOCKED", "{preview}");
+    assert_eq!(
+        preview["plan"]["effect_application_plans"]
+            .as_array()
+            .map(Vec::len),
+        Some(1),
+        "{preview}"
+    );
+    assert!(
+        preview["plan"]["effect_policy_decision"].is_null(),
+        "no policy snapshot must not be fabricated: {preview}"
+    );
+    assert!(
+        preview["plan"]["actions"]
+            .as_array()
+            .is_some_and(|actions| actions.iter().all(|action| {
+                !action
+                    .as_str()
+                    .is_some_and(|action| action.contains("run task"))
+            })),
+        "a blocked preview must not promise setup after refusal: {preview}"
+    );
+    assert!(!fixture.path().join("setup-sentinel").exists());
+    assert!(!fixture.path().join(".env.typed").exists());
+
     let execution = Command::new(env!("CARGO_BIN_EXE_ota"))
         .args(["run", "migrate", "--plain", "--log"])
         .current_dir(fixture.path())
@@ -2810,6 +2838,10 @@ workflows:
   release:
     setup: {{ task: setup }}
     run: {{ task: parent }}
+  declared-only:
+    run: {{ task: migrate-declared-only }}
+  untyped:
+    run: {{ task: setup }}
 agent:
   effect_refusal_canaries:
     - id: production_schema_refusal
@@ -2846,6 +2878,47 @@ agent:
             .contains("declared-only effect realization without an exact typed adapter plan",)
     );
     assert!(!fixture.path().join("declared-only-sentinel").exists());
+    let no_policy_up_preview = run_ota_failure_stdout_json(
+        &["up", "--workflow", "release", "--dry-run", "--json"],
+        fixture.path(),
+    );
+    assert_matches_schema("up.json", &no_policy_up_preview);
+    assert_eq!(
+        no_policy_up_preview["phase"], "preview",
+        "{no_policy_up_preview}"
+    );
+    assert_eq!(
+        no_policy_up_preview["preview_status"], "BLOCKED",
+        "{no_policy_up_preview}"
+    );
+    assert_eq!(
+        no_policy_up_preview["plan"]["effect_application_plans"]
+            .as_array()
+            .map(Vec::len),
+        Some(1),
+        "{no_policy_up_preview}"
+    );
+    assert!(
+        no_policy_up_preview["plan"]["effect_policy_decision"].is_null(),
+        "a missing policy must not be fabricated: {no_policy_up_preview}"
+    );
+    let declared_only_up_preview = run_ota_failure_stdout_json(
+        &["up", "--workflow", "declared-only", "--dry-run", "--json"],
+        fixture.path(),
+    );
+    assert_matches_schema("up.json", &declared_only_up_preview);
+    assert_eq!(declared_only_up_preview["preview_status"], "BLOCKED");
+    assert!(
+        declared_only_up_preview["plan"]["effect_policy_decision"].is_null(),
+        "a declared-only refusal must not fabricate policy evidence: {declared_only_up_preview}"
+    );
+    let untyped_up_preview = run_ota_json_output(
+        &["up", "--workflow", "untyped", "--dry-run", "--json"],
+        fixture.path(),
+    );
+    assert_matches_schema("up.json", &untyped_up_preview);
+    assert!(untyped_up_preview["plan"]["effect_application_plans"].is_null());
+    assert!(untyped_up_preview["plan"]["effect_policy_decision"].is_null());
     let no_policy_declared_only_preview = run_ota_failure_stdout_json(
         &["run", "migrate-declared-only", "--dry-run", "--json"],
         fixture.path(),
@@ -2939,6 +3012,93 @@ policies:
             .as_str()
             .is_some_and(|identity| identity.starts_with("sha256:"))
     );
+    let up_preview = run_ota_failure_stdout_json(
+        &["up", "--workflow", "release", "--dry-run", "--json"],
+        fixture.path(),
+    );
+    assert_matches_schema("up.json", &up_preview);
+    assert_eq!(up_preview["preview_status"], "BLOCKED", "{up_preview}");
+    assert_eq!(
+        up_preview["plan"]["effect_application_plans"]
+            .as_array()
+            .map(Vec::len),
+        Some(1),
+        "{up_preview}"
+    );
+    assert_eq!(
+        up_preview["plan"]["effect_policy_decision"]["aggregate_decision"],
+        decision["aggregate_decision"],
+        "run and up dry-run must retain the same aggregate policy decision: {up_preview}"
+    );
+    assert_eq!(
+        up_preview["plan"]["effect_policy_decision"]["policy_snapshot_identity"],
+        decision["policy_snapshot_identity"],
+        "run and up dry-run must bind the same policy snapshot: {up_preview}"
+    );
+    let mut missing_typed_plan = up_preview.clone();
+    missing_typed_plan["plan"]
+        .as_object_mut()
+        .expect("up plan")
+        .remove("effect_application_plans");
+    assert_rejected_by_schema("up.json", &missing_typed_plan);
+    let mut runnable_typed_deny = up_preview.clone();
+    runnable_typed_deny["ok"] = json!(true);
+    runnable_typed_deny["status"] = json!("READY");
+    runnable_typed_deny["preview_status"] = json!("RUNNABLE");
+    assert_rejected_by_schema("up.json", &runnable_typed_deny);
+
+    let mut typed_member = up_preview.clone();
+    let typed_member = typed_member.as_object_mut().expect("up preview object");
+    typed_member.remove("path");
+    typed_member.insert("member".to_owned(), json!("typed-member"));
+    let mut grouped_preview = up_preview.clone();
+    grouped_preview["members"] = json!([typed_member]);
+    assert_matches_schema("up.json", &grouped_preview);
+    grouped_preview["members"][0]["plan"]
+        .as_object_mut()
+        .expect("member plan")
+        .remove("effect_application_plans");
+    assert_rejected_by_schema("up.json", &grouped_preview);
+
+    let mut workspace_member = typed_member.clone();
+    let workspace_member = &mut workspace_member;
+    workspace_member.retain(|key, _| {
+        matches!(
+            key.as_str(),
+            "member"
+                | "ok"
+                | "dry_run"
+                | "status"
+                | "phase"
+                | "summary"
+                | "contract_identity"
+                | "execution"
+                | "plan"
+                | "blockers"
+        )
+    });
+    workspace_member["plan"]
+        .as_object_mut()
+        .expect("workspace member plan")
+        .retain(|key, _| {
+            matches!(
+                key.as_str(),
+                "actions" | "skipped" | "effect_application_plans" | "effect_policy_decision"
+            )
+        });
+    let mut workspace_preview = json!({
+        "ok": false,
+        "path": "/workspace",
+        "dry_run": true,
+        "status": "BLOCKED",
+        "phase": "aggregate",
+        "findings": [],
+        "members": [workspace_member]
+    });
+    assert_matches_schema("up.json", &workspace_preview);
+    workspace_preview["members"][0]["ok"] = json!(true);
+    workspace_preview["members"][0]["status"] = json!("READY");
+    assert_rejected_by_schema("up.json", &workspace_preview);
     let declared_only_preview = run_ota_failure_stdout_json(
         &["run", "migrate-declared-only", "--dry-run", "--json"],
         fixture.path(),

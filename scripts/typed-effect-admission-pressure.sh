@@ -330,8 +330,13 @@ stage=preview_validation
   --assert-eq plan.effect_policy_decision.explicit_typed_deny=true \
   --write-payload "$proof_root/run-dry-run.json" \
   -- "$ota" run migrate --dry-run --json "$preview_fixture"
-"$ota" json validate --schema up.json --assert-eq dry_run=true \
-  --assert-eq phase=preview --write-payload "$proof_root/up-dry-run.json" \
+"$ota" json validate --schema up.json --allow-exit 1 --assert-eq dry_run=true \
+  --assert-eq ok=false --assert-eq execution_started=false \
+  --assert-eq preview_status=BLOCKED --assert-eq phase=preview \
+  --write-payload "$proof_root/up-dry-run.json" \
+  --assert-non-empty-string plan.effect_application_plans.0.identity \
+  --assert-eq plan.effect_policy_decision.aggregate_decision=deny \
+  --assert-eq plan.effect_policy_decision.explicit_typed_deny=true \
   -- "$ota" up --dry-run --json "$preview_fixture"
 record_stage previews_validated
 

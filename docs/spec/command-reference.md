@@ -2517,6 +2517,10 @@ Current behavior:
   prepare/setup/run execution instead of treating the request as advisory
 - `ota up --dry-run --json` carries `execution_started: false`; option-admission blockers identify
   the requested flag and selected task before any workflow phase starts
+- when a selected workflow closure contains a typed effect, `ota up --dry-run` derives the same
+  selected-closure admission before previewing any setup work; JSON exposes the admitted
+  `plan.effect_application_plans` and active `plan.effect_policy_decision`, while a refusal returns
+  `BLOCKED` without running a workflow phase
 - when non-dry-run `ota up --json` is blocked by an explicit typed policy deny,
   `receipt.typed_effect_policy_refusal` retains the exact command-scoped decision with
   `execution_started: false`; ordinary refusal remains non-durable

@@ -162,8 +162,8 @@ durable agent workflow belongs in the canonical Ota skill.
   `migration_set.content_identity`, and derives a domain-separated application plan bound to the
   exact task attachment, contract invocation origin, repository-relative effective working directory,
   and effect realization. Dry-run publishes that non-secret plan. For repo-level `ota run` and
-  non-dry-run repo-level `ota up`, one command-level typed preflight admits and verifies every typed
-  action in the selected closure before
+  `ota up`, including `ota up --dry-run`, one command-level typed preflight admits and verifies every
+  typed action in the selected closure before
   command-scoped replay-input policy loading, agent/crossing/sandbox admission, workflow-environment
   artifact rendering, or durable-log preparation. It re-observes source truth through retained
   no-follow descriptors and returns the provider-disabled refusal before task conditions, required
@@ -172,9 +172,10 @@ durable agent workflow belongs in the canonical Ota skill.
   `ota proof lifecycle` now directly admit the complete selected proof closure, retaining phase
   and proof-helper invocation role/order without unselected-mode dependencies, before replay,
   crossing or sandbox admission, proof artifacts, service work, or child startup; a typed deny
-  returns `OTA_EFFECT_POLICY_DENIED` with `execution_started: false`. Dry-run, other read-only
-  command diagnosis, and policy discovery are not claimed to occur after this boundary. Validation
-  refuses mode or OS-variant execution-body overrides so runtime selection
+  returns `OTA_EFFECT_POLICY_DENIED` with `execution_started: false`. `ota up --dry-run` carries the
+  admitted non-secret plans and active decision in its blocked preview without starting work; other
+  read-only command diagnosis and policy discovery are not claimed to occur after this boundary.
+  Validation refuses mode or OS-variant execution-body overrides so runtime selection
   cannot replace the previewed typed action. Non-dry-run `ota up` emits its ordinary blocked
   readiness receipt with `execution_attempted: false`; the typed adapter emits no positive effect
   or execution receipt, archive, success claim, agent-safe authority, canary, or positive assurance.
@@ -250,10 +251,11 @@ durable agent workflow belongs in the canonical Ota skill.
   CLI orchestration. Its content-addressed decision binds the policy snapshot, redacted source
   location, source kind and authority posture, selected invocation and execution graph, effect and
   realization sets, every matching typed rule, current coarse-effect components, and aggregate
-  `deny > warn > allow` precedence. Repo-level `ota run` and non-dry-run `ota up` consume that same
-  decision before replay, authority, sandbox, setup, environment rendering, services, dependencies,
-  provider contact, or repository mutation. A typed rule, strict fallback, or coarse component whose
-  aggregate is `deny` causes `OTA_EFFECT_POLICY_DENIED`; dry-run publishes the non-secret decision.
+  `deny > warn > allow` precedence. Repo-level `ota run` and `ota up`, including read-only
+  `--dry-run`, consume the selected-closure decision before replay, authority, sandbox, setup,
+  environment rendering, services, dependencies, provider contact, or repository mutation. A typed
+  rule, strict fallback, or coarse component whose aggregate is `deny` causes
+  `OTA_EFFECT_POLICY_DENIED`; dry-run publishes the non-secret plans and decision without starting work.
   Caller overrides remain limited to shipped coarse selectors and cannot target typed rules. This is
   operational refusal only: provider execution, positive effect/execution receipts and archives,
   and positive assurance remain disabled. Plan-to-executor continuity is now
