@@ -890,6 +890,71 @@ test ! -e "$fixture/.env.typed" || fail "refusal archive rendered workflow envir
 test ! -e "$fixture/.ota/state/logs" || fail "refusal archive created durable execution logs"
 record_stage durable_refusal_archive_verified
 
+stage=effect_refusal_candidate
+mkdir -p "$fixture/.ota/candidates"
+archive_path=$(tr -d '\n' < "$proof_root/refusal-archive-path.txt")
+candidate_path=".ota/candidates/effect-refusal-candidate.json"
+"$ota" json validate --schema effect-refusal-candidate.json --assert-eq written=false \
+  --assert-eq candidate_published=true --assert-eq candidate_publication=durable \
+  --assert-eq disposition=unknown --assert-eq no_op=false \
+  --assert-eq candidate.kind=effect_assurance \
+  --assert-eq reconciliation.schema_version=1 \
+  --write-payload "$proof_root/effect-refusal-candidate-published.json" \
+  -- "$ota" contract effect-refusal-candidate --archive "$archive_path" \
+    --canary-id reviewed_archive_schema_refusal --candidate-out "$candidate_path" --json "$fixture"
+test -f "$fixture/$candidate_path" || fail "effect-refusal candidate was not published"
+python3 - "$proof_root/effect-refusal-candidate-published.json" <<'PY'
+import json
+import pathlib
+import sys
+
+candidate = json.loads(pathlib.Path(sys.argv[1]).read_text())["candidate"]
+if "application_projection" in candidate:
+    raise SystemExit("review-only effect-refusal candidate carried an application projection")
+PY
+"$ota" json validate --schema contract-candidate-application.json --allow-exit 1 \
+  --assert-eq code=candidate_read_only --assert-eq written=false \
+  --write-payload "$proof_root/effect-refusal-candidate-read-only.json" \
+  -- "$ota" contract apply-candidate "$candidate_path" --write --carrier git --json "$fixture"
+"$ota" json validate --schema effect-refusal-candidate.json --assert-eq written=false \
+  --assert-eq candidate_published=false --assert-eq candidate_publication=not_published \
+  --assert-eq disposition=already_declared --assert-eq no_op=true \
+  --assert-eq reconciliation.canary_id=pressure_workflow_archive_refusal \
+  --assert-non-empty-string reconciliation.identity \
+  --write-payload "$proof_root/effect-refusal-candidate-no-op.json" \
+  -- "$ota" contract effect-refusal-candidate --archive "$archive_path" \
+    --canary-id pressure_workflow_archive_refusal \
+    --candidate-out .ota/candidates/effect-refusal-candidate-no-op.json --json "$fixture"
+test ! -e "$fixture/.ota/candidates/effect-refusal-candidate-no-op.json" \
+  || fail "effect-refusal candidate no-op published an artifact"
+cp "$fixture/migrations/001.sql" "$proof_root/effect-refusal-candidate-migration-original.sql"
+printf 'alter table example add column candidate_drift integer;\n' >> "$fixture/migrations/001.sql"
+"$ota" json validate --schema effect-refusal-candidate.json --allow-exit 1 \
+  --assert-eq code=effect_refusal_candidate_stale --assert-eq candidate_published=false \
+  --write-payload "$proof_root/effect-refusal-candidate-stale.json" \
+  -- "$ota" contract effect-refusal-candidate --archive "$archive_path" \
+    --canary-id stale_archive_schema_refusal \
+    --candidate-out .ota/candidates/effect-refusal-candidate-stale.json --json "$fixture"
+test ! -e "$fixture/.ota/candidates/effect-refusal-candidate-stale.json" \
+  || fail "stale effect-refusal candidate published an artifact"
+cp "$proof_root/effect-refusal-candidate-migration-original.sql" "$fixture/migrations/001.sql"
+mv "$fixture/ota.yaml" "$proof_root/effect-refusal-candidate-contract-original.yaml"
+mkdir -p "$proof_root/effect-refusal-candidate-outside"
+cp "$proof_root/effect-refusal-candidate-contract-original.yaml" \
+  "$proof_root/effect-refusal-candidate-outside/ota.yaml"
+ln -s "$proof_root/effect-refusal-candidate-outside/ota.yaml" "$fixture/ota.yaml"
+"$ota" json validate --schema effect-refusal-candidate.json --allow-exit 1 \
+  --assert-eq code=effect_refusal_candidate_failed --assert-eq candidate_published=false \
+  --write-payload "$proof_root/effect-refusal-candidate-aliased-contract.json" \
+  -- "$ota" contract effect-refusal-candidate --archive "$archive_path" \
+    --canary-id aliased_archive_schema_refusal \
+    --candidate-out .ota/candidates/effect-refusal-candidate-aliased-contract.json --json "$fixture"
+test ! -e "$fixture/.ota/candidates/effect-refusal-candidate-aliased-contract.json" \
+  || fail "aliased contract published an effect-refusal candidate"
+rm "$fixture/ota.yaml"
+mv "$proof_root/effect-refusal-candidate-contract-original.yaml" "$fixture/ota.yaml"
+record_stage effect_refusal_candidate_verified
+
 stage=stale_input_refusal
 cp -R "$preview_fixture" "$proof_root/stale-fixture"
 printf 'alter table example add column value integer;\n' \
@@ -961,6 +1026,7 @@ printf '%s\n' \
   'archive_backed_workflow_assurance_supported' \
   'archive_backed_assurance_tamper_refused' \
   'durable_refusal_archive_restored' \
+  'effect_refusal_candidate_verified' \
   'setup_sentinel_absent' \
   'workflow_env_artifact_absent' \
   'stale_input_refused' \

@@ -78,6 +78,9 @@ jobs:
           cargo test --locked tasks_json_binds_typed_effect_policy_and_refuses_provider_capability \
             --lib -- --test-threads=1 2>&1 | tee \
             "$RUNNER_TEMP/ota-typed-effect-admission-pressure/sandbox-admission-continuity.txt"
+          cargo test --locked contract_candidate::tests::effect_assurance_candidate_is_archive_bound_and_read_only \
+            --lib -- --test-threads=1 2>&1 | tee \
+            "$RUNNER_TEMP/ota-typed-effect-admission-pressure/effect-refusal-candidate-integrity.txt"
 
       - name: Upload pressure evidence
         if: always()
