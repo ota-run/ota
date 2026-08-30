@@ -675,9 +675,14 @@ Snapshot publication uncertainty is a separate partial-transaction outcome: it n
 `policy_snapshot` or `contract_snapshot`, carries the exact path, and states that no refusal receipt
 was published by that attempt.
 
-Effect-refusal canary output remains execution-free and ephemeral until it can reference that
-verified refusal archive without introducing a second archive format. It must not be archived as a
-standalone `passed` claim or consumed by V11.14 assurance first.
+Effect-refusal canary output remains execution-free and ephemeral. Doctor may consume the existing
+verified private refusal archive without introducing a second archive format, but only for an exact
+workflow challenge lane: the current semantic contract snapshot, workflow, eligible effect,
+attachment, realization, explicit typed deny, and pre-execution posture must all reconcile. A
+task-only challenge remains `unknown` until a durable task carrier exists. It must not archive a
+standalone `passed` canary or promote fallback, coarse, unavailable, or provider-disabled refusal.
+An invalid sibling archive or more than one exact matching archive leaves the claim `unknown`:
+Doctor never chooses attestation evidence by archive order.
 
 The later durable refusal/archive and successful assurance records must bind:
 

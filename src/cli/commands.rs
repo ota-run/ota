@@ -22286,6 +22286,8 @@ fn doctor_claim_assurance_with_overrides(
     loaded_policy: Option<&LoadedOrgPolicyPack>,
 ) -> Vec<crate::claim_assurance::ClaimAssuranceRecord> {
     let policy_pack = loaded_policy.map(|loaded| &loaded.pack);
+    let root = contract_working_dir(contract_path);
+    let effect_refusal_archives = load_effect_refusal_archive_candidates(root).unwrap_or_default();
     let mut records = contract
         .tasks
         .iter()
@@ -22304,15 +22306,17 @@ fn doctor_claim_assurance_with_overrides(
         })
         .collect::<Vec<_>>();
     records.extend(
-        crate::claim_assurance::effect_refusal_assurance_claims(contract)
-            .into_iter()
-            .map(|mut record| {
-                apply_claim_assurance_policy(&mut record, policy_pack);
-                record
-            }),
+        crate::claim_assurance::effect_refusal_assurance_claims_with_archives(
+            contract,
+            &effect_refusal_archives,
+        )
+        .into_iter()
+        .map(|mut record| {
+            apply_claim_assurance_policy(&mut record, policy_pack);
+            record
+        }),
     );
 
-    let root = contract_working_dir(contract_path);
     let contract_snapshot_hash = build_contract_snapshot_artifact(root, contract, false)
         .ok()
         .map(|snapshot| snapshot.hash);
@@ -43469,9 +43473,11 @@ fn read_repo_receipt_archive_record_from_bytes(
         .as_deref()
         .and_then(|value| repo_receipt_archive_timestamp(Path::new(value)))
         .or_else(|| repo_receipt_archive_timestamp(path));
-    let record = RepoReceiptArchiveRecord {
+    let mut record = RepoReceiptArchiveRecord {
         archive_path: path.to_path_buf(),
         archived_at,
+        archive_identity: receipt_archive_identity.clone(),
+        contract_snapshot_identity: None,
         payload,
     };
     // Receipt history is archive-only verification. Do not consult the mutable worktree contract:
@@ -43486,6 +43492,16 @@ fn read_repo_receipt_archive_record_from_bytes(
             compact_path(path, ".")
         )
     })?;
+    record.contract_snapshot_identity = Some(
+        crate::semantic_identity::semantic_contract_identity(&crossing_contract).map_err(
+            |error| {
+                format!(
+                    "receipt archive `{}` cannot derive its contract snapshot identity: {error}",
+                    compact_path(path, ".")
+                )
+            },
+        )?,
+    );
     verify_archived_effect_policy_refusal(&record, &crossing_contract, path)?;
     if let Some(evidence) = record
         .payload
@@ -44353,6 +44369,66 @@ fn scan_repo_receipt_archives(root: &Path) -> Result<RepoReceiptArchiveScan, Str
         archives,
         invalid_archives,
     })
+}
+
+/// Extracts only refusal realizations that already passed the private archive verifier. Doctor
+/// treats scan failure, missing archives, and invalid entries as absent evidence rather than
+/// weakening an assurance claim.
+fn load_effect_refusal_archive_candidates(
+    root: &Path,
+) -> Option<Vec<crate::claim_assurance::EffectRefusalArchiveCandidate>> {
+    let Ok(scan) = scan_repo_receipt_archives(root) else {
+        return None;
+    };
+    if !scan.invalid_archives.is_empty() {
+        return None;
+    }
+    Some(
+        scan.archives
+            .into_iter()
+            .flat_map(|record| {
+                let Some(context) = record
+                    .payload
+                    .archive_context
+                    .as_ref()
+                    .and_then(|context| context.effect_policy_refusal.as_ref())
+                else {
+                    return Vec::new();
+                };
+                let Some(evidence) = record.payload.receipt.typed_effect_policy_refusal.as_ref()
+                else {
+                    return Vec::new();
+                };
+                let Some(contract_snapshot_identity) = record.contract_snapshot_identity.as_ref()
+                else {
+                    return Vec::new();
+                };
+                evidence
+                    .policy_decision
+                    .effects
+                    .iter()
+                    .filter(|effect| {
+                        effect.eligible
+                            && effect.decision == PolicyEffectDecision::Deny
+                            && effect
+                                .applicable_rules
+                                .iter()
+                                .any(|rule| rule.decision == PolicyEffectDecision::Deny)
+                    })
+                    .filter_map(|effect| {
+                        crate::claim_assurance::EffectRefusalArchiveCandidate::from_verified(
+                            record.archive_identity.clone(),
+                            contract_snapshot_identity.clone(),
+                            context.workflow.clone(),
+                            effect.effect_identity.clone(),
+                            effect.attachment_identity.clone(),
+                            effect.realization_identity.clone(),
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>(),
+    )
 }
 
 #[cfg(not(unix))]
@@ -131008,6 +131084,8 @@ struct ArchivedRepoReceiptEnvelope {
 struct RepoReceiptArchiveRecord {
     archive_path: PathBuf,
     archived_at: Option<String>,
+    archive_identity: String,
+    contract_snapshot_identity: Option<String>,
     payload: ArchivedRepoReceiptEnvelope,
 }
 

@@ -588,7 +588,16 @@ pub(crate) fn typed_effect_admission_refusal(admission: &TypedEffectAdmission) -
             ),
         });
     }
-    let decision = admission.policy_decision.as_ref()?;
+    let first_plan = admission.closure.application_plans.first()?;
+    let Some(decision) = admission.policy_decision.as_ref() else {
+        return Some(RunError::FileActionFailed {
+            task: first_plan.task.clone(),
+            message: format!(
+                "typed database schema-mutation plan `{}` and every typed action in the selected closure were admitted with their exact materialized inputs, but provider execution is disabled in V12",
+                first_plan.identity,
+            ),
+        });
+    };
     if decision.effects.iter().any(|effect| !effect.eligible) {
         return Some(RunError::FileActionFailed {
             task,
@@ -638,8 +647,6 @@ pub(crate) fn typed_effect_admission_refusal(admission: &TypedEffectAdmission) -
             ),
         });
     }
-
-    let first_plan = admission.closure.application_plans.first()?;
 
     Some(RunError::FileActionFailed {
         task: first_plan.task.clone(),

@@ -2819,6 +2819,11 @@ agent:
           origin: {{ task: migrate, effect: migration }}
         - workflow: release
           origin: {{ task: migrate, effect: migration }}
+    - id: workflow_archive_schema_refusal
+      effect: migration
+      challenge_lanes:
+        - workflow: release
+          origin: {{ task: migrate, effect: migration }}
     - id: declared_only_schema_refusal
       effect: migration
       challenge_lanes:
@@ -3396,6 +3401,216 @@ policies:
     assert_eq!(history["summary"]["archive_count"], 1, "{history}");
     assert_eq!(history["summary"]["invalid_archive_count"], 0, "{history}");
 
+    let doctor_with_archive = run_ota(
+        &[
+            "doctor",
+            "--json",
+            fixture.path().to_str().expect("UTF-8 fixture path"),
+        ],
+        fixture.path(),
+    );
+    assert_matches_schema("doctor.json", &doctor_with_archive);
+    let claims = doctor_with_archive["claim_assurance"]
+        .as_array()
+        .expect("claim assurance array");
+    let workflow_claim = claims
+        .iter()
+        .find(|claim| claim["subject"]["name"] == "workflow_archive_schema_refusal")
+        .expect("workflow archive claim");
+    assert_eq!(workflow_claim["assurance"]["status"], "supported");
+    assert_eq!(workflow_claim["closure"]["status"], "resolved");
+    assert!(
+        workflow_claim["assurance"]["coverage_records"]
+            .as_array()
+            .expect("coverage records")
+            .iter()
+            .any(|record| {
+                record["kind"] == "declared_challenge_lane"
+                    && record["status"] == "verified"
+                    && record["evidence_class"] == "attested"
+            })
+    );
+    assert!(
+        workflow_claim["assurance"]["evidence"]
+            .as_array()
+            .expect("archive evidence")
+            .iter()
+            .any(|evidence| {
+                evidence["id"]
+                    .as_str()
+                    .is_some_and(|id| id.starts_with("effect_refusal_archive:sha256:"))
+            })
+    );
+    let task_and_workflow_claim = claims
+        .iter()
+        .find(|claim| claim["subject"]["name"] == "production_schema_refusal")
+        .expect("mixed carrier claim");
+    assert_eq!(task_and_workflow_claim["assurance"]["status"], "unknown");
+
+    let mut forged_supported = doctor_with_archive.clone();
+    let forged_claim = forged_supported["claim_assurance"]
+        .as_array_mut()
+        .expect("claim assurance array")
+        .iter_mut()
+        .find(|claim| claim["subject"]["name"] == "workflow_archive_schema_refusal")
+        .expect("workflow archive claim");
+    forged_claim["assurance"]["gaps"] = json!([
+        "verified_effect_refusal_archive",
+        "opaque_execution_paths_not_enumerated"
+    ]);
+    assert_rejected_by_schema("doctor.json", &forged_supported);
+    let mut forged_attestation = doctor_with_archive.clone();
+    let forged_record = forged_attestation["claim_assurance"]
+        .as_array_mut()
+        .expect("claim assurance array")
+        .iter_mut()
+        .find(|claim| claim["subject"]["name"] == "workflow_archive_schema_refusal")
+        .expect("workflow archive claim")["assurance"]["coverage_records"]
+        .as_array_mut()
+        .expect("coverage records")
+        .iter_mut()
+        .find(|record| record["kind"] == "declared_challenge_lane")
+        .expect("verified declaration record");
+    forged_record["evidence_class"] = json!("derived");
+    assert_rejected_by_schema("doctor.json", &forged_attestation);
+
+    let mut forged_incomplete_challenge = doctor_with_archive.clone();
+    let challenge_records = forged_incomplete_challenge["claim_assurance"]
+        .as_array_mut()
+        .expect("claim assurance array")
+        .iter_mut()
+        .find(|claim| claim["subject"]["name"] == "workflow_archive_schema_refusal")
+        .expect("workflow archive claim")["assurance"]["coverage_records"]
+        .as_array_mut()
+        .expect("coverage records");
+    let mut incomplete_record = challenge_records
+        .iter()
+        .find(|record| record["kind"] == "declared_challenge_lane")
+        .expect("verified declaration record")
+        .clone();
+    incomplete_record["status"] = json!("not_verified");
+    incomplete_record["evidence_class"] = json!("derived");
+    challenge_records.push(incomplete_record);
+    assert_rejected_by_schema("doctor.json", &forged_incomplete_challenge);
+
+    let mut forged_task_challenge = doctor_with_archive.clone();
+    let task_path = forged_task_challenge["claim_assurance"]
+        .as_array_mut()
+        .expect("claim assurance array")
+        .iter_mut()
+        .find(|claim| claim["subject"]["name"] == "workflow_archive_schema_refusal")
+        .expect("workflow archive claim")["assurance"]["coverage_records"]
+        .as_array_mut()
+        .expect("coverage records")
+        .iter_mut()
+        .find(|record| record["kind"] == "declared_challenge_lane")
+        .expect("verified declaration record")["path"]
+        .as_array_mut()
+        .expect("challenge path");
+    task_path[2] = json!("tasks");
+    assert_rejected_by_schema("doctor.json", &forged_task_challenge);
+
+    let mut forged_archive_source = doctor_with_archive.clone();
+    let archive_evidence = forged_archive_source["claim_assurance"]
+        .as_array_mut()
+        .expect("claim assurance array")
+        .iter_mut()
+        .find(|claim| claim["subject"]["name"] == "workflow_archive_schema_refusal")
+        .expect("workflow archive claim")["assurance"]["evidence"]
+        .as_array_mut()
+        .expect("archive evidence")
+        .iter_mut()
+        .find(|evidence| {
+            evidence["id"]
+                .as_str()
+                .is_some_and(|id| id.starts_with("effect_refusal_archive:"))
+        })
+        .expect("attested archive evidence");
+    archive_evidence["source"] = json!("forged");
+    assert_rejected_by_schema("doctor.json", &forged_archive_source);
+
+    let mut forged_unknown_attestation = doctor_with_archive.clone();
+    let unknown_claim = forged_unknown_attestation["claim_assurance"]
+        .as_array_mut()
+        .expect("claim assurance array")
+        .iter_mut()
+        .find(|claim| claim["subject"]["name"] == "production_schema_refusal")
+        .expect("mixed carrier claim");
+    let unknown_record = unknown_claim["assurance"]["coverage_records"]
+        .as_array_mut()
+        .expect("unknown coverage records")
+        .iter_mut()
+        .find(|record| record["kind"] == "declared_challenge_lane")
+        .expect("unknown challenge record");
+    unknown_record["status"] = json!("verified");
+    unknown_record["evidence_class"] = json!("attested");
+    unknown_claim["assurance"]["evidence"] = json!([
+        {
+            "id": "effect_refusal_archive:sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "source": "private_receipt_archive:sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:realization:sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "evidence_class": "attested"
+        }
+    ]);
+    assert_rejected_by_schema("doctor.json", &forged_unknown_attestation);
+
+    let mut forged_opaque_attestation = doctor_with_archive.clone();
+    let opaque_record = forged_opaque_attestation["claim_assurance"]
+        .as_array_mut()
+        .expect("claim assurance array")
+        .iter_mut()
+        .find(|claim| claim["subject"]["name"] == "workflow_archive_schema_refusal")
+        .expect("workflow archive claim")["assurance"]["coverage_records"]
+        .as_array_mut()
+        .expect("coverage records")
+        .iter_mut()
+        .find(|record| record["kind"] == "opaque_execution_paths")
+        .expect("opaque coverage record");
+    opaque_record["evidence_class"] = json!("attested");
+    assert_rejected_by_schema("doctor.json", &forged_opaque_attestation);
+
+    let mut forged_supported_derived_evidence = doctor_with_archive.clone();
+    forged_supported_derived_evidence["claim_assurance"]
+        .as_array_mut()
+        .expect("claim assurance array")
+        .iter_mut()
+        .find(|claim| claim["subject"]["name"] == "workflow_archive_schema_refusal")
+        .expect("workflow archive claim")["assurance"]["evidence"]
+        .as_array_mut()
+        .expect("archive evidence")
+        .push(json!({
+            "id": "unrelated_derived_evidence",
+            "source": "contract",
+            "evidence_class": "derived"
+        }));
+    assert_rejected_by_schema("doctor.json", &forged_supported_derived_evidence);
+
+    let live_contract_path = fixture.path().join("ota.yaml");
+    let original_live_contract = fs::read_to_string(&live_contract_path).expect("live contract");
+    fs::write(
+        &live_contract_path,
+        original_live_contract.replace(
+            "typed-effect-policy-refusal",
+            "typed-effect-policy-refusal-drifted",
+        ),
+    )
+    .expect("drift live contract");
+    let doctor_with_contract_drift = run_ota(
+        &[
+            "doctor",
+            "--json",
+            fixture.path().to_str().expect("UTF-8 fixture path"),
+        ],
+        fixture.path(),
+    );
+    let drifted_claim = doctor_with_contract_drift["claim_assurance"]
+        .as_array()
+        .expect("claim assurance array")
+        .iter()
+        .find(|claim| claim["subject"]["name"] == "workflow_archive_schema_refusal")
+        .expect("workflow archive claim");
+    assert_eq!(drifted_claim["assurance"]["status"], "unknown");
+    fs::write(&live_contract_path, original_live_contract).expect("restore live contract");
+
     let policy_snapshot = fixture.path().join(policy_snapshot_path);
     let original_policy_snapshot = fs::read(&policy_snapshot).expect("policy snapshot bytes");
     let mut tampered_policy: serde_json::Value =
@@ -3449,6 +3664,21 @@ policies:
         stripped_history["summary"]["invalid_archive_count"], 1,
         "{stripped_history}"
     );
+    let doctor_with_invalid_archive = run_ota(
+        &[
+            "doctor",
+            "--json",
+            fixture.path().to_str().expect("UTF-8 fixture path"),
+        ],
+        fixture.path(),
+    );
+    let invalid_archive_claim = doctor_with_invalid_archive["claim_assurance"]
+        .as_array()
+        .expect("claim assurance array")
+        .iter()
+        .find(|claim| claim["subject"]["name"] == "workflow_archive_schema_refusal")
+        .expect("workflow archive claim");
+    assert_eq!(invalid_archive_claim["assurance"]["status"], "unknown");
     fs::write(&refusal_archive, &original_refusal_archive).expect("restore refusal archive");
 
     let mut duplicate_invocation = refusal_archive_json.clone();
@@ -3469,6 +3699,47 @@ policies:
         "{duplicate_history}"
     );
     fs::write(&refusal_archive, &original_refusal_archive).expect("restore refusal archive");
+
+    let duplicate_archive =
+        refusal_archive.with_file_name("repo-receipt-duplicate-effect-refusal.json");
+    fs::write(&duplicate_archive, &original_refusal_archive)
+        .expect("duplicate valid refusal archive");
+    let doctor_with_duplicate_archive = run_ota(
+        &[
+            "doctor",
+            "--json",
+            fixture.path().to_str().expect("UTF-8 fixture path"),
+        ],
+        fixture.path(),
+    );
+    let duplicate_claim = doctor_with_duplicate_archive["claim_assurance"]
+        .as_array()
+        .expect("claim assurance array")
+        .iter()
+        .find(|claim| claim["subject"]["name"] == "workflow_archive_schema_refusal")
+        .expect("workflow archive claim");
+    assert_eq!(duplicate_claim["assurance"]["status"], "unknown");
+    fs::remove_file(&duplicate_archive).expect("remove duplicate valid refusal archive");
+
+    let invalid_archive =
+        refusal_archive.with_file_name("repo-receipt-invalid-effect-refusal.json");
+    fs::write(&invalid_archive, b"not a receipt archive").expect("invalid refusal archive");
+    let doctor_with_invalid_sibling = run_ota(
+        &[
+            "doctor",
+            "--json",
+            fixture.path().to_str().expect("UTF-8 fixture path"),
+        ],
+        fixture.path(),
+    );
+    let invalid_sibling_claim = doctor_with_invalid_sibling["claim_assurance"]
+        .as_array()
+        .expect("claim assurance array")
+        .iter()
+        .find(|claim| claim["subject"]["name"] == "workflow_archive_schema_refusal")
+        .expect("workflow archive claim");
+    assert_eq!(invalid_sibling_claim["assurance"]["status"], "unknown");
+    fs::remove_file(&invalid_archive).expect("remove invalid refusal archive");
 
     let mut omitted_plan = refusal_archive_json.clone();
     omitted_plan["archive_context"]["effect_policy_refusal"]["application_plans"] = json!([]);

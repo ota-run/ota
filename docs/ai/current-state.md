@@ -90,8 +90,11 @@ durable agent workflow belongs in the canonical Ota skill.
   lanes with refused preflight and `provider_execution: disabled`, plus a typed-warn lane that
   remains refused as provider-disabled. Both artifacts pass the Core task/workflow retained
   command-admission sandbox control. This proves neither provider contact or mutation nor
-  authoritative sandbox enforcement. Refusal receipt/archive beyond the covered source-posture
-  control and archive-backed V11.14 assurance requirements remain open.
+  authoritative sandbox enforcement. The existing private workflow refusal archive now upgrades
+  Doctor's V11.14 `effect_refusal_assurance` only for an exact current-contract workflow challenge
+  with matching eligible attachment, realization, explicit typed deny, and pre-execution posture;
+  task-only, stale, invalid, or mismatched evidence remains `unknown`. Hosted evidence for that
+  archive-backed assurance path remains open.
   See `docs/pressure/v12-real-repository-effect-refusal.md`.
 - active version: V12 effect-bound refusal assurance. V11 is reconciled complete and V12 is the sole
   active version as of 2026-08-25. The first local implementation batch adds strict PostgreSQL

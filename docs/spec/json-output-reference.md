@@ -3153,8 +3153,8 @@ identity, resolved execution scope, and `replay_posture: witness_only`. A matchi
 `contradicted`; absent, stale, changed-source, or scope-mismatched archives remain `unknown`.
 Consumers must not infer absent declared-effects records as support or contradiction.
 
-V12 adds `effect_refusal_assurance` records for declared `agent.effect_refusal_canaries`. This
-initial contract-graph carrier is intentionally `unknown`: it binds the current semantic contract
+V12 adds `effect_refusal_assurance` records for declared `agent.effect_refusal_canaries`. The
+contract-graph carrier is initially `unknown`: it binds the current semantic contract
 snapshot and `typed_contract_graph_v1` enumeration scope, then enumerates the declared challenge
 lanes, exact effect and attachment identities, and every other declared attachment with the same
 canonical effect identity. An unchallenged equivalent attachment is emitted as
@@ -3163,8 +3163,13 @@ canonical effect identity. An unchallenged equivalent attachment is emitted as
 or provider configuration. JSON Schema validates the snapshot digest's local shape only; Core
 re-derives and reconciles its equality with the current semantic contract. A declaration or
 ephemeral canary result cannot make this record
-`supported`; that requires a later verified refusal archive that binds the selected invocation,
-realization, policy, and execution-attempted evidence.
+`supported`; an exact workflow challenge can reach `supported` only when the existing private
+refusal archive verifies the current semantic contract snapshot, same workflow, exact eligible
+effect attachment and realization, explicit typed deny, and `execution_started: false`. Task-only
+challenges remain `unknown` because the current archive carrier is workflow-only. A missing,
+invalid, stale, ambiguous duplicate, or mismatched archive remains `unknown` rather than being
+matched by similarity. Any invalid sibling in the observed private archive set also prevents
+support.
 
 When an active org policy pack declares `policies.agent.claim_assurance.<family>`, `policy` is
 derived from that requirement. For example, a policy requiring `agent_safety.minimum_status:

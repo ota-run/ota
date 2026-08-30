@@ -134,11 +134,77 @@ pub struct ProofArchiveCandidate {
     pub proof_verdict: String,
 }
 
+/// A verified private workflow refusal archive that can attest one exact typed realization.
+///
+/// This is crate-private so only the persistence boundary can construct it after archive
+/// verification. Public callers can request declaration-only claim assurance, never supply
+/// their own attestation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct EffectRefusalArchiveCandidate {
+    archive_identity: String,
+    contract_snapshot_identity: String,
+    workflow: String,
+    effect_identity: String,
+    attachment_identity: String,
+    realization_identity: String,
+}
+
+impl EffectRefusalArchiveCandidate {
+    pub(crate) fn from_verified(
+        archive_identity: String,
+        contract_snapshot_identity: String,
+        workflow: String,
+        effect_identity: String,
+        attachment_identity: String,
+        realization_identity: String,
+    ) -> Option<Self> {
+        if workflow.is_empty()
+            || ![
+                &archive_identity,
+                &contract_snapshot_identity,
+                &effect_identity,
+                &attachment_identity,
+                &realization_identity,
+            ]
+            .into_iter()
+            .all(|identity| is_sha256_identity(identity))
+        {
+            return None;
+        }
+        Some(Self {
+            archive_identity,
+            contract_snapshot_identity,
+            workflow,
+            effect_identity,
+            attachment_identity,
+            realization_identity,
+        })
+    }
+}
+
+fn is_sha256_identity(value: &str) -> bool {
+    value.len() == "sha256:".len() + 64
+        && value.starts_with("sha256:")
+        && value["sha256:".len()..]
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+}
+
 /// Reports the currently enumerable contract coverage for every declared typed effect-refusal
 /// canary. This is deliberately declaration-only evidence: a canary declaration or ephemeral
 /// command result cannot make an assurance claim supported. A later verified receipt archive is
 /// responsible for adding realization and execution evidence.
 pub fn effect_refusal_assurance_claims(contract: &Contract) -> Vec<ClaimAssuranceRecord> {
+    effect_refusal_assurance_claims_with_archives(contract, &[])
+}
+
+/// Reconciles declared workflow challenge lanes with content-verified private refusal archives.
+/// A task challenge remains unknown: the current durable carrier only archives workflow refusal
+/// evidence, so it cannot attest a task invocation by similarity.
+pub(crate) fn effect_refusal_assurance_claims_with_archives(
+    contract: &Contract,
+    archives: &[EffectRefusalArchiveCandidate],
+) -> Vec<ClaimAssuranceRecord> {
     let Some(agent) = contract.agent.as_ref() else {
         return Vec::new();
     };
@@ -167,6 +233,7 @@ pub fn effect_refusal_assurance_claims(contract: &Contract) -> Vec<ClaimAssuranc
             let mut challenge_attachment_ids = BTreeSet::new();
             let mut coverage_records = Vec::new();
             let mut evidence = Vec::new();
+            let mut all_challenges_verified = true;
 
             for (lane_index, lane) in canary.challenge_lanes.iter().enumerate() {
                 let attachment = catalog.attachments.iter().find(|attachment| {
@@ -175,23 +242,59 @@ pub fn effect_refusal_assurance_claims(contract: &Contract) -> Vec<ClaimAssuranc
                 });
                 if let Some(attachment) = attachment {
                     challenge_attachment_ids.insert(attachment.identity.clone());
-                    evidence.push(ClaimEvidence {
-                        id: format!("effect_attachment:{}", attachment.identity),
-                        source: format!(
-                            "agent.effect_refusal_canaries[{}].challenge_lanes[{lane_index}].origin",
-                            canary.id
-                        ),
-                        evidence_class: String::from("derived"),
+                    let matching_archives = lane.workflow.as_ref().map_or_else(Vec::new, |workflow| {
+                        archives.iter().filter(|archive| {
+                            archive.contract_snapshot_identity == contract_snapshot_identity
+                                && archive.workflow == *workflow
+                                && effect_identity.as_deref() == Some(archive.effect_identity.as_str())
+                                && archive.attachment_identity == attachment.identity
+                        }).collect::<Vec<_>>()
                     });
+                    // Multiple archive records for one exact realization are ambiguous evidence.
+                    // Do not choose one by ordering when the durable carrier cannot explain why.
+                    let archive = match matching_archives.as_slice() {
+                        [archive] => Some(*archive),
+                        _ => None,
+                    };
+                    let verified = archive.is_some();
+                    all_challenges_verified &= verified;
+                    if let Some(archive) = archive {
+                        evidence.push(ClaimEvidence {
+                            id: format!("effect_refusal_archive:{}", archive.archive_identity),
+                            source: format!(
+                                "private_receipt_archive:{}:realization:{}",
+                                archive.archive_identity, archive.realization_identity
+                            ),
+                            evidence_class: String::from("attested"),
+                        });
+                    } else {
+                        evidence.push(ClaimEvidence {
+                            id: format!("effect_attachment:{}", attachment.identity),
+                            source: format!(
+                                "agent.effect_refusal_canaries[{}].challenge_lanes[{lane_index}].origin",
+                                canary.id
+                            ),
+                            evidence_class: String::from("derived"),
+                        });
+                    }
                     coverage_records.push(ClaimCoverageRecord {
                         kind: String::from("declared_challenge_lane"),
-                        status: String::from("not_verified"),
+                        status: if verified {
+                            String::from("verified")
+                        } else {
+                            String::from("not_verified")
+                        },
                         path: declared_challenge_path(lane),
                         effect_identity: effect_identity.clone(),
                         attachment_identity: Some(attachment.identity.clone()),
-                        evidence_class: String::from("derived"),
+                        evidence_class: if verified {
+                            String::from("attested")
+                        } else {
+                            String::from("derived")
+                        },
                     });
                 } else {
+                    all_challenges_verified = false;
                     coverage_records.push(ClaimCoverageRecord {
                         kind: String::from("declared_challenge_lane"),
                         status: String::from("incomplete"),
@@ -203,11 +306,37 @@ pub fn effect_refusal_assurance_claims(contract: &Contract) -> Vec<ClaimAssuranc
                 }
             }
 
-            let mut gaps = vec![
-                String::from("verified_effect_refusal_archive"),
-                String::from("effect_realization_not_verified"),
-                String::from("opaque_execution_paths_not_enumerated"),
-            ];
+            // Assurance is a claim-level posture. A partially matched archive must not make an
+            // otherwise unknown mixed task/workflow challenge look partly attested: task lanes
+            // have no durable carrier, so retain only derived declaration evidence until every
+            // declared challenge can be verified together.
+            if !all_challenges_verified {
+                evidence.clear();
+                for record in coverage_records.iter_mut().filter(|record| {
+                    record.kind == "declared_challenge_lane"
+                }) {
+                    record.status = String::from("not_verified");
+                    record.evidence_class = String::from("derived");
+                    if let Some(attachment_identity) = record.attachment_identity.as_ref() {
+                        evidence.push(ClaimEvidence {
+                            id: format!("effect_attachment:{attachment_identity}"),
+                            source: record.path.join("."),
+                            evidence_class: String::from("derived"),
+                        });
+                    }
+                }
+            }
+
+            let mut gaps = vec![String::from("opaque_execution_paths_not_enumerated")];
+            if !all_challenges_verified {
+                gaps.splice(
+                    0..0,
+                    [
+                        String::from("verified_effect_refusal_archive"),
+                        String::from("effect_realization_not_verified"),
+                    ],
+                );
+            }
             if let Some(effect_identity) = effect_identity.as_deref() {
                 for attachment in catalog.attachments.iter().filter(|attachment| {
                     attachment.effect_identity == effect_identity
@@ -249,16 +378,34 @@ pub fn effect_refusal_assurance_claims(contract: &Contract) -> Vec<ClaimAssuranc
                     evidence_class: String::from("asserted"),
                 },
                 closure: ClaimClosure {
-                    status: String::from("unavailable"),
-                    blockers: vec![String::from("verified_effect_refusal_archive")],
+                    status: if all_challenges_verified {
+                        String::from("resolved")
+                    } else {
+                        String::from("unavailable")
+                    },
+                    blockers: if all_challenges_verified {
+                        Vec::new()
+                    } else {
+                        vec![String::from("verified_effect_refusal_archive")]
+                    },
                     evidence_class: String::from("derived"),
                 },
                 assurance: ClaimAssurance {
-                    status: String::from("unknown"),
-                    coverage: vec![
+                    status: if all_challenges_verified {
+                        String::from("supported")
+                    } else {
+                        String::from("unknown")
+                    },
+                    coverage: {
+                        let mut coverage = vec![
                         String::from("contract_effect_graph"),
                         String::from("declared_challenge_lanes"),
-                    ],
+                        ];
+                        if all_challenges_verified {
+                            coverage.push(String::from("verified_effect_refusal_archives"));
+                        }
+                        coverage
+                    },
                     contract_snapshot_identity: Some(contract_snapshot_identity.clone()),
                     discovery_scope: Some(String::from("typed_contract_graph_v1")),
                     coverage_records,

@@ -25,4 +25,5 @@
 version: 1
 repository: ota-run/skills
 mode: synced
+consumer_commit: 49f23a7eeaeb0634461a730e3642ac64f0212b3c
 reviewed_ota_commit: cd833298dbea4fc69fc2331f9ae79fb98944d52e

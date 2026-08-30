@@ -35,7 +35,7 @@
           "additionalProperties": false,
           "required": ["status", "evidence_class"],
           "properties": {
-            "status": { "enum": ["safe", "unsafe", "unavailable"] },
+            "status": { "enum": ["safe", "unsafe", "unavailable", "resolved"] },
             "blockers": {
               "type": "array",
               "items": { "type": "string" }
@@ -66,7 +66,7 @@
                 "required": ["kind", "status", "path", "evidence_class"],
                 "properties": {
                   "kind": { "enum": ["declared_challenge_lane", "equivalent_execution_path", "opaque_execution_paths"] },
-                  "status": { "enum": ["not_verified", "not_proved", "incomplete"] },
+                  "status": { "enum": ["verified", "not_verified", "not_proved", "incomplete"] },
                   "path": {
                     "type": "array",
                     "minItems": 1,
@@ -74,21 +74,34 @@
                   },
                   "effect_identity": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
                   "attachment_identity": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
-                  "evidence_class": { "enum": ["derived"] }
+                  "evidence_class": { "enum": ["derived", "attested"] }
                 },
                 "allOf": [
                   {
                     "if": { "properties": { "kind": { "const": "declared_challenge_lane" } }, "required": ["kind"] },
                     "then": {
                       "required": ["effect_identity", "attachment_identity"],
-                      "properties": { "status": { "const": "not_verified" } }
+                      "properties": {
+                        "status": { "enum": ["verified", "not_verified"] },
+                        "evidence_class": { "enum": ["derived", "attested"] }
+                      },
+                      "allOf": [
+                        {
+                          "if": { "properties": { "status": { "const": "verified" } }, "required": ["status"] },
+                          "then": { "properties": { "evidence_class": { "const": "attested" } }, "required": ["evidence_class"] },
+                          "else": { "properties": { "evidence_class": { "const": "derived" } }, "required": ["evidence_class"] }
+                        }
+                      ]
                     }
                   },
                   {
                     "if": { "properties": { "kind": { "const": "equivalent_execution_path" } }, "required": ["kind"] },
                     "then": {
                       "required": ["effect_identity", "attachment_identity"],
-                      "properties": { "status": { "const": "not_proved" } }
+                      "properties": {
+                        "status": { "const": "not_proved" },
+                        "evidence_class": { "const": "derived" }
+                      }
                     }
                   },
                   {
@@ -96,6 +109,7 @@
                     "then": {
                       "properties": {
                         "status": { "const": "not_proved" },
+                        "evidence_class": { "const": "derived" },
                         "effect_identity": false,
                         "attachment_identity": false
                       }
@@ -166,17 +180,9 @@
                 },
                 "required": ["value", "evidence_class"]
               },
-              "closure": {
-                "properties": {
-                  "status": { "const": "unavailable" },
-                  "blockers": { "contains": { "const": "verified_effect_refusal_archive" } }
-                },
-                "required": ["status", "blockers"]
-              },
               "assurance": {
                 "required": ["contract_snapshot_identity", "discovery_scope", "coverage_records", "gaps"],
                 "properties": {
-                  "status": { "const": "unknown" },
                   "coverage": {
                     "allOf": [
                       { "contains": { "const": "contract_effect_graph" } },
@@ -189,13 +195,6 @@
                     "allOf": [
                       { "contains": { "properties": { "kind": { "const": "declared_challenge_lane" } }, "required": ["kind"] } },
                       { "contains": { "properties": { "kind": { "const": "opaque_execution_paths" } }, "required": ["kind"] } }
-                    ]
-                  },
-                  "gaps": {
-                    "allOf": [
-                      { "contains": { "const": "verified_effect_refusal_archive" } },
-                      { "contains": { "const": "effect_realization_not_verified" } },
-                      { "contains": { "const": "opaque_execution_paths_not_enumerated" } }
                     ]
                   }
                 },
@@ -227,7 +226,164 @@
                 ],
                 "required": ["status", "coverage", "contract_snapshot_identity", "discovery_scope", "coverage_records", "gaps"]
               }
-            }
+            },
+            "allOf": [
+              {
+                "anyOf": [
+                  {
+                    "properties": {
+                      "closure": {
+                        "properties": {
+                          "status": { "const": "unavailable" },
+                          "blockers": { "contains": { "const": "verified_effect_refusal_archive" } }
+                        },
+                        "required": ["status", "blockers"]
+                      },
+                      "assurance": {
+                        "properties": {
+                          "status": { "const": "unknown" },
+                          "gaps": {
+                            "allOf": [
+                              { "contains": { "const": "verified_effect_refusal_archive" } },
+                              { "contains": { "const": "effect_realization_not_verified" } },
+                              { "contains": { "const": "opaque_execution_paths_not_enumerated" } }
+                            ]
+                          },
+                          "coverage_records": {
+                            "items": {
+                              "allOf": [
+                                {
+                                  "if": {
+                                    "properties": { "kind": { "const": "declared_challenge_lane" } },
+                                    "required": ["kind"]
+                                  },
+                                  "then": {
+                                    "properties": {
+                                      "status": { "const": "not_verified" },
+                                      "evidence_class": { "const": "derived" }
+                                    },
+                                    "required": ["status", "evidence_class"]
+                                  }
+                                }
+                              ]
+                            }
+                          },
+                          "evidence": {
+                            "items": {
+                              "not": {
+                                "anyOf": [
+                                  {
+                                    "properties": { "id": { "type": "string", "pattern": "^effect_refusal_archive:" } },
+                                    "required": ["id"]
+                                  },
+                                  {
+                                    "properties": { "source": { "type": "string", "pattern": "^private_receipt_archive:" } },
+                                    "required": ["source"]
+                                  }
+                                ]
+                              }
+                            }
+                          }
+                        },
+                        "required": ["status", "gaps"]
+                      }
+                    },
+                    "required": ["closure", "assurance"]
+                  },
+                  {
+                    "properties": {
+                      "closure": {
+                        "properties": { "status": { "const": "resolved" }, "blockers": false },
+                        "required": ["status"]
+                      },
+                      "assurance": {
+                        "properties": {
+                          "status": { "const": "supported" },
+                          "coverage": { "contains": { "const": "verified_effect_refusal_archives" } },
+                          "coverage_records": {
+                            "contains": {
+                              "properties": {
+                                "kind": { "const": "declared_challenge_lane" },
+                                "status": { "const": "verified" },
+                                "evidence_class": { "const": "attested" },
+                                "path": {
+                                  "type": "array",
+                                  "minItems": 4,
+                                  "prefixItems": [
+                                    { "const": "agent" },
+                                    { "const": "effect_refusal_canaries" },
+                                    { "const": "workflows" }
+                                  ]
+                                }
+                              },
+                              "required": ["kind", "status", "evidence_class", "path"]
+                            },
+                            "items": {
+                              "allOf": [
+                                {
+                                  "if": {
+                                    "properties": { "kind": { "const": "declared_challenge_lane" } },
+                                    "required": ["kind"]
+                                  },
+                                  "then": {
+                                    "properties": {
+                                      "status": { "const": "verified" },
+                                      "evidence_class": { "const": "attested" },
+                                      "path": {
+                                        "type": "array",
+                                        "minItems": 4,
+                                        "prefixItems": [
+                                          { "const": "agent" },
+                                          { "const": "effect_refusal_canaries" },
+                                          { "const": "workflows" }
+                                        ]
+                                      }
+                                    },
+                                    "required": ["status", "evidence_class", "path"]
+                                  }
+                                }
+                              ]
+                            }
+                          },
+                          "gaps": {
+                            "allOf": [{ "contains": { "const": "opaque_execution_paths_not_enumerated" } }],
+                            "not": {
+                              "anyOf": [
+                                { "contains": { "const": "verified_effect_refusal_archive" } },
+                                { "contains": { "const": "effect_realization_not_verified" } }
+                              ]
+                            }
+                          },
+                          "evidence": {
+                            "contains": {
+                              "properties": {
+                                "id": { "type": "string", "pattern": "^effect_refusal_archive:sha256:[0-9a-f]{64}$" },
+                                "source": { "type": "string", "pattern": "^private_receipt_archive:sha256:[0-9a-f]{64}:realization:sha256:[0-9a-f]{64}$" },
+                                "evidence_class": { "const": "attested" }
+                              },
+                              "required": ["id", "source", "evidence_class"]
+                            },
+                            "items": {
+                              "properties": {
+                                "id": { "type": "string", "pattern": "^effect_refusal_archive:sha256:[0-9a-f]{64}$" },
+                                "source": { "type": "string", "pattern": "^private_receipt_archive:sha256:[0-9a-f]{64}:realization:sha256:[0-9a-f]{64}$" },
+                                "evidence_class": { "const": "attested" }
+                              },
+                              "required": ["id", "source", "evidence_class"]
+                            }
+                          },
+                          "contradictions": {
+                            "maxItems": 0
+                          }
+                        },
+                        "required": ["status", "coverage", "coverage_records", "gaps", "evidence"]
+                      }
+                    },
+                    "required": ["closure", "assurance"]
+                  }
+                ]
+              }
+            ]
           }
         }
       ]
@@ -366,12 +522,15 @@
       "required": ["name"],
       "properties": {
         "name": { "type": "string" },
+        "use": { "$ref": "./tasks.json#/$defs/laneUseSummary" },
         "intent": { "type": "string" },
         "description": { "type": "string" },
         "notes": { "type": "string" },
         "prepare_task": { "type": "string" },
         "setup_task": { "type": "string" },
         "run_task": { "type": "string" },
+        "declared_safe_for_agent": { "type": "boolean" },
+        "effective_safe_for_agent": { "type": "boolean" },
         "run_task_launch": { "$ref": "./execution.json#/$defs/taskLaunch" },
         "required_services": {
           "type": "array",
