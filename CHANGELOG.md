@@ -33,15 +33,15 @@
   rather than fabricating effect evidence.
 
 - Recorded immutable Linux/x64 and macOS pressure for typed `ota up --dry-run` admission in
-  [run 33341297026](https://github.com/ota-run/ota/actions/runs/33341297026) against exact Core
-  `d4e3bef699022c77211349ac0634377697f9d070`. Both retained artifacts report one admitted plan,
+  [run 33382559640](https://github.com/ota-run/ota/actions/runs/33382559640) against exact Core
+  `a5aae10f5ce33e0d0927dbb913a685505933145b`. Both retained artifacts report one admitted plan,
   an explicit typed deny, `BLOCKED`, `execution_started: false`, and only the refusal action.
-  Core-owned plan-to-executor and sandbox-admission continuity controls also passed. The fixture
-  did not declare the setup, environment-rendering, proof, durable-log, and command paths needed
-  to establish their absence for this preview, so those boundaries remain unproved pending a
-  replacement matrix. This is internal, provider-disabled evidence only; it does not prove
-  provider contact or mutation, arbitrary child-process absence, repository-wide immutability,
-  database correctness, positive assurance, or archive export safety.
+  The selected fixture's setup sentinel, rendered environment artifact, proof artifact, durable-log
+  path, and dependency command sentinel were absent immediately after preview. Core-owned
+  plan-to-executor and sandbox-admission continuity controls also passed. This is internal,
+  provider-disabled evidence only; it does not prove provider contact or mutation, arbitrary
+  child-process absence, repository-wide immutability, database correctness, positive assurance,
+  or archive export safety.
 
 - Added the Core-owned pressure-evidence registry at
   `docs/pressure/evidence-manifest.json` and a generated Site discovery projection. Each retained

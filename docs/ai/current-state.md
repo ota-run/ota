@@ -69,16 +69,16 @@ durable agent workflow belongs in the canonical Ota skill.
   green-badge surface. The public index, Glossary, FAQ, Skills protocol, and engineering notes
   follow the same source-of-truth rule. Learn and Examples are unaffected because this is evidence
   accounting, not an operator contract workflow.
-- Immutable Linux/x64 and macOS [run 33341297026](https://github.com/ota-run/ota/actions/runs/33341297026)
-  against exact Core `d4e3bef699022c77211349ac0634377697f9d070` closes the repaired typed
+- Immutable Linux/x64 and macOS [run 33382559640](https://github.com/ota-run/ota/actions/runs/33382559640)
+  against exact Core `a5aae10f5ce33e0d0927dbb913a685505933145b` closes the repaired typed
   `ota up --dry-run` admission control. Both retained artifacts show one admitted application plan,
   an explicit typed deny, `BLOCKED`, `execution_started: false`, and only the refusal action. The
-  same jobs pass Core-owned plan-to-executor and sandbox-admission continuity controls. That
-  fixture did not declare the setup, environment-rendering, proof-artifact, durable-log, and
-  command paths needed to establish their absence under this preview; a replacement matrix is
-  required before claiming those controls. This remains internal, provider-disabled evidence only;
-  it does not prove provider contact or mutation, arbitrary child-process absence, repository-wide
-  immutability, database correctness, positive assurance, or archive export safety.
+  same jobs pass Core-owned plan-to-executor and sandbox-admission continuity controls. The exact
+  selected fixture declares and immediately verifies absence of its setup sentinel, rendered
+  environment artifact, proof artifact, durable-log path, and dependency command sentinel. This
+  remains internal, provider-disabled evidence only; it does not prove provider contact or
+  mutation, arbitrary child-process absence, repository-wide immutability, database correctness,
+  positive assurance, or archive export safety.
 - Final V12 internal Linux/x64 and macOS pressure is green in
   [run 33335973677](https://github.com/ota-run/ota/actions/runs/33335973677), bound to Core
   `25afb2b510a13ce149a2e9aa8ed5418a7af69482`. Both retained artifacts complete the selected typed
