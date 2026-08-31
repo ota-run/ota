@@ -18,6 +18,9 @@ Existing contract comparison:
 
 Contract
 version: 1
+metadata:
+  ota:
+    minimum_version: 1.6.27
 project:
   name: ota-web
 toolchains:

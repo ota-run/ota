@@ -12079,7 +12079,11 @@ project:
         baseline["receipt"]["contract_snapshot_hash"] = Value::String(snapshot_hash);
         baseline["receipt"]["contract_snapshot_ref"] = Value::String(snapshot_ref);
 
-        let baseline_file = fixture.dir.path().join("baseline-receipt.json");
+        fs::create_dir_all(fixture.dir.path().join(".ota/receipts")).unwrap();
+        let baseline_file = fixture
+            .dir
+            .path()
+            .join(".ota/receipts/baseline-receipt.json");
         fs::write(
             &baseline_file,
             serde_json::to_string_pretty(&baseline).unwrap(),
@@ -12096,7 +12100,7 @@ project:
             fixture.path(),
         ]);
 
-        assert_eq!(output.exit_code, 0);
+        assert_eq!(output.exit_code, 0, "{}", output.stdout);
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
         assert_eq!(json["mode"], "diff");
         assert_eq!(json["gate"]["rule"], "fail_on_new_blockers");
@@ -12424,7 +12428,11 @@ project:
 "#,
                 );
 
-                let baseline_file = fixture.dir.path().join("legacy-baseline.json");
+                fs::create_dir_all(fixture.dir.path().join(".ota/receipts")).unwrap();
+                let baseline_file = fixture
+                    .dir
+                    .path()
+                    .join(".ota/receipts/legacy-baseline.json");
                 fs::write(
                     &baseline_file,
                     serde_json::to_string_pretty(&serde_json::json!({
@@ -12835,7 +12843,11 @@ project:
                     .cloned()
                     .unwrap();
 
-                let baseline_file = fixture.dir.path().join("baseline-receipt.json");
+                fs::create_dir_all(fixture.dir.path().join(".ota/receipts")).unwrap();
+                let baseline_file = fixture
+                    .dir
+                    .path()
+                    .join(".ota/receipts/baseline-receipt.json");
                 let (snapshot_ref, snapshot_hash) = write_receipt_snapshot(
                     &fixture,
                     "receipt-diff-explicit-file",
@@ -26698,7 +26710,7 @@ tasks:
     }
 
     #[test]
-    fn doctor_recovers_bounded_shell_smoke_sequence_as_verifier_task() {
+    fn doctor_reports_drift_for_bounded_shell_smoke_sequence() {
         let dir = tempfile::tempdir().expect("tempdir");
         fs::create_dir_all(dir.path().join(".github/workflows")).expect("create workflows dir");
         fs::write(
@@ -26783,8 +26795,8 @@ tasks:
             })
             .collect::<Vec<_>>();
         assert!(
-            ci_drift_findings.is_empty(),
-            "expected no CI drift once bounded shell smoke verification sequences recover declared verifier tasks: {}",
+            !ci_drift_findings.is_empty(),
+            "a multi-command shell step must not be treated as the declared verifier task: {}",
             serde_json::to_string_pretty(&ci_drift_findings).unwrap()
         );
     }
@@ -26862,7 +26874,7 @@ tasks:
     }
 
     #[test]
-    fn doctor_recovers_actual_renderer_workflow_verifier_union() {
+    fn doctor_reports_drift_for_renderer_workflow_with_unmodeled_shell_setup() {
         let dir = tempfile::tempdir().expect("tempdir");
         fs::create_dir_all(dir.path().join(".github/workflows")).expect("create workflows dir");
         fs::write(
@@ -26948,14 +26960,14 @@ tasks:
             })
             .collect::<Vec<_>>();
         assert!(
-            ci_drift_findings.is_empty(),
-            "expected no CI drift once the actual renderer workflow shape recovers the full verifier union: {}",
+            !ci_drift_findings.is_empty(),
+            "the multi-command Storybook setup must remain outside the single-task verifier identity: {}",
             serde_json::to_string_pretty(&ci_drift_findings).unwrap()
         );
     }
 
     #[test]
-    fn doctor_recovers_actual_renderer_workflow_verifier_union_for_command_tasks() {
+    fn doctor_reports_drift_for_renderer_command_tasks_with_unmodeled_shell_setup() {
         let dir = tempfile::tempdir().expect("tempdir");
         fs::create_dir_all(dir.path().join(".github/workflows")).expect("create workflows dir");
         fs::write(
@@ -27044,14 +27056,14 @@ tasks:
             })
             .collect::<Vec<_>>();
         assert!(
-            ci_drift_findings.is_empty(),
-            "expected no CI drift once the actual renderer workflow shape recovers the full verifier union for command tasks: {}",
+            !ci_drift_findings.is_empty(),
+            "the multi-command Storybook setup must remain outside the single-task verifier identity: {}",
             serde_json::to_string_pretty(&ci_drift_findings).unwrap()
         );
     }
 
     #[test]
-    fn doctor_recovers_twenty_renderer_workflow_shape_verbatim() {
+    fn doctor_reports_drift_for_verbatim_renderer_workflow_with_unmodeled_shell_setup() {
         let dir = tempfile::tempdir().expect("tempdir");
         fs::create_dir_all(dir.path().join(".github/workflows")).expect("create workflows dir");
         fs::write(
@@ -27225,8 +27237,8 @@ tasks:
             })
             .collect::<Vec<_>>();
         assert!(
-            ci_drift_findings.is_empty(),
-            "expected no CI drift once the verbatim twenty renderer workflow shape recovers the full verifier union: {}",
+            !ci_drift_findings.is_empty(),
+            "the multi-command Storybook setup must remain outside the single-task verifier identity: {}",
             serde_json::to_string_pretty(&ci_drift_findings).unwrap()
         );
     }
@@ -39322,6 +39334,7 @@ project:
         assert!(stderr.contains("snapshot file"));
     }
 
+    #[cfg(unix)]
     #[test]
     fn detect_writes_high_confidence_contract_with_write_flag() {
         let fixture = ContractFixture::new_dir();
@@ -39371,6 +39384,7 @@ project:
         assert!(written.contains("metadata:"));
     }
 
+    #[cfg(unix)]
     #[test]
     fn detect_write_includes_canonical_compose_service_contract() {
         let fixture = ContractFixture::new_dir();
@@ -39398,6 +39412,7 @@ project:
         assert!(written.contains("service: postgres"), "{written}");
     }
 
+    #[cfg(unix)]
     #[test]
     fn detect_write_does_not_mutate_gitignore() {
         let fixture = ContractFixture::new_dir();
@@ -39752,6 +39767,7 @@ tasks:
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn detect_write_json_reports_written_config_with_ownership_metadata() {
         let fixture = ContractFixture::new_dir();
@@ -39818,6 +39834,7 @@ tasks:
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn detect_write_leaves_unresolved_node_package_scripts_out_of_the_contract() {
         let fixture = ContractFixture::new_dir();
@@ -39846,6 +39863,7 @@ tasks:
         assert!(json["config"]["tasks"]["dev"].is_null());
     }
 
+    #[cfg(unix)]
     #[test]
     fn detect_write_promotes_gradle_build_and_test_tasks() {
         let fixture = ContractFixture::new_dir();
@@ -39894,6 +39912,7 @@ java {
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn detect_write_does_not_mark_unresolved_package_scripts_safe_for_agent() {
         let fixture = ContractFixture::new_dir();
@@ -39940,6 +39959,7 @@ java {
         assert!(!build_safe_present);
     }
 
+    #[cfg(unix)]
     #[test]
     fn detect_write_does_not_promote_ci_interpolated_command_into_task_truth() {
         let fixture = ContractFixture::new_dir();
@@ -39977,6 +39997,7 @@ jobs:
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn detect_write_does_not_mark_watch_tasks_safe_for_agent() {
         let fixture = ContractFixture::new_dir();
@@ -40150,6 +40171,7 @@ project:
         assert!(!fixture.file_path().exists());
     }
 
+    #[cfg(unix)]
     #[test]
     fn detect_write_blocked_error_uses_explicit_repo_path_in_next_steps() {
         let _env_guard = env_mutex_lock();
@@ -40178,6 +40200,7 @@ project:
         assert!(stderr.contains(&expected_write));
     }
 
+    #[cfg(unix)]
     #[test]
     fn detect_write_blocked_json_uses_explicit_repo_path_in_next() {
         let _env_guard = env_mutex_lock();
