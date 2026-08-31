@@ -3261,7 +3261,13 @@ fn find_workspace_policy_pack_location(
                 return Ok(Some(if is_remote_policy_source(policy) {
                     policy.to_string()
                 } else {
-                    dir.join(policy).display().to_string()
+                    fs::canonicalize(dir.join(policy))
+                        .map_err(|source| LoadPolicyPackError::Read {
+                            path: dir.join(policy).display().to_string(),
+                            source,
+                        })?
+                        .display()
+                        .to_string()
                 }));
             }
         }
@@ -3536,7 +3542,7 @@ policies:
 
         let (pack, loaded_path) = loaded.expect("policy override should load");
 
-        assert_eq!(loaded_path, override_path);
+        assert_eq!(loaded_path, fs::canonicalize(&override_path).unwrap());
         assert_eq!(
             pack.policies.required_sections,
             vec![String::from("checks")]
@@ -3597,7 +3603,7 @@ policies:
         let loaded = loaded.expect("policy override should load");
 
         assert_eq!(loaded.source, PolicyPackSource::EnvOverride);
-        assert_eq!(loaded.path, override_path);
+        assert_eq!(loaded.path, fs::canonicalize(&override_path).unwrap());
     }
 
     #[cfg(not(windows))]
@@ -3712,7 +3718,7 @@ policies:
         assert_eq!(loaded.source, PolicyPackSource::WorkspacePolicy);
         assert_eq!(
             loaded.path,
-            fixture.path().join("policy").join("org-policy.yaml")
+            fs::canonicalize(fixture.path().join("policy").join("org-policy.yaml")).unwrap()
         );
         assert_eq!(
             loaded.pack.policies.required_sections,

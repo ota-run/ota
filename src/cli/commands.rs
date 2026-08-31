@@ -65086,6 +65086,7 @@ policies:
         assert_eq!(failure.0, "org_policy_unavailable");
     }
 
+    #[cfg(unix)]
     #[test]
     fn ci_projection_re_evaluates_typed_effect_policy_on_the_provider_checkout() {
         use crate::policy_pack::PolicyEffectDecision;
@@ -75337,6 +75338,7 @@ tasks:
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn detect_candidate_out_writes_review_artifact_without_modifying_contract() {
         let repo = tempfile::tempdir().expect("repo tempdir");
@@ -75409,6 +75411,7 @@ tasks:
         assert!(!repo.path().join("candidate.json").exists());
     }
 
+    #[cfg(unix)]
     #[test]
     fn detect_candidate_out_binds_existing_contract_bytes_without_applying_changes() {
         let repo = tempfile::tempdir().expect("repo tempdir");
@@ -75692,6 +75695,9 @@ project:
             stdout.contains(&format!(
                 "run `ota agents --write {}",
                 operator_root.display()
+            )) || stdout.contains(&format!(
+                "run `ota agents --write {}",
+                operator_root.display().to_string().replace('\\', "/")
             )),
             "{stdout}"
         );
@@ -79919,6 +79925,7 @@ agent:
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn tasks_json_binds_typed_effect_policy_and_refuses_provider_capability() {
         use sha2::{Digest as _, Sha256};
