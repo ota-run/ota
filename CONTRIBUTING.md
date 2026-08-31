@@ -53,6 +53,11 @@ Ota treats the contract, diagnosis model, JSON output, and readiness semantics a
 product surfaces. The project is currently kept under strict maintainer stewardship so those
 surfaces can evolve coherently while the public contract hardens.
 
+External code pull requests remain closed during this stabilization period. Any future opening
+will begin with bounded contribution lanes backed by explicit contribution terms, provenance,
+ownership, and review controls; roadmap and trust-sensitive product decisions will remain
+maintainer-led.
+
 ## If you want to help anyway
 
 - open a bug with a failing repo shape
