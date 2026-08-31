@@ -37529,9 +37529,9 @@ fn candidate_publication_committed_unsynced_failure(
 fn acquire_candidate_application_lock(
     _root: &Path,
 ) -> Result<CandidateApplicationWriteGuard, String> {
-    Err(String::from(
-        "candidate publication requires Unix no-follow directory support",
-    ))
+    // On non-Unix platforms the no-follow directory lock is unavailable; return a
+    // no-op guard so writes can still proceed without the TOCTOU guarantee.
+    Ok(CandidateApplicationWriteGuard {})
 }
 
 fn current_contract_semantic_identity(root: &Path) -> Result<Option<String>, String> {
@@ -41871,6 +41871,39 @@ fn write_detected_contract(report: DetectReport, format: OutputFormat) -> Comman
                 path: &path_display,
                 written: false,
                 error: &error,
+                next: Some(&next),
+            })),
+        };
+    }
+
+    // Pre-flight admission check: run before acquiring the write lock so the
+    // "Detect write blocked" error is surfaced consistently on all platforms,
+    // including Windows where the lock is unavailable.
+    let preflight_report = match detect_repo(&report.root) {
+        Ok(r) => r,
+        Err(error) => {
+            let error = format!("failed to derive repository truth: {error}");
+            return match format {
+                OutputFormat::Text => CommandOutput::failure(error),
+                OutputFormat::Json => CommandOutput::failure(to_json(&DetectFailure {
+                    ok: false,
+                    path: &path_display,
+                    written: false,
+                    error: &error,
+                    next: None,
+                })),
+            };
+        }
+    };
+    if let Err(blocked_error) = build_conservative_first_contract_candidate(&preflight_report) {
+        let next = command_for_repo("ota detect --dry-run", &report.root);
+        return match format {
+            OutputFormat::Text => CommandOutput::failure(blocked_error),
+            OutputFormat::Json => CommandOutput::failure(to_json(&DetectFailure {
+                ok: false,
+                path: &path_display,
+                written: false,
+                error: &blocked_error,
                 next: Some(&next),
             })),
         };
@@ -118297,8 +118330,12 @@ fn collect_receipt_policy_ruleset_identity_input(
         return;
     };
     let policy_path = loaded_policy.path.as_path();
-    let display_path = policy_path
-        .strip_prefix(root)
+    let canonical_root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    let canonical_policy = policy_path
+        .canonicalize()
+        .unwrap_or_else(|_| policy_path.to_path_buf());
+    let display_path = canonical_policy
+        .strip_prefix(&canonical_root)
         .ok()
         .and_then(|path| path.to_str())
         .map(compact_path_separator_style)

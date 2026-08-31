@@ -32381,10 +32381,16 @@ name = "fastapi"
             "Ota only writes an inferred `agent` block when at least one safe task is present"
         ));
         let canonical_root = fs::canonicalize(fixture.path()).expect("canonical fixture root");
-        assert!(preview_stdout.contains(&format!(
-            "run `ota agents --write {}",
-            canonical_root.display()
-        )));
+        // Production code normalizes Windows paths (strips \\?\ prefix, replaces \ with /).
+        let canonical_root_display = canonical_root
+            .display()
+            .to_string()
+            .trim_start_matches("\\\\?\\")
+            .replace('\\', "/");
+        assert!(
+            preview_stdout.contains(&format!("run `ota agents --write {canonical_root_display}")),
+            "expected agents --write path in stdout; got:\n{preview_stdout}"
+        );
         assert!(!preview_stdout.contains("\nagent:\n"));
     }
 

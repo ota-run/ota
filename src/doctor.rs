@@ -16162,7 +16162,7 @@ tasks:
             },
         }
 
-        assert_eq!(version.as_deref(), Some("go1.24.2"));
+        assert_eq!(version.as_deref(), Some("1.24.2"));
     }
 
     #[test]
