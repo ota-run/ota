@@ -26,11 +26,10 @@
 
 ## Unreleased
 
-- Reconciled V12 as implementation-complete with its formal bounded real-repository pressure bar
-  complete. Plausible and Outline retain exact selected-closure refusal evidence and bounded
-  witnesses for every applicable database, provider, worktree, service, hook, and selected-child
-  mutation path. Independent closure reconciliation remains before formal V12 closure; V12.1
-  remains planned and inactive.
+- Closed V12 after independent reconciliation of its implementation, formal bounded
+  real-repository pressure, and explicit proof limits. Plausible and Outline retain exact
+  selected-closure refusal evidence and bounded witnesses for every applicable database, provider,
+  worktree, service, hook, and selected-child mutation path. V12.1 remains planned and inactive.
 
 - `ota up --dry-run --json` now derives selected typed-effect admission before rendering a
   workflow preview. A typed refusal is `BLOCKED` without setup or other workflow work, and retains

@@ -35,12 +35,12 @@ durable agent workflow belongs in the canonical Ota skill.
 
 - branch: `1.6.27-implementation`
 - released baseline: `v1.6.26`
-- current V12 state: implementation-order steps 1-10 and the bounded real-repository pressure bar
-  are complete. Plausible and Outline now retain exact selected-closure denial with
+- V12 closure: implementation-order steps 1-10, the bounded real-repository pressure bar, and
+  independent closure reconciliation are complete. Plausible and Outline retain exact
+  selected-closure denial with
   `execution_started: false` plus independent setup, provider/database precursor,
   worktree/child-command, and outcome-hook absence witnesses; captured closure evidence records no
-  selected service. The next and only closure gate is one full independent audit of the complete
-  evidence set. The final corrected typed
+  selected service. The final corrected typed
   `ota up --dry-run` control is immutable-hosted in
   [run 33382559640](https://github.com/ota-run/ota/actions/runs/33382559640) against Core
   `a5aae10f5ce33e0d0927dbb913a685505933145b`. The archive-derived
@@ -48,8 +48,8 @@ durable agent workflow belongs in the canonical Ota skill.
   and platform-stably non-writable. Provider execution or mutation, callback behavior after Core's
   ordered delivery, independently administered policy authority, positive assurance, arbitrary
   child-process absence, repository-wide immutability, database correctness, and public archive
-  export safety remain unproved or outside V12. V12.1 remains planned and inactive; eventual V12
-  closure does not activate it, and its own gates require the released V12 surface plus one
+  export safety remain unproved or outside V12. V12.1 remains planned and inactive; V12 closure
+  does not activate it, and its own gates require the released V12 surface plus one
   concrete late-delivery provider case.
 - Core now owns `docs/pressure/evidence-manifest.json`, a machine-readable registry that binds
   retained pressure cases to exact revisions, matrices, exercised surfaces, proven facts, and
@@ -149,8 +149,9 @@ durable agent workflow belongs in the canonical Ota skill.
   repository-wide readiness, actual provider/database behavior, database correctness, arbitrary
   child-process absence, complete repository immutability, positive assurance, or export safety.
   See `docs/pressure/v12-real-repository-effect-refusal.md`.
-- active version: V12 effect-bound refusal assurance. V11 is reconciled complete and V12 is the sole
-  active version as of 2026-08-25. The first local implementation batch adds strict PostgreSQL
+- completed version: V12 effect-bound refusal assurance. V11 is reconciled complete and V12 was
+  the sole active version from 2026-08-25 through its closure. The first local implementation
+  batch added strict PostgreSQL
   resource bindings, discriminated database schema-mutation definitions, exact task attachment
   origins, and separate JCS/SHA-256 domains for resource, consequence, attachment, evidence, and
   realization identity. Contract validation rejects ambiguous namespace authority, unresolved or
@@ -1610,9 +1611,8 @@ Site propagation was pinned. The bounded engineering notes remain drafts pending
 review; their draft status is not an implementation or evidence gap, and the pressure evidence is
 not a release claim.
 The reviewed post-V11 sequence is now explicit. [V12 effect-bound refusal
-assurance](../planning/v12/plan.md) remains the sole active version: its bounded implementation
-and real-repository pressure are complete, and only independent closure reconciliation remains
-pending. The following plans remain inactive:
+assurance](../planning/v12/plan.md) is complete: its bounded implementation, real-repository
+pressure, and independent closure reconciliation are complete. The following plans remain inactive:
 [V12.1 secret-delivery governance](../planning/v12.1/plan.md),
 [V12.2 contract-authored crossing requirements](../planning/v12.2/plan.md),
 [V12.3 provider-attested authority carrier](../planning/v12.3/plan.md),

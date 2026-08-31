@@ -24,18 +24,19 @@
 
 # V12: Effect-Bound Refusal Assurance
 
-Status: active, implementation and pressure complete, independent closure review pending. Activated
+Status: complete. Activated
 on 2026-08-25 after V11 closure reconciliation and independent plan review. Implementation-order
 steps 1-10 are complete. Internal Linux/x64 and macOS pressure, bounded Plausible and Outline fork
 pressure, archive/assurance/candidate pressure, and the corrected typed `ota up --dry-run` control
 are retained below with exact revisions and limits. The final
 corrected preview run is
 [33382559640](https://github.com/ota-run/ota/actions/runs/33382559640) against Core
-`a5aae10f5ce33e0d0927dbb913a685505933145b`; closure reconciliation follows that tested revision.
+`a5aae10f5ce33e0d0927dbb913a685505933145b`. The later final Plausible and Outline matrices
+listed below, together with independent closure reconciliation, accepted the complete evidence set.
 Both real-repository fixtures now independently witness refusal before every applicable selected
 local database/provider precursor, worktree/child-command, setup, and hook path required by the
-bounded pressure bar; retained closure evidence records that no service is selected. V12 is not
-complete until one independent review reconciles the complete evidence set. Categories that cannot
+bounded pressure bar; retained closure evidence records that no service is selected. Independent
+closure review reconciled the complete evidence set. Categories that cannot
 be instrumented remain explicit `not_proved` boundaries. Provider mutation, callback behavior after Core's ordered delivery,
 independently administered policy authority, positive assurance, and public archive export safety
 remain outside this bounded V12 claim.
@@ -65,7 +66,7 @@ complete or that equivalent paths are covered.
   machinery.
 - The V11 parent frame is complete; deferred follow-ons remain durably owned outside V12.
 - Independent review found no remaining material planning findings.
-- The canonical handoff activates V12 as the sole active version and keeps V12.1 onward inactive.
+- The canonical handoff activated V12 as the sole active version and kept V12.1 onward inactive.
 
 Activation authorizes implementation order step 1 only. It does not establish effect support,
 policy enforcement, canary assurance, receipt/archive evidence, or pressure proof.
@@ -785,7 +786,7 @@ re-derives every proposed field.
 
 ## Implementation Order
 
-Implementation-order steps 1-10 are complete; independent closure review remains open. Step 8 is deliberately limited to the
+Implementation-order steps 1-10 and independent closure review are complete. Step 8 is deliberately limited to the
 review-only `effect_assurance` candidate described above; writable incident ratcheting is not an
 unfinished V12 branch and is owned by the inactive
 [Incident Ratchet Application](../incident-ratchet-application/plan.md) plan. The shared evaluator can produce an effect-caused
@@ -902,7 +903,7 @@ positive assurance, or export safety.
    [Incident Ratchet Application](../incident-ratchet-application/plan.md) plan.
 9. Propagate the public schema, command behavior, JSON references, examples, canonical skill,
    installed skill mirrors, and site reference before pressure.
-10. Complete independent real-repository pressure before marking V12 complete.
+10. Completed independent real-repository pressure before marking V12 complete.
 
 ## Acceptance Bar
 
