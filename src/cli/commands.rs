@@ -37422,6 +37422,8 @@ fn candidate_evidence_matches_root(candidate: &ContractCandidate, root: &Path) -
 struct CandidateApplicationWriteGuard {
     #[cfg(unix)]
     root_directory: File,
+    #[cfg(not(unix))]
+    root: std::path::PathBuf,
 }
 
 #[cfg(unix)]
@@ -37527,11 +37529,13 @@ fn candidate_publication_committed_unsynced_failure(
 
 #[cfg(not(unix))]
 fn acquire_candidate_application_lock(
-    _root: &Path,
+    root: &Path,
 ) -> Result<CandidateApplicationWriteGuard, String> {
     // On non-Unix platforms the no-follow directory lock is unavailable; return a
     // no-op guard so writes can still proceed without the TOCTOU guarantee.
-    Ok(CandidateApplicationWriteGuard {})
+    Ok(CandidateApplicationWriteGuard {
+        root: root.to_path_buf(),
+    })
 }
 
 fn current_contract_semantic_identity(root: &Path) -> Result<Option<String>, String> {
@@ -38342,13 +38346,42 @@ fn publish_candidate_create_new(_directory: &File, _temporary: &CString, _target
 
 #[cfg(not(unix))]
 fn write_candidate_contract_create_new(
-    _guard: &CandidateApplicationWriteGuard,
-    _contract: &Contract,
-    _expected_base_identity: Option<&str>,
+    guard: &CandidateApplicationWriteGuard,
+    contract: &Contract,
+    expected_base_identity: Option<&str>,
 ) -> Result<(), CandidatePublicationError> {
-    Err(CandidatePublicationError::PrePublication(String::from(
-        "candidate publication requires Unix no-follow directory support",
-    )))
+    if expected_base_identity.is_some() {
+        return Err(CandidatePublicationError::PrePublication(String::from(
+            "candidate publication refuses to replace an existing ota.yaml; review the candidate and apply the contract through an owned update flow",
+        )));
+    }
+    let bytes = serde_yaml::to_string(contract)
+        .map_err(|error| {
+            CandidatePublicationError::PrePublication(format!(
+                "failed to serialize projected contract: {error}"
+            ))
+        })?
+        .into_bytes();
+    // On non-Unix platforms write with create_new semantics (fails if already exists).
+    let path = guard.root.join(DEFAULT_CONTRACT_FILE);
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .map_err(|error| {
+            CandidatePublicationError::PrePublication(format!(
+                "failed to create ota.yaml: {error}"
+            ))
+        })?;
+    file.write_all(&bytes)
+        .and_then(|_| file.sync_all())
+        .map_err(|error| {
+            // Best-effort cleanup on write failure
+            let _ = fs::remove_file(&path);
+            CandidatePublicationError::PrePublication(format!(
+                "failed to write ota.yaml: {error}"
+            ))
+        })
 }
 
 fn render_detect_contract_preview(
