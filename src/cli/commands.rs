@@ -38369,18 +38369,14 @@ fn write_candidate_contract_create_new(
         .create_new(true)
         .open(&path)
         .map_err(|error| {
-            CandidatePublicationError::PrePublication(format!(
-                "failed to create ota.yaml: {error}"
-            ))
+            CandidatePublicationError::PrePublication(format!("failed to create ota.yaml: {error}"))
         })?;
     file.write_all(&bytes)
         .and_then(|_| file.sync_all())
         .map_err(|error| {
             // Best-effort cleanup on write failure
             let _ = fs::remove_file(&path);
-            CandidatePublicationError::PrePublication(format!(
-                "failed to write ota.yaml: {error}"
-            ))
+            CandidatePublicationError::PrePublication(format!("failed to write ota.yaml: {error}"))
         })
 }
 
