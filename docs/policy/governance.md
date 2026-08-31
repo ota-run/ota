@@ -70,6 +70,10 @@ Ota is trying to become trusted infrastructure, not just a useful script. That m
 Maintainer-led governance is the current mechanism for keeping those boundaries clean while the
 public contract hardens.
 
+External code pull requests remain closed during this stabilization period. Any future opening
+will begin with bounded contribution lanes backed by explicit contribution terms, provenance,
+ownership, and review controls; it will not transfer roadmap or release authority away from Ota.
+
 ## Maintainer repo controls
 
 The repository should enforce a small branch-protection baseline on `main` even though Ota does
