@@ -780,8 +780,9 @@ durable agent workflow belongs in the canonical Ota skill.
   authoritative, and positive effect-backed promotion is deferred to V12's typed effect and
   realization evaluator rather than treated as a V11.22 closure gate;
   V11.22 does not consume crossing records as approval authority. V12 effect-bound
-  refusal assurance has completed its bounded implementation but remains active while the formal
-  real-repository pressure bar is open. That status does not widen the completed
+  refusal assurance had completed its bounded implementation while the formal real-repository
+  pressure bar was still open. The final Plausible and Outline witness matrices now complete that
+  bounded pressure bar; independent closure reconciliation does not widen the completed
   crossing implementation. See [V11.7](../planning/v11.7/plan.md),
   [V11.22](../planning/v11.22/plan.md), [V12](../planning/v12/plan.md), and the planned,
   inactive [V12.1 secret-delivery governance follow-on](../planning/v12.1/plan.md).
@@ -1609,8 +1610,9 @@ Site propagation was pinned. The bounded engineering notes remain drafts pending
 review; their draft status is not an implementation or evidence gap, and the pressure evidence is
 not a release claim.
 The reviewed post-V11 sequence is now explicit. [V12 effect-bound refusal
-assurance](../planning/v12/plan.md) remains the sole active version while its real-repository
-pressure and independent closure review remain pending; the following plans remain inactive:
+assurance](../planning/v12/plan.md) remains the sole active version: its bounded implementation
+and real-repository pressure are complete, and only independent closure reconciliation remains
+pending. The following plans remain inactive:
 [V12.1 secret-delivery governance](../planning/v12.1/plan.md),
 [V12.2 contract-authored crossing requirements](../planning/v12.2/plan.md),
 [V12.3 provider-attested authority carrier](../planning/v12.3/plan.md),

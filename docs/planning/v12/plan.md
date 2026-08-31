@@ -819,8 +819,9 @@ inherited-proof typed denial with `execution_attempted: false`, absent workflow 
 environment-rendering, proof-artifact, and durable-log paths, stale-input and symlink refusal,
 task/workflow canary outcomes, and the Core-owned delivery-continuity control. The fixture does
 not independently establish arbitrary child-process absence, provider contact or mutation, or
-complete repository immutability. It remains execution-disabled internal evidence; V12 still
-requires its independent real-repository pressure bar before closure.
+complete repository immutability. At that internal-evidence stage, V12 still required its
+independent real-repository pressure bar before closure. The final Plausible and Outline matrices
+now complete that bounded pressure requirement; only independent closure reconciliation remains.
 The exact provider-checkout re-evaluation command is separately immutable-hosted on Linux/x64 and
 macOS in [run 33302123045](https://github.com/ota-run/ota/actions/runs/33302123045) against Core
 `d0178b2013efd3d12f6baa0a94bb572f162c70a7`. Both retained artifacts pass a compatibility-policy
