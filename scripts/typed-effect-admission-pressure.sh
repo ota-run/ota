@@ -158,8 +158,13 @@ tasks:
     command:
       exe: sh
       args: [-c, "touch setup-sentinel"]
+  prepare-command:
+    command:
+      exe: sh
+      args: [-c, "touch command-sentinel"]
   migrate:
     action: { kind: database_schema_mutation, effect: migration }
+    depends_on: [prepare-command]
     effects:
       declared: [migration]
   migrate-declared-only:
@@ -337,7 +342,16 @@ stage=preview_validation
   --assert-non-empty-string plan.effect_application_plans.0.identity \
   --assert-eq plan.effect_policy_decision.aggregate_decision=deny \
   --assert-eq plan.effect_policy_decision.explicit_typed_deny=true \
-  -- "$ota" up --dry-run --json "$preview_fixture"
+  -- "$ota" up --dry-run --json "$fixture"
+for path in setup-sentinel .env.typed .ota/proof .ota/state/logs command-sentinel; do
+  test ! -e "$fixture/$path" || fail "typed up preview created $path before refusal"
+done
+printf '%s\n' \
+  'setup_sentinel_absent' \
+  'workflow_env_artifact_absent' \
+  'proof_artifact_absent' \
+  'durable_log_path_absent' \
+  'command_sentinel_absent' > "$proof_root/up-dry-run-side-effect-absence.txt"
 record_stage previews_validated
 
 stage=mixed_realization_refusal
@@ -1032,6 +1046,11 @@ printf '%s\n' \
   'archive_backed_assurance_tamper_refused' \
   'durable_refusal_archive_restored' \
   'effect_refusal_candidate_verified' \
+  'typed_up_preview_setup_sentinel_absent' \
+  'typed_up_preview_workflow_env_artifact_absent' \
+  'typed_up_preview_proof_artifact_absent' \
+  'typed_up_preview_durable_log_path_absent' \
+  'typed_up_preview_command_sentinel_absent' \
   'setup_sentinel_absent' \
   'workflow_env_artifact_absent' \
   'stale_input_refused' \

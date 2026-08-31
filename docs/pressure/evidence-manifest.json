@@ -130,8 +130,8 @@
       "ota": {"version": "pre-release v1.6.27", "core_revision": "d4e3bef699022c77211349ac0634377697f9d070"},
       "evidence": [{"platforms": ["linux", "macos"], "run_url": "https://github.com/ota-run/ota/actions/runs/33341297026"}],
       "exercised_surfaces": ["typed up dry-run admission", "blocked preview envelope", "Core plan-to-executor continuity", "sandbox admission continuity"],
-      "proven_facts": ["An explicit typed deny blocked the selected up preview before the fixture's setup, environment-rendering, proof, durable-log, and command-sentinel paths.", "The blocked preview retained one admitted application plan and its explicit deny decision without rendering ordinary workflow actions."],
-      "not_proved": ["Provider contact or mutation", "arbitrary child-process absence", "repository-wide immutability", "database correctness", "positive assurance", "archive export safety"],
+      "proven_facts": ["An explicit typed deny produced a blocked preview with one admitted application plan and its explicit deny decision.", "The blocked preview contained only the refusal action, and Core-owned plan-to-executor and sandbox-admission continuity controls passed."],
+      "not_proved": ["Selected-preview setup, environment-rendering, proof-artifact, durable-log, or command-path absence", "Provider contact or mutation", "arbitrary child-process absence", "repository-wide immutability", "database correctness", "positive assurance", "archive export safety"],
       "engineering_note": {"status": "draft", "url": null},
       "core_note": "docs/ai/current-state.md"
     },

@@ -72,12 +72,13 @@ durable agent workflow belongs in the canonical Ota skill.
 - Immutable Linux/x64 and macOS [run 33341297026](https://github.com/ota-run/ota/actions/runs/33341297026)
   against exact Core `d4e3bef699022c77211349ac0634377697f9d070` closes the repaired typed
   `ota up --dry-run` admission control. Both retained artifacts show one admitted application plan,
-  an explicit typed deny, `BLOCKED`, `execution_started: false`, and only the refusal action before
-  the fixture's setup, environment-rendering, proof-artifact, durable-log, and command-sentinel
-  paths. The same jobs pass Core-owned plan-to-executor and sandbox-admission continuity controls.
-  This remains internal, provider-disabled evidence only; it does not prove provider contact or
-  mutation, arbitrary child-process absence, repository-wide immutability, database correctness,
-  positive assurance, or archive export safety.
+  an explicit typed deny, `BLOCKED`, `execution_started: false`, and only the refusal action. The
+  same jobs pass Core-owned plan-to-executor and sandbox-admission continuity controls. That
+  fixture did not declare the setup, environment-rendering, proof-artifact, durable-log, and
+  command paths needed to establish their absence under this preview; a replacement matrix is
+  required before claiming those controls. This remains internal, provider-disabled evidence only;
+  it does not prove provider contact or mutation, arbitrary child-process absence, repository-wide
+  immutability, database correctness, positive assurance, or archive export safety.
 - Final V12 internal Linux/x64 and macOS pressure is green in
   [run 33335973677](https://github.com/ota-run/ota/actions/runs/33335973677), bound to Core
   `25afb2b510a13ce149a2e9aa8ed5418a7af69482`. Both retained artifacts complete the selected typed
