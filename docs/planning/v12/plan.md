@@ -24,20 +24,21 @@
 
 # V12: Effect-Bound Refusal Assurance
 
-Status: active. Activated on 2026-08-25 after V11 closure reconciliation and independent plan
-review. Declaration, canonical-identity, execution-disabled application-plan, and Core-owned
-ordered-delivery continuity foundations are committed through Core
-`32e3395f92e1114ce209dc620d14ecc82330856f`. Immutable internal-fixture pressure is green on
-Linux/x64 and macOS in [run 33032683375](https://github.com/ota-run/ota/actions/runs/33032683375).
-This evidence does not enable provider mutation, establish callback behavior after delivery, or
-replace the required independent real-repository pressure. The shared typed effect-policy evaluator
-and pre-side-effect denial boundary are committed at Core `d72c6c85`; immutable internal-fixture
-admission pressure is green on Linux/x64 and macOS in
-[run 33067741989](https://github.com/ota-run/ota/actions/runs/33067741989) against exact Core
-`212446c000b55d68bad5906a4b532ce5055c1477`. It proves only canonical policy-decision publication
-and typed `run`/`up`/inherited-proof refusal before the selected fixture's setup or environment
-rendering. It does not establish provider mutation, canary assurance, positive evidence, an
-independently administered policy authority, or independent real-repository pressure.
+Status: active, implementation and pressure complete, independent closure review pending. Activated
+on 2026-08-25 after V11 closure reconciliation and independent plan review. Implementation-order
+steps 1-10 are complete. Internal Linux/x64 and macOS pressure, bounded Plausible and Outline fork
+pressure, archive/assurance/candidate pressure, and the corrected typed `ota up --dry-run` control
+are retained below with exact revisions and limits. The final
+corrected preview run is
+[33382559640](https://github.com/ota-run/ota/actions/runs/33382559640) against Core
+`a5aae10f5ce33e0d0927dbb913a685505933145b`; closure reconciliation follows that tested revision.
+Both real-repository fixtures now independently witness refusal before every applicable selected
+local database/provider precursor, worktree/child-command, setup, and hook path required by the
+bounded pressure bar; retained closure evidence records that no service is selected. V12 is not
+complete until one independent review reconciles the complete evidence set. Categories that cannot
+be instrumented remain explicit `not_proved` boundaries. Provider mutation, callback behavior after Core's ordered delivery,
+independently administered policy authority, positive assurance, and public archive export safety
+remain outside this bounded V12 claim.
 
 ## Activation Gates
 
@@ -784,8 +785,7 @@ re-derives every proposed field.
 
 ## Implementation Order
 
-Completed V12 boundary: implementation-order steps 1-10 are complete for the bounded,
-provider-disabled effect-refusal assurance surface. Step 8 is deliberately limited to the
+Implementation-order steps 1-10 are complete; independent closure review remains open. Step 8 is deliberately limited to the
 review-only `effect_assurance` candidate described above; writable incident ratcheting is not an
 unfinished V12 branch and is owned by the inactive
 [Incident Ratchet Application](../incident-ratchet-application/plan.md) plan. The shared evaluator can produce an effect-caused
@@ -861,16 +861,20 @@ migration drift plus a symlinked contract without publication. The carrier also 
 rehashed substituted-proposal regression. This is internal, provider-disabled evidence only; it
 does not prove provider contact or mutation, arbitrary child-process absence, repository-wide
 immutability, positive assurance, or export safety.
-The same archive, assurance, and candidate-reconciliation controls are now immutable-hosted on
-Linux/x64 and macOS against two forked real repositories: Plausible in
-[run 33327820048](https://github.com/bobaikato/analytics/actions/runs/33327820048) and Outline in
-[run 33327824518](https://github.com/bobaikato/outline/actions/runs/33327824518). Both retain a
-clean source-built Core `9b2ff4bd0ed760a506d35539477441b3899e924f` identity, one valid private
+The same archive, assurance, candidate-reconciliation, and bounded selected-path controls are now
+immutable-hosted on Linux/x64 and macOS against two forked real repositories: Plausible in
+[run 33391482073](https://github.com/bobaikato/analytics/actions/runs/33391482073) and Outline in
+[run 33391486538](https://github.com/bobaikato/outline/actions/runs/33391486538). Both retain a
+clean source-built Core `e96cad13db9e4289c0985fca2ce6d8353a896da4` identity, one valid private
 workflow archive, exact workflow-only Doctor promotion to `supported` with fallback to `unknown`
 after context stripping, a projection-free `unknown` candidate, read-only write refusal,
-reconciliation-bound no-op, and migration-drift plus contract-alias refusal. This remains
-provider-disabled selected-lane evidence; it does not prove provider behavior, repository-wide
-immutability, database correctness, positive assurance, or export safety.
+reconciliation-bound no-op, and migration-drift plus contract-alias refusal. Each task and workflow
+canary also retains absence of its selected provider/database precursor, worktree/child-command,
+and outcome-hook sentinels; the workflow additionally retains setup-sentinel absence. Captured
+closure evidence records no selected service. This remains provider-disabled selected-lane
+evidence; it does not prove actual provider behavior or database mutation prevention, arbitrary
+child-process absence, repository-wide immutability, database correctness, positive assurance, or
+export safety.
 The final consolidated V12 internal control is immutable-hosted on Linux/x64 and macOS in
 [run 33335973677](https://github.com/ota-run/ota/actions/runs/33335973677), bound to exact Core
 `25afb2b510a13ce149a2e9aa8ed5418a7af69482`. Both retained artifacts complete the selected typed
@@ -973,18 +977,25 @@ claim callback behavior, database correctness, or successful mutation.
 
 The first repository must contain committed deterministic database migration truth and at least
 two real selected lanes with different task/workflow names that resolve to the same typed
-`database_schema_mutation` effect. Both must refuse through the same effect-policy rule before any
-database, provider, worktree, service, hook, or child-process mutation.
+`database_schema_mutation` effect. Both must refuse through the same effect-policy rule before
+every selected local database/provider precursor, worktree, service, hook, or child-command path
+that the pressure contract declares. Every applicable path requires an independent bounded witness;
+an unselected category requires retained closure evidence rather than a fabricated sentinel. V12
+has no executable provider adapter, so these controls do not prove provider contact, database
+mutation, or mutation prevention outside Ota. Those boundaries remain explicitly `not_proved`
+rather than becoming impossible closure requirements for this provider-disabled version.
 
-Immutable partial evidence is retained in
+Immutable bounded evidence is retained in
 [`docs/pressure/v12-real-repository-effect-refusal.md`](../../pressure/v12-real-repository-effect-refusal.md):
 Plausible Analytics and Outline each pass direct task and workflow explicit-deny canaries on Linux
-and macOS with `execution_started: false`. Those controls establish only Ota's selected-closure
-refusal boundary. A second immutable matrix against both repositories additionally proves static
-coverage honesty: one known equal-effect path is intentionally left unchallenged and appears as
+and macOS with `execution_started: false`. The final matrix retains the selected setup,
+provider/database precursor, worktree/child-command, and outcome-hook paths and observes each
+sentinel absent immediately after the applicable refusal; retained closure evidence records no
+selected service. An earlier immutable matrix additionally proves static coverage honesty: one
+known equal-effect path is intentionally left unchallenged and appears as
 `equivalent_execution_paths_not_proved`, opaque execution remains a gap, and a generic caller
-refusal cannot false-green the canary. These controls do not prove arbitrary process absence or
-close this pressure bar.
+refusal cannot false-green the canary. These controls close the bounded pressure bar without
+claiming arbitrary process absence, actual provider/database behavior, or repository-wide truth.
 
 An adversarial mixed-realization control attaches one eligible typed realization and one
 ineligible declared-only/opaque realization to the same effect identity. Challenging the ineligible

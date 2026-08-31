@@ -35,33 +35,22 @@ durable agent workflow belongs in the canonical Ota skill.
 
 - branch: `1.6.27-implementation`
 - released baseline: `v1.6.26`
-- current V12 slice: `ota contract effect-refusal-candidate` turns one verified private workflow
-  refusal archive with exactly one eligible explicit typed denial into a schema-v5, archive-bound
-  `unknown` proposal for one `agent.effect_refusal_canaries` entry. It freezes one regular
-  `ota.yaml` through retained no-follow descriptors, parses those exact bytes, re-derives current
-  contract, workflow, effect, attachment, migration-plan, and realization truth, and rechecks the
-  contract before publication or no-op; stale, aliased, or conflicting inputs refuse, an
-  exact existing declaration is a non-publishing no-op, and the artifact has no application
-  projection. Both success branches expose one versioned reconciliation identity and its exact
-  source identities. `apply-candidate` returns platform-stable `candidate_read_only` before writer
-  platform or lock admission. This closes only the reviewed
-  evidence-to-authoring handoff; it does not infer effect definitions, policy, grants, provider
-  authority, execution approval, or positive assurance. Core command/JSON references, the Site
-  command/schema references, and the canonical Skill carry that boundary. Examples remain
-  unchanged because the command requires a real private archive rather than a static copy-ready
-  fixture. Learn remains unchanged until typed provider execution is operator-usable; the existing
-  Effect refusal canary Glossary entry already owns the term, and this specialist review command
-  does not add a new general FAQ question. CLI orchestration lives in the focused
-  `cli/commands/effect_assurance_candidate` module; candidate identity and derivation remain in the
-  shared candidate domain. Immutable Linux/x64 and macOS pressure in
-  [run 33323426885](https://github.com/ota-run/ota/actions/runs/33323426885), bound to Core
-  `9b2ff4bd0ed760a506d35539477441b3899e924f`, directly invokes the command: both retained
-  artifacts publish one bounded candidate, reject `apply-candidate --write --carrier git` as
-  `candidate_read_only`, produce a reconciliation-bound exact-existing no-op, and refuse
-  migration drift and a symlinked contract without publication. The carrier also runs the Core
-  regression rejecting a rehashed substituted proposal. This is internal, provider-disabled
-  evidence only; it does not prove provider contact or mutation, arbitrary child-process absence,
-  repository-wide immutability, positive assurance, or export safety.
+- current V12 state: implementation-order steps 1-10 and the bounded real-repository pressure bar
+  are complete. Plausible and Outline now retain exact selected-closure denial with
+  `execution_started: false` plus independent setup, provider/database precursor,
+  worktree/child-command, and outcome-hook absence witnesses; captured closure evidence records no
+  selected service. The next and only closure gate is one full independent audit of the complete
+  evidence set. The final corrected typed
+  `ota up --dry-run` control is immutable-hosted in
+  [run 33382559640](https://github.com/ota-run/ota/actions/runs/33382559640) against Core
+  `a5aae10f5ce33e0d0927dbb913a685505933145b`. The archive-derived
+  `effect_assurance` candidate remains schema-v5, `unknown`, reconciliation-bound, review-only,
+  and platform-stably non-writable. Provider execution or mutation, callback behavior after Core's
+  ordered delivery, independently administered policy authority, positive assurance, arbitrary
+  child-process absence, repository-wide immutability, database correctness, and public archive
+  export safety remain unproved or outside V12. V12.1 remains planned and inactive; eventual V12
+  closure does not activate it, and its own gates require the released V12 surface plus one
+  concrete late-delivery provider case.
 - Core now owns `docs/pressure/evidence-manifest.json`, a machine-readable registry that binds
   retained pressure cases to exact revisions, matrices, exercised surfaces, proven facts, and
   explicit limits. The Site commits a generated discovery projection and validates it against Core
@@ -95,7 +84,7 @@ durable agent workflow belongs in the canonical Ota skill.
   `elixir --version` also prints Erlang/OTP. Credentialed CAEP, merge, communications, and the
   Liminal lifecycle remain unmodeled. See `docs/pressure/pythialabs-discovery.md` for exact
   revisions, hosted evidence, and limits.
-- V12 has partial immutable real-repository refusal evidence: Linux/macOS fork matrices against
+- V12 has bounded immutable real-repository refusal evidence: Linux/macOS fork matrices against
   Plausible Analytics and Outline each validate a committed PostgreSQL migration root, then pass
   direct task and workflow effect-refusal canaries with `execution_started: false` and an explicit
   typed deny. `ota doctor --json` now emits contract-graph coverage records for each declared
@@ -144,17 +133,20 @@ durable agent workflow belongs in the canonical Ota skill.
   Core `81c25e09c833559312e9cd43ce04a1c63f27d6fa` now proves that exact workflow-only promotion
   from a verified private archive and its fallback to `unknown` after archive tampering. It remains
   internal, provider-disabled negative evidence, not provider contact, mutation, positive
-  assurance, or export safety. The next fork-only Linux/macOS matrices against Plausible and
-  Outline are immutable-hosted in [run 33327820048](https://github.com/bobaikato/analytics/actions/runs/33327820048)
-  and [run 33327824518](https://github.com/bobaikato/outline/actions/runs/33327824518) at fork
-  revisions `0e01e63cbeb44ee8e8bbb6f3231478050739dcd0` and
-  `1ca4a64089b7eefa74783d9e51a31d7cf398d484`. Every retained artifact binds clean source-built
-  Core `9b2ff4bd0ed760a506d35539477441b3899e924f`. Both create and verify one private workflow
+  assurance, or export safety. The final fork-only Linux/macOS matrices against Plausible and
+  Outline are immutable-hosted in [run 33391482073](https://github.com/bobaikato/analytics/actions/runs/33391482073)
+  and [run 33391486538](https://github.com/bobaikato/outline/actions/runs/33391486538) at fork
+  revisions `fa24db238dae39a277e5fbfc08519488a32c1020` and
+  `58b6a7731aff1a1237da1d9ade6021114b0a1c6e`. Every retained artifact binds clean source-built
+  Core `e96cad13db9e4289c0985fca2ce6d8353a896da4`. Both create and verify one private workflow
   archive, promote only its exact workflow-only claim to `supported`, return it to `unknown` after
   context stripping, publish a projection-free `unknown` candidate, refuse its write attempt,
   emit a reconciliation-bound existing-declaration no-op, and refuse migration drift and a
-  symlinked contract without publication. This is still selected-lane, provider-disabled evidence:
-  it does not prove repository-wide readiness, provider behavior, database correctness, arbitrary
+  symlinked contract without publication. Their task and workflow canaries additionally retain
+  absence of selected provider/database precursor, worktree/child-command, and outcome-hook
+  sentinels; workflow canaries retain setup-sentinel absence, and closure evidence records no
+  selected service. This is still selected-lane, provider-disabled evidence: it does not prove
+  repository-wide readiness, actual provider/database behavior, database correctness, arbitrary
   child-process absence, complete repository immutability, positive assurance, or export safety.
   See `docs/pressure/v12-real-repository-effect-refusal.md`.
 - active version: V12 effect-bound refusal assurance. V11 is reconciled complete and V12 is the sole
@@ -788,8 +780,8 @@ durable agent workflow belongs in the canonical Ota skill.
   authoritative, and positive effect-backed promotion is deferred to V12's typed effect and
   realization evaluator rather than treated as a V11.22 closure gate;
   V11.22 does not consume crossing records as approval authority. V12 effect-bound
-  refusal assurance is now active after explicit V11 closure reconciliation and independent plan
-  review. Activation does not widen the completed
+  refusal assurance has completed its bounded implementation but remains active while the formal
+  real-repository pressure bar is open. That status does not widen the completed
   crossing implementation. See [V11.7](../planning/v11.7/plan.md),
   [V11.22](../planning/v11.22/plan.md), [V12](../planning/v12/plan.md), and the planned,
   inactive [V12.1 secret-delivery governance follow-on](../planning/v12.1/plan.md).
@@ -1617,7 +1609,8 @@ Site propagation was pinned. The bounded engineering notes remain drafts pending
 review; their draft status is not an implementation or evidence gap, and the pressure evidence is
 not a release claim.
 The reviewed post-V11 sequence is now explicit. [V12 effect-bound refusal
-assurance](../planning/v12/plan.md) is the sole active version; the following plans remain inactive:
+assurance](../planning/v12/plan.md) remains the sole active version while its real-repository
+pressure and independent closure review remain pending; the following plans remain inactive:
 [V12.1 secret-delivery governance](../planning/v12.1/plan.md),
 [V12.2 contract-authored crossing requirements](../planning/v12.2/plan.md),
 [V12.3 provider-attested authority carrier](../planning/v12.3/plan.md),

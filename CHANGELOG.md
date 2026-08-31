@@ -26,6 +26,11 @@
 
 ## Unreleased
 
+- Reconciled V12 as implementation-complete with its formal real-repository pressure bar still
+  open. Plausible and Outline retain exact selected-closure refusal evidence, but require bounded
+  witnesses for every applicable database, provider, worktree, service, hook, and selected-child
+  mutation path before closure. V12.1 remains planned and inactive.
+
 - `ota up --dry-run --json` now derives selected typed-effect admission before rendering a
   workflow preview. A typed refusal is `BLOCKED` without setup or other workflow work, and retains
   the admitted non-secret `plan.effect_application_plans` plus active
@@ -73,17 +78,20 @@
   evidence; it does not prove provider contact or mutation, arbitrary child-process absence,
   repository-wide immutability, positive assurance, or export safety.
 
-- Recorded the same archive, assurance, and review-only candidate controls against forked
+- Recorded the same archive, assurance, review-only candidate, and bounded selected-path controls against forked
   Plausible and Outline repositories on Linux/x64 and macOS in
-  [run 33327820048](https://github.com/bobaikato/analytics/actions/runs/33327820048) and
-  [run 33327824518](https://github.com/bobaikato/outline/actions/runs/33327824518). Both retained
-  artifacts bind clean source-built Core `9b2ff4bd0ed760a506d35539477441b3899e924f`, verify one
+  [run 33391482073](https://github.com/bobaikato/analytics/actions/runs/33391482073) and
+  [run 33391486538](https://github.com/bobaikato/outline/actions/runs/33391486538). Both retained
+  artifacts bind clean source-built Core `e96cad13db9e4289c0985fca2ce6d8353a896da4`, verify one
   private workflow archive, promote only its exact workflow claim to `supported`, return it to
   `unknown` after retained-context stripping, and exercise durable projection-free candidate,
-  read-only write refusal, reconciliation no-op, migration drift, and contract-alias refusal.
-  This is selected-lane, provider-disabled evidence only; it does not prove repository-wide
-  readiness, provider behavior, database correctness, arbitrary child-process absence, complete
-  repository immutability, positive assurance, or export safety.
+  read-only write refusal, reconciliation no-op, migration drift, and contract-alias refusal. Task
+  and workflow canaries retain absence of their selected provider/database precursor,
+  worktree/child-command, and outcome-hook sentinels; workflow canaries additionally retain
+  setup-sentinel absence, while captured closure evidence records no selected service. This is
+  selected-lane, provider-disabled evidence only; it does not prove repository-wide readiness,
+  actual provider/database behavior, database correctness, arbitrary child-process absence,
+  complete repository immutability, positive assurance, or export safety.
 
 - Recorded immutable Linux/x64 and macOS pressure for private archive-backed workflow refusal
   assurance in [run 33309358828](https://github.com/ota-run/ota/actions/runs/33309358828)
