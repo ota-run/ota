@@ -1093,7 +1093,9 @@ impl ContractCandidate {
                     )));
                 }
             }
-            if let Some(closure) = &change.execution_closure {
+            if let Some(closure) = &change.execution_closure
+                && change.disposition == CandidateDisposition::Applicable
+            {
                 validate_closure_reconciliation(closure, &self.evidence_manifest)?;
                 for node in closure
                     .nodes

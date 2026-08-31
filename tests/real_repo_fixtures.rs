@@ -170,6 +170,19 @@ fn stdout_json(output: &Output) -> Value {
     serde_json::from_slice(&output.stdout).expect("stdout should be valid JSON")
 }
 
+fn assert_detect_merge_removed(output: &Output) {
+    assert!(
+        !output.status.success(),
+        "legacy --merge should be refused, stdout was: {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let json: Value = serde_json::from_slice(&output.stderr).expect("stderr should be JSON");
+    assert_eq!(json["ok"], false);
+    assert_eq!(json["written"], false);
+    assert_eq!(json["code"], "detect_legacy_mutation_removed");
+    assert_eq!(json["removed_flags"], serde_json::json!(["--merge"]));
+}
+
 fn stdout_json_any(output: &Output) -> Value {
     serde_json::from_slice(&output.stdout).expect("stdout should be valid JSON")
 }
@@ -3215,44 +3228,7 @@ project:
         "--json",
         fixture.path().to_str().unwrap(),
     ]);
-    let json = stdout_json(&output);
-
-    assert_eq!(json["written"], true);
-    assert_eq!(json["comparison"]["existing_contract"], true);
-    assert!(
-        json["comparison"]["changes"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|change| change["field"] == "project.name" && change["status"] == "update")
-    );
-    let written = fs::read_to_string(fixture.path().join("ota.yaml"))
-        .expect("ota.yaml should be merged for docker-heavy fixture");
-
-    assert!(written.contains("name: existing"));
-    assert!(written.contains("toolchains:"));
-    assert!(written.contains("node:"));
-    assert!(written.contains("version: 22.3.0") || written.contains("version: '*'"));
-    assert!(written.contains("pnpm: 10.5.0") || written.contains("manager: npm"));
-    assert!(written.contains("execution:"));
-    assert!(written.contains("default_context: host"));
-    assert!(written.contains("backend: native"));
-    assert!(written.contains("manager:"));
-    assert!(written.contains("kind: compose"));
-    assert!(written.contains("endpoints:"));
-    assert!(written.contains("address: 127.0.0.1"));
-    assert!(written.contains("port: 3000"));
-    assert!(written.contains("from: host"));
-    assert!(written.contains("kind: tcp"));
-    assert!(
-        written.contains("run: pnpm build")
-            || (written.contains("exe: pnpm") && written.contains("- build"))
-    );
-    assert!(
-        written.contains("run: pnpm dev")
-            || (written.contains("exe: pnpm") && written.contains("- dev"))
-    );
-    assert!(!written.contains("name: ota-containerized-web"));
+    assert_detect_merge_removed(&output);
 }
 
 #[test]
@@ -3282,43 +3258,7 @@ execution:
         "--json",
         fixture.path().to_str().unwrap(),
     ]);
-    let json = stdout_json(&output);
-
-    assert_eq!(json["written"], true);
-    assert!(
-        !json["comparison"]["changes"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|change| change["field"] == "execution.default_context")
-    );
-
-    let contract = load_contract(&fixture.path().join("ota.yaml"))
-        .expect("merged ota.yaml should load for named execution fixture");
-    validate_contract(&contract).expect("merged named execution contract should validate");
-
-    let execution = contract
-        .execution
-        .as_ref()
-        .expect("named execution fixture should keep execution");
-    assert_eq!(execution.default_context.as_deref(), Some("app"));
-    assert_eq!(
-        execution
-            .contexts
-            .get("host")
-            .map(|context| context.backend),
-        Some(ota::schema::Backend::Native)
-    );
-    let web = contract
-        .services
-        .get("web")
-        .expect("web service should be merged");
-    assert_eq!(
-        web.readiness
-            .as_ref()
-            .and_then(|readiness| readiness.from.as_deref()),
-        Some("host")
-    );
+    assert_detect_merge_removed(&output);
 }
 
 #[test]
@@ -3346,40 +3286,7 @@ execution:
         "--json",
         fixture.path().to_str().unwrap(),
     ]);
-    let json = stdout_json(&output);
-
-    assert_eq!(json["written"], true);
-    assert!(
-        !json["comparison"]["changes"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|change| {
-                change["field"] == "execution.default_context"
-                    || change["field"] == "execution.contexts.host.backend"
-                    || change["field"] == "services.web.endpoints.host.address"
-                    || change["field"] == "services.web.endpoints.host.port"
-                    || change["field"] == "services.web.readiness.from"
-                    || change["field"] == "services.web.readiness.kind"
-            })
-    );
-
-    let contract = load_contract(&fixture.path().join("ota.yaml"))
-        .expect("merged ota.yaml should load for shorthand execution fixture");
-    validate_contract(&contract).expect("merged shorthand execution contract should validate");
-
-    let execution = contract
-        .execution
-        .as_ref()
-        .expect("shorthand execution fixture should keep execution");
-    assert_eq!(execution.preferred, Some(ota::schema::Backend::Container));
-    assert!(execution.contexts.is_empty());
-    let web = contract
-        .services
-        .get("web")
-        .expect("web service should be merged");
-    assert!(web.endpoints.is_empty());
-    assert!(web.readiness.is_none());
+    assert_detect_merge_removed(&output);
 }
 
 #[test]
@@ -3401,33 +3308,7 @@ project:
         "--json",
         fixture.path().to_str().unwrap(),
     ]);
-    let json = stdout_json(&output);
-
-    assert_eq!(json["written"], true);
-    assert_eq!(json["comparison"]["existing_contract"], true);
-    assert!(
-        json["comparison"]["changes"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|change| change["field"] == "project.name" && change["status"] == "update")
-    );
-    assert!(
-        json["comparison"]["changes"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|change| change["field"] == "runtimes.python" && change["status"] == "add")
-    );
-    let written = fs::read_to_string(fixture.path().join("ota.yaml"))
-        .expect("ota.yaml should be merged for mixed node/python fixture");
-
-    assert!(written.contains("name: existing"));
-    assert!(written.contains("node: 22.8.0"));
-    assert!(!written.contains("python:"));
-    assert!(written.contains("manager:"));
-    assert!(written.contains("kind: compose"));
-    assert!(!written.contains("name: ota-hybrid-app"));
+    assert_detect_merge_removed(&output);
 }
 
 #[cfg(unix)]
@@ -3512,25 +3393,7 @@ project:
         "--json",
         fixture.path().to_str().unwrap(),
     ]);
-    let json = stdout_json(&output);
-
-    assert_eq!(json["written"], true);
-    assert_eq!(json["comparison"]["existing_contract"], true);
-    assert!(
-        json["comparison"]["changes"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|change| change["field"] == "project.name" && change["status"] == "update")
-    );
-
-    let written = fs::read_to_string(fixture.path().join("ota.yaml"))
-        .expect("ota.yaml should be merged for java maven fixture");
-
-    assert!(written.contains("name: existing"));
-    assert!(written.contains("toolchains:"));
-    assert!(written.contains("java:"));
-    assert!(!written.contains("name: ota-maven-service"));
+    assert_detect_merge_removed(&output);
 }
 
 #[test]
@@ -3555,32 +3418,7 @@ runtimes:
         "--json",
         fixture.path().to_str().unwrap(),
     ]);
-    let json = stdout_json(&output);
-
-    assert_eq!(json["written"], false);
-    assert_eq!(json["comparison"]["existing_contract"], true);
-    assert!(
-        json["comparison"]["changes"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|change| change["field"] == "project.name" && change["status"] == "update")
-    );
-    assert!(
-        json["comparison"]["changes"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|change| change["field"] == "tools.pip" && change["status"] == "add")
-    );
-
-    let written = fs::read_to_string(fixture.path().join("ota.yaml"))
-        .expect("ota.yaml should remain unchanged for python requirements merge fixture");
-
-    assert!(written.contains("name: existing"));
-    assert!(written.contains("python: \"3.12.7\""));
-    assert!(!written.contains("pip:"));
-    assert!(!written.contains("name: python-requirements"));
+    assert_detect_merge_removed(&output);
 }
 
 #[cfg(unix)]
