@@ -33,8 +33,8 @@ durable agent workflow belongs in the canonical Ota skill.
 
 ## Active Work
 
-- branch: `1.6.27-implementation`
-- released baseline: `v1.6.26`
+- branch: `main`
+- released baseline: `v1.6.27`
 - V12 closure: implementation-order steps 1-10, the bounded real-repository pressure bar, and
   independent closure reconciliation are complete. Plausible and Outline retain exact
   selected-closure denial with
