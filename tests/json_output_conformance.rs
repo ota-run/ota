@@ -164,6 +164,7 @@ fn removed_repo_detect_mutation_flags_refuse_before_repository_access() {
 }
 
 #[test]
+#[cfg(unix)]
 fn detect_candidate_artifact_matches_published_schemas_without_writing_a_contract() {
     let fixture = tempfile::tempdir().expect("tempdir");
     fs::write(
@@ -343,6 +344,7 @@ fn init_dry_run_exposes_a_source_bound_starter_preview_candidate() {
 }
 
 #[test]
+#[cfg(unix)]
 fn contract_upgrade_candidate_is_lossless_reproducible_and_never_writes() {
     let fixture = tempfile::tempdir().expect("tempdir");
     let legacy = "version: 1\nproject:\n  name: legacy-upgrade\ntoolchains:\n  rust:\n    version: '1.95'\n    fulfillment: run\n";
@@ -1197,6 +1199,7 @@ fn contract_git_carrier_refuses_a_pre_cas_branch_change() {
 }
 
 #[test]
+#[cfg(unix)]
 fn contract_upgrade_refuses_unregistered_and_tampered_migrations() {
     let fixture = tempfile::tempdir().expect("tempdir");
     fs::write(
@@ -1287,6 +1290,7 @@ fn contract_candidate_unsupported_writer_platform_refusal_matches_schema() {
 }
 
 #[test]
+#[cfg(unix)]
 fn contract_candidate_application_rederives_or_refuses_review_artifacts() {
     let fixture = tempfile::tempdir().expect("tempdir");
     fs::write(
@@ -1497,6 +1501,7 @@ fn contract_candidate_application_rederives_or_refuses_review_artifacts() {
 }
 
 #[test]
+#[cfg(unix)]
 fn contract_candidate_write_is_atomic_rechecked_and_idempotent() {
     let fixture = tempfile::tempdir().expect("tempdir");
     fs::write(
@@ -1632,6 +1637,7 @@ fn contract_candidate_write_is_atomic_rechecked_and_idempotent() {
 }
 
 #[test]
+#[cfg(unix)]
 fn contract_candidate_no_op_retains_nested_closure_evidence() {
     let fixture = tempfile::tempdir().expect("tempdir");
     fs::write(
