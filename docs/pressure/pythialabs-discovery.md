@@ -6,15 +6,15 @@ released and Aleksei reviews a draft PR in writing.
 
 ## Subject
 
--   Repository: `safal207/pythiaLabs`
--   Default branch: `main`
--   Reviewed revision: `17df87775c0d5407c07e86f278455d912ed51305`
--   Review date: 2026-08-29
--   Fork: `bobaikato/pythiaLabs`, branch `bobai/ota-pre-release-pressure`
--   Native-pressure revision: `bf51a0b4c93128522226cf977895f54c6603d33d`
--   Container-pressure revision: `916f9f127c9d76580e8f5efa8f4f0af497019fff`, hosted in [run 33258442106](https://github.com/bobaikato/pythiaLabs/actions/runs/33258442106)
--   Ota probe: source-built Ota v1.6.27 at Core `cd99c9abd2c0225b454371e897eca2486319db26`
--   Upstream posture: Aleksei requested asynchronous written review through a draft PR from a fork, with a proposed `ota.yaml`, a separate non-blocking workflow, exercised assumptions, and explicit unproved boundaries.
+- Repository: `safal207/pythiaLabs`
+- Default branch: `main`
+- Reviewed revision: `17df87775c0d5407c07e86f278455d912ed51305`
+- Review date: 2026-08-29
+- Fork: `bobaikato/pythiaLabs`, branch `bobai/ota-pre-release-pressure`
+- Native-pressure revision: `bf51a0b4c93128522226cf977895f54c6603d33d`
+- Container-pressure revision: `916f9f127c9d76580e8f5efa8f4f0af497019fff`, hosted in [run 33258442106](https://github.com/bobaikato/pythiaLabs/actions/runs/33258442106)
+- Ota probe: source-built Ota v1.6.27 at Core `cd99c9abd2c0225b454371e897eca2486319db26`
+- Upstream posture: Aleksei requested asynchronous written review through a draft PR from a fork, with a proposed `ota.yaml`, a separate non-blocking workflow, exercised assumptions, and explicit unproved boundaries.
 
 This revision combines an Elixir core, a Rust NIF with an Elixir fallback, a Rust port worker, a Node MCP bridge, a generated Node site, Python conformance suites, credentialed provider pilots, and pinned multi-repository evidence workflows. The repository is a high-signal design-partner candidate because its important boundary is not language count. It is the difference between declared decision logic, selected execution posture, effective runtime use, and external authority.
 
@@ -24,16 +24,16 @@ The review used an isolated temporary clone. It did not modify or execute upstre
 
 Locally observed:
 
--   `node integrations/mcp/smoke.mjs` passed its framing and routing assertions;
--   `cargo test` in `workers/solver_port` passed six tests;
--   Action Envelope conformance passed 64 tests in an isolated Python environment;
--   VCE conformance passed 17 tests in an isolated Python environment;
--   authorization fixtures and adversarial checks passed 12 cases in total;
--   CAEP tests passed 52 cases with their optional cryptographic dependency installed;
--   `npm ci` and `npm run build` under `site/` passed;
--   `npm run format:check` under `site/` failed on 13 existing files;
--   the Elixir lane was not run locally because this host did not have `mix`; and
--   current `main` hosted CI, security, ACI, and VCE runs are green at the reviewed revision.
+- `node integrations/mcp/smoke.mjs` passed its framing and routing assertions;
+- `cargo test` in `workers/solver_port` passed six tests;
+- Action Envelope conformance passed 64 tests in an isolated Python environment;
+- VCE conformance passed 17 tests in an isolated Python environment;
+- authorization fixtures and adversarial checks passed 12 cases in total;
+- CAEP tests passed 52 cases with their optional cryptographic dependency installed;
+- `npm ci` and `npm run build` under `site/` passed;
+- `npm run format:check` under `site/` failed on 13 existing files;
+- the Elixir lane was not run locally because this host did not have `mix`; and
+- current `main` hosted CI, security, ACI, and VCE runs are green at the reviewed revision.
 
 The local Rust run generated an untracked `workers/solver_port/Cargo.lock`, confirming that the reviewed revision does not retain that resolution identity. Generated build and Python cache files were confined to the temporary clone.
 
@@ -43,10 +43,10 @@ The fork carries a reviewable `ota.yaml` and two separate visible workflows. The
 upstream CI checks and do not execute credentialed CAEP, GitHub merge, communications, or the
 Liminal multi-repository lifecycle.
 
--   [Declaration and discovery pressure run 33256380938](https://github.com/bobaikato/pythiaLabs/actions/runs/33256380938) passed at the fork revision above. It validates the contract, exports declared task posture, runs Doctor, and emits a review-only detection candidate.
--   [Non-credentialed execution matrix 33256380935](https://github.com/bobaikato/pythiaLabs/actions/runs/33256380935) ran the reviewed native lanes with the exact Core revision above. Ten of eleven lanes passed: Elixir format/test, MCP smoke, Rust worker build/test, site build, and Action Envelope, VCE, ACI, and local CAEP conformance.
--   `verify:site-format` failed because Pythia's existing `prettier --check .` reports 13 unformatted site files. This is a repository-quality finding, not an Ota failure. The fork does not rewrite upstream source or downgrade the verification lane without maintainer review.
--   An earlier fork execution attempt exposed an Ota parser defect: the generic version parser read `Erlang/OTP 26` as the Elixir version. Core `cd99c9ab` now extracts the explicit `Elixir 1.16.3` line, with a regression. The contract also replaced unsupported `~> 1.15` syntax with the supported equivalent `>=1.15,<2`.
+- [Declaration and discovery pressure run 33256380938](https://github.com/bobaikato/pythiaLabs/actions/runs/33256380938) passed at the fork revision above. It validates the contract, exports declared task posture, runs Doctor, and emits a review-only detection candidate.
+- [Non-credentialed execution matrix 33256380935](https://github.com/bobaikato/pythiaLabs/actions/runs/33256380935) ran the reviewed native lanes with the exact Core revision above. Ten of eleven lanes passed: Elixir format/test, MCP smoke, Rust worker build/test, site build, and Action Envelope, VCE, ACI, and local CAEP conformance.
+- `verify:site-format` failed because Pythia's existing `prettier --check .` reports 13 unformatted site files. This is a repository-quality finding, not an Ota failure. The fork does not rewrite upstream source or downgrade the verification lane without maintainer review.
+- An earlier fork execution attempt exposed an Ota parser defect: the generic version parser read `Erlang/OTP 26` as the Elixir version. Core `cd99c9ab` now extracts the explicit `Elixir 1.16.3` line, with a regression. The contract also replaced unsupported `~> 1.15` syntax with the supported equivalent `>=1.15,<2`.
 
 ### Container Decision
 
@@ -67,11 +67,11 @@ macOS/Windows parity, or upgrade any lane to agent-safe authority.
 
 Current source-built Ota detected Elixir and `mix`, but did not recover the repository's material lane structure:
 
--   it inferred the site's `npm run build` at repository root, losing the workflow-owned `working-directory: site`; the inferred command fails from that root;
--   it reduced a multiline MCP verification step to its first command;
--   it omitted the Rust NIF posture, Rust port-worker lane, Python conformance families, credentialed provider pilot, and pinned multi-repository lifecycle;
--   it produced a partial agent boundary that did not represent several material roots; and
--   its starter preview did not author a minimum Ota version floor.
+- it inferred the site's `npm run build` at repository root, losing the workflow-owned `working-directory: site`; the inferred command fails from that root;
+- it reduced a multiline MCP verification step to its first command;
+- it omitted the Rust NIF posture, Rust port-worker lane, Python conformance families, credentialed provider pilot, and pinned multi-repository lifecycle;
+- it produced a partial agent boundary that did not represent several material roots; and
+- its starter preview did not author a minimum Ota version floor.
 
 The durable candidate remained honest about unresolved truth. The mis-rooted build and truncated check remained `unknown`, and `apply-candidate --require-complete` refused. The defect is therefore in discovery fidelity and lane recovery, not in candidate admission silently promoting unknown work.
 
@@ -79,21 +79,21 @@ The durable candidate remained honest about unresolved truth. The mis-rooted bui
 
 ### Repository maturity
 
-1.  Native acceleration can silently disappear. The custom Rustler compiler converts NIF build errors and exceptions into successful fallback compilation, and the fallback message is hidden unless `PYTHIA_VERBOSE_FALLBACK` is enabled. Main CI does not independently prove that the NIF compiled and loaded. A fallback-compatible lane and a NIF-required lane should be distinct.
-2.  Port-worker tests skip when Cargo is unavailable. Contributor `mix test` can therefore be green without exercising the advertised worker. Hosted CI currently installs Rust and separately builds/tests the worker, but contributor truth is weaker than CI truth.
-3.  Rust resolution and toolchain inputs are mutable. Neither Rust project retains a committed `Cargo.lock`; CI uses `rust-toolchain@stable`; the Dockerfile installs current Rust through a network script. These are reproducibility gaps, not Ota execution failures.
-4.  Site formatting is an existing red lane not present in hosted site CI or contributor guidance. The README also recommends `npm install` while hosted CI uses `npm ci`.
-5.  Trust-sensitive workflow dependencies are inconsistently immutable. Some workflows pin actions to commits, while others use floating action tags or install provider dependencies dynamically.
-6.  The default branch is not protected. That is repository administration posture and should not be represented as an execution-contract guarantee.
+1. Native acceleration can silently disappear. The custom Rustler compiler converts NIF build errors and exceptions into successful fallback compilation, and the fallback message is hidden unless `PYTHIA_VERBOSE_FALLBACK` is enabled. Main CI does not independently prove that the NIF compiled and loaded. A fallback-compatible lane and a NIF-required lane should be distinct.
+2. Port-worker tests skip when Cargo is unavailable. Contributor `mix test` can therefore be green without exercising the advertised worker. Hosted CI currently installs Rust and separately builds/tests the worker, but contributor truth is weaker than CI truth.
+3. Rust resolution and toolchain inputs are mutable. Neither Rust project retains a committed `Cargo.lock`; CI uses `rust-toolchain@stable`; the Dockerfile installs current Rust through a network script. These are reproducibility gaps, not Ota execution failures.
+4. Site formatting is an existing red lane not present in hosted site CI or contributor guidance. The README also recommends `npm install` while hosted CI uses `npm ci`.
+5. Trust-sensitive workflow dependencies are inconsistently immutable. Some workflows pin actions to commits, while others use floating action tags or install provider dependencies dynamically.
+6. The default branch is not protected. That is repository administration posture and should not be represented as an execution-contract guarantee.
 
 ### Ota maturity gaps
 
-1.  CI detection must bind job and step working directories into command closure identity.
-2.  Multiline workflow steps must remain complete ordered closures or become explicitly unresolved; selecting only the first line is not an acceptable runnable inference.
-3.  Multi-project lane recovery must preserve separate Elixir, Rust NIF, Rust worker, MCP, Python, site, credentialed, and multi-repository postures instead of collapsing them into generic `build`, `check`, and `test` names.
-4.  Agent-boundary inference needs complete, evidence-bound path classification or an explicit incomplete posture. Partial writable/protected output must not look repository-global.
-5.  Ota detects Elixir and Mix commands, but does not own a typed Mix/Hex hydration source. A first-class BEAM hydration and lockfile posture is a concrete widening opportunity if repeated pressure shows demand.
-6.  Newly authored starter contracts should carry the Skill's minimum-version quality bar. Core may remain backward-compatible with older contracts, but omission from current authoring output is an onboarding maturity gap.
+1. CI detection must bind job and step working directories into command closure identity.
+2. Multiline workflow steps must remain complete ordered closures or become explicitly unresolved; selecting only the first line is not an acceptable runnable inference.
+3. Multi-project lane recovery must preserve separate Elixir, Rust NIF, Rust worker, MCP, Python, site, credentialed, and multi-repository postures instead of collapsing them into generic `build`, `check`, and `test` names.
+4. Agent-boundary inference needs complete, evidence-bound path classification or an explicit incomplete posture. Partial writable/protected output must not look repository-global.
+5. Ota detects Elixir and Mix commands, but does not own a typed Mix/Hex hydration source. A first-class BEAM hydration and lockfile posture is a concrete widening opportunity if repeated pressure shows demand.
+6. Newly authored starter contracts should carry the Skill's minimum-version quality bar. Core may remain backward-compatible with older contracts, but omission from current authoring output is an onboarding maturity gap.
 
 ### V12 and later-version signals
 
@@ -101,27 +101,27 @@ PythiaLabs is not a current V12 database-schema-mutation pressure repository. It
 
 It does expose adjacent demand:
 
--   guarded GitHub merge is an external mutation requiring exact target, authority, replay, and provider evidence;
--   the credentialed CAEP benchmark performs multi-provider model calls with cost and concurrency dimensions and is a useful V12.1 secret-delivery pressure input;
--   provider calls, GitHub merge, communications, and external-data actions are possible future effect families, but each needs its own selectors, policy, schemas, evidence, and independent pressure before activation; and
--   Pythia decision artifacts could become inputs to a future provider-neutral adapter profile, but they must never become Ota execution grants merely because the verdict is `ALLOW`.
+- guarded GitHub merge is an external mutation requiring exact target, authority, replay, and provider evidence;
+- the credentialed CAEP benchmark performs multi-provider model calls with cost and concurrency dimensions and is a useful V12.1 secret-delivery pressure input;
+- provider calls, GitHub merge, communications, and external-data actions are possible future effect families, but each needs its own selectors, policy, schemas, evidence, and independent pressure before activation; and
+- Pythia decision artifacts could become inputs to a future provider-neutral adapter profile, but they must never become Ota execution grants merely because the verdict is `ALLOW`.
 
 V12.3 through V12.5 remain demand-gated. This discovery does not activate a provider-attested or platform authority carrier.
 
 ### Governance gaps
 
-1.  Pythia's decision authority and Ota's execution authority must stay separate. Any future bridge must bind action, resource, scope, subject, freshness, policy source, decision identity, and one-use consumption before the result can influence admission.
-2.  Repository-controlled policy, an in-process replay store, and injected test executors do not establish independently administered authority or production enforcement.
-3.  MCP configuration and smoke output do not prove that Cursor or another harness loaded the server, used the real Elixir evaluator, or applied the returned decision. A future adapter must distinguish projected, runtime-acknowledged, effective, and unknown posture.
-4.  The Gmail-to-GitHub synchronization protocol describes consequential communications and code changes in prose. It is not an identity-bound execution or receipt surface today.
+1. Pythia's decision authority and Ota's execution authority must stay separate. Any future bridge must bind action, resource, scope, subject, freshness, policy source, decision identity, and one-use consumption before the result can influence admission.
+2. Repository-controlled policy, an in-process replay store, and injected test executors do not establish independently administered authority or production enforcement.
+3. MCP configuration and smoke output do not prove that Cursor or another harness loaded the server, used the real Elixir evaluator, or applied the returned decision. A future adapter must distinguish projected, runtime-acknowledged, effective, and unknown posture.
+4. The Gmail-to-GitHub synchronization protocol describes consequential communications and code changes in prose. It is not an identity-bound execution or receipt surface today.
 
 ### Widening opportunities
 
-1.  Use Pythia as a regression for working-directory-aware, multiline, multi-project detection.
-2.  Pressure a first-class BEAM/Mix hydration source only after determining whether this need repeats beyond one repository.
-3.  Treat the pinned three-repository Liminal workflow as a workspace-contract pressure case for exact revisions, mapped tasks, lifecycle cleanup, and evidence lineage. Do not flatten it into one repo-local shell task.
-4.  Use the MCP boundary as future adapter-conformance pressure for required posture versus witnessed effective runtime posture. Do not substitute product-specific config scanning for attestation.
-5.  Consider a versioned Pythia decision-evidence adapter only after a real runtime integration can produce immutable, independently reconcilable evidence.
+1. Use Pythia as a regression for working-directory-aware, multiline, multi-project detection.
+2. Pressure a first-class BEAM/Mix hydration source only after determining whether this need repeats beyond one repository.
+3. Treat the pinned three-repository Liminal workflow as a workspace-contract pressure case for exact revisions, mapped tasks, lifecycle cleanup, and evidence lineage. Do not flatten it into one repo-local shell task.
+4. Use the MCP boundary as future adapter-conformance pressure for required posture versus witnessed effective runtime posture. Do not substitute product-specific config scanning for attestation.
+5. Consider a versioned Pythia decision-evidence adapter only after a real runtime integration can produce immutable, independently reconcilable evidence.
 
 ## Demand-Gated Capability Ledger
 
@@ -233,11 +233,11 @@ Current-surface detector defects are not demand-gated by this table. Working-dir
 
 The pending v1.6.27 detector repair addresses the reproduced Ota-owned defects without adding a Pythia-specific adapter:
 
--   canonical repository-relative GitHub Actions job or step `working-directory` becomes structured task `command.cwd`; dynamic, noncanonical, and escaping values do not become root-task truth;
--   named multiline verification steps retain the complete ordered `run` body and stay unresolved, rather than promoting one selected line;
--   CI job identity continues to separate distinct verifier lanes, while CI evidence remains non-authoritative and never becomes inferred agent-safe authority;
--   detected boundaries with heuristic safe tasks report `Partially inferred` unless the path boundary is explicit; and
--   newly authored starter contracts declare `metadata.ota.minimum_version` for the running Ota release.
+- canonical repository-relative GitHub Actions job or step `working-directory` becomes structured task `command.cwd`; dynamic, noncanonical, and escaping values do not become root-task truth;
+- named multiline verification steps retain the complete ordered `run` body and stay unresolved, rather than promoting one selected line;
+- CI job identity continues to separate distinct verifier lanes, while CI evidence remains non-authoritative and never becomes inferred agent-safe authority;
+- detected boundaries with heuristic safe tasks report `Partially inferred` unless the path boundary is explicit; and
+- newly authored starter contracts declare `metadata.ota.minimum_version` for the running Ota release.
 
 These repairs need independent review and release validation. They do not prove BEAM hydration, real MCP runtime loading, provider calls, external effects, or Pythia repository behavior.
 
@@ -246,11 +246,11 @@ These repairs need independent review and release validation. They do not prove 
 On the source-built `1.6.27-implementation` branch, a fresh clone pinned to
 `17df87775c0d5407c07e86f278455d912ed51305` confirmed the repaired detector/candidate boundary:
 
--   the site build remains `npm run build` with `cwd: site` in both detected output and the
+- the site build remains `npm run build` with `cwd: site` in both detected output and the
     source-bound candidate's identity-bound execution closure;
--   the MCP syntax step retains its complete ordered multiline body and remains `unknown` rather
+- the MCP syntax step retains its complete ordered multiline body and remains `unknown` rather
     than becoming a selected one-line task; and
--   the candidate contains 11 changes, with 5 `applicable` and 6 `unknown`; `apply-candidate
+- the candidate contains 11 changes, with 5 `applicable` and 6 `unknown`; `apply-candidate
     --require-complete` refuses with `candidate_incomplete` and writes no contract.
 
 The remaining unknowns include inline shell `cd` worker lanes, heredoc/credentialed workflows,
@@ -284,12 +284,12 @@ Do not publish the draft PR until Ota v1.6.27 is released. Before authoring it, 
 
 The bounded first PR should contain:
 
--   one reviewable `ota.yaml` with explicit contributor lanes rather than a global `test` claim;
--   a separate non-blocking Ota workflow with retained machine-readable artifacts;
--   explicit Elixir format/test, Rust NIF-required, Rust port-worker, MCP smoke, selected Python conformance, and site build/format lanes where their prerequisites are deterministic;
--   non-agent-safe setup/hydration tasks separated from verification tasks;
--   no credentialed provider calls, live merge execution, Pages deployment, or external repository mutation; and
--   an uncovered-material-behavior inventory in the PR description and pressure artifact.
+- one reviewable `ota.yaml` with explicit contributor lanes rather than a global `test` claim;
+- a separate non-blocking Ota workflow with retained machine-readable artifacts;
+- explicit Elixir format/test, Rust NIF-required, Rust port-worker, MCP smoke, selected Python conformance, and site build/format lanes where their prerequisites are deterministic;
+- non-agent-safe setup/hydration tasks separated from verification tasks;
+- no credentialed provider calls, live merge execution, Pages deployment, or external repository mutation; and
+- an uncovered-material-behavior inventory in the PR description and pressure artifact.
 
 Do not route the credentialed CAEP pilot, guarded merge executor, Gmail/GitHub protocol, or Liminal multi-repository workflow through ordinary agent-safe tasks. They require separate future contract, workspace, effect, secret-delivery, or provider-authority treatment.
 

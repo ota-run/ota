@@ -26,6 +26,8 @@
 
 ## Unreleased
 
+## 1.6.27
+
 - Closed V12 after independent reconciliation of its implementation, formal bounded
   real-repository pressure, and explicit proof limits. Plausible and Outline retain exact
   selected-closure refusal evidence and bounded witnesses for every applicable database, provider,
