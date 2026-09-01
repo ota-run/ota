@@ -344,3 +344,16 @@
 - Rule: Public pressure cards must optimize for evidence navigation and bounded interpretation, not
   promotional summarization; visual variants may change semantics and labels, never duplicate the
   canonical evidence source.
+
+## 2026-09-01
+
+- Pattern: A first-party Site task was run through direct package commands and an isolated worktree,
+  bypassing the repository's declared Ota task surface and leaving the user unable to inspect the
+  intended active-worktree result.
+- Correction: Work in the active first-party repository unless isolation is explicitly required.
+  Before validation, generation, preview, or launch, run `ota tasks --use` and execute the
+  declared task through `ota run` or `ota up`. Treat direct package commands as read-only
+  diagnostics only, never as authoritative validation or launch.
+- Rule: For Core, Site, Skills, and Examples, the local `ota.yaml` is the operational authority.
+  State the declared Ota task used in every completion summary; do not substitute `npm`, `cargo`,
+  or another tool command when a contract-owned task exists.
