@@ -2875,9 +2875,15 @@ agent:
         .output()
         .expect("declared-only task without policy should run");
     assert!(!no_policy_declared_only.status.success());
+    let no_policy_declared_only_stderr = String::from_utf8_lossy(&no_policy_declared_only.stderr);
+    let no_policy_declared_only_stderr = no_policy_declared_only_stderr
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
     assert!(
-        String::from_utf8_lossy(&no_policy_declared_only.stderr)
-            .contains("declared-only effect realization without an exact typed adapter plan",)
+        no_policy_declared_only_stderr
+            .contains("declared-only effect realization without an exact typed adapter plan"),
+        "{no_policy_declared_only_stderr}"
     );
     assert!(!fixture.path().join("declared-only-sentinel").exists());
     let no_policy_up_preview = run_ota_failure_stdout_json(
@@ -3786,6 +3792,10 @@ policies:
         .expect("declared-only task command should run");
     assert!(!declared_only_run.status.success());
     let declared_only_run_stderr = String::from_utf8_lossy(&declared_only_run.stderr);
+    let declared_only_run_stderr = declared_only_run_stderr
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
     assert!(
         declared_only_run_stderr.contains("declared-only effect realization"),
         "{declared_only_run_stderr}"
@@ -4410,6 +4420,10 @@ policies:
         String::from_utf8_lossy(&non_denial_archive.stdout),
         String::from_utf8_lossy(&non_denial_archive.stderr)
     );
+    let non_denial_output = non_denial_output
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
     assert!(
         non_denial_output
             .contains("`--archive-effect-refusal` requires an explicit matching typed deny rule"),
@@ -4493,6 +4507,10 @@ policies:
         String::from_utf8_lossy(&strict_execution.stdout),
         String::from_utf8_lossy(&strict_execution.stderr)
     );
+    let strict_output = strict_output
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
     assert!(
         strict_output.contains("effect policy denied"),
         "{strict_output}"
