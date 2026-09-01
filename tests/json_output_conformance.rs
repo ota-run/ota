@@ -2870,6 +2870,8 @@ agent:
     let no_policy_declared_only = Command::new(env!("CARGO_BIN_EXE_ota"))
         .args(["run", "migrate-declared-only"])
         .current_dir(fixture.path())
+        .env_remove("OTA_POLICY")
+        .env_remove("OTA_INTERNAL_POLICY_SNAPSHOT_ABSENT")
         .output()
         .expect("declared-only task without policy should run");
     assert!(!no_policy_declared_only.status.success());
@@ -2953,6 +2955,8 @@ agent:
     let no_policy_declared_only_text = Command::new(env!("CARGO_BIN_EXE_ota"))
         .args(["run", "migrate-declared-only", "--dry-run", "--plain"])
         .current_dir(fixture.path())
+        .env_remove("OTA_POLICY")
+        .env_remove("OTA_INTERNAL_POLICY_SNAPSHOT_ABSENT")
         .output()
         .expect("declared-only dry-run text preview");
     assert!(!no_policy_declared_only_text.status.success());

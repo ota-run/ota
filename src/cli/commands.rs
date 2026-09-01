@@ -75691,18 +75691,23 @@ project:
 
         assert_eq!(output.exit_code, 0, "{}", output.stdout);
         let stdout = super::strip_ansi_codes(&output.stdout);
+        let normalize_display_path = |value: String| {
+            let normalized = value.replace('\\', "/");
+            normalized
+                .strip_prefix("//?/")
+                .unwrap_or(&normalized)
+                .to_string()
+        };
+        let normalized_stdout = stdout.replace('\\', "/");
+        let operator_root_display = normalize_display_path(operator_root.display().to_string());
+        let snapshot_root_display =
+            normalize_display_path(canonical_snapshot_root.display().to_string());
         assert!(
-            stdout.contains(&format!(
-                "run `ota agents --write {}",
-                operator_root.display()
-            )) || stdout.contains(&format!(
-                "run `ota agents --write {}",
-                operator_root.display().to_string().replace('\\', "/")
-            )),
+            normalized_stdout.contains(&format!("run `ota agents --write {operator_root_display}")),
             "{stdout}"
         );
         assert!(
-            !stdout.contains(&canonical_snapshot_root.display().to_string()),
+            !normalized_stdout.contains(&snapshot_root_display),
             "snapshot root `{}` escaped into operator guidance for repo `{}`: {stdout}",
             canonical_snapshot_root.display(),
             operator_root.display(),
