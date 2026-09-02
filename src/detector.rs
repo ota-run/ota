@@ -3301,6 +3301,9 @@ fn collect_github_actions_verification_tasks_from_workflow(
                 } else if let Some(task_name) =
                     step_name.and_then(infer_ci_verification_task_name_from_step_name)
                 {
+                    if commands.is_none() {
+                        continue;
+                    }
                     // Retain a named multi-command step as one review-only body. Selecting a
                     // filtered line would claim an incomplete execution closure.
                     let task_name = ci_job_scoped_verification_task_name(job_name, &task_name);
@@ -12733,16 +12736,15 @@ jobs:
             .find(|change| change.subject.is_path(&["tasks", "check:mcp", "run"]))
             .expect("multiline candidate");
         assert_eq!(mcp.disposition, CandidateDisposition::Unknown);
-        let mixed = candidate
-            .changes
-            .iter()
-            .find(|change| {
-                change
+        assert!(
+            candidate
+                .changes
+                .iter()
+                .all(|change| !change
                     .subject
-                    .is_path(&["tasks", "check:mixed-closure", "run"])
-            })
-            .expect("mixed candidate");
-        assert_eq!(mixed.disposition, CandidateDisposition::Unknown);
+                    .is_path(&["tasks", "check:mixed-closure", "run"])),
+            "dynamic named bodies must remain outside runnable candidate truth"
+        );
         assert_eq!(
             build
                 .execution_closure
@@ -12750,14 +12752,7 @@ jobs:
                 .map(|closure| closure.working_directory.as_str()),
             Some("site")
         );
-        assert_eq!(
-            report
-                .contract
-                .tasks
-                .get("check:mixed-closure")
-                .map(|task| task.run.as_str()),
-            Some("setup=$CI_SETUP\ncargo test")
-        );
+        assert!(!report.contract.tasks.contains_key("check:mixed-closure"));
         assert!(
             !report.contract.tasks.contains_key("test:windows-path")
                 && !report.contract.tasks.contains_key("test:non-string")
@@ -13099,6 +13094,58 @@ jobs:
             !report.contract.tasks.contains_key("build"),
             "CI shell-variable commands must remain unresolved rather than becoming task truth"
         );
+    }
+
+    #[test]
+    fn does_not_promote_named_ci_commands_with_github_matrix_expansion() {
+        let fixture = Fixture::new();
+        fixture.write(
+            ".github/workflows/ci.yml",
+            r#"
+name: ci
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        batch: [tools::gatekeeper, tools::vault]
+    steps:
+      - name: Run matrix batch
+        run: |
+          batch='${{ matrix.batch }}'
+          cargo test --bin eris "$batch" -- --test-threads=1
+"#,
+        );
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert!(
+            !report.contract.tasks.contains_key("test:run-matrix-batch"),
+            "unresolved GitHub matrix expressions must not become runnable task truth"
+        );
+        assert!(
+            report
+                .contract
+                .tasks
+                .values()
+                .all(|task| !task.run.contains("${{")),
+            "generated runnable tasks must not retain unresolved GitHub expressions"
+        );
+
+        let candidate = report.source_bound_candidate().expect("candidate capture");
+        let candidate_json = serde_json::to_string(&candidate.candidate).expect("candidate JSON");
+        assert!(!candidate_json.contains("${{"));
+
+        let init_preview = report
+            .source_bound_init_preview_candidate()
+            .expect("init preview capture");
+        let init_contract_json =
+            serde_json::to_string(&init_preview.contract).expect("init contract JSON");
+        let init_candidate_json =
+            serde_json::to_string(&init_preview.candidate).expect("init candidate JSON");
+        assert!(!init_contract_json.contains("${{"));
+        assert!(!init_candidate_json.contains("${{"));
+        assert!(!fixture.path().join("ota.yaml").exists());
     }
 
     #[test]

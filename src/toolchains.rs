@@ -1792,7 +1792,7 @@ fn dotnet_channel_from_requirement(requirement: &VersionReq) -> Option<String> {
     ))
 }
 
-fn parse_semver_requirement(value: &str) -> Option<VersionReq> {
+pub(crate) fn parse_semver_requirement(value: &str) -> Option<VersionReq> {
     let trimmed = value.trim();
     VersionReq::parse(trimmed).ok().or_else(|| {
         normalize_short_version_requirement(trimmed)
@@ -3112,5 +3112,18 @@ toolchains:
             toolchain_fulfillment_status_detail("none", false),
             "check-only on this execution path"
         );
+    }
+
+    #[test]
+    fn shared_semver_requirement_parser_accepts_canonical_forms() {
+        for requirement in ["1.26", ">=1.26.3", ">=1.26.3,<1.27", ">=1.26.3 <1.27"] {
+            assert!(
+                parse_semver_requirement(requirement).is_some(),
+                "{requirement} must use the shared semantic-version grammar"
+            );
+        }
+        for invalid in ["", "stable", "beta", "nightly"] {
+            assert!(parse_semver_requirement(invalid).is_none());
+        }
     }
 }

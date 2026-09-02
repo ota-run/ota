@@ -26,6 +26,11 @@
 
 ## Unreleased
 
+- Fixed detection so named GitHub Actions steps containing unresolved matrix or shell expressions
+  cannot become runnable contract tasks, and made Rust channel validation consistent with Doctor:
+  diagnose-only toolchains require comparable semantic versions while rustup-owned run fulfillment
+  continues to accept `stable`, `beta`, and `nightly`.
+
 - Activated V12.1 with an additive provider-neutral `secret_requirements` contract catalog. The
   initial declaration binds an authentication-credential purpose, canonical process-environment
   destination, exact task/workflow roots, deny-only propagation posture, requested execution

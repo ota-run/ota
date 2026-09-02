@@ -57,6 +57,12 @@ durable agent workflow belongs in the canonical Ota skill.
   exists. No command consumes the catalog for execution, no provider binding exists, and no secret
   bytes are loaded or delivered. Step 2 remains unauthorized pending independent review and commit
   of this bounded foundation.
+- Eris adoption pressure exposed and locally repaired two bounded Core defects without changing the
+  released `v1.6.27` runtime used by that partner contract: detector output no longer promotes
+  named GitHub Actions bodies containing unresolved matrix or shell expressions into runnable task
+  truth, and diagnose-only Rust toolchains must use comparable semantic requirements while
+  rustup-owned run fulfillment retains channel names. Site and Skills carry the same distinction;
+  their temporary sync waivers require consumer-first commits before this Core repair is committed.
 - V12 closure: implementation-order steps 1-10, the bounded real-repository pressure bar, and
   independent closure reconciliation are complete. Plausible and Outline retain exact
   selected-closure denial with

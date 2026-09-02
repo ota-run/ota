@@ -88,7 +88,7 @@ use crate::schema::{
 use crate::terminal::supports_dynamic_stderr_ui;
 use crate::toolchains::{
     ToolchainManagedSurfaceKind, ToolchainOpportunityContext, declared_toolchain_contract,
-    declared_toolchain_source_label,
+    declared_toolchain_source_label, parse_semver_requirement,
     requirement_surface_with_toolchain_owned_capabilities_for_required_tools,
     requirement_surface_with_toolchain_owned_tools_for_required_tools,
     shipped_toolchain_contract_by_label, tool_versions_entry, toolchain_fulfillment_source_label,
@@ -13440,48 +13440,6 @@ fn push_python_version_candidate(candidates: &mut Vec<String>, major: u64, minor
         return;
     };
     candidates.push(format!("python{major}.{minor}"));
-}
-
-fn parse_semver_requirement(value: &str) -> Option<VersionReq> {
-    let trimmed = value.trim();
-    VersionReq::parse(trimmed).ok().or_else(|| {
-        normalize_short_version_requirement(trimmed)
-            .and_then(|normalized| VersionReq::parse(&normalized).ok())
-    })
-}
-
-fn normalize_short_version_requirement(value: &str) -> Option<String> {
-    if value.is_empty() || value == "*" || value.contains("||") {
-        return None;
-    }
-    if value
-        .chars()
-        .all(|character| character.is_ascii_digit() || character == '.')
-    {
-        let segments = value
-            .split('.')
-            .filter(|segment| !segment.is_empty())
-            .collect::<Vec<_>>();
-        return match segments.as_slice() {
-            [major] => {
-                let major = major.parse::<u64>().ok()?;
-                Some(format!(">={major}.0.0,<{}.0.0", major.saturating_add(1)))
-            }
-            [major, minor] => {
-                let major = major.parse::<u64>().ok()?;
-                let minor = minor.parse::<u64>().ok()?;
-                Some(format!(
-                    ">={major}.{minor}.0,<{}.{minor_next}.0",
-                    major,
-                    minor_next = minor.saturating_add(1)
-                ))
-            }
-            _ => None,
-        };
-    }
-
-    let normalized = value.split_whitespace().collect::<Vec<_>>().join(", ");
-    (normalized != value).then_some(normalized)
 }
 
 fn dedupe_preserve_order(values: Vec<String>) -> Vec<String> {

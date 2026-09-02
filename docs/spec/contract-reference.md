@@ -834,6 +834,9 @@ Rules:
 
 - toolchain names must not be empty
 - `version` must not be empty
+- diagnose-only `toolchains.rust.version` values must be semantic version requirements that Doctor
+  can compare, such as `>=1.85`; rustup channels such as `stable`, `beta`, and `nightly` require
+  `fulfillment.mode: run`
 - shared toolchain fields are `version`, `fulfillment`, `required`, `only_on`, and
   `platforms.<os>.version`; legacy `provider` is still accepted for compatibility, but it is no
   longer the canonical public shape

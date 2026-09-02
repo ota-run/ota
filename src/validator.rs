@@ -55,8 +55,9 @@ use crate::schema::{
 };
 use crate::toolchains::{
     declared_toolchain_contract, fulfillment_source_legacy_provider,
-    known_provider_specific_field_owner_groups, shipped_toolchain_contract_by_name,
-    shipped_toolchain_contracts_summary, toolchain_provider_label,
+    known_provider_specific_field_owner_groups, parse_semver_requirement,
+    shipped_toolchain_contract_by_name, shipped_toolchain_contracts_summary,
+    toolchain_provider_label,
 };
 use crate::workspace::load_contract_for_workspace_repo_ref;
 
@@ -1604,6 +1605,19 @@ fn validate_toolchains(
                 "toolchain `{name}` must declare a non-empty version"
             )));
         }
+        if name == "rust" && toolchain.fulfillment_mode() == ToolchainFulfillmentMode::None {
+            validate_rust_diagnose_only_version(name, "version", &toolchain.version, errors);
+            for (platform, detail) in &toolchain.platforms {
+                if let Some(version) = detail.version.as_deref() {
+                    validate_rust_diagnose_only_version(
+                        name,
+                        &format!("platforms.{platform}.version"),
+                        version,
+                        errors,
+                    );
+                }
+            }
+        }
         validate_supported_toolchain(name, toolchain, errors);
         validate_only_on("toolchain", name, toolchain.only_on.as_ref(), errors);
         validate_platform_keys("toolchain", name, toolchain.platforms.keys(), errors);
@@ -1665,6 +1679,19 @@ fn validate_toolchains(
                 }
             }
         }
+    }
+}
+
+fn validate_rust_diagnose_only_version(
+    name: &str,
+    field: &str,
+    version: &str,
+    errors: &mut Vec<ValidationError>,
+) {
+    if !version.trim().is_empty() && parse_semver_requirement(version).is_none() {
+        errors.push(ValidationError::new(format!(
+            "toolchain `{name}` uses diagnose-only fulfillment, so `toolchains.{name}.{field}` must be a semantic version requirement like `>=1.85`; rustup channels such as `stable`, `beta`, or `nightly` require `fulfillment.mode: run`"
+        )));
     }
 }
 
@@ -39099,6 +39126,151 @@ toolchains:
         .unwrap();
 
         validate_contract(&contract).expect("sdkman java run fulfillment should validate");
+    }
+
+    #[test]
+    fn accepts_comparable_rust_requirements_for_diagnose_only_toolchain() {
+        for version in ["1.85", ">=1.85", ">=1.85,<1.96", ">=1.85 <1.96"] {
+            let contract = parse_contract_str(
+                Path::new("ota.yaml"),
+                &format!(
+                    r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  rust:
+    version: "{version}"
+"#
+                ),
+            )
+            .unwrap();
+
+            validate_contract(&contract)
+                .unwrap_or_else(|error| panic!("{version} must validate: {error}"));
+        }
+    }
+
+    #[test]
+    fn rejects_rustup_channels_for_diagnose_only_toolchain() {
+        for version in ["stable", "beta", "nightly"] {
+            let contract = parse_contract_str(
+                Path::new("ota.yaml"),
+                &format!(
+                    r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  rust:
+    version: {version}
+"#
+                ),
+            )
+            .unwrap();
+
+            let rendered = validate_contract(&contract)
+                .expect_err("diagnose-only Rust requires comparable semantic version truth")
+                .to_string();
+            assert!(rendered.contains("must be a semantic version requirement like `>=1.85`"));
+        }
+    }
+
+    #[test]
+    fn accepts_rustup_channel_for_run_fulfillment() {
+        for version in ["stable", "beta", "nightly"] {
+            let contract = parse_contract_str(
+                Path::new("ota.yaml"),
+                &format!(
+                    r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  rust:
+    version: {version}
+    fulfillment: run
+"#
+                ),
+            )
+            .unwrap();
+
+            validate_contract(&contract).expect("rustup-owned run fulfillment accepts channels");
+        }
+    }
+
+    #[test]
+    fn validates_platform_rust_versions_with_shared_requirement_grammar() {
+        let accepted = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  rust:
+    version: ">=1.85"
+    platforms:
+      linux:
+        version: ">=1.85 <1.96"
+"#,
+        )
+        .unwrap();
+        validate_contract(&accepted).expect("platform range must use shared grammar");
+
+        let rejected = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  rust:
+    version: ">=1.85"
+    platforms:
+      linux:
+        version: stable
+"#,
+        )
+        .unwrap();
+        let rendered = validate_contract(&rejected)
+            .expect_err("diagnose-only platform channels must refuse")
+            .to_string();
+        assert!(rendered.contains("toolchains.rust.platforms.linux.version"));
+    }
+
+    #[test]
+    fn empty_rust_version_reports_only_the_existing_empty_error() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  rust:
+    version: ""
+"#,
+        )
+        .unwrap();
+        let rendered = validate_contract(&contract)
+            .expect_err("empty version must refuse")
+            .errors()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            rendered
+                .iter()
+                .filter(|error| error.contains("toolchain `rust` must declare a non-empty version"))
+                .count(),
+            1
+        );
+        assert!(
+            !rendered
+                .iter()
+                .any(|error| error.contains("diagnose-only fulfillment"))
+        );
     }
 
     #[test]
