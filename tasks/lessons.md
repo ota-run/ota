@@ -357,3 +357,26 @@
 - Rule: For Core, Site, Skills, and Examples, the local `ota.yaml` is the operational authority.
   State the declared Ota task used in every completion summary; do not substitute `npm`, `cargo`,
   or another tool command when a contract-owned task exists.
+
+## 2026-09-02
+
+- Pattern: An unrelated Core Release Gate was monitored and narrated inside an Eris design-partner
+  pressure closeout, obscuring which evidence and blockers belonged to the external repository.
+- Correction: Keep each pressure repository bound only to its own source revision, workflow run,
+  artifacts, contract, findings, and explicit limits. Track Core feature or release gates as a
+  separate workstream even when the pressure work helped motivate them.
+- Rule: Never make an external pressure-repository status depend on an unrelated Ota Release Gate;
+  connect them only when the pressure contract pins that exact Core revision as an explicit gate.
+
+## 2026-09-03
+
+- Pattern: The canonical Skill required material task notes and directed agents to
+  `ota tasks --safe --use`, but that exact text renderer hid task notes while ordinary task output
+  and JSON retained them. Deferring the renderer mismatch would leave the canonical agent workflow
+  unable to consume the guidance it requires.
+- Correction: Repair the canonical discovery surface immediately when contract truth already exists
+  and the omission prevents agents from seeing a declared boundary; preserve JSON compatibility and
+  lock rich/plain text parity with command-level regressions.
+- Rule: Do not defer a bounded visibility defect on the canonical agent path as optional UX work.
+  If the Skill requires agents to consult a field before execution, the named discovery command must
+  expose that field in the same release slice.
