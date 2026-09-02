@@ -8,6 +8,7 @@ license = "Apache-2.0"
 # Non-default fault injection used only by publication regression tests.
 test-candidate-publication-faults = []
 test-effect-refusal-archive-faults = []
+test-proof-assurance-faults = []
 
 [dependencies]
 clap = { version = "4.5.39", features = ["derive"] }

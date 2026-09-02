@@ -441,6 +441,37 @@ tasks:
       toolchains:
         - rust
     safe_for_agent: true
+  proof-assurance:faults:
+    description: Exercise runtime-proof attestation substitution at the live reconciliation boundary
+    notes: |
+      Use this to verify that a second valid attestation from the same proof run cannot replace
+      the selected negative-control digest before terminal verdict, receipt, or archive emission.
+      Production and ordinary debug binaries do not expose this fault control.
+    category: test
+    command:
+      exe: cargo
+      args:
+        - test
+        - --features
+        - test-proof-assurance-faults
+        - --test
+        - json_output_conformance
+        - proof_runtime_refuses_valid_sibling_attestation_substitution_before_positive_evidence
+        - --
+        - --exact
+    variants:
+      - when:
+          os: windows
+        command:
+          exe: pwsh
+          args:
+            - -NoProfile
+            - -Command
+            - Write-Output 'Skipping runtime-proof assurance fault tests on Windows'
+    requirements:
+      toolchains:
+        - rust
+    safe_for_agent: true
   release-gate:
     description: Run the GitHub Actions verification suite
     notes: |
@@ -466,6 +497,7 @@ tasks:
       - ci
       - candidate-publication:faults
       - effect-refusal-archive:faults
+      - proof-assurance:faults
       - compat
       - first-party:sync:check
       - dependency-update

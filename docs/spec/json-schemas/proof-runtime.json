@@ -413,7 +413,7 @@
         "same_obligation": { "type": "boolean" },
         "negative_control_id": { "type": "string" },
         "failure_mode": { "$ref": "#/$defs/negativeControlFailureMode" },
-        "failure_attestation_digest": { "type": "string" }
+        "failure_attestation_digest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" }
       },
       "allOf": [
         {
@@ -471,7 +471,7 @@
         },
         "proof_scope_ref": { "type": "string" },
         "evidence_class": { "type": "string", "enum": ["derived", "attested"] },
-        "attestation_digest": { "type": "string" },
+        "attestation_digest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
         "exit_code": { "type": "integer" },
         "detail": { "type": "string" }
       }
@@ -512,7 +512,7 @@
         "failure_mode": { "$ref": "#/$defs/negativeControlFailureMode" },
         "proof_scope_ref": { "type": "string" },
         "evidence_class": { "type": "string", "enum": ["derived", "attested"] },
-        "failure_attestation_digest": { "type": "string" },
+        "failure_attestation_digest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
         "exit_code": { "type": "integer" },
         "detail": { "type": "string" }
       },

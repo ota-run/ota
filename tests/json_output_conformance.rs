@@ -2738,6 +2738,151 @@ fn proof_runtime_typed_negative_control_refuses_before_artifacts() {
     assert_proof_runtime_typed_helper_refusal(false, true, true);
 }
 
+#[cfg(all(unix, feature = "test-proof-assurance-faults"))]
+#[test]
+fn proof_runtime_refuses_valid_sibling_attestation_substitution_before_positive_evidence() {
+    use std::net::TcpListener;
+
+    let fixture = tempfile::tempdir().expect("tempdir");
+    let source =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/reference/runtime-proof-evidence");
+    fs::create_dir_all(fixture.path().join("scripts")).expect("scripts directory");
+    let app_listener = TcpListener::bind("127.0.0.1:0").expect("reserve app port");
+    let dependency_listener = TcpListener::bind("127.0.0.1:0").expect("reserve dependency port");
+    let app_port = app_listener.local_addr().expect("app address").port();
+    let dependency_port = dependency_listener
+        .local_addr()
+        .expect("dependency address")
+        .port();
+    drop((app_listener, dependency_listener));
+    for relative in [
+        "ota.yaml",
+        "compose.yaml",
+        "scripts/dependency.py",
+        "scripts/produce_marker.py",
+        "scripts/observe_marker.py",
+        "scripts/negative_control.py",
+    ] {
+        let content = fs::read_to_string(source.join(relative)).expect("reference fixture file");
+        let content = content
+            .replace("8080", app_port.to_string().as_str())
+            .replace("8081", dependency_port.to_string().as_str());
+        fs::write(fixture.path().join(relative), content).expect("copied fixture file");
+    }
+    let contract_path = fixture.path().join("ota.yaml");
+    let contract = fs::read_to_string(&contract_path).expect("fixture contract");
+    let sibling = r#"
+        - id: dependency-unavailable-sibling
+          dependency: dependency
+          obligation: dependency-marker
+          task: proof:dependency-unavailable
+          intervention:
+            kind: dependency_endpoint_override
+          expected_failure: dependency_unavailable"#;
+    fs::write(
+        &contract_path,
+        contract.replacen(
+            "          expected_failure: dependency_unavailable",
+            format!("          expected_failure: dependency_unavailable{sibling}").as_str(),
+            1,
+        ),
+    )
+    .expect("contract with sibling control");
+
+    let bin_dir = fixture.path().join("bin");
+    fs::create_dir_all(&bin_dir).expect("fake engine directory");
+    let docker = bin_dir.join("docker");
+    fs::write(
+        &docker,
+        r#"#!/bin/sh
+set -eu
+pid_file=.ota-test-dependency.pid
+case "$*" in
+  *"compose"*"up -d"*"dependency"*)
+    python3 scripts/dependency.py >.ota-test-dependency.log 2>&1 &
+    echo $! > "$pid_file"
+    ;;
+  *"compose"*"ps -q"*"dependency"*)
+    if [ -f "$pid_file" ] && kill -0 "$(cat "$pid_file")" 2>/dev/null; then
+      printf '%s\n' ota-test-dependency
+    fi
+    ;;
+  *"compose"*"stop"*"dependency"*)
+    if [ -f "$pid_file" ]; then
+      kill "$(cat "$pid_file")" 2>/dev/null || true
+      rm -f "$pid_file"
+    fi
+    ;;
+  *"compose version"*|*"--version"*)
+    printf '%s\n' 'Docker version 27.0.0'
+    ;;
+esac
+"#,
+    )
+    .expect("fake engine");
+    let mut permissions = fs::metadata(&docker)
+        .expect("fake engine metadata")
+        .permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&docker, permissions).expect("fake engine permissions");
+    let mut paths = vec![bin_dir];
+    paths.extend(env::split_paths(&env::var_os("PATH").unwrap_or_default()));
+    let path = env::join_paths(paths).expect("test PATH");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ota"))
+        .args([
+            "proof",
+            "runtime",
+            "--json",
+            "--archive",
+            "--workflow",
+            "app-proof",
+            "--negative-control",
+            "dependency-unavailable",
+            "--ready-timeout",
+            "20s",
+            ".",
+        ])
+        .current_dir(fixture.path())
+        .env("PATH", path)
+        .env(
+            "OTA_TEST_PROOF_ASSURANCE_FAULT",
+            "sibling_attestation_digest",
+        )
+        .output()
+        .expect("runtime proof command");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if let Ok(pid) = fs::read_to_string(fixture.path().join(".ota-test-dependency.pid")) {
+        let _ = Command::new("kill").arg(pid.trim()).status();
+    }
+
+    assert!(
+        !output.status.success(),
+        "stdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(
+        format!("{stdout}\n{stderr}").contains("negative-control evidence reconciliation failed"),
+        "stdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    let rendered = format!("{stdout}\n{stderr}");
+    assert!(!rendered.contains("\"proof_verdict\""), "{rendered}");
+    assert!(!rendered.contains("\"archive\":"), "{rendered}");
+    assert!(
+        !fixture.path().join(".ota/receipts").exists(),
+        "reconciliation refusal must not publish a receipt"
+    );
+    let archive_dir = fixture.path().join(".ota/proof/archives");
+    assert!(
+        !archive_dir.exists()
+            || fs::read_dir(&archive_dir)
+                .expect("archive directory")
+                .next()
+                .is_none(),
+        "reconciliation refusal must not publish a proof archive"
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn inline_typed_workflow_prepare_refuses_before_run_admission() {
@@ -6375,7 +6520,7 @@ workflows:
                 "same_obligation": true,
                 "negative_control_id": "postgres-down",
                 "failure_mode": "expected_missing_effect",
-                "failure_attestation_digest": "sha256:control"
+                "failure_attestation_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
             }
         }
     ]);
@@ -6390,7 +6535,7 @@ workflows:
             "outcome": "observed",
             "proof_scope_ref": "workflow:app",
             "evidence_class": "attested",
-            "attestation_digest": "sha256:attestation"
+            "attestation_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
         }
     ]);
     seam_proof["negative_control"] = serde_json::json!({
@@ -6406,7 +6551,7 @@ workflows:
         "failure_mode": "expected_missing_effect",
         "proof_scope_ref": "workflow:app",
         "evidence_class": "attested",
-        "failure_attestation_digest": "sha256:control"
+        "failure_attestation_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     });
     seam_proof["not_proved"] = serde_json::json!([
         {
@@ -6428,8 +6573,9 @@ workflows:
         .expect("validated projection must reconcile with its canonical negative control");
 
     let mut changed_digest = seam_proof.clone();
-    changed_digest["dependency_evidence"][0]["negative_control"]["failure_attestation_digest"] =
-        serde_json::json!("sha256:substituted");
+    changed_digest["dependency_evidence"][0]["negative_control"]["failure_attestation_digest"] = serde_json::json!(
+        "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    );
     assert!(assert_negative_control_projection_consistent(&changed_digest).is_err());
 
     let mut changed_control = seam_proof.clone();

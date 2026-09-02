@@ -24,6 +24,7 @@
 
 version: 1
 repository: ota-run/ota-site
-mode: synced
+mode: waived
 consumer_commit: 6720ed0e08879f4e5c2751e268ff2650f7d29a41
 reviewed_ota_commit: a5bb8bf6b100a80caaf05086d3263aace11edaf6
+waiver_reason: "The proof-assurance hardening clarifies an existing Core JSON identity invariant without changing Site content; replace this temporary waiver with the immutable Core implementation revision after commit."

@@ -164,7 +164,7 @@ mod tests {
             failure_mode: Some(ProofRuntimeNegativeControlFailureMode::ExpectedMissingEffect),
             proof_scope_ref: String::from("workflow:verify"),
             evidence_class: ExecutionEvidenceClass::Attested,
-            failure_attestation_digest: Some(String::from("sha256:canonical")),
+            failure_attestation_digest: Some(format!("sha256:{}", "a".repeat(64))),
             exit_code: Some(1),
             detail: None,
         };
@@ -224,6 +224,14 @@ mod tests {
             .expect("fixture has projection")
             .failure_attestation_digest = Some(String::from("sha256:changed"));
         assert!(reconcile(&changed_digest, Some(&control)).is_err());
+
+        let mut changed_well_formed_digest = evidence.clone();
+        changed_well_formed_digest[0]
+            .negative_control
+            .as_mut()
+            .expect("fixture has projection")
+            .failure_attestation_digest = Some(format!("sha256:{}", "0".repeat(64)));
+        assert!(reconcile(&changed_well_formed_digest, Some(&control)).is_err());
 
         let mut changed_control_id = evidence.clone();
         changed_control_id[0]

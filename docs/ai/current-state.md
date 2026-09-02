@@ -44,7 +44,7 @@ durable agent workflow belongs in the canonical Ota skill.
   `SecretRequirementIdentity`, validation, and adversarial tests. No provider binding, provider
   contact, materialization, injection, execution authority, positive evidence, or support claim is
   active yet. V12.2 and later versions remain inactive.
-- V12.1 implementation-order step 1 is locally implemented for review. `ota.yaml` now has an
+- V12.1 implementation-order step 1 is independently reviewed and committed. `ota.yaml` now has an
   additive provider-neutral `secret_requirements` catalog with one initial
   `authentication_credential` / `external_api_authentication` vocabulary, canonical
   `process_environment` destinations, explicit task/workflow recipients, deny-only propagation
@@ -55,14 +55,24 @@ durable agent workflow belongs in the canonical Ota skill.
   reference, Glossary, FAQ, canonical Skill, and both installed mirrors carry the same
   declaration-only boundary; Learn and Examples remain unchanged because no usable delivery flow
   exists. No command consumes the catalog for execution, no provider binding exists, and no secret
-  bytes are loaded or delivered. Step 2 remains unauthorized pending independent review and commit
-  of this bounded foundation.
-- Eris adoption pressure exposed and locally repaired two bounded Core defects without changing the
+  bytes are loaded or delivered. Step 2 remains paused until the connected v1.6.28 proof-assurance
+  hardening is independently reviewed and committed.
+- Vinicius' independent v1.6.27 source review confirmed that negative-control projection
+  reconciliation is live on runtime proof, emitted-archive verification, and Doctor archive
+  loading. It also exposed a narrower adversarial-test gap: the existing digest mutation was
+  malformed rather than a valid sibling attestation. Core now retains the malformed case as
+  structural coverage and adds a non-default test-only live-transaction fault boundary. Two
+  declared controls execute through normal Core derivation in one proof run; substituting the
+  sibling's valid digest after projection creation refuses at the production reconciler before
+  terminal proof output, receipt, or archive publication. Site, Skills, Examples, Learn, FAQ, and
+  Glossary remain unchanged because this hardens an existing guarantee without changing operator
+  behavior or public vocabulary.
+- Eris adoption pressure exposed and repaired two bounded Core defects without changing the
   released `v1.6.27` runtime used by that partner contract: detector output no longer promotes
   named GitHub Actions bodies containing unresolved matrix or shell expressions into runnable task
   truth, and diagnose-only Rust toolchains must use comparable semantic requirements while
-  rustup-owned run fulfillment retains channel names. Site and Skills carry the same distinction;
-  their temporary sync waivers require consumer-first commits before this Core repair is committed.
+  rustup-owned run fulfillment retains channel names. Site and Skills carry the same distinction
+  at immutable revisions pinned by Core.
 - V12 closure: implementation-order steps 1-10, the bounded real-repository pressure bar, and
   independent closure reconciliation are complete. Plausible and Outline retain exact
   selected-closure denial with

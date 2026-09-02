@@ -26,6 +26,13 @@
 
 ## Unreleased
 
+- Hardened the existing runtime-proof negative-control guarantee with a test-only live-transaction
+  fault boundary. Two declared controls now produce distinct valid attestations in one proof run;
+  substituting the sibling digest while retaining `same_obligation: true` refuses at production
+  reconciliation before terminal proof output, receipt, or archive publication. The earlier
+  malformed-digest regression remains separate structural coverage, and the published runtime-proof
+  schema now requires canonical lowercase SHA-256 attestation identities.
+
 - Fixed detection so named GitHub Actions steps containing unresolved matrix or shell expressions
   cannot become runnable contract tasks, and made Rust channel validation consistent with Doctor:
   diagnose-only toolchains require comparable semantic versions while rustup-owned run fulfillment

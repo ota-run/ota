@@ -338,6 +338,11 @@ jobs:
         timeout-minutes: 10
         run: cargo test --features test-effect-refusal-archive-faults --test json_output_conformance typed_effect_policy_decision_causes_exact_pre_side_effect_refusal -- --exact
 
+      - name: Run release gate (non-Windows) - runtime proof assurance substitution boundary
+        if: runner.os != 'Windows'
+        timeout-minutes: 10
+        run: cargo test --features test-proof-assurance-faults --test json_output_conformance proof_runtime_refuses_valid_sibling_attestation_substitution_before_positive_evidence -- --exact
+
       - name: Run release gate (non-Windows) - detect fixtures
         if: runner.os == 'macOS'
         timeout-minutes: 10

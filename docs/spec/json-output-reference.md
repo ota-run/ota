@@ -1203,7 +1203,8 @@ Notes:
   self-describing projection of this canonical record, never a second source of truth. A
   `validated` projection includes `negative_control_id`, which must equal the canonical top-level
   `negative_control.id`; its parent dependency and obligation identities and its
-  `failure_attestation_digest` must exactly equal the canonical record. Core performs that
+  `failure_attestation_digest` must be a canonical lowercase SHA-256 identity and exactly equal the
+  canonical record. Core performs that
   cross-record reconciliation before emission and when loading runtime-proof archives. When the
   archived scope selected a control, Core re-derives it from the archived contract and requires
   exactly one canonical record and matching projection; other consumers must do the same. JSON

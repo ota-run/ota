@@ -907,22 +907,26 @@ fn proof_runtime_schema_covers_summary_and_artifact_fields() {
     );
 
     let dependency_negative_control = proof_runtime_definition_schema("dependencyNegativeControl");
+    let valid_attestation_digest = format!("sha256:{}", "a".repeat(64));
     let valid = json!({
         "evidence_class": "derived",
         "status": "validated",
         "same_obligation": true,
         "negative_control_id": "postgres-down",
         "failure_mode": "expected_missing_effect",
-        "failure_attestation_digest": "sha256:control"
+        "failure_attestation_digest": valid_attestation_digest
     });
     assert!(dependency_negative_control.is_valid(&valid));
+    let mut malformed_digest = valid.clone();
+    malformed_digest["failure_attestation_digest"] = json!("sha256:changed");
+    assert!(!dependency_negative_control.is_valid(&malformed_digest));
     for invalid in [
         json!({
             "evidence_class": "derived",
             "status": "validated",
             "same_obligation": true,
             "failure_mode": "expected_missing_effect",
-            "failure_attestation_digest": "sha256:control"
+            "failure_attestation_digest": format!("sha256:{}", "a".repeat(64))
         }),
         json!({
             "evidence_class": "derived",
@@ -930,7 +934,7 @@ fn proof_runtime_schema_covers_summary_and_artifact_fields() {
             "same_obligation": false,
             "negative_control_id": "postgres-down",
             "failure_mode": "expected_missing_effect",
-            "failure_attestation_digest": "sha256:control"
+            "failure_attestation_digest": format!("sha256:{}", "a".repeat(64))
         }),
         json!({
             "evidence_class": "derived",
@@ -1002,9 +1006,12 @@ fn proof_runtime_schema_covers_summary_and_artifact_fields() {
         "failure_mode": "expected_missing_effect",
         "proof_scope_ref": "workflow:app",
         "evidence_class": "attested",
-        "failure_attestation_digest": "sha256:control"
+        "failure_attestation_digest": format!("sha256:{}", "a".repeat(64))
     });
     assert!(canonical_negative_control.is_valid(&canonical_valid));
+    let mut malformed_canonical_digest = canonical_valid.clone();
+    malformed_canonical_digest["failure_attestation_digest"] = json!("sha256:changed");
+    assert!(!canonical_negative_control.is_valid(&malformed_canonical_digest));
     for field in ["outcome", "failure_mode", "evidence_class"] {
         let mut invalid = canonical_valid.clone();
         invalid[field] = match field {

@@ -4768,6 +4768,22 @@ pub fn proof_runtime_with_grant(
                         obligation_id: control.obligation_id.clone(),
                     }
                 });
+                #[cfg(feature = "test-proof-assurance-faults")]
+                if let Err(error) = proof_runtime_inject_sibling_negative_control_digest(
+                    contract,
+                    &target.contract_path,
+                    effective_workflow_selector.as_deref(),
+                    overrides,
+                    selected_negative_control.as_ref(),
+                    &seam_observations,
+                    &artifact_dir,
+                    &mut dependency_evidence,
+                ) {
+                    return fail_active_proof_crossing_transaction(
+                        format!("negative-control evidence fault injection failed: {error}"),
+                        proof_execution_id.as_str(),
+                    );
+                }
                 if let Err(error) = crate::proof_assurance::reconcile_negative_control_projection(
                     &dependency_evidence,
                     negative_control.as_ref(),
@@ -125566,6 +125582,81 @@ fn proof_runtime_apply_negative_control_projection(
             evidence.level = Some(String::from("fault_tested"));
         }
     }
+}
+
+#[cfg(feature = "test-proof-assurance-faults")]
+fn proof_runtime_inject_sibling_negative_control_digest(
+    contract: &Contract,
+    contract_path: &Path,
+    workflow_name: Option<&str>,
+    overrides: ExecutionOverrides,
+    selected: Option<&crate::schema::WorkflowNegativeControlSpec>,
+    obligations: &[crate::output::ProofRuntimeSeamObservation],
+    artifact_dir: &Path,
+    dependency_evidence: &mut [ProofRuntimeDependencyEvidence],
+) -> Result<(), String> {
+    if env::var("OTA_TEST_PROOF_ASSURANCE_FAULT").ok().as_deref()
+        != Some("sibling_attestation_digest")
+    {
+        return Ok(());
+    }
+    let selected = selected.ok_or_else(|| {
+        String::from("sibling-attestation substitution requires a selected negative control")
+    })?;
+    let (_, workflow) = contract.selected_workflow(workflow_name).ok_or_else(|| {
+        String::from("sibling-attestation substitution requires a selected workflow")
+    })?;
+    let sibling = workflow
+        .proof
+        .negative_controls
+        .iter()
+        .find(|candidate| {
+            candidate.id != selected.id
+                && candidate.dependency == selected.dependency
+                && candidate.obligation == selected.obligation
+                && candidate.expected_failure == selected.expected_failure
+        })
+        .ok_or_else(|| {
+            String::from(
+                "sibling-attestation substitution requires another control for the same obligation",
+            )
+        })?;
+    let obligation = obligations
+        .iter()
+        .find(|obligation| obligation.id == selected.obligation)
+        .ok_or_else(|| String::from("selected negative control has no observed obligation"))?;
+    let sibling_record = proof_runtime_execute_negative_control(
+        contract_path,
+        sibling,
+        workflow_name,
+        overrides,
+        Some(obligation),
+        true,
+        artifact_dir,
+    );
+    if !proof_runtime_negative_control_is_validated(&sibling_record) {
+        return Err(String::from(
+            "sibling negative control did not produce a valid canonical attestation",
+        ));
+    }
+    let sibling_digest = sibling_record
+        .failure_attestation_digest
+        .ok_or_else(|| String::from("validated sibling control has no attestation digest"))?;
+    let projection = dependency_evidence
+        .iter_mut()
+        .find(|evidence| {
+            evidence.dependency_id == format!("service:{}", selected.dependency)
+                && evidence.proof_obligation_id.as_deref() == Some(selected.obligation.as_str())
+        })
+        .and_then(|evidence| evidence.negative_control.as_mut())
+        .ok_or_else(|| String::from("selected negative-control projection is unavailable"))?;
+    if projection.failure_attestation_digest.as_deref() == Some(sibling_digest.as_str()) {
+        return Err(String::from(
+            "sibling and selected controls unexpectedly produced the same attestation digest",
+        ));
+    }
+    projection.failure_attestation_digest = Some(sibling_digest);
+    Ok(())
 }
 
 fn proof_runtime_negative_control_is_validated(control: &ProofRuntimeNegativeControl) -> bool {
