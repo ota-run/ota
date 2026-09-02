@@ -16,6 +16,23 @@
       "core_note": "docs/ai/current-state.md"
     },
     {
+      "id": "create-chrome-extension-prebound-authority",
+      "status": "immutable_pressure",
+      "repository": {"name": "create-chrome-extension authority fixture", "type": "TypeScript CLI scaffolding repository", "url": "https://github.com/bobaikato/create-chrome-extension", "revision": "a1dba8ece7bf79448c3201a87ec7bad81bde2a8d"},
+      "ota": {"version": "v1.6.26", "core_revision": "e9d8d8d6d206c65311f48d61648c8467b90f0c03"},
+      "evidence": [
+        {"scenario": "live_grant", "platforms": ["linux"], "run_url": "https://github.com/bobaikato/create-chrome-extension/actions/runs/30863257307", "job_url": "https://github.com/bobaikato/create-chrome-extension/actions/runs/30863257307/job/91849573417", "artifact": {"name": "ota-crossing-authority-live", "digest": "sha256:58bb2d0721f4157479a608021681675bbc1c7c5eb87bce6bd8606593c1b20359"}},
+        {"scenario": "expired_grant", "platforms": ["linux"], "run_url": "https://github.com/bobaikato/create-chrome-extension/actions/runs/30862934335", "job_url": "https://github.com/bobaikato/create-chrome-extension/actions/runs/30862934335/job/91848618117", "artifact": {"name": "ota-crossing-authority-expired", "digest": "sha256:759bf42023838bc0844c81f6950221a4eb4a6c0a5431600049ade66560c9b9db"}},
+        {"scenario": "revoked_grant", "platforms": ["linux"], "run_url": "https://github.com/bobaikato/create-chrome-extension/actions/runs/30863024099", "job_url": "https://github.com/bobaikato/create-chrome-extension/actions/runs/30863024099/job/91848891803", "artifact": {"name": "ota-crossing-authority-revoked", "digest": "sha256:b926eef03abeca41253e0de53d1845cef66428d55811234c15a72fa54238df35"}},
+        {"scenario": "out_of_scope_grant", "platforms": ["linux"], "run_url": "https://github.com/bobaikato/create-chrome-extension/actions/runs/30863121110", "job_url": "https://github.com/bobaikato/create-chrome-extension/actions/runs/30863121110/job/91849179129", "artifact": {"name": "ota-crossing-authority-out-of-scope", "digest": "sha256:83806d12428c88424621a10619ce60cd4dbab98bc892366e9e51aa1ffcdfedbd"}}
+      ],
+      "exercised_surfaces": ["prebound signed-file authority", "exact selected-scope admission", "expired, revoked, and out-of-scope refusal", "crossing transaction and receipt archive"],
+      "proven_facts": ["One exact-scope live grant admitted the selected scaffold action and produced one completed crossing transaction with valid receipt history.", "Expired, revoked, and out-of-scope grants refused both dry-run and real execution before the selected scaffold path was created; retained before/after checkout manifests matched.", "The source-built Ota binary and the root-managed authority files were verified before the governed lane ran."],
+      "not_proved": ["Provider-attested or independently administered authority separation", "absence of every escalation path, mount alias, metadata credential, or host-control endpoint", "verified human, CI, or platform identity", "one-use authority or atomic broker consumption", "repository-global safety, application correctness, or prevention of raw-shell bypasses", "artifact retention beyond GitHub's configured retention policy"],
+      "engineering_note": {"status": "published", "url": "https://ota.run/blog/a-protected-runner-is-not-an-approval-system-4q8m"},
+      "core_note": "docs/planning/v11.7/plan.md"
+    },
+    {
       "id": "caddy-candidate-application",
       "status": "immutable_pressure",
       "repository": {"name": "Caddy", "type": "Go server", "url": "https://github.com/caddyserver/caddy", "revision": "e9f45dbb0b9bdd2c3ff598b3667f49c3ba44c9dd"},

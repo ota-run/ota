@@ -26,3 +26,8 @@ This prevents an old post from being silently upgraded into current evidence.
 
 Every case must state both `proven_facts` and `not_proved`. A green workflow, passing command, or
 published engineering note is not a substitute for that boundary.
+
+Each evidence entry always binds its platform set and hosted run. When a case has separately
+retained scenarios, it may also bind the scenario name, exact job URL, and artifact name plus
+lowercase SHA-256 digest. Those fields identify retained evidence; they do not broaden the listed
+`proven_facts`.
