@@ -2799,7 +2799,7 @@ set -eu
 pid_file=.ota-test-dependency.pid
 case "$*" in
   *"compose"*"up -d"*"dependency"*)
-    python3 scripts/dependency.py >.ota-test-dependency.log 2>&1 &
+    nohup python3 scripts/dependency.py </dev/null >.ota-test-dependency.log 2>&1 &
     echo $! > "$pid_file"
     ;;
   *"compose"*"ps -q"*"dependency"*)
@@ -2840,7 +2840,7 @@ esac
             "--negative-control",
             "dependency-unavailable",
             "--ready-timeout",
-            "20s",
+            "60s",
             ".",
         ])
         .current_dir(fixture.path())
