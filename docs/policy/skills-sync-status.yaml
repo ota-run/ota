@@ -24,7 +24,6 @@
 
 version: 1
 repository: ota-run/skills
-mode: waived
+mode: synced
 consumer_commit: d7c2cc8e1fa2788db5fe1b3516f4f0d1a37dfa4e
-reviewed_ota_commit: 9835edfabe5b12b4012ec18f05a1ffa3cf3ee41c
-waiver_reason: "The canonical Skill already requires task notes on material agent boundaries; this Core repair makes the existing ota tasks --safe --use guidance true without changing Skill content. Replace this waiver with the immutable Core revision after commit."
+reviewed_ota_commit: df6592103903804b017961fb7c58d0fe7cae20f0
