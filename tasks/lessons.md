@@ -380,3 +380,11 @@
 - Rule: Do not defer a bounded visibility defect on the canonical agent path as optional UX work.
   If the Skill requires agents to consult a field before execution, the named discovery command must
   expose that field in the same release slice.
+- Pattern: A design-partner PR description included Ota's internal product-gap and roadmap ledger,
+  even though the upstream maintainer only needed the proposed integration, exact evidence,
+  unchanged repository findings, and proof limits.
+- Correction: Keep partner PR descriptions scoped to what the maintainer must review and decide.
+  Record Ota platform gaps, widening opportunities, and future ownership in Ota-owned plans,
+  handoffs, pressure records, and engineering notes instead.
+- Rule: Upstream PRs are review artifacts, not Ota planning ledgers. Include only information that
+  explains the diff, its evidence, its repository impact, or its explicit limitations.
