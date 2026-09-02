@@ -24,8 +24,10 @@
 
 # V12.1: Secret Delivery Governance
 
-Status: planned and inactive. This plan does not authorize contract, CLI, provider, or runtime
-implementation.
+Status: active. Activated on 2026-09-02 after V12 closure, PythiaLabs credentialed-CAEP discovery,
+and feasibility review of a concrete Google Secret Manager adapter using GitHub OIDC and Google
+Workload Identity Federation. Activation authorizes implementation-order step 1 only. It does not
+establish provider support, secret delivery, execution authority, or pressure evidence.
 
 ## Activation Gates
 
@@ -41,6 +43,34 @@ V12.1 may be activated only after:
 
 V12.1 must not widen V11.7 authority transport or reinterpret a crossing grant as secret-delivery
 authority. Crossing admission and secret-delivery admission are separate and both must pass.
+
+## Activation Record
+
+- V11.7, V11.22, and V12 completed the prerequisite authority, candidate, typed-effect, shared
+  admission, archive, pressure, and closure bars named above.
+- PythiaLabs supplies the real repository boundary: its credentialed CAEP lane requires
+  `GOOGLE_API_KEY` for consequential model-provider calls, while inherited GitHub environment
+  state cannot prove late delivery to the exact selected recipient or exclusion from adjacent
+  tasks, hooks, services, helpers, logs, and replay state.
+- The first implementation subject is
+  `google_secret_manager_github_oidc_process_environment_v1`, limited initially to a Linux GitHub
+  Actions native-process recipient. After all Ota admission succeeds, the adapter requests the
+  exact workflow-run OIDC token, exchanges it through Google Workload Identity Federation, reads
+  one exact Google Secret Manager version, and injects the returned bytes only into the admitted
+  child process environment.
+- GitHub's OIDC request capability and the resulting short-lived Google credential authenticate
+  provider access; neither is the delivered repository secret or proof that delivery succeeded.
+  A GitHub secret, workflow expression, action output, generated credentials file, inherited
+  environment value, or shell bootstrap cannot substitute for the adapter transaction.
+- Initial pressure will use Bobai's fork, a disposable Google Cloud provider scope, and synthetic
+  canary material. It will not require an upstream maintainer secret or treat a model-provider call
+  as proved until that separate consequential action is explicitly selected and evidenced.
+- Local, macOS, Windows, container, remote, persistent-runtime, dynamic-lease, and additional
+  provider delivery remain unsupported until separately implemented and pressured.
+
+Activation does not make PythiaLabs `ALLOW` evidence into Ota authority, does not activate V12.2,
+and does not authorize provider contact before the shared admission and transaction boundaries
+ship.
 
 Planned follow-on: [V12.2 Contract-Authored Crossing Requirements](../v12.2/plan.md) remains
 inactive and may be activated only after V12.1 completes or is formally deferred. This sequencing
@@ -369,26 +399,34 @@ The eventual repository schema contains requirements, not provider bindings:
 ```yaml
 secret_requirements:
   billing_api_token:
+    secret_class: authentication_credential
     purpose: external_api_authentication
     delivery:
       kind: process_environment
       variable: BILLING_API_TOKEN
     recipients:
       tasks: [publish_billing]
-      propagation: deny
+      dependencies: deny
       hooks: deny
       services: deny
       helpers: deny
       containers: deny
       remote_execution: deny
+      proof_observers: deny
+      negative_controls: deny
+      lifecycle_children: deny
     constraints:
       actor_mode: agent
       environment: production
+      execution_mode: native
+      target_platform: linux
+      runtime_boundary: process
       capability: segmented_process_environment
 ```
 
-This is illustrative only. It is not an accepted `ota.yaml` surface until activation and schema
-review. The provider mapping is intentionally absent.
+This shape became the accepted provider-neutral step-1 surface after activation and schema review.
+It remains declaration-only until later implementation-order steps add separately sourced binding,
+admission, and runtime support. The provider mapping is intentionally absent.
 
 ## Evidence, Privacy, Receipts, And Archives
 
@@ -480,6 +518,52 @@ Enterprise owns centrally administered provider bindings, tenant/org scope, prov
 workload identity, policy distribution, fleet posture, controlled evidence retention, exceptions,
 and management UX. Enterprise consumes Core's canonical model rather than defining a parallel
 secret taxonomy.
+
+## First Implementation Boundary
+
+The first slice adds only the provider-neutral `secret_requirements` contract surface, canonical
+destination and recipient semantics, domain-separated `SecretRequirementIdentity`, and strict
+validation. It must reject secret defaults, ambiguous compatibility ownership, duplicate or
+unknown recipients, unsupported destinations, noncanonical environment-variable names, and any
+provider selector in `ota.yaml`.
+
+Step 1 does not load a provider binding, evaluate secret-delivery policy, request GitHub OIDC,
+contact Google, materialize or inject bytes, alter child environments, emit positive delivery
+evidence, or make any task agent-safe. Existing `env` behavior remains compatibility input and
+cannot satisfy the new requirement.
+
+Implementation-order step 1 is implemented locally on `1.6.28-implementation`: the additive model,
+Rust-owned JSON Schema, resolver, domain-separated identity, strict compatibility checks, contract
+reference, and adversarial unit/schema tests are present. This is not immutable or independent
+review evidence, and it does not authorize step 2 until this batch is reviewed and committed.
+
+## Implementation Order
+
+1. Add the additive provider-neutral requirement schema, parser model, canonical destinations,
+   recipient graph, semantic identity, validation, and adversarial identity/schema tests.
+2. Add a separately sourced protected provider-binding model, binding/source identities,
+   disclosure classes, and zero/duplicate/substitution refusal without provider contact.
+3. Register the exact Google Secret Manager/GitHub OIDC implementation subject and capability
+   profile under the adapter/profile conformance rules; unsupported targets refuse.
+4. Add one shared secret-delivery evaluator and dry-run plan that preserves V12 effect decisions,
+   reports `availability: not_checked`, and performs no provider interaction.
+5. Route `run`, `up`, proof, Doctor context, CI re-evaluation, sandbox capability, and harness
+   output through one retained command-scoped admission before provider contact or side effects.
+6. Implement the transaction-bound adapter: OIDC request, WIF exchange, exact-version Secret
+   Manager access, recipient-only injection, non-recipient exclusion, interruption, and terminal
+   cleanup.
+7. Add phase-accurate non-secret receipts, protected archive attachments, public redacted
+   projections, re-derivation, replay refusal, and tamper/substitution tests.
+8. Integrate the mechanically derived `secret_material_delivery` V12 effect and assurance profile
+   without allowing either policy domain to manufacture authority for the other.
+9. Propagate the shipped operator surface to Core references, changelog, Example, Skill, Site,
+   Learn, FAQ, and Glossary as each behavior becomes available; do not publish future semantics as
+   current behavior.
+10. Run internal adversarial matrices, then immutable real-repository pressure against the named
+    adapter and independently reconcile every proved and `not_proved` boundary before closure.
+
+Only one step may advance at a time. Completion of a step does not imply provider support or allow
+later steps to consume unimplemented evidence.
 
 ## Initial Pressure Bar
 

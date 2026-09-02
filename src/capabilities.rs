@@ -63,6 +63,10 @@ const CONTRACT_CAPABILITY_SPECS: &[ContractCapabilitySpec] = &[
         introduced_in: "1.6.27",
     },
     ContractCapabilitySpec {
+        id: "secret_requirements",
+        introduced_in: "1.6.28",
+    },
+    ContractCapabilitySpec {
         id: "tasks.effects.declared",
         introduced_in: "1.6.27",
     },
@@ -372,6 +376,7 @@ fn capability_present_in_document(capability: &ContractCapabilitySpec, document:
         }
         "resource_bindings" => nonempty_mapping_child(document, "resource_bindings"),
         "effect_definitions" => nonempty_mapping_child(document, "effect_definitions"),
+        "secret_requirements" => nonempty_mapping_child(document, "secret_requirements"),
         "tasks.effects.declared" => tasks_effects_declared_present(document),
         "tasks.effects.writes" => tasks_effects_writes_present(document),
         "tasks.effects.workspace_writes" => tasks_effects_workspace_writes_present(document),
@@ -437,6 +442,7 @@ fn capability_present_in_contract(
         "metadata.ota.minimum_version" => contract.minimum_ota_version().is_some(),
         "resource_bindings" => !contract.resource_bindings.is_empty(),
         "effect_definitions" => !contract.effect_definitions.is_empty(),
+        "secret_requirements" => !contract.secret_requirements.is_empty(),
         "tasks.effects.declared" => contract
             .tasks
             .values()
@@ -1000,6 +1006,73 @@ tasks:
                 ("tasks.effects.declared", "1.6.27"),
             ]
         );
+    }
+
+    #[test]
+    fn publishes_and_detects_v12_1_secret_requirement_capability() {
+        let document: Value = serde_yaml::from_str(
+            r#"
+secret_requirements:
+  provider_api_token:
+    secret_class: authentication_credential
+"#,
+        )
+        .unwrap();
+        let detected = detect_declared_contract_capabilities(&document)
+            .into_iter()
+            .map(|capability| (capability.id, capability.introduced_in))
+            .collect::<Vec<_>>();
+        assert_eq!(detected, vec![("secret_requirements", "1.6.28")]);
+    }
+
+    #[test]
+    fn detects_v12_1_secret_requirement_capability_from_parsed_contract() {
+        let contract: Contract = serde_yaml::from_str(
+            r#"
+version: 1
+project:
+  name: secret-capability
+tasks:
+  provider-conformance:
+    command:
+      exe: "true"
+secret_requirements:
+  provider_api_token:
+    secret_class: authentication_credential
+    purpose: external_api_authentication
+    delivery:
+      kind: process_environment
+      variable: GOOGLE_API_KEY
+    recipients:
+      tasks: [provider-conformance]
+      dependencies: deny
+      hooks: deny
+      services: deny
+      helpers: deny
+      containers: deny
+      remote_execution: deny
+      proof_observers: deny
+      negative_controls: deny
+      lifecycle_children: deny
+    constraints:
+      actor_mode: ci
+      environment: test
+      execution_mode: native
+      target_platform: linux
+      runtime_boundary: process
+      capability: segmented_process_environment
+"#,
+        )
+        .unwrap();
+        let detected = unsupported_declared_contract_capabilities_in_contract(
+            &contract,
+            &Version::parse("1.6.27").unwrap(),
+        )
+        .into_iter()
+        .map(|capability| (capability.id, capability.introduced_in))
+        .collect::<Vec<_>>();
+
+        assert_eq!(detected, vec![("secret_requirements", "1.6.28")]);
     }
 
     #[test]

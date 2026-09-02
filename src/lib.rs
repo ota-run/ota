@@ -61,6 +61,7 @@ pub(crate) mod replay_inputs;
 pub mod runner;
 pub(crate) mod sandbox_policy;
 pub mod schema;
+pub mod secret_requirements;
 pub(crate) mod semantic_identity;
 pub(crate) mod terminal;
 #[cfg(test)]

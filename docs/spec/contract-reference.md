@@ -2072,6 +2072,74 @@ Fields:
 - `external_state`: optional list of lowercase tokens naming out-of-repo state the task mutates,
   such as `docker` or `postgres`
 
+### Governed secret requirements
+
+V12.1 introduces the provider-neutral `secret_requirements` catalog. A requirement declares what
+secret class and purpose a selected task or workflow needs, where the material would be delivered,
+which execution edges must not receive it, and the requested execution constraints:
+
+```yaml
+metadata:
+  ota:
+    minimum_version: "1.6.28"
+
+secret_requirements:
+  provider_api_token:
+    secret_class: authentication_credential
+    purpose: external_api_authentication
+    delivery:
+      kind: process_environment
+      variable: GOOGLE_API_KEY
+    recipients:
+      tasks: [provider-conformance]
+      dependencies: deny
+      hooks: deny
+      services: deny
+      helpers: deny
+      containers: deny
+      remote_execution: deny
+      proof_observers: deny
+      negative_controls: deny
+      lifecycle_children: deny
+    constraints:
+      actor_mode: ci
+      environment: test
+      execution_mode: native
+      target_platform: linux
+      runtime_boundary: process
+      capability: segmented_process_environment
+
+tasks:
+  provider-conformance:
+    command:
+      exe: python3
+      args: [scripts/provider_conformance.py]
+```
+
+Requirement labels use canonical lowercase catalog identifiers. Process-environment destinations
+use uppercase ASCII `[A-Z_][A-Z0-9_]*` names. Recipient task and workflow arrays are semantic sets:
+they must be non-empty when present, unique, and sorted in ascending byte order, and at least one
+recipient root is required. Every initial propagation edge is explicit and `deny`; a future schema
+version must define any wider edge rather than silently changing this posture. Environment classes
+are canonical lowercase identifiers. The initial runtime-boundary and capability vocabulary is
+`process` plus `segmented_process_environment`.
+
+The declaration cannot contain a provider, cloud project, tenant, secret path, secret version,
+GitHub secret name, Vault path, credential value, default, or other provider selector. Two
+requirements cannot target the same environment variable. A governed destination also cannot be
+owned simultaneously by `env.vars`, profile literal environment, execution-context environment,
+workflow-instance environment or task overlays, task or mode environment, task environment
+bindings, or task variants. Existing `env` and inherited process values remain compatibility input;
+matching a variable name never satisfies a governed requirement.
+
+Ota derives `SecretRequirementIdentity` from the typed class, purpose, normalized destination,
+recipient graph, propagation posture, and requested constraints under a versioned domain. The
+contract-local requirement label does not participate. This step-1 identity is declaration truth
+only: current commands do not resolve a provider binding, evaluate secret-delivery policy, request
+OIDC, contact a provider, load or inject bytes, make a task agent-safe, or emit positive delivery
+evidence. A contract that validates this catalog is not evidence that secret delivery is supported
+or occurred.
+
 ### Typed effect definitions
 
 V12 separates a real resource binding, a reusable effect definition, and the task attachment that

@@ -1760,6 +1760,97 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
         { "$ref": "#/$defs/taskActionStep" }
       ]
     },
+    "secretDeliveryDestination": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "variable"],
+      "properties": {
+        "kind": { "const": "process_environment" },
+        "variable": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[A-Z_][A-Z0-9_]*$"
+        }
+      }
+    },
+    "secretRecipients": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "dependencies",
+        "hooks",
+        "services",
+        "helpers",
+        "containers",
+        "remote_execution",
+        "proof_observers",
+        "negative_controls",
+        "lifecycle_children"
+      ],
+      "properties": {
+        "tasks": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "workflows": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "dependencies": { "const": "deny" },
+        "hooks": { "const": "deny" },
+        "services": { "const": "deny" },
+        "helpers": { "const": "deny" },
+        "containers": { "const": "deny" },
+        "remote_execution": { "const": "deny" },
+        "proof_observers": { "const": "deny" },
+        "negative_controls": { "const": "deny" },
+        "lifecycle_children": { "const": "deny" }
+      },
+      "anyOf": [
+        { "required": ["tasks"] },
+        { "required": ["workflows"] }
+      ]
+    },
+    "secretRequirementConstraints": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "actor_mode",
+        "environment",
+        "execution_mode",
+        "target_platform",
+        "runtime_boundary",
+        "capability"
+      ],
+      "properties": {
+        "actor_mode": { "enum": ["human", "agent", "ci"] },
+        "environment": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-z][a-z0-9_-]*$"
+        },
+        "execution_mode": { "enum": ["native", "container", "remote"] },
+        "target_platform": { "enum": ["linux", "macos", "windows"] },
+        "runtime_boundary": { "const": "process" },
+        "capability": { "const": "segmented_process_environment" }
+      }
+    },
+    "secretRequirement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["secret_class", "purpose", "delivery", "recipients", "constraints"],
+      "properties": {
+        "secret_class": { "const": "authentication_credential" },
+        "purpose": { "const": "external_api_authentication" },
+        "delivery": { "$ref": "#/$defs/secretDeliveryDestination" },
+        "recipients": { "$ref": "#/$defs/secretRecipients" },
+        "constraints": { "$ref": "#/$defs/secretRequirementConstraints" }
+      }
+    },
     "effectCatalogLabel": {
       "type": "string",
       "maxLength": 128,
@@ -2646,6 +2737,11 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
       "type": "object",
       "propertyNames": { "$ref": "#/$defs/effectCatalogLabel" },
       "additionalProperties": { "$ref": "#/$defs/effectDefinition" }
+    },
+    "secret_requirements": {
+      "type": "object",
+      "propertyNames": { "$ref": "#/$defs/effectCatalogLabel" },
+      "additionalProperties": { "$ref": "#/$defs/secretRequirement" }
     },
     "env": { "$ref": "#/$defs/envConfig" },
     "readiness": {

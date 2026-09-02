@@ -66,14 +66,16 @@ complete or that equivalent paths are covered.
   machinery.
 - The V11 parent frame is complete; deferred follow-ons remain durably owned outside V12.
 - Independent review found no remaining material planning findings.
-- The canonical handoff activated V12 as the sole active version and kept V12.1 onward inactive.
+- The canonical handoff activated V12 as the sole active version and, at that activation boundary,
+  kept V12.1 onward inactive.
 
 Activation authorizes implementation order step 1 only. It does not establish effect support,
 policy enforcement, canary assurance, receipt/archive evidence, or pressure proof.
 
-Planned follow-on: [V12.1 Secret Delivery Governance](../v12.1/plan.md) remains inactive and may be
-activated only after V12 completes and its own activation gates are satisfied. The reviewed
-sequence then continues through [V12.2 Contract-Authored Crossing Requirements](../v12.2/plan.md),
+Planned follow-on: [V12.1 Secret Delivery Governance](../v12.1/plan.md) remained inactive throughout
+V12 and could activate only after V12 completed and its own activation gates were satisfied. Its
+separate activation record now owns that successor state. The reviewed sequence then continues
+through [V12.2 Contract-Authored Crossing Requirements](../v12.2/plan.md),
 [V12.3 Provider-Attested Authority Carrier](../v12.3/plan.md),
 [V12.4 macOS Protected Authority Carrier](../v12.4/plan.md), and
 [V12.5 Windows Protected Authority Carrier](../v12.5/plan.md), followed by the public

@@ -137,6 +137,7 @@ pub fn validate_contract_with_path(
     validate_surfaces(contract, &mut errors);
     validate_services(contract, contract_path, &mut errors);
     validate_effect_domain(contract, &mut errors);
+    validate_secret_requirements(contract, &mut errors);
     validate_tasks(contract, contract_path, &mut errors);
     validate_task_replay_inputs(contract, &mut errors);
     validate_task_witnessed_observations(contract, &mut errors);
@@ -205,6 +206,15 @@ fn validate_effect_domain(contract: &Contract, errors: &mut Vec<ValidationError>
                 }
             }
         }
+    }
+}
+
+fn validate_secret_requirements(contract: &Contract, errors: &mut Vec<ValidationError>) {
+    if let Err(error) = crate::secret_requirements::resolve_secret_requirement_catalog(contract) {
+        errors.push(ValidationError::new(format!(
+            "secret requirement invalid ({}): {}",
+            error.code, error.message
+        )));
     }
 }
 
@@ -603,6 +613,11 @@ fn validate_project(contract: &Contract, errors: &mut Vec<ValidationError>) {
 
 fn validate_ota_minimum_version(contract: &Contract, errors: &mut Vec<ValidationError>) {
     let Some(minimum_version) = contract.minimum_ota_version() else {
+        if !contract.secret_requirements.is_empty() {
+            errors.push(ValidationError::new(
+                "`secret_requirements` requires `metadata.ota.minimum_version` of at least `1.6.28`",
+            ));
+        }
         return;
     };
 
@@ -615,6 +630,13 @@ fn validate_ota_minimum_version(contract: &Contract, errors: &mut Vec<Validation
             return;
         }
     };
+
+    let secret_requirements_floor = Version::new(1, 6, 28);
+    if !contract.secret_requirements.is_empty() && minimum < secret_requirements_floor {
+        errors.push(ValidationError::new(format!(
+            "`secret_requirements` requires `metadata.ota.minimum_version` of at least `{secret_requirements_floor}`"
+        )));
+    }
 
     if let Some(AgentBootstrapOtaSource::Version { version }) = contract
         .agent
@@ -41604,6 +41626,67 @@ agent:
         .unwrap();
 
         assert!(validate_contract(&contract).is_ok());
+    }
+
+    #[test]
+    fn secret_requirements_require_the_v1_6_28_contract_floor() {
+        let contract = |minimum_version: Option<&str>| {
+            let metadata = minimum_version.map_or_else(String::new, |version| {
+                format!("metadata:\n  ota:\n    minimum_version: \"{version}\"\n")
+            });
+            serde_yaml::from_str(&format!(
+                r#"
+version: 1
+{metadata}project:
+  name: secret-floor
+tasks:
+  provider-conformance:
+    command:
+      exe: "true"
+secret_requirements:
+  provider_api_token:
+    secret_class: authentication_credential
+    purpose: external_api_authentication
+    delivery:
+      kind: process_environment
+      variable: GOOGLE_API_KEY
+    recipients:
+      tasks: [provider-conformance]
+      dependencies: deny
+      hooks: deny
+      services: deny
+      helpers: deny
+      containers: deny
+      remote_execution: deny
+      proof_observers: deny
+      negative_controls: deny
+      lifecycle_children: deny
+    constraints:
+      actor_mode: ci
+      environment: test
+      execution_mode: native
+      target_platform: linux
+      runtime_boundary: process
+      capability: segmented_process_environment
+"#
+            ))
+            .unwrap()
+        };
+        let floor_error = |version| {
+            validate_contract(&contract(version))
+                .unwrap_err()
+                .errors()
+                .iter()
+                .any(|error| {
+                    error.message
+                        == "`secret_requirements` requires `metadata.ota.minimum_version` of at least `1.6.28`"
+                })
+        };
+
+        assert!(floor_error(None));
+        assert!(floor_error(Some("1.6.27")));
+        assert!(!floor_error(Some("1.6.28")));
+        assert!(!floor_error(Some("1.7.0")));
     }
 
     #[test]

@@ -165,6 +165,8 @@ pub struct Contract {
     pub resource_bindings: BTreeMap<String, ResourceBindingSpec>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub effect_definitions: BTreeMap<String, EffectDefinitionSpec>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub secret_requirements: BTreeMap<String, SecretRequirementSpec>,
     #[serde(default)]
     pub env: EnvConfig,
     #[serde(default)]
@@ -228,6 +230,105 @@ pub struct ResourceNamespaceSpec {
 #[serde(rename_all = "snake_case")]
 pub enum DatabaseEffectProvider {
     Postgresql,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct SecretRequirementSpec {
+    pub secret_class: SecretRequirementClass,
+    pub purpose: SecretRequirementPurpose,
+    pub delivery: SecretDeliveryDestinationSpec,
+    pub recipients: SecretRecipientSpec,
+    pub constraints: SecretRequirementConstraintsSpec,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SecretRequirementClass {
+    AuthenticationCredential,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SecretRequirementPurpose {
+    ExternalApiAuthentication,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum SecretDeliveryDestinationSpec {
+    ProcessEnvironment { variable: String },
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct SecretRecipientSpec {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tasks: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub workflows: Vec<String>,
+    pub dependencies: SecretPropagationPosture,
+    pub hooks: SecretPropagationPosture,
+    pub services: SecretPropagationPosture,
+    pub helpers: SecretPropagationPosture,
+    pub containers: SecretPropagationPosture,
+    pub remote_execution: SecretPropagationPosture,
+    pub proof_observers: SecretPropagationPosture,
+    pub negative_controls: SecretPropagationPosture,
+    pub lifecycle_children: SecretPropagationPosture,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SecretPropagationPosture {
+    Deny,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct SecretRequirementConstraintsSpec {
+    pub actor_mode: SecretActorMode,
+    pub environment: String,
+    pub execution_mode: SecretExecutionMode,
+    pub target_platform: SecretTargetPlatform,
+    pub runtime_boundary: SecretRuntimeBoundary,
+    pub capability: SecretCapabilityClass,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SecretActorMode {
+    Human,
+    Agent,
+    Ci,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SecretExecutionMode {
+    Native,
+    Container,
+    Remote,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SecretTargetPlatform {
+    Linux,
+    Macos,
+    Windows,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SecretRuntimeBoundary {
+    Process,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SecretCapabilityClass {
+    SegmentedProcessEnvironment,
 }
 
 impl DatabaseEffectProvider {

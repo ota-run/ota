@@ -690,6 +690,90 @@ fn published_contract_schema_discriminates_typed_effect_bounds() {
 }
 
 #[test]
+fn published_contract_schema_discriminates_secret_requirements() {
+    let schema = load_schema("docs/spec/json-schemas/contract.json");
+    let compiled = JSONSchema::options()
+        .with_draft(Draft::Draft202012)
+        .compile(&schema)
+        .expect("contract schema should compile");
+    let valid = json!({
+        "version": 1,
+        "project": { "name": "secret-requirement-fixture" },
+        "tasks": {
+            "publish": { "command": { "exe": "true" } }
+        },
+        "secret_requirements": {
+            "provider_api_token": {
+                "secret_class": "authentication_credential",
+                "purpose": "external_api_authentication",
+                "delivery": {
+                    "kind": "process_environment",
+                    "variable": "GOOGLE_API_KEY"
+                },
+                "recipients": {
+                    "tasks": ["publish"],
+                    "dependencies": "deny",
+                    "hooks": "deny",
+                    "services": "deny",
+                    "helpers": "deny",
+                    "containers": "deny",
+                    "remote_execution": "deny",
+                    "proof_observers": "deny",
+                    "negative_controls": "deny",
+                    "lifecycle_children": "deny"
+                },
+                "constraints": {
+                    "actor_mode": "ci",
+                    "environment": "test",
+                    "execution_mode": "native",
+                    "target_platform": "linux",
+                    "runtime_boundary": "process",
+                    "capability": "segmented_process_environment"
+                }
+            }
+        }
+    });
+    assert!(compiled.is_valid(&valid));
+
+    for (path, value) in [
+        ("variable", json!("Google_API_KEY")),
+        ("kind", json!("repository_file")),
+    ] {
+        let mut invalid = valid.clone();
+        invalid["secret_requirements"]["provider_api_token"]["delivery"][path] = value;
+        assert!(!compiled.is_valid(&invalid));
+    }
+
+    let mut provider_selector = valid.clone();
+    provider_selector["secret_requirements"]["provider_api_token"]["provider"] =
+        json!("google_secret_manager");
+    assert!(!compiled.is_valid(&provider_selector));
+
+    let mut missing_edge = valid.clone();
+    missing_edge["secret_requirements"]["provider_api_token"]["recipients"]
+        .as_object_mut()
+        .unwrap()
+        .remove("hooks");
+    assert!(!compiled.is_valid(&missing_edge));
+
+    let mut widened_edge = valid.clone();
+    widened_edge["secret_requirements"]["provider_api_token"]["recipients"]["dependencies"] =
+        json!("allow");
+    assert!(!compiled.is_valid(&widened_edge));
+
+    let mut no_recipients = valid.clone();
+    no_recipients["secret_requirements"]["provider_api_token"]["recipients"]
+        .as_object_mut()
+        .unwrap()
+        .remove("tasks");
+    assert!(!compiled.is_valid(&no_recipients));
+
+    let mut secret_default = valid.clone();
+    secret_default["secret_requirements"]["provider_api_token"]["default"] = json!("secret");
+    assert!(!compiled.is_valid(&secret_default));
+}
+
+#[test]
 fn published_contract_schema_includes_crossing_authority_reference() {
     let schema = load_schema("docs/spec/json-schemas/contract.json");
     let authority = &schema["$defs"]["governance"]["properties"]["crossing_authority"];

@@ -33,8 +33,30 @@ durable agent workflow belongs in the canonical Ota skill.
 
 ## Active Work
 
-- branch: `main`
+- branch: `1.6.28-implementation`
 - released baseline: `v1.6.27`
+- active version: V12.1 secret-delivery governance. Activated on 2026-09-02 after the released V12
+  closure and feasibility review of PythiaLabs' credentialed CAEP boundary. The named first adapter
+  is `google_secret_manager_github_oidc_process_environment_v1`, initially limited to a Linux
+  GitHub Actions native-process recipient using GitHub OIDC, Google Workload Identity Federation,
+  and one exact Google Secret Manager version. Activation authorizes implementation-order step 1
+  only: the provider-neutral requirement schema, canonical recipient/destination model,
+  `SecretRequirementIdentity`, validation, and adversarial tests. No provider binding, provider
+  contact, materialization, injection, execution authority, positive evidence, or support claim is
+  active yet. V12.2 and later versions remain inactive.
+- V12.1 implementation-order step 1 is locally implemented for review. `ota.yaml` now has an
+  additive provider-neutral `secret_requirements` catalog with one initial
+  `authentication_credential` / `external_api_authentication` vocabulary, canonical
+  `process_environment` destinations, explicit task/workflow recipients, deny-only propagation
+  edges, requested execution constraints, and domain-separated `SecretRequirementIdentity`.
+  Validation requires `metadata.ota.minimum_version` of at least `1.6.28` and rejects provider
+  selectors, secret defaults, destination collisions, compatibility ownership conflicts, unknown
+  or noncanonical recipients, and noncanonical environment-variable names. The Site contract
+  reference, Glossary, FAQ, canonical Skill, and both installed mirrors carry the same
+  declaration-only boundary; Learn and Examples remain unchanged because no usable delivery flow
+  exists. No command consumes the catalog for execution, no provider binding exists, and no secret
+  bytes are loaded or delivered. Step 2 remains unauthorized pending independent review and commit
+  of this bounded foundation.
 - V12 closure: implementation-order steps 1-10, the bounded real-repository pressure bar, and
   independent closure reconciliation are complete. Plausible and Outline retain exact
   selected-closure denial with
@@ -48,9 +70,8 @@ durable agent workflow belongs in the canonical Ota skill.
   and platform-stably non-writable. Provider execution or mutation, callback behavior after Core's
   ordered delivery, independently administered policy authority, positive assurance, arbitrary
   child-process absence, repository-wide immutability, database correctness, and public archive
-  export safety remain unproved or outside V12. V12.1 remains planned and inactive; V12 closure
-  does not activate it, and its own gates require the released V12 surface plus one
-  concrete late-delivery provider case.
+  export safety remain unproved or outside V12. V12 closure did not implicitly activate V12.1;
+  the separate activation record in the V12.1 plan owns the new work.
 - Core now owns `docs/pressure/evidence-manifest.json`, a machine-readable registry that binds
   retained pressure cases to exact revisions, matrices, exercised surfaces, proven facts, and
   explicit limits. The Site commits a generated discovery projection and validates it against Core
@@ -240,8 +261,9 @@ durable agent workflow belongs in the canonical Ota skill.
   foundation is committed at Core `f3d4b8e1`, Site `5926f69`, Skills `d05b1d1`, and Examples
   `2dad574`; canonical-identity hardening is committed at Core `1b9a03d6`, Site `e78b963`, and
   Skills `30c8dbd`. The hosted carrier above exercises the selected plan/admission path but does not
-  replace the exhaustive local identity-domain regression matrix. V12.1 onward and both cross-cutting plans remain
-  planned and inactive. The reference Example correctly requires Ota `1.6.27`; the source-built
+  replace the exhaustive local identity-domain regression matrix. V12.2 onward and the authority
+  distribution plan remain planned and inactive; adapter/profile conformance constrains the named
+  V12.1 implementation without establishing support. The reference Example correctly requires Ota `1.6.27`; the source-built
   `v1.6.27` development binary validated that exact contract locally on 2026-08-25. This closes
   only the local minimum-version gate. Application plans now carry the canonical discriminated
   action bounds needed by an executor, rather than requiring contract reconstruction. A Core-owned,
@@ -1612,8 +1634,9 @@ review; their draft status is not an implementation or evidence gap, and the pre
 not a release claim.
 The reviewed post-V11 sequence is now explicit. [V12 effect-bound refusal
 assurance](../planning/v12/plan.md) is complete: its bounded implementation, real-repository
-pressure, and independent closure reconciliation are complete. The following plans remain inactive:
-[V12.1 secret-delivery governance](../planning/v12.1/plan.md),
+pressure, and independent closure reconciliation are complete. [V12.1 secret-delivery
+governance](../planning/v12.1/plan.md) is now the sole active version under its separate activation
+record. The following version plans remain inactive:
 [V12.2 contract-authored crossing requirements](../planning/v12.2/plan.md),
 [V12.3 provider-attested authority carrier](../planning/v12.3/plan.md),
 [V12.4 macOS protected authority carrier](../planning/v12.4/plan.md), and

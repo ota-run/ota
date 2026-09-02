@@ -26,6 +26,15 @@
 
 ## Unreleased
 
+- Activated V12.1 with an additive provider-neutral `secret_requirements` contract catalog. The
+  initial declaration binds an authentication-credential purpose, canonical process-environment
+  destination, exact task/workflow roots, deny-only propagation posture, requested execution
+  constraints, and a domain-separated semantic identity. Validation rejects provider selectors,
+  secret defaults, destination collisions, compatibility-owned values, unknown or noncanonical
+  recipients, noncanonical environment-variable names, and a missing or lower-than-1.6.28 contract
+  floor. This foundation does not load provider bindings, contact providers, materialize or inject
+  secret bytes, authorize execution, or emit positive delivery evidence.
+
 ## 1.6.27
 
 - Closed V12 after independent reconciliation of its implementation, formal bounded
