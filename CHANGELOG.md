@@ -26,6 +26,11 @@
 
 ## Unreleased
 
+- Fixed `ota tasks --use`, including the canonical `ota tasks --safe --use` agent-discovery lane,
+  to render task `notes` alongside descriptions and runnable commands. Multiline notes retain plain
+  output parity, so declared proof limits and external-boundary guidance are visible before an
+  agent selects a task.
+
 - Hardened the existing runtime-proof negative-control guarantee with a test-only live-transaction
   fault boundary. Two declared controls now produce distinct valid attestations in one proof run;
   substituting the sibling digest while retaining `same_obligation: true` refuses at production

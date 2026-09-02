@@ -75,7 +75,16 @@ durable agent workflow belongs in the canonical Ota skill.
   named GitHub Actions bodies containing unresolved matrix or shell expressions into runnable task
   truth, and diagnose-only Rust toolchains must use comparable semantic requirements while
   rustup-owned run fulfillment retains channel names. Site and Skills carry the same distinction
-  at immutable revisions pinned by Core.
+  at immutable revisions pinned by Core. The same pressure review exposed a task-discovery UX gap:
+  `ota tasks --use`, including `ota tasks --safe --use`, now renders task `notes` alongside
+  descriptions and runnable commands so agents see declared proof limits and external-boundary
+  guidance before selecting a lane. JSON already carried the notes and remains unchanged. Six
+  non-blocking follow-ons are now recorded in the
+  inactive [execution-contract follow-on plan](../planning/execution-contract-follow-ons/plan.md):
+  lock-strict Cargo hydration, aggregate mode eligibility, mixed-mode preview selection, Doctor
+  cause reconciliation, opaque-shell evidence boundaries, and identity-bound container cleanup.
+  The plan does not delay the Eris draft or interrupt V12.1; every sub-slice requires a future
+  version owner and independent activation.
 - V12 closure: implementation-order steps 1-10, the bounded real-repository pressure bar, and
   independent closure reconciliation are complete. Plausible and Outline retain exact
   selected-closure denial with

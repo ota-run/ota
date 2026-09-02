@@ -300,7 +300,7 @@ Current behavior:
 - includes variant summaries when variants are declared
 - `--use` expands each task with human and agent run commands, closure-aware agent policy,
   command preview, safety posture, declared effects, dry-run JSON, receipt follow-up guidance,
-  plus task description and required inputs when present; plain `ota tasks` remains the full
+  plus task description, operational notes, and required inputs when present; plain `ota tasks` remains the full
   declaration view for dependencies, services, conditions, hooks, notes, and related metadata
 - `--safe` and `--unsafe` are mutually exclusive filters over the effective safe set
   (`safe_for_agent: true` plus `agent.safe_tasks`)
@@ -342,7 +342,8 @@ Common operator lanes:
 - `ota tasks --safe`: show only effective agent-safe tasks
 - `ota tasks --unsafe`: show only non-safe tasks
 - `ota tasks --safe --use`: show safe tasks plus canonical run commands, safety posture, and
-  machine-readable follow-up commands
+  machine-readable follow-up commands; task notes remain visible so agents receive declared
+  proof limits and external-boundary guidance before choosing a lane
 - `ota tasks --unsafe --use`: show non-safe tasks plus canonical run commands, review posture, and
   machine-readable follow-up commands
 - `ota tasks --via native`: filter to tasks runnable through native execution

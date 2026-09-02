@@ -24,6 +24,7 @@
 
 version: 1
 repository: ota-run/ota-site
-mode: synced
+mode: waived
 consumer_commit: 6720ed0e08879f4e5c2751e268ff2650f7d29a41
 reviewed_ota_commit: 0e62bf3d3561745066d6cc0dcbc8055e152314fb
+waiver_reason: "The task-note discovery repair has a connected uncommitted Site command-reference update; commit Site first, then replace this waiver with its immutable revision before committing Core."

@@ -22366,6 +22366,7 @@ tasks:
     description: Start the dev server
     notes: |
       Use this for local development and manual verification.
+      It does not prove production deployment readiness.
     run: cargo run
   start:
     context: app
@@ -22387,15 +22388,30 @@ tasks:
         assert!(stdout.contains("Context: app"));
         assert!(stdout.contains("Native (Default): `ota run dev`"));
         assert!(stdout.contains("Description: Start the dev server"));
+        assert!(stdout.contains("Notes: Use this for local development and manual verification."));
+        assert!(stdout.contains("\n  It does not prove production deployment readiness."));
         assert!(stdout.contains("✦ start"));
         assert!(stdout.contains("Native (Default): `ota run start`"));
         assert!(stdout.contains("✦ typecheck"));
         assert!(stdout.contains("Native (Default): `ota run typecheck`"));
-        assert!(!stdout.contains("Notes:"));
         assert!(stdout.contains("Dry Run JSON: `ota run dev --dry-run --json`"));
         assert!(stdout.contains("Dry Run JSON: `ota run start --dry-run --json`"));
         assert!(stdout.contains("Preview:"));
         assert!(!stdout.contains("Mode Branches: -"));
+
+        let plain_output = run_with(["ota", "tasks", "--use", "--plain", fixture.path()]);
+        assert_eq!(plain_output.exit_code, 0);
+        assert!(
+            plain_output
+                .stdout
+                .contains("Notes: Use this for local development and manual verification.")
+        );
+        assert!(
+            plain_output
+                .stdout
+                .contains("\n  It does not prove production deployment readiness.")
+        );
+        assert_eq!(plain_output.stdout, strip_ansi(&plain_output.stdout));
     }
 
     #[test]

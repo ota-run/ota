@@ -56835,6 +56835,13 @@ fn render_tasks_use_text(path: &str, tasks: &[TaskSummary<'_>]) -> String {
         if let Some(description) = task.description {
             output.push_str(&format!("\n  {} {description}", paint_key("Description:")));
         }
+        if let Some(notes) = task.notes {
+            output.push_str(&format!(
+                "\n  {} {}",
+                paint_key("Notes:"),
+                render_multiline_field(notes)
+            ));
+        }
         push_task_run_fields(&mut output, task);
         push_rendered_field(
             &mut output,
