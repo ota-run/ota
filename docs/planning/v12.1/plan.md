@@ -26,8 +26,10 @@
 
 Status: active. Activated on 2026-09-02 after V12 closure, PythiaLabs credentialed-CAEP discovery,
 and feasibility review of a concrete Google Secret Manager adapter using GitHub OIDC and Google
-Workload Identity Federation. Activation authorizes implementation-order step 1 only. It does not
-establish provider support, secret delivery, execution authority, or pressure evidence.
+Workload Identity Federation. Implementation-order step 1 is independently reviewed and committed
+at Core `9835edfa`. Step 2 remains inactive while the connected v1.6.28 proof-assurance hardening
+completes its immutable hosted proof and reconciliation gate. This activation does not establish
+provider support, secret delivery, execution authority, or pressure evidence.
 
 ## Activation Gates
 
@@ -56,8 +58,12 @@ authority. Crossing admission and secret-delivery admission are separate and bot
   `google_secret_manager_github_oidc_process_environment_v1`, limited initially to a Linux GitHub
   Actions native-process recipient. After all Ota admission succeeds, the adapter requests the
   exact workflow-run OIDC token, exchanges it through Google Workload Identity Federation, reads
-  one exact Google Secret Manager version, and injects the returned bytes only into the admitted
-  child process environment.
+  one exact Google Secret Manager version, and injects the returned bytes only into the selected
+  recipient process-tree environment.
+- Before implementation-order step 3 may begin, the adapter profile must require and bind the exact
+  GitHub OIDC issuer, audience, and admitted claims; Workload Identity Federation pool and provider;
+  service account; Google project; Secret Manager resource; and numeric secret version. Every field
+  is mandatory canonical identity input, and substitution of any field must refuse.
 - GitHub's OIDC request capability and the resulting short-lived Google credential authenticate
   provider access; neither is the delivered repository secret or proof that delivery succeeded.
   A GitHub secret, workflow expression, action output, generated credentials file, inherited
@@ -71,6 +77,14 @@ authority. Crossing admission and secret-delivery admission are separate and bot
 Activation does not make PythiaLabs `ALLOW` evidence into Ota authority, does not activate V12.2,
 and does not authorize provider contact before the shared admission and transaction boundaries
 ship.
+
+### Step 2 Activation Gate
+
+Step 2 is not authorized by the original step-1 activation record. It may be activated only through
+an explicit plan and current-state amendment after the v1.6.28 proof-assurance hardening is committed
+and its Linux/macOS Release Gate evidence is inspected. Clearing those prerequisites does not
+activate step 2 by itself. The activation amendment must name the exact provider-binding ownership
+and disclosure boundary being implemented and must preserve zero provider contact.
 
 Planned follow-on: [V12.2 Contract-Authored Crossing Requirements](../v12.2/plan.md) remains
 inactive and may be activated only after V12.1 completes or is formally deferred. This sequencing
@@ -532,10 +546,11 @@ contact Google, materialize or inject bytes, alter child environments, emit posi
 evidence, or make any task agent-safe. Existing `env` behavior remains compatibility input and
 cannot satisfy the new requirement.
 
-Implementation-order step 1 is implemented locally on `1.6.28-implementation`: the additive model,
-Rust-owned JSON Schema, resolver, domain-separated identity, strict compatibility checks, contract
-reference, and adversarial unit/schema tests are present. This is not immutable or independent
-review evidence, and it does not authorize step 2 until this batch is reviewed and committed.
+Implementation-order step 1 is independently reviewed and committed at Core `9835edfa`: the
+additive model, Rust-owned JSON Schema, resolver, domain-separated identity, strict compatibility
+checks, contract reference, and adversarial unit/schema tests are present. Step 2 remains paused at
+the explicit activation gate above while the connected v1.6.28 proof-assurance hardening completes
+its hosted proof and immutable reconciliation. Step 1 completion does not authorize step 2.
 
 ## Implementation Order
 
@@ -544,18 +559,21 @@ review evidence, and it does not authorize step 2 until this batch is reviewed a
 2. Add a separately sourced protected provider-binding model, binding/source identities,
    disclosure classes, and zero/duplicate/substitution refusal without provider contact.
 3. Register the exact Google Secret Manager/GitHub OIDC implementation subject and capability
-   profile under the adapter/profile conformance rules; unsupported targets refuse.
-4. Add one shared secret-delivery evaluator and dry-run plan that preserves V12 effect decisions,
-   reports `availability: not_checked`, and performs no provider interaction.
-5. Route `run`, `up`, proof, Doctor context, CI re-evaluation, sandbox capability, and harness
+   profile under the adapter/profile conformance rules; require the complete Google binding tuple
+   named in the activation record and reject every substitution; unsupported targets refuse.
+4. Mechanically derive the `secret_material_delivery` V12 effect, realization inputs, and refusal-
+   assurance profile from the canonical requirement, selected closure, destination, recipient
+   process-tree, and bounded consequence truth. Integrate the effect-policy decision without
+   allowing either policy domain to manufacture authority for the other.
+5. Add one shared secret-delivery evaluator and dry-run plan that consumes the retained V12 effect
+   decision, reports `availability: not_checked`, and performs no provider interaction.
+6. Route `run`, `up`, proof, Doctor context, CI re-evaluation, sandbox capability, and harness
    output through one retained command-scoped admission before provider contact or side effects.
-6. Implement the transaction-bound adapter: OIDC request, WIF exchange, exact-version Secret
+7. Implement the transaction-bound adapter: OIDC request, WIF exchange, exact-version Secret
    Manager access, recipient-only injection, non-recipient exclusion, interruption, and terminal
    cleanup.
-7. Add phase-accurate non-secret receipts, protected archive attachments, public redacted
+8. Add phase-accurate non-secret receipts, protected archive attachments, public redacted
    projections, re-derivation, replay refusal, and tamper/substitution tests.
-8. Integrate the mechanically derived `secret_material_delivery` V12 effect and assurance profile
-   without allowing either policy domain to manufacture authority for the other.
 9. Propagate the shipped operator surface to Core references, changelog, Example, Skill, Site,
    Learn, FAQ, and Glossary as each behavior becomes available; do not publish future semantics as
    current behavior.
@@ -577,6 +595,9 @@ synthetic canary material so leak scanning is possible without retaining real va
 - positive late delivery to one exact supported recipient segment;
 - non-recipient segmentation when the adapter can enforce it;
 - honest process-tree inheritance for process-environment delivery;
+- explicit acknowledgement that arbitrary descendants of the selected recipient process tree may
+  inherit process-environment material, while undeclared descendants and raw-shell behavior remain
+  unproved rather than represented as excluded helpers;
 - hook, service, helper, proof/lifecycle child, and unsupported-segment refusal;
 - untrusted-fork/external-contributor refusal unless both requirement and authority-owned binding
   already admit the exact event/workload posture, with policy only narrowing;

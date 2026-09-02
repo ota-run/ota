@@ -55,8 +55,11 @@ durable agent workflow belongs in the canonical Ota skill.
   reference, Glossary, FAQ, canonical Skill, and both installed mirrors carry the same
   declaration-only boundary; Learn and Examples remain unchanged because no usable delivery flow
   exists. No command consumes the catalog for execution, no provider binding exists, and no secret
-  bytes are loaded or delivered. Step 2 remains paused until the connected v1.6.28 proof-assurance
-  hardening is independently reviewed and committed.
+  bytes are loaded or delivered. Step 2 remains inactive under the explicit activation gate in the
+  V12.1 plan until the connected proof-assurance hardening is committed, its immutable Linux/macOS
+  evidence is independently inspected, and a separate activation amendment authorizes the
+  provider-binding ownership and disclosure boundary. Clearing prerequisites alone does not
+  activate step 2.
 - Vinicius' independent v1.6.27 source review confirmed that negative-control projection
   reconciliation is live on runtime proof, emitted-archive verification, and Doctor archive
   loading. It also exposed a narrower adversarial-test gap: the existing digest mutation was
