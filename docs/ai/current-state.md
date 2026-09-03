@@ -37,14 +37,16 @@ durable agent workflow belongs in the canonical Ota skill.
 - released baseline: `v1.6.27`
 - active version: V12.1 secret-delivery governance. Activated on 2026-09-02 after the released V12
   closure and feasibility review of PythiaLabs' credentialed CAEP boundary. The named first adapter
-  is `google_secret_manager_github_oidc_process_environment_v1`, initially limited to a Linux
-  GitHub Actions native-process recipient using GitHub OIDC, Google Workload Identity Federation,
-  and one exact Google Secret Manager version. Activation authorizes implementation-order step 1
-  and, under the separate 2026-09-03 amendment, implementation-order step 2: the provider-neutral
-  requirement schema, canonical recipient/destination model, `SecretRequirementIdentity`, and the
-  Core-owned provider-binding domain model with pure fail-closed resolution. No provider binding
-  loader, provider contact, materialization, injection, execution authority, positive evidence, or
-  support claim is implemented yet. V12.2 and later versions remain inactive.
+  is `google_secret_manager_github_oidc_process_environment_v1`, initially limited to a
+  `linux/x86_64` GitHub Actions native-process recipient using GitHub OIDC, Google Workload Identity
+  Federation, and one exact Google Secret Manager version. Activation authorizes implementation-order
+  step 1 and, under separate 2026-09-03 amendments, implementation-order steps 2 and 3: the
+  provider-neutral requirement schema, canonical recipient/destination model,
+  `SecretRequirementIdentity`, and the Core-owned provider-binding domain model with pure
+  fail-closed resolution, followed by the exact first-adapter profile and implementation-subject
+  descriptor model. No provider binding loader, concrete implementation registration, provider
+  contact, materialization, injection, execution authority, positive evidence, or support claim is
+  implemented yet. V12.2 and later versions remain inactive.
 - V12.1 implementation-order step 1 is independently reviewed and committed. `ota.yaml` now has an
   additive provider-neutral `secret_requirements` catalog with one initial
   `authentication_credential` / `external_api_authentication` vocabulary, canonical
@@ -63,8 +65,8 @@ durable agent workflow belongs in the canonical Ota skill.
   snapshots. It does not authorize a binding loader, CLI route, provider adapter, provider contact,
   OIDC/WIF, materialization, injection, policy/effect admission, execution, receipts, archives, or
   support claims.
-- V12.1 implementation-order step 2 is implemented locally and awaits independent review. The
-  sealed Core-only model derives domain-separated protected source-evidence and private-binding
+- V12.1 implementation-order step 2 is independently reviewed and committed at Core `9218151b`.
+  The sealed Core-only model derives domain-separated protected source-evidence and private-binding
   identities from exact requirement, provider reference, authority scope, source evidence, adapter,
   lifecycle, and target truth. The pure resolver validates the complete protected snapshot before
   selection, requires exact source/binding scope and requirement-target agreement, refuses zero,
@@ -76,6 +78,22 @@ durable agent workflow belongs in the canonical Ota skill.
   consumes the model. Site, Skills, Examples, Learn, FAQ, and Glossary remain unchanged because
   this sealed internal foundation creates no authoring or operator workflow, command, output, or
   public vocabulary.
+- V12.1 implementation-order step 3 is explicitly activated under a separate plan amendment. It
+  authorizes only the crate-private capability-profile and implementation-subject descriptor model
+  for `google_secret_manager_github_oidc_process_environment_v1`, deterministic identities, the
+  complete protected GitHub OIDC/WIF/Google Secret Manager binding tuple, exact `linux/x86_64`
+  GitHub Actions native-process target posture, unsupported-target refusal, and adversarial
+  substitution tests. Stable profile semantics, implementation/build/target truth, and exact
+  per-run values remain separated through `profile_semantic_identity`,
+  `implementation_subject_identity`, and protected `SecretDeliveryInvocationBindingIdentity`.
+  A concrete implementation subject cannot be finalized or registered until exact source, build,
+  and artifact identities exist; registration and lifecycle identities remain uncreated. No loader,
+  registry installation, lifecycle promotion, CLI route,
+  token request, provider contact, network access, effect/policy admission, materialization,
+  injection, execution, receipt, archive, assurance, conformance result, pressure evidence, or
+  support claim is authorized, and the generic cross-cutting adapter/profile conformance plan
+  remains inactive. Step 4 and later steps remain unauthorized. This activation-only amendment
+  creates no Site, Skill, Example, Learn, FAQ, Glossary, contract-schema, or public-JSON change.
 - Vinicius' independent v1.6.27 source review confirmed that negative-control projection
   reconciliation is live on runtime proof, emitted-archive verification, and Doctor archive
   loading. It also exposed a narrower adversarial-test gap: the existing digest mutation was

@@ -29,8 +29,10 @@ and feasibility review of a concrete Google Secret Manager adapter using GitHub 
 Workload Identity Federation. Implementation-order step 1 is independently reviewed and committed
 at Core `9835edfa`. Implementation-order step 2 was separately activated on 2026-09-03 after the
 connected v1.6.28 proof-assurance hardening passed immutable Linux/macOS Release Gate evidence and
-that evidence was reconciled at Core `a582b948`. This activation does not establish provider
-support, secret delivery, execution authority, or pressure evidence.
+that evidence was reconciled at Core `a582b948`; step 2 was independently reviewed and committed
+at Core `9218151b`. Implementation-order step 3 is separately activated under the amendment below.
+This activation does not establish provider support, secret delivery, execution authority, or
+pressure evidence.
 
 ## Activation Gates
 
@@ -56,11 +58,11 @@ authority. Crossing admission and secret-delivery admission are separate and bot
   state cannot prove late delivery to the exact selected recipient or exclusion from adjacent
   tasks, hooks, services, helpers, logs, and replay state.
 - The first implementation subject is
-  `google_secret_manager_github_oidc_process_environment_v1`, limited initially to a Linux GitHub
-  Actions native-process recipient. After all Ota admission succeeds, the adapter requests the
-  exact workflow-run OIDC token, exchanges it through Google Workload Identity Federation, reads
-  one exact Google Secret Manager version, and injects the returned bytes only into the selected
-  recipient process-tree environment.
+  `google_secret_manager_github_oidc_process_environment_v1`, limited initially to a
+  `linux/x86_64` GitHub Actions native-process recipient. After all Ota admission succeeds, the
+  adapter requests the exact workflow-run OIDC token, exchanges it through Google Workload Identity
+  Federation, reads one exact Google Secret Manager version, and injects the returned bytes only
+  into the selected recipient process-tree environment.
 - Before implementation-order step 3 may begin, the adapter profile must require and bind the exact
   GitHub OIDC issuer, audience, and admitted claims; Workload Identity Federation pool and provider;
   service account; Google project; Secret Manager resource; and numeric secret version. Every field
@@ -115,6 +117,70 @@ registration, GitHub OIDC, Workload Identity Federation, Google Secret Manager c
 policy, effect derivation, admission, materialization, injection, execution, receipts, archives, or
 support claims. Those boundaries remain owned by later implementation-order steps and require their
 stated gates.
+
+### Step 3 Activation Gate
+
+Step 3 is not authorized by either earlier activation record. It may be activated only after the
+step-2 provider-binding model is independently reviewed and committed. The activation amendment
+must preserve the adapter/profile conformance separation between shared profile semantics, the
+exact implementation subject, registration evidence, and release-owned lifecycle. It must also
+freeze the first adapter's complete binding and target posture without implying that an
+unimplemented adapter has source, build, artifact, conformance, pressure, registration, or support
+evidence.
+
+#### Step 3 Activation Amendment
+
+Implementation-order step 3 is activated on 2026-09-03. The prerequisite provider-binding model is
+independently reviewed and committed at Core `9218151b`.
+
+This amendment authorizes only the Core-owned, crate-private profile definition and implementation-
+subject descriptor model for `google_secret_manager_github_oidc_process_environment_v1`, together
+with deterministic semantic identities and adversarial substitution tests. The profile definition
+must bind its materialization applicability class; selected-recipient-process-tree boundary;
+`process_environment` destination; `linux/x86_64` GitHub Actions native-process target;
+provider-neutral requirement and protected-binding inputs; provider interaction, cleanup,
+interruption, and disclosure capabilities; and every unsupported or unproved target and behavior.
+The implementation-subject descriptor must bind the exact profile identity, implementation owner,
+source, build, artifact, claimed Core and Protocol ranges, and exact target posture. Until those
+implementation inputs exist, no concrete implementation-subject identity may be finalized or
+registered.
+Applying those identity and separation rules to this named V12.1 model does not activate the
+cross-cutting adapter/profile conformance plan, its generic registry, registration packages,
+conformance harness, pressure lifecycle, or release lifecycle.
+
+Identity ownership is explicit. `profile_semantic_identity` binds the stable required claim
+vocabulary, canonicalization and validation semantics, capability boundary, and permitted target
+set; it does not bind concrete workflow-run or provider-reference values.
+`implementation_subject_identity` binds the exact implementation owner, source, build, artifact,
+claimed Core and Protocol ranges, and `linux/x86_64` GitHub Actions native-process target; it does
+not vary per invocation. A separate protected `SecretDeliveryInvocationBindingIdentity` binds the
+selected requirement and protected provider-binding identities plus the exact per-invocation
+binding tuple. Registration and lifecycle identities remain uncreated.
+
+That protected per-invocation tuple must contain the exact GitHub OIDC issuer and audience; the
+complete admitted claim-name and expected-value map, including subject, repository and repository-
+owner numeric identities, workflow reference and revision, repository ref and revision, actor
+numeric identity, event, run identity, and run attempt; Workload Identity Federation pool and
+provider; service account; Google project; Secret Manager resource; and numeric secret version.
+Every field and every admitted claim is a mandatory canonical input to
+`SecretDeliveryInvocationBindingIdentity`. Omission, duplication, aliasing, or substitution must
+refuse rather than fall back to another binding or target. Semantically unordered claim
+collections must normalize to one canonical order; any ordered claim input must preserve its
+semantic order in identity.
+
+The only initially permitted target is `linux/x86_64` GitHub Actions using native execution and a
+transient selected recipient process tree. Other architectures, local, macOS, Windows, container,
+remote, persistent-runtime, dynamic-lease, raw-shell, undeclared-descendant, additional-provider,
+and mutable-secret-version postures must be represented as unsupported or unproved and must refuse
+selection. The profile may describe required future provider and cleanup behavior, but this step
+cannot claim that behavior is implemented, observed, pressured, or supported.
+
+Step 3 does not authorize a binding loader, registry installation, implementation registration,
+lifecycle promotion, CLI route, OIDC token request, Workload Identity Federation exchange, Google
+Secret Manager contact, network access, effect derivation, policy or command admission,
+materialization, injection, child execution, receipt, archive, assurance, conformance result,
+pressure evidence, or support claim. Implementation-order step 4 and every later step remain
+unauthorized.
 
 Planned follow-on: [V12.2 Contract-Authored Crossing Requirements](../v12.2/plan.md) remains
 inactive and may be activated only after V12.1 completes or is formally deferred. This sequencing
@@ -583,7 +649,7 @@ checks, contract reference, and adversarial unit/schema tests are present. Step 
 activated under the amendment above after the connected v1.6.28 proof-assurance hardening completed
 its hosted proof and immutable reconciliation. Step 1 completion did not authorize step 2.
 
-Implementation-order step 2 is implemented locally and awaits independent review. The sealed
+Implementation-order step 2 is independently reviewed and committed at Core `9218151b`. The sealed
 Core-only model derives separate source-evidence, private-binding, source-projection, and public-
 projection identities; requires exact source/binding authority-scope equality; validates the whole
 protected snapshot before selection; and returns only sources used by the selected requirement set.
@@ -600,9 +666,11 @@ delivery, policy/effect admission, execution, receipt, archive, or support path 
    recipient graph, semantic identity, validation, and adversarial identity/schema tests.
 2. Add a separately sourced protected provider-binding model, binding/source identities,
    disclosure classes, and zero/duplicate/substitution refusal without provider contact.
-3. Register the exact Google Secret Manager/GitHub OIDC implementation subject and capability
-   profile under the adapter/profile conformance rules; require the complete Google binding tuple
-   named in the activation record and reject every substitution; unsupported targets refuse.
+3. Define the exact Google Secret Manager/GitHub OIDC capability profile and implementation-subject
+   descriptor under the adapter/profile conformance rules; require the complete protected binding
+   tuple named in the activation record and reject every substitution; unsupported targets refuse.
+   Do not finalize or register a concrete implementation subject before exact source, build, and
+   artifact identities exist.
 4. Mechanically derive the `secret_material_delivery` V12 effect, realization inputs, and refusal-
    assurance profile from the canonical requirement, selected closure, destination, recipient
    process-tree, and bounded consequence truth. Integrate the effect-policy decision without
