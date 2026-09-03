@@ -660,7 +660,7 @@ private binding/source identities, provider references, authority scope, workloa
 roots, and verifier identities. No loader, CLI route, provider adapter, provider contact, secret
 delivery, policy/effect admission, execution, receipt, archive, or support path consumes this model.
 
-Implementation-order step 3 is implemented locally and awaits independent review. The sealed
+Implementation-order step 3 is independently reviewed and committed at Core `9ac9274f`. The sealed
 Core-only model defines the exact
 `google_secret_manager_github_oidc_process_environment_v1` profile, a separately identified
 implementation subject, and a protected per-run invocation binding. It keeps stable profile

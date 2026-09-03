@@ -56,7 +56,10 @@
   substituting the sibling digest while retaining `same_obligation: true` refuses at production
   reconciliation before terminal proof output, receipt, or archive publication. The earlier
   malformed-digest regression remains separate structural coverage, and the published runtime-proof
-  schema now requires canonical lowercase SHA-256 attestation identities.
+  schema now requires canonical lowercase SHA-256 attestation identities. Thanks to
+  [@vinimabreu](https://github.com/vinimabreu) for identifying the difference between malformed-
+  digest rejection and substitution of a valid digest from the wrong attestation, and for pushing
+  the transaction-level regression that proves the latter refuses before evidence publication.
 
 - Fixed detection so named GitHub Actions steps containing unresolved matrix or shell expressions
   cannot become runnable contract tasks, and made Rust channel validation consistent with Doctor:
