@@ -63,6 +63,19 @@ durable agent workflow belongs in the canonical Ota skill.
   snapshots. It does not authorize a binding loader, CLI route, provider adapter, provider contact,
   OIDC/WIF, materialization, injection, policy/effect admission, execution, receipts, archives, or
   support claims.
+- V12.1 implementation-order step 2 is implemented locally and awaits independent review. The
+  sealed Core-only model derives domain-separated protected source-evidence and private-binding
+  identities from exact requirement, provider reference, authority scope, source evidence, adapter,
+  lifecycle, and target truth. The pure resolver validates the complete protected snapshot before
+  selection, requires exact source/binding scope and requirement-target agreement, refuses zero,
+  duplicate, conflicting, unknown, noncanonical, or substituted inputs without fallback, and
+  returns only selected bindings and their sources. Its fail-closed public projection omits
+  requirement linkage and every private source/reference input; changing private references does
+  not create a public correlation oracle. No loader, CLI, adapter, OIDC/WIF, provider contact,
+  materialization, injection, policy/effect admission, execution, receipt, archive, or support path
+  consumes the model. Site, Skills, Examples, Learn, FAQ, and Glossary remain unchanged because
+  this sealed internal foundation creates no authoring or operator workflow, command, output, or
+  public vocabulary.
 - Vinicius' independent v1.6.27 source review confirmed that negative-control projection
   reconciliation is live on runtime proof, emitted-archive verification, and Doctor archive
   loading. It also exposed a narrower adversarial-test gap: the existing digest mutation was

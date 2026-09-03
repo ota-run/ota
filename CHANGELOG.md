@@ -26,6 +26,15 @@
 
 ## Unreleased
 
+- Added the V12.1 protected provider-binding identity foundation. A sealed Core model now binds the
+  exact requirement, provider reference, authority scope, source evidence, adapter identity,
+  lifecycle posture, and target constraints, while a pure resolver refuses missing, duplicate,
+  conflicting, unknown, cross-scope, and substituted bindings without precedence fallback. Its
+  public projection excludes requirement linkage and all private provider/source material, exposing
+  only the closed non-secret binding class, disclosure posture, and projection identities.
+  This step adds no binding loader, CLI route, provider adapter, provider contact, secret delivery,
+  execution authority, receipt, archive, or support claim.
+
 - Fixed `ota tasks --use`, including the canonical `ota tasks --safe --use` agent-discovery lane,
   to render task `notes` alongside descriptions and runnable commands. Multiline notes retain plain
   output parity, so declared proof limits and external-boundary guidance are visible before an

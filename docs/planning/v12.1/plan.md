@@ -583,6 +583,17 @@ checks, contract reference, and adversarial unit/schema tests are present. Step 
 activated under the amendment above after the connected v1.6.28 proof-assurance hardening completed
 its hosted proof and immutable reconciliation. Step 1 completion did not authorize step 2.
 
+Implementation-order step 2 is implemented locally and awaits independent review. The sealed
+Core-only model derives separate source-evidence, private-binding, source-projection, and public-
+projection identities; requires exact source/binding authority-scope equality; validates the whole
+protected snapshot before selection; and returns only sources used by the selected requirement set.
+Its resolver refuses missing, duplicate, conflicting, unknown, noncanonical, cross-scope, target-
+substituted, and identity-substituted inputs. With no selected requirement it remains not applicable
+and does not evaluate unrelated protected snapshots. Public projection excludes requirement linkage,
+private binding/source identities, provider references, authority scope, workload identity, trust
+roots, and verifier identities. No loader, CLI route, provider adapter, provider contact, secret
+delivery, policy/effect admission, execution, receipt, archive, or support path consumes this model.
+
 ## Implementation Order
 
 1. Add the additive provider-neutral requirement schema, parser model, canonical destinations,
