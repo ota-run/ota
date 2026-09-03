@@ -102,7 +102,17 @@ durable agent workflow belongs in the canonical Ota skill.
   resource aliases, and self-consistent resolved forgeries. Step 4 and later steps remain
   unauthorized. This internal model creates no Site, Skill, Example, Learn, FAQ, Glossary,
   contract-schema, or public-JSON change because it has no loader, command, output, or operator
-  workflow.
+  workflow. A separate Step 4 activation amendment is now proposed for independent review. It
+  authorizes only crate-private derivation of the `secret_material_delivery` V12 effect,
+  realization inputs, internal refusal-assurance eligibility, and the narrow canonical evaluator
+  extension needed to consume the derived effect. It keeps stable bounded consequence truth in
+  `EffectIdentity`; binds exact requirement, recipient, closure role, invocation origin, protected
+  binding/source, profile, implementation subject, and target truth in the realization identity;
+  and requires structural authority reconciliation before policy evaluation. The amendment is not
+  effective until independently reviewed and committed. Step 5 and later steps remain
+  unauthorized, and no loader, CLI route, provider contact, materialization, injection, execution,
+  public output, receipt, archive, assurance promotion, pressure evidence, or support claim is
+  introduced.
 - Vinicius' independent v1.6.27 source review confirmed that negative-control projection
   reconciliation is live on runtime proof, emitted-archive verification, and Doctor archive
   loading. It also exposed a narrower adversarial-test gap: the existing digest mutation was

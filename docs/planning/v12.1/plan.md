@@ -182,6 +182,62 @@ materialization, injection, child execution, receipt, archive, assurance, confor
 pressure evidence, or support claim. Implementation-order step 4 and every later step remain
 unauthorized.
 
+### Step 4 Activation Gate
+
+Step 4 is not authorized by any earlier activation record. It may be activated only after the
+step-3 profile and implementation-subject model is independently reviewed and committed. The
+activation amendment must preserve one canonical V12 effect-policy evaluator, keep provider and
+secret material outside effect identities and public projections, and distinguish stable bounded
+consequence truth from exact realization and invocation truth. Clearing those prerequisites does
+not activate step 4 by itself.
+
+#### Step 4 Activation Amendment
+
+Implementation-order step 4 is activated by the commit carrying this amendment after independent
+review. The prerequisite profile and implementation-subject model is independently reviewed and
+committed at Core `9ac9274f`; Core `68b652db` records its completed status and first-party
+reconciliation. Hosted checks for that exact closure revision remain a separate verification gate
+and must not be represented as completed evidence until their terminal results are inspected.
+
+This amendment authorizes only a Core-owned, crate-private derivation model for the
+`secret_material_delivery` V12 effect, its realization inputs, and its internal refusal-assurance
+eligibility profile, plus the narrow extension of the canonical V12 effect-policy evaluator needed
+to consume that derived effect. It must not create a secret-specific or provider-specific parallel
+policy evaluator, authority path, admission result, or decision vocabulary.
+
+`EffectIdentity` binds stable bounded consequence truth: effect kind, secret class, purpose,
+canonical destination class, environment/resource bounds, and the material consequence of making
+the secret available through that destination. It must not bind or disclose secret bytes, a secret-
+derived value, a private provider reference, a requirement label, a selected recipient, provider
+subject, workflow-run claim, or invocation origin. Two requirements with the same canonical
+bounded consequence may share an effect identity; changing destination or bounded consequence
+must produce a different identity.
+
+The realization identity binds the exact selected `SecretRequirementIdentity`, recipient segment
+and process-tree boundary, selected closure role and invocation origin, protected provider-binding
+and source-evidence identities, profile semantic identity, implementation-subject identity, and
+exact target-execution posture. Reusing one requirement through different recipients, origins,
+roles, subjects, or targets must retain distinct realization identities. Substituting protected
+binding or source evidence must change or invalidate the realization without changing the effect
+identity when the bounded consequence is unchanged.
+
+Derivation must start from the validated provider-neutral requirement and the exact selected
+closure. It must reconcile the required recipient, destination, execution constraints, protected
+binding and source authority, profile, implementation subject, and target posture before policy
+evaluation. Missing, ambiguous, conflicting, unsupported, unverified, noncanonical, or substituted
+inputs refuse structurally. Neither an effect-policy allow nor any secret-delivery policy outcome
+may manufacture a missing requirement, binding, source authority, profile, subject, recipient, or
+target capability; policy may only narrow already valid authority.
+
+The internal refusal-assurance profile may describe only derivation eligibility, identity inputs,
+and fail-closed reasons needed by later command admission. It is not a canary, Doctor claim,
+receipt, archive, public JSON result, or positive assurance statement. Step 4 does not authorize a
+binding loader, CLI route, dry-run delivery plan, command-scoped admission, OIDC token request,
+Workload Identity Federation exchange, Google Secret Manager contact, network access,
+materialization, process-environment injection, child execution, receipt, archive, public output,
+assurance promotion, pressure evidence, or support claim. Implementation-order step 5 and every
+later step remain unauthorized.
+
 Planned follow-on: [V12.2 Contract-Authored Crossing Requirements](../v12.2/plan.md) remains
 inactive and may be activated only after V12.1 completes or is formally deferred. This sequencing
 link does not authorize implementation.
