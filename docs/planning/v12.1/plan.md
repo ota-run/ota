@@ -660,6 +660,20 @@ private binding/source identities, provider references, authority scope, workloa
 roots, and verifier identities. No loader, CLI route, provider adapter, provider contact, secret
 delivery, policy/effect admission, execution, receipt, archive, or support path consumes this model.
 
+Implementation-order step 3 is implemented locally and awaits independent review. The sealed
+Core-only model defines the exact
+`google_secret_manager_github_oidc_process_environment_v1` profile, a separately identified
+implementation subject, and a protected per-run invocation binding. It keeps stable profile
+semantics, implementation/build/target truth, and dynamic invocation/provider truth in three
+domain-separated identities. The profile is restricted to `linux/x86_64` GitHub Actions native
+execution and a transient selected recipient process tree. Resolution requires the complete
+canonical GitHub OIDC claim set, exact GitHub issuer, an audience equal to the selected WIF provider
+URL, exact WIF pool and provider resources, project-matched service account and Secret Manager
+resource, and one numeric secret version. Independent semantic verification reconstructs retained
+inputs rather than trusting a self-consistent resolved record. No loader, registration or lifecycle
+identity, CLI route, token request, provider contact, effect/policy admission, delivery, execution,
+evidence, or support path consumes this model. Step 4 and later steps remain unauthorized.
+
 ## Implementation Order
 
 1. Add the additive provider-neutral requirement schema, parser model, canonical destinations,

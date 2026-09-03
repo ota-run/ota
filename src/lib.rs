@@ -62,6 +62,7 @@ pub mod runner;
 pub(crate) mod sandbox_policy;
 pub mod schema;
 pub(crate) mod secret_provider_bindings;
+pub(crate) mod secret_provider_profile;
 pub mod secret_requirements;
 pub(crate) mod semantic_identity;
 pub(crate) mod terminal;

@@ -26,6 +26,17 @@
 
 ## Unreleased
 
+- Added the V12.1 exact first-adapter identity foundation for
+  `google_secret_manager_github_oidc_process_environment_v1`. A sealed Core model now separates
+  stable profile semantics, exact implementation/build/target truth, and the protected per-run
+  GitHub OIDC, Google Workload Identity Federation, service-account, project, and versioned Secret
+  Manager tuple. Resolution requires the exact `linux/x86_64` GitHub Actions native-process target,
+  canonicalizes unordered claim input, binds every expected claim value, requires the OIDC audience
+  to identify the selected WIF provider, and refuses omitted, duplicate, noncanonical, widened, or
+  substituted inputs. This internal step adds no loader, registration, CLI route, token request,
+  network or provider contact, secret delivery, effect/policy admission, execution, evidence, or
+  support claim.
+
 - Added the V12.1 protected provider-binding identity foundation. A sealed Core model now binds the
   exact requirement, provider reference, authority scope, source evidence, adapter identity,
   lifecycle posture, and target constraints, while a pure resolver refuses missing, duplicate,

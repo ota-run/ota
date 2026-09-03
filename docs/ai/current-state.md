@@ -92,8 +92,16 @@ durable agent workflow belongs in the canonical Ota skill.
   token request, provider contact, network access, effect/policy admission, materialization,
   injection, execution, receipt, archive, assurance, conformance result, pressure evidence, or
   support claim is authorized, and the generic cross-cutting adapter/profile conformance plan
-  remains inactive. Step 4 and later steps remain unauthorized. This activation-only amendment
-  creates no Site, Skill, Example, Learn, FAQ, Glossary, contract-schema, or public-JSON change.
+  remains inactive. The activated model is now implemented locally and awaits independent review.
+  It uses domain-separated profile, implementation-subject, and protected invocation-binding
+  identities; requires the complete canonical GitHub claim set and exact issuer; binds the audience
+  to the selected WIF provider URL; reconciles exact WIF, service-account, project, Secret Manager,
+  requirement, and provider-binding truth; and independently re-derives retained input before
+  accepting a resolved record. Ten adversarial tests cover normalization, omission, duplication,
+  target widening, tuple substitution, cross-resource aliases, and self-consistent resolved
+  forgeries. Step 4 and later steps remain unauthorized. This internal model creates no Site, Skill,
+  Example, Learn, FAQ, Glossary, contract-schema, or public-JSON change because it has no loader,
+  command, output, or operator workflow.
 - Vinicius' independent v1.6.27 source review confirmed that negative-control projection
   reconciliation is live on runtime proof, emitted-archive verification, and Doctor archive
   loading. It also exposed a narrower adversarial-test gap: the existing digest mutation was
