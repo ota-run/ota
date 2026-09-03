@@ -24,7 +24,6 @@
 
 version: 1
 repository: ota-run/skills
-mode: waived
+mode: synced
 consumer_commit: d7c2cc8e1fa2788db5fe1b3516f4f0d1a37dfa4e
-reviewed_ota_commit: df6592103903804b017961fb7c58d0fe7cae20f0
-waiver_reason: "The Core and standalone Examples runtime-proof fixture now use bounded dependency-readiness retries for hosted proof reliability. This changes no Skill authoring or review guidance. Replace this waiver with the immutable Core revision after commit."
+reviewed_ota_commit: b2404b1d0161dff345a8b481985042594d371f89
