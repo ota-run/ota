@@ -40,10 +40,11 @@ durable agent workflow belongs in the canonical Ota skill.
   is `google_secret_manager_github_oidc_process_environment_v1`, initially limited to a Linux
   GitHub Actions native-process recipient using GitHub OIDC, Google Workload Identity Federation,
   and one exact Google Secret Manager version. Activation authorizes implementation-order step 1
-  only: the provider-neutral requirement schema, canonical recipient/destination model,
-  `SecretRequirementIdentity`, validation, and adversarial tests. No provider binding, provider
-  contact, materialization, injection, execution authority, positive evidence, or support claim is
-  active yet. V12.2 and later versions remain inactive.
+  and, under the separate 2026-09-03 amendment, implementation-order step 2: the provider-neutral
+  requirement schema, canonical recipient/destination model, `SecretRequirementIdentity`, and the
+  Core-owned provider-binding domain model with pure fail-closed resolution. No provider binding
+  loader, provider contact, materialization, injection, execution authority, positive evidence, or
+  support claim is implemented yet. V12.2 and later versions remain inactive.
 - V12.1 implementation-order step 1 is independently reviewed and committed. `ota.yaml` now has an
   additive provider-neutral `secret_requirements` catalog with one initial
   `authentication_credential` / `external_api_authentication` vocabulary, canonical
@@ -55,11 +56,13 @@ durable agent workflow belongs in the canonical Ota skill.
   reference, Glossary, FAQ, canonical Skill, and both installed mirrors carry the same
   declaration-only boundary; Learn and Examples remain unchanged because no usable delivery flow
   exists. No command consumes the catalog for execution, no provider binding exists, and no secret
-  bytes are loaded or delivered. Step 2 remains inactive under the explicit activation gate in the
-  V12.1 plan until the connected proof-assurance hardening is committed, its immutable Linux/macOS
-  evidence is independently inspected, and a separate activation amendment authorizes the
-  provider-binding ownership and disclosure boundary. Clearing prerequisites alone does not
-  activate step 2.
+  bytes are loaded or delivered. Step 2 is now explicitly activated under the V12.1 plan amendment
+  after the connected proof-assurance hardening and immutable Linux/macOS evidence were inspected.
+  It authorizes only the Core-owned provider-binding domain model, private canonical identities,
+  opaque public disclosure, and pure fail-closed resolution of authority-sourced protected
+  snapshots. It does not authorize a binding loader, CLI route, provider adapter, provider contact,
+  OIDC/WIF, materialization, injection, policy/effect admission, execution, receipts, archives, or
+  support claims.
 - Vinicius' independent v1.6.27 source review confirmed that negative-control projection
   reconciliation is live on runtime proof, emitted-archive verification, and Doctor archive
   loading. It also exposed a narrower adversarial-test gap: the existing digest mutation was

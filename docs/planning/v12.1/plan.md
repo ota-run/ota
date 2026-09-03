@@ -27,9 +27,10 @@
 Status: active. Activated on 2026-09-02 after V12 closure, PythiaLabs credentialed-CAEP discovery,
 and feasibility review of a concrete Google Secret Manager adapter using GitHub OIDC and Google
 Workload Identity Federation. Implementation-order step 1 is independently reviewed and committed
-at Core `9835edfa`. Step 2 remains inactive while the connected v1.6.28 proof-assurance hardening
-completes its immutable hosted proof and reconciliation gate. This activation does not establish
-provider support, secret delivery, execution authority, or pressure evidence.
+at Core `9835edfa`. Implementation-order step 2 was separately activated on 2026-09-03 after the
+connected v1.6.28 proof-assurance hardening passed immutable Linux/macOS Release Gate evidence and
+that evidence was reconciled at Core `a582b948`. This activation does not establish provider
+support, secret delivery, execution authority, or pressure evidence.
 
 ## Activation Gates
 
@@ -85,6 +86,34 @@ an explicit plan and current-state amendment after the v1.6.28 proof-assurance h
 and its Linux/macOS Release Gate evidence is inspected. Clearing those prerequisites does not
 activate step 2 by itself. The activation amendment must name the exact provider-binding ownership
 and disclosure boundary being implemented and must preserve zero provider contact.
+
+#### Step 2 Activation Amendment
+
+Implementation-order step 2 is activated on 2026-09-03. The prerequisite proof-assurance
+hardening is committed at Core `876680f074777aada0b3910a62aab9b245b34af7`; Release Gate
+[run 33744200940](https://github.com/ota-run/ota/actions/runs/33744200940) passed the live valid
+sibling-attestation substitution boundary on Ubuntu and macOS, and Core `a582b948` records the
+inspected immutable evidence.
+
+This amendment authorizes only a Core-owned provider-binding domain model and pure resolver. The
+resolver consumes an explicitly authority-sourced protected snapshot that is separate from
+`ota.yaml`; contracts, tasks, workflows, environment variables, and caller labels cannot create,
+redirect, or elevate a binding. The private canonical record binds the exact requirement, provider
+reference, authority scope, source evidence, adapter/capability constraints, and lifecycle posture.
+Zero matches, duplicate matches, conflicting sources, unknown selectors, and substitution of any
+identity input refuse without precedence fallback.
+
+The private identity retains every material provider-reference input. Public output may expose only
+the provider/binding class, disclosure class, and opaque or redacted identities that Core can
+reconcile with the private record. It must not expose secret values, hashes, lengths, raw provider
+paths, secret names, tenancy details, workload metadata, credentials, descriptors, or reusable
+handles. A redacted projection cannot become a selector or authority source.
+
+Step 2 does not authorize a filesystem or control-plane loader, a new CLI route, provider adapter
+registration, GitHub OIDC, Workload Identity Federation, Google Secret Manager contact, delivery
+policy, effect derivation, admission, materialization, injection, execution, receipts, archives, or
+support claims. Those boundaries remain owned by later implementation-order steps and require their
+stated gates.
 
 Planned follow-on: [V12.2 Contract-Authored Crossing Requirements](../v12.2/plan.md) remains
 inactive and may be activated only after V12.1 completes or is formally deferred. This sequencing
@@ -548,9 +577,9 @@ cannot satisfy the new requirement.
 
 Implementation-order step 1 is independently reviewed and committed at Core `9835edfa`: the
 additive model, Rust-owned JSON Schema, resolver, domain-separated identity, strict compatibility
-checks, contract reference, and adversarial unit/schema tests are present. Step 2 remains paused at
-the explicit activation gate above while the connected v1.6.28 proof-assurance hardening completes
-its hosted proof and immutable reconciliation. Step 1 completion does not authorize step 2.
+checks, contract reference, and adversarial unit/schema tests are present. Step 2 is separately
+activated under the amendment above after the connected v1.6.28 proof-assurance hardening completed
+its hosted proof and immutable reconciliation. Step 1 completion did not authorize step 2.
 
 ## Implementation Order
 
