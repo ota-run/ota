@@ -1142,7 +1142,19 @@ mod tests {
     use std::path::Path;
 
     use super::*;
+    use crate::effect_policy::{
+        EffectPolicyInvocation, SecretDeliveryEffectPolicyInput, SecretDeliveryEffectPolicyScope,
+        evaluate_secret_delivery_effect_policy, verify_secret_delivery_effect_policy_decision,
+    };
     use crate::parser::parse_contract_str;
+    use crate::policy_pack::{
+        LoadedOrgPolicyPack, OrgPolicyPack, PolicyEffectDecision, PolicyPackSource,
+    };
+    use crate::secret_delivery_effect::{
+        SecretDeliveryClosureRole, SecretDeliveryEffectOrigin, SecretDeliveryInvocationOrigin,
+        SecretDeliveryRecipient, SecretDeliveryRecipientKind,
+        SecretMaterialDeliveryDerivationInput, derive_secret_material_delivery_effect,
+    };
     use crate::secret_provider_bindings::{
         SecretProviderBindingInput, SecretProviderBindingSnapshotInput,
         SecretProviderBindingSourceInput, SecretProviderBindingSourceKind,
@@ -1151,20 +1163,33 @@ mod tests {
     use crate::secret_requirements::{
         SecretRequirementCatalog, resolve_secret_requirement_catalog,
     };
+    use crate::semantic_identity::semantic_contract_identity;
 
     fn digest(byte: char) -> String {
         format!("sha256:{}", byte.to_string().repeat(64))
     }
 
     fn requirements() -> SecretRequirementCatalog {
-        let contract = parse_contract_str(
+        requirements_with_variable("GOOGLE_API_KEY")
+    }
+
+    fn requirements_with_variable(variable: &str) -> SecretRequirementCatalog {
+        resolve_secret_requirement_catalog(&contract_with_variable(variable)).unwrap()
+    }
+
+    fn contract_with_variable(variable: &str) -> crate::schema::Contract {
+        parse_contract_str(
             Path::new("ota.yaml"),
-            r#"
+            &format!(
+                r#"
 version: 1
 project:
   name: profile-fixture
 tasks:
   publish:
+    command:
+      exe: "true"
+  publish_alt:
     command:
       exe: "true"
 secret_requirements:
@@ -1173,9 +1198,9 @@ secret_requirements:
     purpose: external_api_authentication
     delivery:
       kind: process_environment
-      variable: GOOGLE_API_KEY
+      variable: {variable}
     recipients:
-      tasks: [publish]
+      tasks: [publish, publish_alt]
       dependencies: deny
       hooks: deny
       services: deny
@@ -1192,10 +1217,10 @@ secret_requirements:
       target_platform: linux
       runtime_boundary: process
       capability: segmented_process_environment
-"#,
+"#
+            ),
         )
-        .unwrap();
-        resolve_secret_requirement_catalog(&contract).unwrap()
+        .unwrap()
     }
 
     fn profile() -> ResolvedSecretDeliveryProfile {
@@ -1254,7 +1279,19 @@ secret_requirements:
         ResolvedSecretProviderBinding,
         ResolvedSecretProviderBindingSource,
     ) {
-        let requirements = requirements();
+        resolved_context_for(requirements(), "control-plane://tenant/repository")
+    }
+
+    fn resolved_context_for(
+        requirements: SecretRequirementCatalog,
+        source_locator: &str,
+    ) -> (
+        SecretRequirementCatalog,
+        ResolvedSecretDeliveryProfile,
+        ResolvedAdapterImplementationSubject,
+        ResolvedSecretProviderBinding,
+        ResolvedSecretProviderBindingSource,
+    ) {
         let requirement = requirements.requirements.values().next().unwrap();
         let profile = profile();
         let subject =
@@ -1269,7 +1306,7 @@ secret_requirements:
             source: SecretProviderBindingSourceInput {
                 schema_version: 1,
                 kind: SecretProviderBindingSourceKind::AdministratorControlPlane,
-                private_locator: "control-plane://tenant/repository".to_string(),
+                private_locator: source_locator.to_string(),
                 authority_scope: authority_scope.clone(),
                 verification: SecretProviderBindingVerification::Verified,
                 trust_root_identity: Some(digest('f')),
@@ -1304,6 +1341,72 @@ secret_requirements:
             resolved.bindings.values().next().unwrap().clone(),
             resolved.sources.values().next().unwrap().clone(),
         )
+    }
+
+    fn derived_effect(
+        requirements: &SecretRequirementCatalog,
+        profile: &ResolvedSecretDeliveryProfile,
+        subject: &ResolvedAdapterImplementationSubject,
+        binding: &ResolvedSecretProviderBinding,
+        source: &ResolvedSecretProviderBindingSource,
+        recipient: &str,
+    ) -> crate::secret_delivery_effect::ResolvedSecretMaterialDeliveryEffectSet {
+        try_derived_effect(requirements, profile, subject, binding, source, recipient).unwrap()
+    }
+
+    fn try_derived_effect(
+        requirements: &SecretRequirementCatalog,
+        profile: &ResolvedSecretDeliveryProfile,
+        subject: &ResolvedAdapterImplementationSubject,
+        binding: &ResolvedSecretProviderBinding,
+        source: &ResolvedSecretProviderBindingSource,
+        recipient: &str,
+    ) -> Result<
+        crate::secret_delivery_effect::ResolvedSecretMaterialDeliveryEffectSet,
+        crate::secret_delivery_effect::SecretDeliveryEffectError,
+    > {
+        let requirement = requirements.requirements.values().next().unwrap();
+        let variable = match &requirement.delivery {
+            crate::schema::SecretDeliveryDestinationSpec::ProcessEnvironment { variable } => {
+                variable.as_str()
+            }
+        };
+        let contract = contract_with_variable(variable);
+        let retained = invocation_input(profile, subject, requirement, binding, source);
+        let invocation = resolve_secret_delivery_invocation_binding(
+            profile,
+            subject,
+            requirement,
+            binding,
+            source,
+            &retained,
+        )
+        .unwrap();
+        let recipient = SecretDeliveryRecipient {
+            kind: SecretDeliveryRecipientKind::Task,
+            name: recipient.to_string(),
+        };
+        let origin = SecretDeliveryEffectOrigin {
+            contract_snapshot_identity: semantic_contract_identity(&contract).unwrap(),
+            selected_subject: vec!["task".to_string(), recipient.name.clone()],
+            closure_role: SecretDeliveryClosureRole::SelectedTask,
+            invocation: SecretDeliveryInvocationOrigin {
+                task: recipient.name.clone(),
+                origin: format!("run:{}", recipient.name),
+            },
+        };
+        derive_secret_material_delivery_effect(SecretMaterialDeliveryDerivationInput {
+            contract: &contract,
+            requirement,
+            recipient: &recipient,
+            origin: &origin,
+            provider_binding: binding,
+            provider_binding_source: source,
+            profile,
+            implementation_subject: subject,
+            retained_invocation_input: &retained,
+            invocation_binding: &invocation,
+        })
     }
 
     fn invocation_input(
@@ -1860,6 +1963,349 @@ secret_requirements:
             .unwrap_err()
             .code,
             "secret_delivery_invocation_binding_identity_mismatch"
+        );
+    }
+
+    #[test]
+    fn derived_effect_separates_consequence_from_exact_realization_truth() {
+        let (requirements, profile, subject, binding, source) = resolved_context();
+        let publish = derived_effect(
+            &requirements,
+            &profile,
+            &subject,
+            &binding,
+            &source,
+            "publish",
+        );
+        let alternate = derived_effect(
+            &requirements,
+            &profile,
+            &subject,
+            &binding,
+            &source,
+            "publish_alt",
+        );
+        assert_eq!(publish.effect.identity, alternate.effect.identity);
+        assert_ne!(publish.attachment.identity, alternate.attachment.identity);
+        assert_ne!(publish.realization.identity, alternate.realization.identity);
+        assert_eq!(
+            publish.refusal_assurance.realization_identity,
+            publish.realization.identity
+        );
+        assert!(publish.refusal_assurance.eligible);
+        let public_consequence = serde_json::to_string(&publish.effect).unwrap();
+        assert!(!public_consequence.contains("control-plane"));
+        assert!(!public_consequence.contains("CAEP_API-Key_1"));
+        assert!(!public_consequence.contains("provider_api_token"));
+
+        let (
+            changed_requirements,
+            changed_profile,
+            changed_subject,
+            changed_binding,
+            changed_source,
+        ) = resolved_context_for(
+            requirements_with_variable("SECOND_GOOGLE_API_KEY"),
+            "control-plane://tenant/repository",
+        );
+        let changed_destination = derived_effect(
+            &changed_requirements,
+            &changed_profile,
+            &changed_subject,
+            &changed_binding,
+            &changed_source,
+            "publish",
+        );
+        assert_ne!(publish.effect.identity, changed_destination.effect.identity);
+
+        let (same_requirements, same_profile, same_subject, replaced_binding, replaced_source) =
+            resolved_context_for(
+                requirements_with_variable("GOOGLE_API_KEY"),
+                "control-plane://tenant/replacement",
+            );
+        let replaced_authority = derived_effect(
+            &same_requirements,
+            &same_profile,
+            &same_subject,
+            &replaced_binding,
+            &replaced_source,
+            "publish",
+        );
+        assert_eq!(publish.effect.identity, replaced_authority.effect.identity);
+        assert_ne!(
+            publish.realization.identity,
+            replaced_authority.realization.identity
+        );
+    }
+
+    #[test]
+    fn derived_effect_refuses_unselected_or_misbound_recipient_truth() {
+        let (requirements, profile, subject, binding, source) = resolved_context();
+        assert_eq!(
+            try_derived_effect(
+                &requirements,
+                &profile,
+                &subject,
+                &binding,
+                &source,
+                "undeclared",
+            )
+            .unwrap_err()
+            .code,
+            "secret_delivery_effect_recipient_mismatch"
+        );
+    }
+
+    #[test]
+    fn derived_effect_uses_canonical_policy_fallback_and_precedence() {
+        let (requirements, profile, subject, binding, source) = resolved_context();
+        let requirement = requirements.requirements.values().next().unwrap();
+        let contract = contract_with_variable("GOOGLE_API_KEY");
+        let retained = invocation_input(&profile, &subject, requirement, &binding, &source);
+        let invocation = resolve_secret_delivery_invocation_binding(
+            &profile,
+            &subject,
+            requirement,
+            &binding,
+            &source,
+            &retained,
+        )
+        .unwrap();
+        let recipient = SecretDeliveryRecipient {
+            kind: SecretDeliveryRecipientKind::Task,
+            name: "publish".to_string(),
+        };
+        let origin = SecretDeliveryEffectOrigin {
+            contract_snapshot_identity: semantic_contract_identity(&contract).unwrap(),
+            selected_subject: vec!["task".to_string(), "publish".to_string()],
+            closure_role: SecretDeliveryClosureRole::SelectedTask,
+            invocation: SecretDeliveryInvocationOrigin {
+                task: "publish".to_string(),
+                origin: "run:publish".to_string(),
+            },
+        };
+        let derivation = SecretMaterialDeliveryDerivationInput {
+            contract: &contract,
+            requirement,
+            recipient: &recipient,
+            origin: &origin,
+            provider_binding: &binding,
+            provider_binding_source: &source,
+            profile: &profile,
+            implementation_subject: &subject,
+            retained_invocation_input: &retained,
+            invocation_binding: &invocation,
+        };
+        let derived = derive_secret_material_delivery_effect(derivation).unwrap();
+        let wrong_contract = contract_with_variable("OTHER_GOOGLE_API_KEY");
+        assert_eq!(
+            derive_secret_material_delivery_effect(SecretMaterialDeliveryDerivationInput {
+                contract: &wrong_contract,
+                ..derivation
+            })
+            .unwrap_err()
+            .code,
+            "secret_delivery_effect_requirement_mismatch"
+        );
+        let wrong_origin = SecretDeliveryEffectOrigin {
+            contract_snapshot_identity: digest('7'),
+            ..origin.clone()
+        };
+        assert_eq!(
+            derive_secret_material_delivery_effect(SecretMaterialDeliveryDerivationInput {
+                origin: &wrong_origin,
+                ..derivation
+            })
+            .unwrap_err()
+            .code,
+            "secret_delivery_effect_contract_identity_mismatch"
+        );
+        let effects = vec![SecretDeliveryEffectPolicyInput {
+            resolved: &derived,
+            derivation,
+        }];
+        let invocations = vec![EffectPolicyInvocation {
+            task: "publish".to_string(),
+            origin: "run:publish".to_string(),
+        }];
+        let selected_subject = vec!["task".to_string(), "publish".to_string()];
+        let scope = SecretDeliveryEffectPolicyScope {
+            contract_snapshot_identity: &derived.realization.origin.contract_snapshot_identity,
+            selected_subject: &selected_subject,
+            workflow_name: None,
+            ordered_invocations: &invocations,
+            effects: &effects,
+        };
+        for (mode, expected) in [
+            ("compatibility", PolicyEffectDecision::Warn),
+            ("strict", PolicyEffectDecision::Deny),
+        ] {
+            let pack: OrgPolicyPack =
+                serde_yaml::from_str(&format!("policies:\n  effects:\n    mode: {mode}\n"))
+                    .unwrap();
+            let loaded = LoadedOrgPolicyPack {
+                source_identity: Some(semantic_contract_identity(&pack).unwrap()),
+                pack,
+                path: Path::new(".ota/org-policy.yaml").to_path_buf(),
+                source: PolicyPackSource::RepoPolicy,
+            };
+            let decision = evaluate_secret_delivery_effect_policy(scope, &loaded).unwrap();
+            assert_eq!(decision.aggregate_decision, expected);
+            assert_eq!(decision.effects.len(), 1);
+            assert_eq!(decision.effects[0].effect_identity, derived.effect.identity);
+            assert_eq!(
+                decision.effects[0].realization_identity,
+                derived.realization.identity
+            );
+            assert!(decision.effects[0].applicable_rules.is_empty());
+            assert!(!decision.explicit_typed_deny);
+        }
+
+        let mut forged = derived.clone();
+        forged.effect.identity = digest('8');
+        let forged_effects = vec![SecretDeliveryEffectPolicyInput {
+            resolved: &forged,
+            derivation,
+        }];
+        let forged_scope = SecretDeliveryEffectPolicyScope {
+            effects: &forged_effects,
+            ..scope
+        };
+        let pack: OrgPolicyPack =
+            serde_yaml::from_str("policies:\n  effects:\n    mode: strict\n").unwrap();
+        let loaded = LoadedOrgPolicyPack {
+            source_identity: Some(semantic_contract_identity(&pack).unwrap()),
+            pack,
+            path: Path::new(".ota/org-policy.yaml").to_path_buf(),
+            source: PolicyPackSource::RepoPolicy,
+        };
+        assert_eq!(
+            evaluate_secret_delivery_effect_policy(forged_scope, &loaded)
+                .unwrap_err()
+                .code,
+            "secret_delivery_effect_reconciliation_failed"
+        );
+
+        let mut decision = evaluate_secret_delivery_effect_policy(scope, &loaded).unwrap();
+        decision.aggregate_decision = PolicyEffectDecision::Allow;
+        assert_eq!(
+            verify_secret_delivery_effect_policy_decision(&decision, scope, &loaded)
+                .unwrap_err()
+                .code,
+            "effect_policy_decision_reconciliation_failed"
+        );
+
+        let duplicate_effects = vec![effects[0], effects[0]];
+        let duplicate_scope = SecretDeliveryEffectPolicyScope {
+            effects: &duplicate_effects,
+            ..scope
+        };
+        assert_eq!(
+            evaluate_secret_delivery_effect_policy(duplicate_scope, &loaded)
+                .unwrap_err()
+                .code,
+            "effect_policy_derived_realization_duplicate"
+        );
+
+        let repeated_origin = SecretDeliveryEffectOrigin {
+            invocation: SecretDeliveryInvocationOrigin {
+                task: "publish".to_string(),
+                origin: "run:publish:repeat".to_string(),
+            },
+            ..origin.clone()
+        };
+        let repeated_derivation = SecretMaterialDeliveryDerivationInput {
+            origin: &repeated_origin,
+            ..derivation
+        };
+        let repeated = derive_secret_material_delivery_effect(repeated_derivation).unwrap();
+        assert_eq!(derived.effect.identity, repeated.effect.identity);
+        assert_eq!(derived.attachment.identity, repeated.attachment.identity);
+        assert_ne!(derived.realization.identity, repeated.realization.identity);
+        let repeated_effects = vec![
+            effects[0],
+            SecretDeliveryEffectPolicyInput {
+                resolved: &repeated,
+                derivation: repeated_derivation,
+            },
+        ];
+        let repeated_scope = SecretDeliveryEffectPolicyScope {
+            effects: &repeated_effects,
+            ..scope
+        };
+        assert_eq!(
+            evaluate_secret_delivery_effect_policy(repeated_scope, &loaded)
+                .unwrap_err()
+                .code,
+            "effect_policy_derived_origin_mismatch"
+        );
+
+        let repeated_invocations = vec![
+            EffectPolicyInvocation {
+                task: "publish".to_string(),
+                origin: "run:publish".to_string(),
+            },
+            EffectPolicyInvocation {
+                task: "publish".to_string(),
+                origin: "run:publish:repeat".to_string(),
+            },
+        ];
+        let repeated_scope = SecretDeliveryEffectPolicyScope {
+            ordered_invocations: &repeated_invocations,
+            ..repeated_scope
+        };
+        let baseline_decision = evaluate_secret_delivery_effect_policy(scope, &loaded).unwrap();
+        let repeated_decision =
+            evaluate_secret_delivery_effect_policy(repeated_scope, &loaded).unwrap();
+        assert_eq!(repeated_decision.effects.len(), 2);
+        assert_ne!(
+            baseline_decision.execution_graph_identity,
+            repeated_decision.execution_graph_identity
+        );
+        assert_ne!(
+            baseline_decision.selected_invocation_identity,
+            repeated_decision.selected_invocation_identity
+        );
+
+        let reordered_effects = vec![repeated_effects[1], repeated_effects[0]];
+        let reordered_scope = SecretDeliveryEffectPolicyScope {
+            effects: &reordered_effects,
+            ..repeated_scope
+        };
+        let reordered_decision =
+            evaluate_secret_delivery_effect_policy(reordered_scope, &loaded).unwrap();
+        assert_eq!(
+            repeated_decision.execution_graph_identity,
+            reordered_decision.execution_graph_identity
+        );
+        assert_eq!(
+            repeated_decision.selected_invocation_identity,
+            reordered_decision.selected_invocation_identity
+        );
+        assert_eq!(repeated_decision.identity, reordered_decision.identity);
+
+        let duplicate_invocations = vec![invocations[0].clone(), invocations[0].clone()];
+        let duplicate_invocation_scope = SecretDeliveryEffectPolicyScope {
+            ordered_invocations: &duplicate_invocations,
+            ..scope
+        };
+        assert_eq!(
+            evaluate_secret_delivery_effect_policy(duplicate_invocation_scope, &loaded)
+                .unwrap_err()
+                .code,
+            "effect_policy_invocation_duplicate"
+        );
+
+        let wrong_subject = vec!["task".to_string(), "publish_alt".to_string()];
+        let mismatched_scope = SecretDeliveryEffectPolicyScope {
+            selected_subject: &wrong_subject,
+            ..scope
+        };
+        assert_eq!(
+            evaluate_secret_delivery_effect_policy(mismatched_scope, &loaded)
+                .unwrap_err()
+                .code,
+            "effect_policy_derived_scope_mismatch"
         );
     }
 }

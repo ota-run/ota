@@ -40,11 +40,12 @@ durable agent workflow belongs in the canonical Ota skill.
   is `google_secret_manager_github_oidc_process_environment_v1`, initially limited to a
   `linux/x86_64` GitHub Actions native-process recipient using GitHub OIDC, Google Workload Identity
   Federation, and one exact Google Secret Manager version. Activation authorizes implementation-order
-  step 1 and, under separate 2026-09-03 amendments, implementation-order steps 2 and 3: the
+  step 1 and, under separate 2026-09-03 amendments, implementation-order steps 2, 3, and 4: the
   provider-neutral requirement schema, canonical recipient/destination model,
   `SecretRequirementIdentity`, and the Core-owned provider-binding domain model with pure
   fail-closed resolution, followed by the exact first-adapter profile and implementation-subject
-  descriptor model. No provider binding loader, concrete implementation registration, provider
+  descriptor model and the crate-private `secret_material_delivery` effect derivation foundation.
+  No provider binding loader, concrete implementation registration, provider
   contact, materialization, injection, execution authority, positive evidence, or support claim is
   implemented yet. V12.2 and later versions remain inactive.
 - V12.1 implementation-order step 1 is independently reviewed and committed. `ota.yaml` now has an
@@ -99,20 +100,29 @@ durable agent workflow belongs in the canonical Ota skill.
   Manager, requirement, and provider-binding truth; and independently re-derives retained input
   before accepting a resolved record. Ten adversarial tests cover normalization, omission,
   duplication, target widening, tuple substitution, provider-specific resource grammars, cross-
-  resource aliases, and self-consistent resolved forgeries. Step 4 and later steps remain
-  unauthorized. This internal model creates no Site, Skill, Example, Learn, FAQ, Glossary,
+  resource aliases, and self-consistent resolved forgeries. At that completion boundary, Step 4
+  and later steps remained unauthorized. This internal model creates no Site, Skill, Example,
+  Learn, FAQ, Glossary,
   contract-schema, or public-JSON change because it has no loader, command, output, or operator
-  workflow. A separate Step 4 activation amendment is now proposed for independent review. It
-  authorizes only crate-private derivation of the `secret_material_delivery` V12 effect,
+  workflow. Step 4 is separately activated at Core `a7dd07ba`. It authorizes only crate-private
+  derivation of the `secret_material_delivery` V12 effect,
   realization inputs, internal refusal-assurance eligibility, and the narrow canonical evaluator
   extension needed to consume the derived effect. It keeps stable bounded consequence truth in
   `EffectIdentity`; binds exact requirement, recipient, closure role, invocation origin, protected
   binding/source, profile, implementation subject, and target truth in the realization identity;
-  and requires structural authority reconciliation before policy evaluation. The amendment is not
-  effective until independently reviewed and committed. Step 5 and later steps remain
-  unauthorized, and no loader, CLI route, provider contact, materialization, injection, execution,
+  and requires structural authority reconciliation before policy evaluation. The independently
+  reviewed implementation derives separate effect,
+  attachment, realization, and internal refusal-attribution identities; independently reconstructs
+  every retained derivation before policy evaluation; requires each realization to match exactly
+  one retained selected invocation; binds that realization-to-invocation mapping into the
+  execution-graph identity; preserves repeated attachment roles as distinct realizations only when
+  the graph retains each exact occurrence; and reuses the canonical effect-policy fallback,
+  precedence, set, decision, and verification finalizer. Step 5 and later steps remain unauthorized,
+  and no loader,
+  policy-authoring surface, CLI route, provider contact, materialization, injection, execution,
   public output, receipt, archive, assurance promotion, pressure evidence, or support claim is
-  introduced.
+  introduced. Site, Skills, Examples, Learn, FAQ, Glossary, contract schema, and public JSON remain
+  unchanged because this internal foundation has no operator surface.
 - Vinicius' independent v1.6.27 source review confirmed that negative-control projection
   reconciliation is live on runtime proof, emitted-archive verification, and Doctor archive
   loading. It also exposed a narrower adversarial-test gap: the existing digest mutation was

@@ -26,6 +26,18 @@
 
 ## Unreleased
 
+- Added the sealed V12.1 `secret_material_delivery` effect foundation. Core now derives a stable
+  bounded-consequence identity separately from exact requirement, recipient, closure-role,
+  invocation, protected binding/source, profile, implementation-subject, and target realization
+  truth. Derived records are independently reconstructed before the existing canonical
+  effect-policy finalizer applies fallback and precedence; every realization must map to exactly
+  one retained selected invocation, and that structured mapping participates in execution-graph
+  identity. Policy cannot manufacture missing authority. Equivalent consequences may share an
+  effect identity while repeated roles and distinct recipients retain distinct realizations only
+  when the selected graph retains those exact occurrences. This internal step adds no loader, policy
+  authoring surface, CLI route, provider contact, materialization, injection, execution, public
+  output, receipt, archive, assurance promotion, pressure evidence, or support claim.
+
 - Added the V12.1 exact first-adapter identity foundation for
   `google_secret_manager_github_oidc_process_environment_v1`. A sealed Core model now separates
   stable profile semantics, exact implementation/build/target truth, and the protected per-run

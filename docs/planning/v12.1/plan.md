@@ -30,9 +30,10 @@ Workload Identity Federation. Implementation-order step 1 is independently revie
 at Core `9835edfa`. Implementation-order step 2 was separately activated on 2026-09-03 after the
 connected v1.6.28 proof-assurance hardening passed immutable Linux/macOS Release Gate evidence and
 that evidence was reconciled at Core `a582b948`; step 2 was independently reviewed and committed
-at Core `9218151b`. Implementation-order step 3 is separately activated under the amendment below.
-This activation does not establish provider support, secret delivery, execution authority, or
-pressure evidence.
+at Core `9218151b`. Implementation-order step 3 was separately activated and committed at Core
+`9ac9274f`; implementation-order step 4 is separately activated at Core `a7dd07ba` under the
+amendments below. These activations do not establish provider support, secret delivery, execution
+authority, or pressure evidence.
 
 ## Activation Gates
 
@@ -728,7 +729,26 @@ URL, exact WIF pool and provider resources, project-matched service account and 
 resource, and one numeric secret version. Independent semantic verification reconstructs retained
 inputs rather than trusting a self-consistent resolved record. No loader, registration or lifecycle
 identity, CLI route, token request, provider contact, effect/policy admission, delivery, execution,
-evidence, or support path consumes this model. Step 4 and later steps remain unauthorized.
+evidence, or support path consumes this model. At the step-3 completion boundary, step 4 and later
+steps remained unauthorized.
+
+Implementation-order step 4 was activated at Core `a7dd07ba` and is independently reviewed and
+implemented. The sealed Core-only derivation binds stable secret class, purpose,
+destination, environment, runtime-boundary, and capability consequence truth in one
+`EffectIdentity`, while attachment and realization identities bind the exact requirement,
+recipient, selected closure role, invocation origin, protected binding/source evidence, profile,
+implementation subject, invocation binding, process-tree boundary, and target posture. The
+canonical effect-policy evaluator independently re-derives every retained secret-delivery input,
+requires each realization origin to match exactly one structured retained selected invocation,
+binds the realization-to-invocation mapping into execution-graph identity, rejects scope mismatch,
+duplicate selected invocations, and duplicate exact realizations, and uses the same fallback,
+precedence, set-identity, decision-identity, and semantic-verification finalizer as existing typed
+effects. Repeated uses of one attachment remain distinct realizations only when the retained graph
+contains each exact invocation rather than collapsing or inventing occurrences by recipient.
+No binding loader, policy-authoring surface, CLI route, dry-run plan, command admission, provider
+contact, secret delivery, execution, public output, receipt, archive, assurance promotion,
+pressure evidence, or support path consumes this model. Step 5 and later steps remain
+unauthorized.
 
 ## Implementation Order
 

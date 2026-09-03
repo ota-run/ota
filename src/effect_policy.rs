@@ -45,6 +45,10 @@ use crate::policy_pack::{
     PolicyTypedResourceNamespacePattern, SafeTaskEffectGovernanceDecision,
 };
 use crate::schema::Contract;
+use crate::secret_delivery_effect::{
+    ResolvedSecretMaterialDeliveryEffectSet, SecretMaterialDeliveryDerivationInput,
+    verify_secret_material_delivery_effect,
+};
 
 const POLICY_SOURCE_EVIDENCE_DOMAIN: &[u8] = b"ota.effect-policy-source-evidence.v1\0";
 const POLICY_RULE_DOMAIN: &[u8] = b"ota.effect-policy-rule.v1\0";
@@ -54,6 +58,8 @@ const EXECUTION_GRAPH_DOMAIN: &[u8] = b"ota.effect-policy-execution-graph.v1\0";
 const SELECTED_INVOCATION_DOMAIN: &[u8] = b"ota.effect-policy-selected-invocation.v1\0";
 const EFFECT_POLICY_DECISION_DOMAIN: &[u8] = b"ota.effect-policy-decision.v1\0";
 const REDACTED_LOCATION_DOMAIN: &[u8] = b"ota.effect-policy-source-location.v1\0";
+#[allow(dead_code)]
+const DERIVED_EXECUTION_GRAPH_DOMAIN: &[u8] = b"ota.effect-policy-derived-execution-graph.v1\0";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EffectPolicyError {
@@ -229,6 +235,23 @@ pub struct EffectPolicyEvaluationScope<'a> {
     pub ordered_invocations: &'a [EffectPolicyInvocation],
     pub plans: &'a [EffectApplicationPlan],
     pub declared_only_attachments: &'a [DeclaredOnlyEffectAttachment],
+}
+
+#[derive(Debug, Clone, Copy)]
+#[allow(dead_code)]
+pub(crate) struct SecretDeliveryEffectPolicyScope<'a> {
+    pub contract_snapshot_identity: &'a str,
+    pub selected_subject: &'a [String],
+    pub workflow_name: Option<&'a str>,
+    pub ordered_invocations: &'a [EffectPolicyInvocation],
+    pub effects: &'a [SecretDeliveryEffectPolicyInput<'a>],
+}
+
+#[derive(Debug, Clone, Copy)]
+#[allow(dead_code)]
+pub(crate) struct SecretDeliveryEffectPolicyInput<'a> {
+    pub resolved: &'a ResolvedSecretMaterialDeliveryEffectSet,
+    pub derivation: SecretMaterialDeliveryDerivationInput<'a>,
 }
 
 /// A selected execution occurrence, retained even when one task participates in multiple roles.
@@ -411,6 +434,23 @@ struct ExecutionGraphPayload<'a> {
 }
 
 #[derive(Serialize)]
+#[allow(dead_code)]
+struct DerivedExecutionGraphPayload<'a> {
+    schema_version: u32,
+    invocations: &'a [EffectPolicyInvocation],
+    attachment_identities: &'a [String],
+    realization_identities: &'a [String],
+    realization_invocations: &'a [DerivedRealizationInvocationPayload],
+}
+
+#[derive(Serialize)]
+struct DerivedRealizationInvocationPayload {
+    realization_identity: String,
+    task: String,
+    origin: String,
+}
+
+#[derive(Serialize)]
 struct DecisionIdentityPayload<'a> {
     schema_version: u32,
     evaluation_version: &'a str,
@@ -437,6 +477,165 @@ pub fn evaluate_typed_effect_policy(
         build_typed_effect_policy_decision(contract, scope, loaded_policy, coarse_overrides)?;
     verify_effect_policy_decision(&decision, contract, scope, loaded_policy, coarse_overrides)?;
     Ok(decision)
+}
+
+#[allow(dead_code)]
+pub(crate) fn evaluate_secret_delivery_effect_policy(
+    scope: SecretDeliveryEffectPolicyScope<'_>,
+    loaded_policy: &LoadedOrgPolicyPack,
+) -> Result<EffectPolicyDecision, EffectPolicyError> {
+    let decision = build_secret_delivery_effect_policy_decision(scope, loaded_policy)?;
+    verify_secret_delivery_effect_policy_decision(&decision, scope, loaded_policy)?;
+    Ok(decision)
+}
+
+#[allow(dead_code)]
+pub(crate) fn verify_secret_delivery_effect_policy_decision(
+    decision: &EffectPolicyDecision,
+    scope: SecretDeliveryEffectPolicyScope<'_>,
+    loaded_policy: &LoadedOrgPolicyPack,
+) -> Result<(), EffectPolicyError> {
+    let expected = build_secret_delivery_effect_policy_decision(scope, loaded_policy)?;
+    if decision != &expected {
+        return Err(EffectPolicyError::new(
+            "effect_policy_decision_reconciliation_failed",
+            "secret delivery effect policy decision does not match independent evaluation",
+        ));
+    }
+    Ok(())
+}
+
+#[allow(dead_code)]
+fn build_secret_delivery_effect_policy_decision(
+    scope: SecretDeliveryEffectPolicyScope<'_>,
+    loaded_policy: &LoadedOrgPolicyPack,
+) -> Result<EffectPolicyDecision, EffectPolicyError> {
+    loaded_policy
+        .pack
+        .validate()
+        .map_err(|message| EffectPolicyError::new("effect_policy_invalid", message))?;
+    if scope.effects.is_empty() {
+        return Err(EffectPolicyError::new(
+            "effect_policy_effect_set_empty",
+            "secret delivery effect policy evaluation requires at least one derived effect",
+        ));
+    }
+    let mut selected_invocations = BTreeSet::new();
+    for invocation in scope.ordered_invocations {
+        if !selected_invocations.insert((invocation.task.as_str(), invocation.origin.as_str())) {
+            return Err(EffectPolicyError::new(
+                "effect_policy_invocation_duplicate",
+                "selected execution graph repeats one exact invocation",
+            ));
+        }
+    }
+    let mut seen_realizations = BTreeSet::new();
+    let mut derived_effects = Vec::with_capacity(scope.effects.len());
+    for input in scope.effects {
+        verify_secret_material_delivery_effect(input.resolved, input.derivation)
+            .map_err(|details| EffectPolicyError::new(details.code, details.message))?;
+        if input.resolved.realization.origin.contract_snapshot_identity
+            != scope.contract_snapshot_identity
+            || input.resolved.realization.origin.selected_subject != scope.selected_subject
+        {
+            return Err(EffectPolicyError::new(
+                "effect_policy_derived_scope_mismatch",
+                "derived secret delivery effect does not match the selected contract snapshot and invocation subject",
+            ));
+        }
+        if !seen_realizations.insert(input.resolved.realization.identity.as_str()) {
+            return Err(EffectPolicyError::new(
+                "effect_policy_derived_realization_duplicate",
+                "derived secret delivery effect policy input repeats one exact realization",
+            ));
+        }
+        let invocation = &input.resolved.realization.origin.invocation;
+        if !selected_invocations.contains(&(invocation.task.as_str(), invocation.origin.as_str())) {
+            return Err(EffectPolicyError::new(
+                "effect_policy_derived_origin_mismatch",
+                "derived secret delivery effect origin is not one retained selected invocation",
+            ));
+        }
+        derived_effects.push((
+            input.resolved.realization.identity.clone(),
+            input.resolved.attachment.identity.clone(),
+            invocation.task.clone(),
+            invocation.origin.clone(),
+        ));
+    }
+    derived_effects.sort_by(|left, right| left.0.cmp(&right.0));
+    let policy_snapshot_identity = loaded_policy.source_identity.clone().ok_or_else(|| {
+        EffectPolicyError::new(
+            "effect_policy_identity_unavailable",
+            "policy snapshot identity is unavailable",
+        )
+    })?;
+    let source_evidence = policy_source_evidence(loaded_policy, &policy_snapshot_identity)?;
+    let attachment_identities = derived_effects
+        .iter()
+        .map(|effect| effect.1.clone())
+        .collect::<Vec<_>>();
+    let realization_identities = derived_effects
+        .iter()
+        .map(|effect| effect.0.clone())
+        .collect::<Vec<_>>();
+    let realization_invocations = derived_effects
+        .iter()
+        .map(|effect| DerivedRealizationInvocationPayload {
+            realization_identity: effect.0.clone(),
+            task: effect.2.clone(),
+            origin: effect.3.clone(),
+        })
+        .collect::<Vec<_>>();
+    let execution_graph_identity = domain_identity(
+        DERIVED_EXECUTION_GRAPH_DOMAIN,
+        &DerivedExecutionGraphPayload {
+            schema_version: 1,
+            invocations: scope.ordered_invocations,
+            attachment_identities: &attachment_identities,
+            realization_identities: &realization_identities,
+            realization_invocations: &realization_invocations,
+        },
+    )?;
+    let selected_invocation_identity = domain_identity(
+        SELECTED_INVOCATION_DOMAIN,
+        &SelectedInvocationPayload {
+            schema_version: 1,
+            contract_identity: scope.contract_snapshot_identity,
+            subject: scope.selected_subject,
+            workflow: scope.workflow_name,
+            execution_graph_identity: &execution_graph_identity,
+        },
+    )?;
+    let fallback = effect_policy_fallback(loaded_policy);
+    let effects = scope
+        .effects
+        .iter()
+        .map(|input| {
+            Ok(EffectPolicyEffectEvaluation {
+                effect_identity: input.resolved.effect.identity.clone(),
+                realization_identity: input.resolved.realization.identity.clone(),
+                attachment_identity: input.resolved.attachment.identity.clone(),
+                origin_path: input.resolved.realization.policy_origin_path(),
+                derivation_posture: EffectDerivationPosture::TypedDerived,
+                eligible: input.resolved.refusal_assurance.eligible,
+                applicable_rules: Vec::new(),
+                decision: fallback,
+                decision_basis: String::from(
+                    "canonical effect-policy fallback; secret-material rule authoring is not activated",
+                ),
+            })
+        })
+        .collect::<Result<Vec<_>, EffectPolicyError>>()?;
+    finalize_effect_policy_decision(
+        policy_snapshot_identity,
+        source_evidence,
+        selected_invocation_identity,
+        execution_graph_identity,
+        effects,
+        Vec::new(),
+        loaded_policy,
+    )
 }
 
 fn build_typed_effect_policy_decision(
@@ -495,16 +694,7 @@ fn build_typed_effect_policy_decision(
         .as_ref()
         .map(|effects| effects.typed.rules.as_slice())
         .unwrap_or_default();
-    let fallback = loaded_policy
-        .pack
-        .policies
-        .effects
-        .as_ref()
-        .map(|effects| match effects.mode {
-            PolicyEffectsMode::Compatibility => PolicyEffectDecision::Warn,
-            PolicyEffectsMode::Strict => PolicyEffectDecision::Deny,
-        })
-        .unwrap_or(PolicyEffectDecision::Warn);
+    let fallback = effect_policy_fallback(loaded_policy);
 
     let mut effects = Vec::new();
     for plan in plans {
@@ -655,7 +845,53 @@ fn build_typed_effect_policy_decision(
             ),
         });
     }
+    let mut coarse_decisions = Vec::new();
+    for invocation in ordered_invocations {
+        let Some(task) = contract.tasks.get(invocation.task.as_str()) else {
+            continue;
+        };
+        let scope = if contract
+            .agent
+            .as_ref()
+            .is_some_and(|agent| agent.safe_tasks.contains(&invocation.task))
+        {
+            EffectGovernanceScope::SafeTask
+        } else {
+            EffectGovernanceScope::Task
+        };
+        coarse_decisions.extend(loaded_policy.pack.effect_governance_decisions(
+            scope,
+            task.effects.effective_network_kind(),
+            &task.effects.adapter_state.iter().cloned().collect(),
+            &task.effects.external_state.iter().cloned().collect(),
+            coarse_overrides,
+        ));
+    }
+    finalize_effect_policy_decision(
+        policy_snapshot_identity,
+        source_evidence,
+        selected_invocation_identity,
+        execution_graph_identity,
+        effects,
+        coarse_decisions,
+        loaded_policy,
+    )
+}
+
+fn finalize_effect_policy_decision(
+    policy_snapshot_identity: String,
+    source_evidence: PolicySourceEvidence,
+    selected_invocation_identity: String,
+    execution_graph_identity: String,
+    mut effects: Vec<EffectPolicyEffectEvaluation>,
+    mut coarse_decisions: Vec<SafeTaskEffectGovernanceDecision>,
+    loaded_policy: &LoadedOrgPolicyPack,
+) -> Result<EffectPolicyDecision, EffectPolicyError> {
     effects.sort_by(|left, right| left.realization_identity.cmp(&right.realization_identity));
+    coarse_decisions.sort_by(|left, right| {
+        (&left.scope, &left.effect, &left.source).cmp(&(&right.scope, &right.effect, &right.source))
+    });
+    coarse_decisions.dedup();
     let effect_identities = effects
         .iter()
         .map(|effect| effect.effect_identity.clone())
@@ -680,32 +916,6 @@ fn build_typed_effect_policy_decision(
             identities: &realization_identities,
         },
     )?;
-    let mut coarse_decisions = Vec::new();
-    for invocation in ordered_invocations {
-        let Some(task) = contract.tasks.get(invocation.task.as_str()) else {
-            continue;
-        };
-        let scope = if contract
-            .agent
-            .as_ref()
-            .is_some_and(|agent| agent.safe_tasks.contains(&invocation.task))
-        {
-            EffectGovernanceScope::SafeTask
-        } else {
-            EffectGovernanceScope::Task
-        };
-        coarse_decisions.extend(loaded_policy.pack.effect_governance_decisions(
-            scope,
-            task.effects.effective_network_kind(),
-            &task.effects.adapter_state.iter().cloned().collect(),
-            &task.effects.external_state.iter().cloned().collect(),
-            coarse_overrides,
-        ));
-    }
-    coarse_decisions.sort_by(|left, right| {
-        (&left.scope, &left.effect, &left.source).cmp(&(&right.scope, &right.effect, &right.source))
-    });
-    coarse_decisions.dedup();
     let typed_decision = effects
         .iter()
         .fold(PolicyEffectDecision::Allow, |current, effect| {
@@ -853,16 +1063,7 @@ fn verify_effect_policy_decision_structure(
         .as_ref()
         .map(|effects| effects.typed.rules.as_slice())
         .unwrap_or_default();
-    let fallback = loaded_policy
-        .pack
-        .policies
-        .effects
-        .as_ref()
-        .map(|effects| match effects.mode {
-            PolicyEffectsMode::Compatibility => PolicyEffectDecision::Warn,
-            PolicyEffectsMode::Strict => PolicyEffectDecision::Deny,
-        })
-        .unwrap_or(PolicyEffectDecision::Warn);
+    let fallback = effect_policy_fallback(loaded_policy);
     for effect in &decision.effects {
         if effect.origin_path.is_empty() {
             return Err(EffectPolicyError::new(
@@ -880,6 +1081,19 @@ fn verify_effect_policy_decision_structure(
                 return Err(EffectPolicyError::new(
                     "effect_policy_ineligible_realization_invalid",
                     "an ineligible realization must retain the canonical declared-only posture",
+                ));
+            }
+            continue;
+        }
+        if effect.derivation_posture == EffectDerivationPosture::TypedDerived {
+            if !effect.applicable_rules.is_empty()
+                || effect.decision != fallback
+                || effect.decision_basis
+                    != "canonical effect-policy fallback; secret-material rule authoring is not activated"
+            {
+                return Err(EffectPolicyError::new(
+                    "effect_policy_derived_realization_invalid",
+                    "a derived secret-material realization must retain the canonical fallback posture",
                 ));
             }
             continue;
@@ -1138,6 +1352,19 @@ fn restrictive(left: PolicyEffectDecision, right: PolicyEffectDecision) -> Polic
         (Warn, _) | (_, Warn) => Warn,
         (Allow, Allow) => Allow,
     }
+}
+
+fn effect_policy_fallback(loaded_policy: &LoadedOrgPolicyPack) -> PolicyEffectDecision {
+    loaded_policy
+        .pack
+        .policies
+        .effects
+        .as_ref()
+        .map(|effects| match effects.mode {
+            PolicyEffectsMode::Compatibility => PolicyEffectDecision::Warn,
+            PolicyEffectsMode::Strict => PolicyEffectDecision::Deny,
+        })
+        .unwrap_or(PolicyEffectDecision::Warn)
 }
 
 fn decision_identity(decision: &EffectPolicyDecision) -> Result<String, EffectPolicyError> {
