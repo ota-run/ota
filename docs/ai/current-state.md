@@ -67,9 +67,12 @@ durable agent workflow belongs in the canonical Ota skill.
   structural coverage and adds a non-default test-only live-transaction fault boundary. Two
   declared controls execute through normal Core derivation in one proof run; substituting the
   sibling's valid digest after projection creation refuses at the production reconciler before
-  terminal proof output, receipt, or archive publication. Site, Skills, Examples, Learn, FAQ, and
-  Glossary remain unchanged because this hardens an existing guarantee without changing operator
-  behavior or public vocabulary.
+  terminal proof output, receipt, or archive publication. The shared Core and standalone Examples
+  runtime-proof fixture now uses bounded dependency-readiness retries so the same transaction is
+  reliable on hosted Linux and macOS without weakening failure semantics; the standalone copy is
+  pinned at `ota-run/examples@6ab6635237aba8172812406499186a7fbc8a16cd`. Site, Skills, Learn,
+  FAQ, and Glossary remain unchanged because this hardens an existing guarantee without changing
+  operator behavior or public vocabulary.
 - Eris adoption pressure exposed and repaired two bounded Core defects without changing the
   released `v1.6.27` runtime used by that partner contract: detector output no longer promotes
   named GitHub Actions bodies containing unresolved matrix or shell expressions into runnable task

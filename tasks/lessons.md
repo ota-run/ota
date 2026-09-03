@@ -388,3 +388,10 @@
   handoffs, pressure records, and engineering notes instead.
 - Rule: Upstream PRs are review artifacts, not Ota planning ledgers. Include only information that
   explains the diff, its evidence, its repository impact, or its explicit limitations.
+- Pattern: A reference-fixture reliability repair was applied in Core while the identical fixture
+  in the standalone Examples repository remained stale.
+- Correction: Treat duplicated reference fixtures as one propagation surface. After changing one,
+  compare and update every owned copy, then assess Site, Skills, Learn, FAQ, and Glossary for
+  connected changes and record unaffected decisions explicitly.
+- Rule: Never declare an Ota or reference-example change complete until Core and standalone
+  Examples copies are reconciled and all first-party consumers have an explicit impact decision.
