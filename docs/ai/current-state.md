@@ -76,10 +76,16 @@ durable agent workflow belongs in the canonical Ota skill.
   projection after its detached fixture services failed to retain the green obligation. The
   feature-gated transaction regression now owns both fixture servers as retained test children,
   verifies their readiness before invoking Ota, keeps Ota's selected runtime child and production
-  reconciliation path intact, and performs terminal cleanup. Three consecutive local executions
-  pass; immutable Linux/macOS evidence remains the next gate. Site, Skills, Learn, FAQ, Glossary,
-  and standalone Examples remain unchanged by this test-harness correction because it changes no
-  operator behavior, public vocabulary, or shared reference content.
+  reconciliation path intact, and performs terminal cleanup. Release Gate
+  [run 33744200940](https://github.com/ota-run/ota/actions/runs/33744200940) passed at exact Core
+  `876680f074777aada0b3910a62aab9b245b34af7`: Ubuntu job `100612831644` and macOS job
+  `100612831722` both passed the dedicated live substitution boundary, and the complete Windows,
+  Ubuntu, and macOS gates succeeded. The hosted control proves that a real canonical sibling
+  attestation digest substituted after projection creation is refused by production reconciliation
+  before terminal proof output, receipt, or archive publication. It does not prove provider
+  behavior, external mutation prevention, or positive proof assurance. Site, Skills, Learn, FAQ,
+  Glossary, and standalone Examples remain unchanged by this test-harness correction because it
+  changes no operator behavior, public vocabulary, or shared reference content.
 - Eris adoption pressure exposed and repaired two bounded Core defects without changing the
   released `v1.6.27` runtime used by that partner contract: detector output no longer promotes
   named GitHub Actions bodies containing unresolved matrix or shell expressions into runnable task
