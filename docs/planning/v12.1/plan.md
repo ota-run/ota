@@ -104,10 +104,11 @@ Zero matches, duplicate matches, conflicting sources, unknown selectors, and sub
 identity input refuse without precedence fallback.
 
 The private identity retains every material provider-reference input. Public output may expose only
-the provider/binding class, disclosure class, and opaque or redacted identities that Core can
-reconcile with the private record. It must not expose secret values, hashes, lengths, raw provider
-paths, secret names, tenancy details, workload metadata, credentials, descriptors, or reusable
-handles. A redacted projection cannot become a selector or authority source.
+the provider/binding class, disclosure class, and approved non-secret semantic or projection
+identities that Core can reconcile with the private record. It must not expose secret values;
+secret- or provider-reference-derived hashes, lengths, prefixes, or transformed values; raw
+provider paths; secret names; tenancy details; workload metadata; credentials; descriptors; or
+reusable handles. A redacted projection cannot become a selector or authority source.
 
 Step 2 does not authorize a filesystem or control-plane loader, a new CLI route, provider adapter
 registration, GitHub OIDC, Workload Identity Federation, Google Secret Manager contact, delivery
@@ -481,10 +482,11 @@ Human and JSON output expose only:
 - exact selected scope and recipient segments; and
 - typed refusal or boundary-failure reasons.
 
-They never expose values, transformed values, hashes, lengths, prefixes, raw provider paths,
-credentials, descriptors, or reusable handles. Provider paths, secret names, reference labels,
-tenancy details, workload metadata, and provider metadata may themselves be sensitive. Public
-output uses redacted or opaque identities plus a disclosure class.
+They may expose approved non-secret semantic or projection identities. They never expose secret
+values; secret- or provider-reference-derived hashes, lengths, prefixes, or transformed values;
+raw provider paths; credentials; descriptors; or reusable handles. Provider paths, secret names,
+reference labels, tenancy details, workload metadata, and provider metadata may themselves be
+sensitive. Public output uses redacted or opaque identities plus a disclosure class.
 
 Public opaque identities and access-controlled Enterprise detail are projections of the same
 canonical private binding evidence. Core verifies their reconciliation without exposing enough
