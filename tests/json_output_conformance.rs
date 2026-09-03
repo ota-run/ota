@@ -2743,6 +2743,15 @@ fn proof_runtime_typed_negative_control_refuses_before_artifacts() {
 fn proof_runtime_refuses_valid_sibling_attestation_substitution_before_positive_evidence() {
     use std::net::TcpListener;
 
+    struct FixtureProcess(std::process::Child);
+
+    impl Drop for FixtureProcess {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+
     let fixture = tempfile::tempdir().expect("tempdir");
     let source =
         Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/reference/runtime-proof-evidence");
@@ -2764,11 +2773,22 @@ fn proof_runtime_refuses_valid_sibling_attestation_substitution_before_positive_
         "scripts/negative_control.py",
     ] {
         let content = fs::read_to_string(source.join(relative)).expect("reference fixture file");
-        let content = content
+        let mut content = content
             .replace("8080", app_port.to_string().as_str())
             .replace("8081", dependency_port.to_string().as_str());
+        if relative == "ota.yaml" {
+            content = content.replace(
+                format!("args: [-m, http.server, \"{app_port}\"]").as_str(),
+                "args: [scripts/app_wait.py]",
+            );
+        }
         fs::write(fixture.path().join(relative), content).expect("copied fixture file");
     }
+    fs::write(
+        fixture.path().join("scripts/app_wait.py"),
+        "import time\ntime.sleep(120)\n",
+    )
+    .expect("fixture app process");
     let contract_path = fixture.path().join("ota.yaml");
     let contract = fs::read_to_string(&contract_path).expect("fixture contract");
     let sibling = r#"
@@ -2796,22 +2816,13 @@ fn proof_runtime_refuses_valid_sibling_attestation_substitution_before_positive_
         &docker,
         r#"#!/bin/sh
 set -eu
-pid_file=.ota-test-dependency.pid
 case "$*" in
   *"compose"*"up -d"*"dependency"*)
-    nohup python3 scripts/dependency.py </dev/null >.ota-test-dependency.log 2>&1 &
-    echo $! > "$pid_file"
     ;;
   *"compose"*"ps -q"*"dependency"*)
-    if [ -f "$pid_file" ] && kill -0 "$(cat "$pid_file")" 2>/dev/null; then
-      printf '%s\n' ota-test-dependency
-    fi
+    printf '%s\n' ota-test-dependency
     ;;
   *"compose"*"stop"*"dependency"*)
-    if [ -f "$pid_file" ]; then
-      kill "$(cat "$pid_file")" 2>/dev/null || true
-      rm -f "$pid_file"
-    fi
     ;;
   *"compose version"*|*"--version"*)
     printf '%s\n' 'Docker version 27.0.0'
@@ -2828,6 +2839,39 @@ esac
     let mut paths = vec![bin_dir];
     paths.extend(env::split_paths(&env::var_os("PATH").unwrap_or_default()));
     let path = env::join_paths(paths).expect("test PATH");
+
+    let dependency_process = FixtureProcess(
+        Command::new("python3")
+            .arg("scripts/dependency.py")
+            .current_dir(fixture.path())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("fixture dependency process"),
+    );
+    let app_port_arg = app_port.to_string();
+    let app_process = FixtureProcess(
+        Command::new("python3")
+            .args(["-m", "http.server", &app_port_arg, "--bind", "127.0.0.1"])
+            .current_dir(fixture.path())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("fixture app readiness process"),
+    );
+    for port in [dependency_port, app_port] {
+        let mut ready = false;
+        for _ in 0..100 {
+            if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
+                ready = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        assert!(ready, "fixture server on port {port} did not become ready");
+    }
 
     let output = Command::new(env!("CARGO_BIN_EXE_ota"))
         .args([
@@ -2853,9 +2897,8 @@ esac
         .expect("runtime proof command");
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
-    if let Ok(pid) = fs::read_to_string(fixture.path().join(".ota-test-dependency.pid")) {
-        let _ = Command::new("kill").arg(pid.trim()).status();
-    }
+    drop(app_process);
+    drop(dependency_process);
 
     assert!(
         !output.status.success(),

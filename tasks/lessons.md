@@ -395,3 +395,10 @@
   connected changes and record unaffected decisions explicitly.
 - Rule: Never declare an Ota or reference-example change complete until Core and standalone
   Examples copies are reconciled and all first-party consumers have an explicit impact decision.
+- Pattern: Retrying the shared fixture's HTTP clients did not stabilize a hosted fault regression
+  because its green obligation still depended on detached shell-owned service processes.
+- Correction: A trust-sensitive end-to-end fault harness must retain ownership of its fixture
+  processes, verify readiness before invoking Ota, and perform terminal cleanup. Client retries are
+  useful for real examples but cannot substitute for deterministic test-fixture lifecycle control.
+- Rule: When a hosted proof regression depends on auxiliary processes, keep their lifecycle inside
+  the test harness and prove readiness before exercising the production reconciliation boundary.

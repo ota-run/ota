@@ -70,9 +70,16 @@ durable agent workflow belongs in the canonical Ota skill.
   terminal proof output, receipt, or archive publication. The shared Core and standalone Examples
   runtime-proof fixture now uses bounded dependency-readiness retries so the same transaction is
   reliable on hosted Linux and macOS without weakening failure semantics; the standalone copy is
-  pinned at `ota-run/examples@6ab6635237aba8172812406499186a7fbc8a16cd`. Site, Skills, Learn,
-  FAQ, and Glossary remain unchanged because this hardens an existing guarantee without changing
-  operator behavior or public vocabulary.
+  pinned at `ota-run/examples@6ab6635237aba8172812406499186a7fbc8a16cd`. Release Gate run
+  `33737308315` then proved the reference-script retry was not the complete hosted fix: Windows
+  passed, Ubuntu's fault step was cancelled, and macOS reached reconciliation without a selected
+  projection after its detached fixture services failed to retain the green obligation. The
+  feature-gated transaction regression now owns both fixture servers as retained test children,
+  verifies their readiness before invoking Ota, keeps Ota's selected runtime child and production
+  reconciliation path intact, and performs terminal cleanup. Three consecutive local executions
+  pass; immutable Linux/macOS evidence remains the next gate. Site, Skills, Learn, FAQ, Glossary,
+  and standalone Examples remain unchanged by this test-harness correction because it changes no
+  operator behavior, public vocabulary, or shared reference content.
 - Eris adoption pressure exposed and repaired two bounded Core defects without changing the
   released `v1.6.27` runtime used by that partner contract: detector output no longer promotes
   named GitHub Actions bodies containing unresolved matrix or shell expressions into runnable task
