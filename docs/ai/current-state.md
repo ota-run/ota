@@ -40,13 +40,14 @@ durable agent workflow belongs in the canonical Ota skill.
   is `google_secret_manager_github_oidc_process_environment_v1`, initially limited to a
   `linux/x86_64` GitHub Actions native-process recipient using GitHub OIDC, Google Workload Identity
   Federation, and one exact Google Secret Manager version. Activation authorizes implementation-order
-  step 1 and, under separate amendments, implementation-order steps 2, 3, 4, and 5: the
+  step 1 and, under separate amendments, implementation-order steps 2, 3, 4, 5, and 6: the
   provider-neutral requirement schema, canonical recipient/destination model,
   `SecretRequirementIdentity`, and the Core-owned provider-binding domain model with pure
   fail-closed resolution, followed by the exact first-adapter profile and implementation-subject
-  descriptor model, the crate-private `secret_material_delivery` effect derivation foundation, and
-  the sealed provider-free evaluator/dry-run-plan model. A proposed Step 6 activation amendment is
-  present locally pending independent review and commit; it does not authorize implementation yet.
+  descriptor model, the crate-private `secret_material_delivery` effect derivation foundation, the
+  sealed provider-free evaluator/dry-run-plan model, and one retained command-scoped admission per
+  invocation. Step 6 was independently reviewed and activated at Core `2dd20ab8`; implementation is
+  authorized under that exact amendment.
   No provider binding loader, concrete implementation registration, provider
   contact, materialization, injection, execution authority, positive evidence, or support claim is
   implemented yet. V12.2 and later versions remain inactive.
@@ -138,8 +139,8 @@ durable agent workflow belongs in the canonical Ota skill.
   `availability: not_checked`, `provider_contact: not_attempted`, `delivery: not_attempted`, and
   `execution_started: false`; it is never runnable, available, delivered, supported, or assured.
   No loader, command consumer, provider interaction, execution, public output, or evidence path was
-  authorized at the Step 5 completion boundary. The proposed Step 6 amendment authorizes, only
-  after independent review and commit, one retained command-scoped admission per invocation across
+  authorized at the Step 5 completion boundary. Step 6 was independently reviewed and activated at
+  Core `2dd20ab8`; it authorizes one retained command-scoped admission per invocation across
   `run`, `up`, proof, Doctor context, sandbox capability, and harness output. CI projection carries
   only a bounded public expectation; provider-checkout CI independently re-derives admission from
   its exact checkout and reconciles the public projection rather than inheriting render-host truth.
@@ -1801,8 +1802,15 @@ the resulting verification loss explicit. Repository fleet reports use a separat
 `RepositoryReportProfile` that classifies every identity and drill-down reference as public,
 protected, or omitted; protected values cannot leak through stable hashes, pseudonyms, references,
 or report identity.
-Two additional cross-cutting plans remain planning-only and inactive rather than extending the
-version sequence:
+One cross-cutting strategy and two cross-cutting plans remain planning-only and inactive rather
+than extending the version sequence:
+[Agent Execution Governance Core](../planning/agent-execution-governance-core/plan.md) maps the
+contract, authority, transaction, observation, evidence, and enforcement planes onto the existing
+V12.1 through V12.6 and cross-cutting plans. It makes V12.1 the first complete provider-backed
+vertical slice and forbids a mandatory-chokepoint claim until an adopted external boundary withholds
+the required capability outside admitted Ota execution. It is strategy and sequencing guidance only;
+it does not activate a version, implementation slice, provider, adapter, command, schema, evidence
+claim, or support posture;
 [OSS adapter and profile conformance](../planning/adapter-profile-conformance/plan.md)
 defines registration, capability, pressure, support, deprecation, and revocation rules for V12+
 implementations. Shared behavior derives `profile_semantic_identity`, while owner, source, build,
@@ -1815,8 +1823,8 @@ the observed lifecycle and snapshot;
 defines the normative acceptance standard for reproducible artifacts, compatibility, protected
 installation, upgrade, rollback, state recovery, uninstall, and support policy. It cannot activate
 or assign implementation by itself; a future version plan must explicitly own a bounded delivery
-slice. Neither cross-cutting plan registers an adapter, publishes an artifact, activates V12, or
-begins the deferred Enterprise V1 control-plane roadmap.
+slice. None of these cross-cutting records registers an adapter, publishes an artifact, activates
+V12, or begins the deferred Enterprise V1 control-plane roadmap.
 Implementation-registration revocation is bounded to the accepted installed registry snapshot
 rather than claimed as globally immediate under an offline release model. Positive admission and
 retained evidence must name all three exact identities plus the observed registry identity,
@@ -1831,7 +1839,8 @@ activate from roadmap order, feasibility, public-repository signals, or technica
 each requires a documented current operator/design-partner need for the exact provider/platform
 boundary and access to immutable native pressure. In the absence of that demand, formally defer
 the carrier rather than implementing nominal parity, and allow V12.6 to proceed after the recorded
-deferrals.
+deferrals only when V12.6's independent evidence-consumer and real organizational interoperability
+demand gates are independently satisfied.
 The local real-OCI
 fixture plus create-chrome-extension run
 [30544809360](https://github.com/bobaikato/create-chrome-extension/actions/runs/30544809360)
