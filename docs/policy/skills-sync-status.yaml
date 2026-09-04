@@ -24,7 +24,6 @@
 
 version: 1
 repository: ota-run/skills
-mode: waived
+mode: synced
 consumer_commit: 082ce38088e8208b6492334bb09ce19bbd8276af
-reviewed_ota_commit: b2404b1d0161dff345a8b481985042594d371f89
-waiver_reason: "V12.1 Step 6 Skill propagation is committed at the recorded consumer revision; commit the Core implementation, then replace this waiver with that exact immutable Core revision."
+reviewed_ota_commit: 67de2b4d9d6773e8b7ea0506669d4635f5feaf3f
