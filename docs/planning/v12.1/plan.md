@@ -31,9 +31,10 @@ at Core `9835edfa`. Implementation-order step 2 was separately activated on 2026
 connected v1.6.28 proof-assurance hardening passed immutable Linux/macOS Release Gate evidence and
 that evidence was reconciled at Core `a582b948`; step 2 was independently reviewed and committed
 at Core `9218151b`. Implementation-order step 3 was separately activated and committed at Core
-`9ac9274f`; implementation-order step 4 is separately activated at Core `a7dd07ba` under the
-amendments below. These activations do not establish provider support, secret delivery, execution
-authority, or pressure evidence.
+`9ac9274f`; implementation-order step 4 was separately activated at Core `a7dd07ba` and committed
+at Core `f1178fe3`. Implementation-order step 5 is separately activated under the amendment below.
+These activations do not establish provider support, secret delivery, execution authority, or
+pressure evidence.
 
 ## Activation Gates
 
@@ -236,7 +237,61 @@ receipt, archive, public JSON result, or positive assurance statement. Step 4 do
 binding loader, CLI route, dry-run delivery plan, command-scoped admission, OIDC token request,
 Workload Identity Federation exchange, Google Secret Manager contact, network access,
 materialization, process-environment injection, child execution, receipt, archive, public output,
-assurance promotion, pressure evidence, or support claim. Implementation-order step 5 and every
+assurance promotion, pressure evidence, or support claim. At the step-4 activation boundary,
+implementation-order step 5 and every later step remained unauthorized.
+
+### Step 5 Activation Gate
+
+Step 5 is not authorized by any earlier activation record. It may be activated only after the
+step-4 effect derivation and canonical policy integration are independently reviewed and committed.
+The activation amendment must retain one evaluator over independently reverified requirement,
+selected-graph, realization, binding/source, profile/subject, invocation, and policy-decision truth;
+it must not reload or reconstruct command-scoped truth, contact a provider, or convert provider
+availability into an assumption. Clearing those prerequisites does not activate step 5 by itself.
+
+#### Step 5 Activation Amendment
+
+Implementation-order step 5 is activated by the commit carrying this amendment after independent
+review. The prerequisite sealed effect derivation and canonical policy integration are independently
+reviewed and committed at Core `f1178fe3`. Hosted checks for that exact implementation revision are
+useful background verification but are not represented as a Step 5 activation prerequisite or as
+provider evidence.
+
+This amendment authorizes only one crate-private secret-delivery evaluator and provider-free dry-run
+plan. The evaluator consumes retained, independently verifiable Step 1-4 domain records supplied by
+its caller: exact requirement and contract identities, the ordered selected invocation graph, the
+resolved binding and source, profile and implementation subject, protected invocation binding,
+derived effect/attachment/realization records, and the exact canonical effect-policy decision. It
+must call the existing semantic verifiers rather than trust a self-consistent resolved record or
+create a parallel secret-specific policy decision.
+
+The evaluator must fail closed on missing, duplicate, reordered selected-invocation, stale,
+substituted, cross-scope, unsupported, or unreconciled input. Selected invocation order is semantic
+and must be retained exactly; unordered semantic sets are canonicalized so caller ordering cannot
+change identity. Every realization must retain its exact selected invocation mapping. An effect-
+policy deny remains a refusal. An allow or warn may establish only structural eligibility for a
+later provider check; it is not provider authority, availability, delivery, execution admission,
+or assurance. Policy cannot manufacture a missing requirement, binding, source posture, profile,
+implementation subject, invocation binding, selected occurrence, or target capability.
+
+The dry-run plan must bind the exact evaluation inputs and decision identities while reporting
+`availability: not_checked`, `provider_contact: not_attempted`, `delivery: not_attempted`, and
+`execution_started: false`. It must not contain a secret value, secret-derived hash, length, prefix,
+transformation, private provider reference, credential, token, or provider response. It must not
+describe a structurally eligible lane as runnable, available, delivered, supported, or assured.
+No public JSON schema or command output is authorized at this step.
+
+An empty selected requirement set is `not_applicable` and must not inspect unrelated protected
+bindings. A non-empty set requires complete Step 1-4 reconciliation and one unambiguous decision per
+exact realization. The evaluator and plan identities must be domain-separated and independently
+recomputable from retained non-secret identity inputs; caller ordering of semantic sets must not
+change them, while selected invocation order remains semantic.
+
+Step 5 does not authorize a provider-binding loader, policy-authoring surface, CLI route, `run`,
+`up`, proof, Doctor, CI, sandbox, or harness consumer, command-scoped admission, OIDC token request,
+Workload Identity Federation exchange, Google Secret Manager contact, network access,
+materialization, process-environment injection, child execution, receipt, archive, public output,
+assurance promotion, pressure evidence, or support claim. Implementation-order step 6 and every
 later step remain unauthorized.
 
 Planned follow-on: [V12.2 Contract-Authored Crossing Requirements](../v12.2/plan.md) remains
