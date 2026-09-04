@@ -97,6 +97,9 @@ pub(crate) struct CiProjectionOwnership {
 pub(crate) struct CiProjectionGovernance {
     pub agent_admission: CiProjectionAdmission,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub secret_delivery_admission:
+        Option<crate::secret_delivery_admission::SecretDeliveryPublicProjection>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub effect_policy_decision: Option<EffectPolicyDecision>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub proof_assurance: Option<CiProjectionProofAssurance>,
@@ -314,6 +317,7 @@ pub(crate) fn build_ci_projection(
                 decision: String::from("unresolved"),
                 basis: Vec::new(),
             },
+            secret_delivery_admission: None,
             effect_policy_decision: None,
             proof_assurance: None,
             replay_input_policy: None,

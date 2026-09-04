@@ -102,6 +102,9 @@ pub struct DoctorSuccess<'a> {
     pub execution: Option<ExecutionSummary<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub governance: Option<DoctorGovernanceSummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub secret_delivery_admission:
+        Option<crate::secret_delivery_admission::SecretDeliveryPublicProjection>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub claim_assurance: Vec<ClaimAssuranceRecord>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1222,6 +1225,9 @@ pub struct RunPreviewPlan {
     pub effect_application_plans: Vec<crate::effect_application_plan::EffectApplicationPlan>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub effect_policy_decision: Option<crate::effect_policy::EffectPolicyDecision>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub secret_delivery_admission:
+        Option<crate::secret_delivery_admission::SecretDeliveryPublicProjection>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub notes: Vec<String>,
 }
@@ -1515,6 +1521,9 @@ pub struct GovernancePreflightEvidenceClasses {
 #[derive(Debug, Serialize, Clone, PartialEq, Eq)]
 pub struct GovernancePreflightEvaluation {
     pub state: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub secret_delivery_admission:
+        Option<crate::secret_delivery_admission::SecretDeliveryPublicProjection>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sandbox_admission: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -3811,6 +3820,9 @@ pub struct UpPreviewPlan {
     pub effect_application_plans: Vec<crate::effect_application_plan::EffectApplicationPlan>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub effect_policy_decision: Option<crate::effect_policy::EffectPolicyDecision>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub secret_delivery_admission:
+        Option<crate::secret_delivery_admission::SecretDeliveryPublicProjection>,
 }
 
 #[derive(Debug, Serialize)]
@@ -4319,6 +4331,9 @@ pub struct HarnessLaneCapability {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sandbox_policy: Option<HarnessSandboxPolicy>,
     pub effect_policy: HarnessEffectPolicyBinding,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub secret_delivery_admission:
+        Option<crate::secret_delivery_admission::SecretDeliveryPublicProjection>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub effects: Option<TaskEffectsSummary>,
     #[serde(skip_serializing_if = "Option::is_none")]

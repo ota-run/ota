@@ -77,6 +77,7 @@ pub(crate) struct EffectPolicySnapshotArchiveReference {
 #[derive(Debug)]
 pub(crate) struct CommandTypedEffectAdmission {
     pub(crate) typed: TypedEffectAdmission,
+    pub(crate) secret_delivery: crate::secret_delivery_admission::SecretDeliveryCommandAdmission,
     pub(crate) loaded_policy: Option<LoadedOrgPolicyPack>,
 }
 
@@ -234,6 +235,7 @@ pub(crate) fn typed_effect_policy_decision_from_loaded_policy(
     })
 }
 
+#[cfg(test)]
 pub(crate) fn admit_typed_effect_closure(
     contract: &Contract,
     contract_path: &Path,
@@ -281,17 +283,92 @@ pub(crate) fn admit_command_typed_effect_closure(
     execution_overrides: ExecutionOverrides,
     effect_overrides: Option<&EffectGovernanceOverrides>,
 ) -> OrchestrationResult<CommandTypedEffectAdmission> {
-    if !typed_effect_closure_applies(contract, roots, execution_overrides)? {
+    let secret_delivery_applicable =
+        crate::secret_delivery_admission::secret_delivery_applies_to_selected_subject(
+            contract,
+            workflow_name,
+            roots,
+        )
+        .map_err(|error| {
+            Box::new(RunError::FileActionFailed {
+                task: roots
+                    .first()
+                    .map(|root| root.task.clone())
+                    .unwrap_or_default(),
+                message: format!(
+                    "secret delivery admission failed ({}): {}",
+                    error.code, error
+                ),
+            })
+        })?;
+    if secret_delivery_applicable {
+        // Protected truth is unavailable in Step 6. Derive the exact selected closure needed by
+        // the public refusal, but do not load or classify effect policy before returning it.
+        let closure = build_typed_effect_closure_admission(
+            contract,
+            contract_path,
+            roots,
+            execution_overrides,
+        )?;
+        let secret_delivery = crate::secret_delivery_admission::admit_secret_delivery_command(
+            contract,
+            workflow_name,
+            roots,
+            &closure.invocations,
+        )
+        .map_err(|error| {
+            Box::new(RunError::FileActionFailed {
+                task: roots
+                    .first()
+                    .map(|root| root.task.clone())
+                    .unwrap_or_default(),
+                message: format!(
+                    "secret delivery admission failed ({}): {}",
+                    error.code, error
+                ),
+            })
+        })?;
         return Ok(CommandTypedEffectAdmission {
-            typed: admit_typed_effect_closure_from_loaded_policy(
-                contract,
-                contract_path,
-                workflow_name,
-                roots,
-                execution_overrides,
-                None,
-                effect_overrides,
-            )?,
+            typed: TypedEffectAdmission {
+                closure,
+                policy_decision: None,
+            },
+            secret_delivery,
+            loaded_policy: None,
+        });
+    }
+
+    if !typed_effect_closure_applies(contract, roots, execution_overrides)? {
+        let typed = admit_typed_effect_closure_from_loaded_policy(
+            contract,
+            contract_path,
+            workflow_name,
+            roots,
+            execution_overrides,
+            None,
+            effect_overrides,
+        )?;
+        let secret_delivery = crate::secret_delivery_admission::admit_secret_delivery_command(
+            contract,
+            workflow_name,
+            roots,
+            &typed.closure.invocations,
+        )
+        .map_err(|error| {
+            Box::new(RunError::FileActionFailed {
+                task: roots
+                    .first()
+                    .map(|root| root.task.clone())
+                    .unwrap_or_default(),
+                message: format!(
+                    "secret delivery admission failed ({}): {}",
+                    error.code, error
+                ),
+            })
+        })?;
+        return Ok(CommandTypedEffectAdmission {
+            typed,
+            secret_delivery,
             loaded_policy: None,
         });
     }
@@ -317,9 +394,47 @@ pub(crate) fn admit_command_typed_effect_closure(
         loaded_policy.as_ref(),
         effect_overrides,
     )?;
+    let secret_delivery = crate::secret_delivery_admission::admit_secret_delivery_command(
+        contract,
+        workflow_name,
+        roots,
+        &typed.closure.invocations,
+    )
+    .map_err(|error| {
+        Box::new(RunError::FileActionFailed {
+            task: roots
+                .first()
+                .map(|root| root.task.clone())
+                .unwrap_or_default(),
+            message: format!(
+                "secret delivery admission failed ({}): {}",
+                error.code, error
+            ),
+        })
+    })?;
     Ok(CommandTypedEffectAdmission {
         typed,
+        secret_delivery,
         loaded_policy,
+    })
+}
+
+pub(crate) fn command_secret_delivery_refusal(
+    admission: &CommandTypedEffectAdmission,
+) -> Option<RunError> {
+    admission.secret_delivery.refuses_execution().then(|| {
+        RunError::FileActionFailed {
+            task: admission
+                .typed
+                .closure
+                .invocations
+                .first()
+                .map(|invocation| invocation.task.clone())
+                .unwrap_or_default(),
+            message: String::from(
+                "selected secret requirements require protected provider-binding truth, but no production binding loader or provider transaction is available in V12.1 Step 6; refusing before provider contact or execution",
+            ),
+        }
     })
 }
 

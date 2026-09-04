@@ -87,6 +87,9 @@
             "effect_policy_decision": {
               "$ref": "./run-preview.json#/$defs/effectPolicyDecision"
             },
+            "secret_delivery_admission": {
+              "$ref": "./secret-delivery-admission.json"
+            },
             "replay_input_policy": {
               "type": "object",
               "additionalProperties": false,
@@ -114,7 +117,20 @@
                 }
               }
             }
-          }
+          },
+          "allOf": [
+            {
+              "if": { "required": ["secret_delivery_admission"] },
+              "then": {
+                "properties": {
+                  "secret_delivery_admission": {
+                    "properties": { "status": { "const": "refused" } },
+                    "required": ["status"]
+                  }
+                }
+              }
+            }
+          ]
         },
         "ownership": {
           "type": "object",

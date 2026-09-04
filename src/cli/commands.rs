@@ -100,9 +100,9 @@ use crate::doctor::{
 };
 use crate::effect_orchestration::{
     CommandTypedEffectAdmission, TypedEffectAdmission, admit_command_typed_effect_closure,
-    admit_typed_effect_closure, admit_typed_effect_closure_from_loaded_policy,
-    build_typed_effect_closure_admission, typed_effect_admission_refusal,
-    typed_effect_closure_applies, typed_effect_policy_decision,
+    admit_typed_effect_closure_from_loaded_policy, build_typed_effect_closure_admission,
+    command_secret_delivery_refusal, selected_execution_closure_invocations,
+    typed_effect_admission_refusal, typed_effect_closure_applies, typed_effect_policy_decision,
     typed_effect_policy_decision_from_loaded_policy, typed_effect_policy_refusal_evidence,
 };
 use crate::effect_policy::{EffectPolicyInvocation, typed_effect_realization_identity};
@@ -2061,6 +2061,30 @@ fn ci_projection_for_contract(
     }
     let projection = build_ci_projection(contract, workflow, mode, target_os)
         .map_err(|message| (String::from("projection_unavailable"), message, None))?;
+    let secret_roots = selected_workflow_phase_task_roots(contract, Some(workflow));
+    let secret_delivery_applicable =
+        crate::secret_delivery_admission::secret_delivery_applies_to_selected_subject(
+            contract,
+            Some(workflow),
+            secret_roots.as_slice(),
+        )
+        .map_err(|error| {
+            (
+                error.code.to_string(),
+                error.to_string(),
+                Some(projection.clone()),
+            )
+        })?;
+    if secret_delivery_applicable {
+        return apply_ci_projection_governance(
+            contract,
+            contract_path,
+            workflow,
+            mode,
+            projection,
+            None,
+        );
+    }
     let loaded_policy = load_org_policy_pack_auto_details(contract_path).map_err(|error| {
         (
             String::from("org_policy_unavailable"),
@@ -2099,6 +2123,57 @@ fn apply_ci_projection_governance(
         }),
         ..ExecutionOverrides::default()
     };
+    // Project the same selected phase roots as `ota up`; the typed planner expands their active
+    // dependencies and hooks without admitting an unselected mode's dependency graph.
+    let effect_policy_roots = selected_workflow_phase_task_roots(contract, Some(workflow));
+    let effect_closure = build_typed_effect_closure_admission(
+        contract,
+        contract_path,
+        effect_policy_roots.as_slice(),
+        overrides,
+    )
+    .map_err(|error| {
+        (
+            String::from("effect_policy_evaluation_unavailable"),
+            format!("workflow `{workflow}` typed effect admission could not be derived: {error}"),
+            Some(projection.clone()),
+        )
+    })?;
+    let secret_delivery_admission =
+        crate::secret_delivery_admission::admit_secret_delivery_command(
+            contract,
+            Some(workflow),
+            effect_policy_roots.as_slice(),
+            &effect_closure.invocations,
+        )
+        .map_err(|error| {
+            (
+                error.code.to_string(),
+                error.to_string(),
+                Some(projection.clone()),
+            )
+        })?;
+    projection.governance.secret_delivery_admission =
+        Some(secret_delivery_admission.projection.clone());
+    if secret_delivery_admission.refuses_execution() {
+        refresh_ci_projection_identity(&mut projection).map_err(|message| {
+            (
+                String::from("projection_identity_unavailable"),
+                message,
+                None,
+            )
+        })?;
+        return Err((
+            String::from(
+                crate::secret_delivery_admission::SECRET_DELIVERY_PROTECTED_TRUTH_UNAVAILABLE,
+            ),
+            format!(
+                "workflow `{workflow}` selects secret requirements without production protected binding truth; provider-checkout admission refuses before provider contact"
+            ),
+            Some(projection),
+        ));
+    }
+    projection.governance.secret_delivery_admission = None;
     if let Some(refusal) = agent_workflow_execution_refusal_with_policy(
         contract,
         contract_path,
@@ -2126,23 +2201,6 @@ fn apply_ci_projection_governance(
         projection.governance.agent_admission.decision = String::from("allow");
         projection.governance.agent_admission.basis = vec![String::from("agent_closure_admitted")];
     }
-
-    // Project the same selected phase roots as `ota up`; the typed planner expands their active
-    // dependencies and hooks without admitting an unselected mode's dependency graph.
-    let effect_policy_roots = selected_workflow_phase_task_roots(contract, Some(workflow));
-    let effect_closure = build_typed_effect_closure_admission(
-        contract,
-        contract_path,
-        effect_policy_roots.as_slice(),
-        overrides,
-    )
-    .map_err(|error| {
-        (
-            String::from("effect_policy_evaluation_unavailable"),
-            format!("workflow `{workflow}` typed effect admission could not be derived: {error}"),
-            Some(projection.clone()),
-        )
-    })?;
     let effect_policy_decision = typed_effect_policy_decision_from_loaded_policy(
         contract,
         Some(workflow),
@@ -2345,18 +2403,32 @@ pub fn ci_projection(
     let projection =
         match ci_projection_for_contract(&contract, &resolved_path, workflow, mode, target_os) {
             Ok(projection) => projection,
-            Err((code, message, Some(projection))) if matches!(format, OutputFormat::Json) => {
-                return CommandOutput::failure(
-                    serde_json::to_string_pretty(&json!({
-                        "ok": false,
-                        "operation": "projection",
-                        "code": code,
-                        "message": message,
-                        "projection": projection,
-                        "refusal": { "code": code, "message": message },
-                    }))
-                    .expect("CI projection refusal JSON is serializable"),
-                );
+            Err((code, message, Some(projection))) => {
+                if expected_identity.is_some_and(|expected| expected != projection.identity) {
+                    return ci_github_failure(
+                        format,
+                        "projection_identity_mismatch",
+                        format!(
+                            "expected projection identity `{}`, observed `{}`",
+                            expected_identity.expect("identity checked"),
+                            projection.identity
+                        ),
+                    );
+                }
+                if matches!(format, OutputFormat::Json) {
+                    return CommandOutput::failure(
+                        serde_json::to_string_pretty(&json!({
+                            "ok": false,
+                            "operation": "projection",
+                            "code": code,
+                            "message": message,
+                            "projection": projection,
+                            "refusal": { "code": code, "message": message },
+                        }))
+                        .expect("CI projection refusal JSON is serializable"),
+                    );
+                }
+                return ci_github_failure(format, &code, message);
             }
             Err((code, message, _)) => return ci_github_failure(format, &code, message),
         };
@@ -3414,6 +3486,15 @@ pub fn proof_lifecycle_with_grant(
             );
         }
     };
+    if let Some(error) = command_secret_delivery_refusal(&typed_effect_admission) {
+        return proof_secret_delivery_admission_failure_output(
+            format,
+            "ota proof lifecycle",
+            &target.contract_path,
+            error,
+            &typed_effect_admission.secret_delivery.projection,
+        );
+    }
     if let Some(error) = typed_effect_admission_refusal(&typed_effect_admission.typed) {
         return proof_typed_effect_admission_failure_output(
             format,
@@ -3431,6 +3512,7 @@ pub fn proof_lifecycle_with_grant(
     let typed_policy_observed = typed_effect_admission.is_typed();
     let CommandTypedEffectAdmission {
         typed: typed_effect_admission,
+        secret_delivery: _,
         loaded_policy,
     } = typed_effect_admission;
     let replay_input_preflight = workflow_replay_input_preflight_for_closure_with_retained_policy(
@@ -4107,31 +4189,46 @@ pub fn proof_runtime_with_grant(
                         origin: String::from("negative_control"),
                     });
                 }
-                match typed_effect_closure_refusal(
+                let command_admission = match admit_command_typed_effect_closure(
                     contract,
                     &target.contract_path,
                     effective_workflow_selector.as_deref(),
                     &typed_effect_roots,
                     overrides,
+                    Some(&current_effect_governance_overrides()),
                 ) {
-                    Ok(Some(error)) => {
-                        return proof_typed_effect_admission_failure_output(
-                            format,
-                            "ota proof runtime",
-                            &target.contract_path,
-                            error,
-                        );
-                    }
-                    Ok(None) => {}
+                    Ok(admission) => admission,
                     Err(error) => {
                         return proof_typed_effect_admission_failure_output(
                             format,
                             "ota proof runtime",
                             &target.contract_path,
-                            error,
+                            *error,
                         );
                     }
+                };
+                if let Some(error) = command_secret_delivery_refusal(&command_admission) {
+                    return proof_secret_delivery_admission_failure_output(
+                        format,
+                        "ota proof runtime",
+                        &target.contract_path,
+                        error,
+                        &command_admission.secret_delivery.projection,
+                    );
                 }
+                if let Some(error) = typed_effect_admission_refusal(&command_admission.typed) {
+                    return proof_typed_effect_admission_failure_output(
+                        format,
+                        "ota proof runtime",
+                        &target.contract_path,
+                        error,
+                    );
+                }
+                let CommandTypedEffectAdmission {
+                    typed: _,
+                    secret_delivery: _,
+                    loaded_policy: retained_effect_policy,
+                } = command_admission;
                 let mut proof_task_closure = contract
                     .selected_workflow_task_closure_names(effective_workflow_selector.as_deref());
                 for observation in &selected_seam_observations {
@@ -4146,11 +4243,13 @@ pub fn proof_runtime_with_grant(
                 proof_task_closure.dedup();
                 let proof_replay_input_preflight =
                     if let Some(workflow_name) = effective_workflow_selector.as_deref() {
-                        workflow_replay_input_preflight_for_closure(
+                        workflow_replay_input_preflight_for_closure_with_retained_policy(
                             contract,
                             &target.contract_path,
                             workflow_name,
                             proof_task_closure.clone(),
+                            retained_effect_policy.is_some(),
+                            retained_effect_policy,
                         )
                     } else {
                         workflow_replay_input_preflight(
@@ -6115,6 +6214,7 @@ fn execution_option_refusal_up_preview_plan(task_name: &str) -> UpPreviewPlan {
         dependency_steps: Vec::new(),
         effect_application_plans: Vec::new(),
         effect_policy_decision: None,
+        secret_delivery_admission: None,
     }
 }
 
@@ -15887,7 +15987,11 @@ fn listed_task_summaries<'a>(
         if !task_matches_tasks_filters(contract, name, task, filters) {
             continue;
         }
-        tasks.push(TaskSummary::from_spec(name, task, current_os(), contract));
+        let mut summary = TaskSummary::from_spec(name, task, current_os(), contract);
+        if selected_secret_requirement_for_task(contract, name) {
+            refuse_lane_use_for_secret_delivery(&mut summary.usage);
+        }
+        tasks.push(summary);
     }
 
     let visible_task_names = tasks
@@ -15899,6 +16003,54 @@ fn listed_task_summaries<'a>(
     }
 
     tasks
+}
+
+fn selected_secret_requirement_for_task(contract: &Contract, task_name: &str) -> bool {
+    contract.secret_requirements.values().any(|requirement| {
+        requirement
+            .recipients
+            .tasks
+            .iter()
+            .any(|task| task == task_name)
+    })
+}
+
+fn selected_secret_requirement_for_workflow(contract: &Contract, workflow_name: &str) -> bool {
+    contract.secret_requirements.values().any(|requirement| {
+        requirement
+            .recipients
+            .workflows
+            .iter()
+            .any(|workflow| workflow == workflow_name)
+    })
+}
+
+fn refuse_lane_use_for_secret_delivery(usage: &mut crate::output::LaneUseSummary) {
+    let refused = || crate::output::LaneUseInvocationSummary {
+        callable: false,
+        command: None,
+        reason: Some(String::from(
+            crate::secret_delivery_admission::SECRET_DELIVERY_PROTECTED_TRUTH_UNAVAILABLE,
+        )),
+    };
+    usage.agent = refused();
+    for mode in &mut usage.modes {
+        mode.human = refused();
+        mode.agent = refused();
+    }
+}
+
+fn listed_workflow_summaries<'a>(
+    contract: &'a Contract,
+    contract_path: &Path,
+) -> Vec<ListedWorkflowSummary<'a>> {
+    let mut workflows = WorkflowSummary::list_from_contract_with_path(contract, contract_path);
+    for listed in &mut workflows {
+        if selected_secret_requirement_for_workflow(contract, listed.workflow.name) {
+            refuse_lane_use_for_secret_delivery(&mut listed.workflow.usage);
+        }
+    }
+    workflows
 }
 
 #[derive(Clone, Copy)]
@@ -16093,6 +16245,7 @@ fn harness_preflight_for_task(
         } else {
             String::from("allowed")
         },
+        secret_delivery_admission: None,
         sandbox_admission: None,
         review_required,
         declared_safe_for_agent: Some(task.safe_for_agent),
@@ -18606,29 +18759,135 @@ fn bind_effect_policy_to_harness_preflight(
     preflight.replay = reconcile_preflight_replay(preflight);
 }
 
+fn harness_secret_delivery_admission(
+    contract: &Contract,
+    workflow_name: Option<&str>,
+    roots: &[EffectPolicyInvocation],
+) -> Result<crate::secret_delivery_admission::SecretDeliveryPublicProjection, String> {
+    let applicable = crate::secret_delivery_admission::secret_delivery_applies_to_selected_subject(
+        contract,
+        workflow_name,
+        roots,
+    )
+    .map_err(|error| format!("{}: {}", error.code, error.message))?;
+    if !applicable {
+        return crate::secret_delivery_admission::admit_secret_delivery_command(
+            contract,
+            workflow_name,
+            roots,
+            &[],
+        )
+        .map(|admission| admission.projection)
+        .map_err(|error| format!("{}: {}", error.code, error.message));
+    }
+    let invocations =
+        selected_execution_closure_invocations(contract, roots, ExecutionOverrides::default())
+            .map_err(|error| error.to_string())?;
+    crate::secret_delivery_admission::admit_secret_delivery_command(
+        contract,
+        workflow_name,
+        roots,
+        &invocations,
+    )
+    .map(|admission| admission.projection)
+    .map_err(|error| format!("{}: {}", error.code, error.message))
+}
+
+fn bind_secret_delivery_to_harness_preflight(
+    preflight: &mut crate::output::GovernancePreflightEvaluation,
+    projection: &crate::secret_delivery_admission::SecretDeliveryPublicProjection,
+) {
+    if !projection.applicable {
+        return;
+    }
+    preflight.secret_delivery_admission = Some(projection.clone());
+    let reason = projection
+        .refusal_code
+        .as_deref()
+        .unwrap_or(crate::secret_delivery_admission::SECRET_DELIVERY_PROTECTED_TRUTH_UNAVAILABLE);
+    preflight.state = String::from("refused");
+    preflight.review_required = Some(true);
+    preflight.refusal_reason_family = Some(reason.to_string());
+    preflight
+        .decision_basis
+        .push(crate::output::GovernanceDecisionBasisEntry {
+            id: format!("secret_delivery_admission:{}", projection.identity),
+            family: String::from("secret_delivery_admission"),
+            evidence_class: String::from("derived"),
+            detail: Some(reason.to_string()),
+        });
+    preflight
+        .decision_inputs
+        .push(crate::output::GovernanceDecisionInputEntry {
+            id: format!("secret_delivery_public_projection:{}", projection.identity),
+            family: String::from("secret_delivery_public_projection"),
+            evidence_class: String::from("derived"),
+            replay_class: String::from("pinned"),
+            detail: Some(String::from("protected provider-binding truth unavailable")),
+        });
+    preflight.evidence_classes.review_required = Some(String::from("derived"));
+    preflight.evidence_classes.refusal_reason_family = Some(String::from("derived"));
+    preflight.replay = reconcile_preflight_replay(preflight);
+}
+
+fn bind_secret_delivery_unavailable_to_harness_preflight(
+    preflight: &mut crate::output::GovernancePreflightEvaluation,
+) {
+    let reason = crate::secret_delivery_admission::SECRET_DELIVERY_ADMISSION_UNAVAILABLE;
+    preflight.state = String::from("refused");
+    preflight.review_required = Some(true);
+    preflight.refusal_reason_family = Some(reason.to_string());
+    preflight
+        .decision_basis
+        .push(crate::output::GovernanceDecisionBasisEntry {
+            id: format!("secret_delivery_admission:{reason}"),
+            family: String::from("secret_delivery_admission"),
+            evidence_class: String::from("derived"),
+            detail: Some(reason.to_string()),
+        });
+    preflight
+        .decision_inputs
+        .push(crate::output::GovernanceDecisionInputEntry {
+            id: format!("secret_delivery_admission:{reason}"),
+            family: String::from("secret_delivery_admission"),
+            evidence_class: String::from("derived"),
+            replay_class: String::from("unavailable"),
+            detail: Some(String::from(
+                "selected secret-delivery admission could not be reconciled",
+            )),
+        });
+    preflight.evidence_classes.review_required = Some(String::from("derived"));
+    preflight.evidence_classes.refusal_reason_family = Some(String::from("derived"));
+    preflight.replay = reconcile_preflight_replay(preflight);
+}
+
 fn task_harness_capability(
     contract: &Contract,
     contract_path: &Path,
     agent: Option<&AgentSummary<'_>>,
     task: &TaskSummary<'_>,
+    secret_delivery_admission: Result<
+        crate::secret_delivery_admission::SecretDeliveryPublicProjection,
+        String,
+    >,
     loaded_policy: Result<Option<&LoadedOrgPolicyPack>, &str>,
 ) -> HarnessLaneCapability {
     let refusal =
         agent_execution_refusal_for_task(contract, task.name, ExecutionOverrides::default());
     let effects =
         collect_task_closure_effects_summary(contract, task.name, ExecutionOverrides::default());
-    let effect_policy = harness_effect_policy_binding(
-        contract,
-        contract_path,
-        None,
-        &[EffectPolicyInvocation {
-            task: task.name.to_string(),
-            origin: String::from("task_capability"),
-        }],
-        loaded_policy,
-    );
+    let roots = [EffectPolicyInvocation {
+        task: task.name.to_string(),
+        origin: String::from("task_capability"),
+    }];
+    let effect_policy =
+        harness_effect_policy_binding(contract, contract_path, None, &roots, loaded_policy);
     let mut preflight = harness_preflight_for_task(task, refusal.as_ref());
     bind_effect_policy_to_harness_preflight(&mut preflight, &effect_policy);
+    match secret_delivery_admission.as_ref() {
+        Ok(projection) => bind_secret_delivery_to_harness_preflight(&mut preflight, projection),
+        Err(_) => bind_secret_delivery_unavailable_to_harness_preflight(&mut preflight),
+    }
     HarnessLaneCapability {
         lane_id: format!("task:{}", task.name),
         lane_kind: String::from("task"),
@@ -18640,6 +18899,9 @@ fn task_harness_capability(
             contract, agent, task.name, &effects,
         )),
         effect_policy,
+        secret_delivery_admission: secret_delivery_admission
+            .ok()
+            .filter(|entry| entry.applicable),
         effects: (!effects.is_empty()).then_some(effects),
         blocked_task: refusal.as_ref().map(|entry| entry.blocked_task.clone()),
         closure_path: refusal.map(|entry| entry.path).unwrap_or_default(),
@@ -18766,6 +19028,7 @@ fn harness_preflight_for_workflow(
         } else {
             String::from("allowed")
         },
+        secret_delivery_admission: None,
         sandbox_admission: None,
         review_required,
         declared_safe_for_agent: workflow.declared_safe_for_agent,
@@ -18817,20 +19080,29 @@ fn workflow_harness_capability(
     contract_path: &Path,
     agent: Option<&AgentSummary<'_>>,
     workflow: &WorkflowSummary<'_>,
+    secret_delivery_admission: Result<
+        crate::secret_delivery_admission::SecretDeliveryPublicProjection,
+        String,
+    >,
     loaded_policy: Result<Option<&LoadedOrgPolicyPack>, &str>,
 ) -> HarnessLaneCapability {
     let selector = workflow_selector_from_summary(workflow);
     let refusal = workflow_agent_refusal(contract, workflow.name);
     let effects = workflow_effects_summary(contract, workflow.name);
+    let roots = selected_workflow_phase_task_roots(contract, Some(workflow.name));
     let effect_policy = harness_effect_policy_binding(
         contract,
         contract_path,
         Some(workflow.name),
-        selected_workflow_phase_task_roots(contract, Some(workflow.name)).as_slice(),
+        roots.as_slice(),
         loaded_policy,
     );
     let mut preflight = harness_preflight_for_workflow(contract, workflow, refusal.as_ref());
     bind_effect_policy_to_harness_preflight(&mut preflight, &effect_policy);
+    match secret_delivery_admission.as_ref() {
+        Ok(projection) => bind_secret_delivery_to_harness_preflight(&mut preflight, projection),
+        Err(_) => bind_secret_delivery_unavailable_to_harness_preflight(&mut preflight),
+    }
     HarnessLaneCapability {
         lane_id: format!("workflow:{selector}"),
         lane_kind: String::from("workflow"),
@@ -18845,6 +19117,9 @@ fn workflow_harness_capability(
             &effects,
         )),
         effect_policy,
+        secret_delivery_admission: secret_delivery_admission
+            .ok()
+            .filter(|entry| entry.applicable),
         effects: (!effects.is_empty()).then_some(effects),
         blocked_task: refusal.as_ref().map(|entry| entry.blocked_task.clone()),
         closure_path: refusal.map(|entry| entry.path).unwrap_or_default(),
@@ -19099,6 +19374,16 @@ fn harness_capability_profile_for_tasks(
     agent: Option<&AgentSummary<'_>>,
     tasks: &[TaskSummary<'_>],
 ) -> HarnessCapabilityProfile {
+    let secret_delivery_admissions = tasks
+        .iter()
+        .map(|task| {
+            let roots = [EffectPolicyInvocation {
+                task: task.name.to_string(),
+                origin: String::from("task_capability"),
+            }];
+            harness_secret_delivery_admission(contract, None, &roots)
+        })
+        .collect::<Vec<_>>();
     let loaded_policy = load_org_policy_pack_auto_details(contract_path);
     let loaded_policy = loaded_policy
         .as_ref()
@@ -19106,12 +19391,15 @@ fn harness_capability_profile_for_tasks(
         .map_err(|error| error.to_string());
     let mut callable_tasks = Vec::new();
     let mut refused_tasks = Vec::new();
-    for task in tasks {
+    for (task, secret_delivery_admission) in
+        tasks.iter().zip(secret_delivery_admissions.into_iter())
+    {
         let capability = task_harness_capability(
             contract,
             contract_path,
             agent,
             task,
+            secret_delivery_admission,
             loaded_policy
                 .as_ref()
                 .map(|loaded| *loaded)
@@ -19152,6 +19440,17 @@ fn harness_capability_profile_for_workflows(
     agent: Option<&AgentSummary<'_>>,
     workflows: &[ListedWorkflowSummary<'_>],
 ) -> HarnessCapabilityProfile {
+    let secret_delivery_admissions = workflows
+        .iter()
+        .map(|listed| {
+            let roots = selected_workflow_phase_task_roots(contract, Some(listed.workflow.name));
+            harness_secret_delivery_admission(
+                contract,
+                Some(listed.workflow.name),
+                roots.as_slice(),
+            )
+        })
+        .collect::<Vec<_>>();
     let loaded_policy = load_org_policy_pack_auto_details(contract_path);
     let loaded_policy = loaded_policy
         .as_ref()
@@ -19159,12 +19458,15 @@ fn harness_capability_profile_for_workflows(
         .map_err(|error| error.to_string());
     let mut callable_workflows = Vec::new();
     let mut refused_workflows = Vec::new();
-    for listed in workflows {
+    for (listed, secret_delivery_admission) in
+        workflows.iter().zip(secret_delivery_admissions.into_iter())
+    {
         let capability = workflow_harness_capability(
             contract,
             contract_path,
             agent,
             &listed.workflow,
+            secret_delivery_admission,
             loaded_policy
                 .as_ref()
                 .map(|loaded| *loaded)
@@ -20055,10 +20357,7 @@ pub fn workflows(
     finalize_debug(
         match load_and_validate_target(&resolved_path, single_member) {
             Ok(target) if members.is_empty() || members.len() == 1 => {
-                let workflows = WorkflowSummary::list_from_contract_with_path(
-                    &target.contract,
-                    &target.contract_path,
-                );
+                let workflows = listed_workflow_summaries(&target.contract, &target.contract_path);
                 let default = target
                     .contract
                     .workflows
@@ -20132,7 +20431,7 @@ pub fn workflows(
 
                     let mut member_results = Vec::new();
                     for (member, member_target) in &member_targets {
-                        let member_workflows = WorkflowSummary::list_from_contract_with_path(
+                        let member_workflows = listed_workflow_summaries(
                             &member_target.contract,
                             &member_target.contract_path,
                         );
@@ -20273,10 +20572,8 @@ pub fn workflows(
 
                 let mut member_results = Vec::new();
                 for (member, target) in &member_targets {
-                    let workflows = WorkflowSummary::list_from_contract_with_path(
-                        &target.contract,
-                        &target.contract_path,
-                    );
+                    let workflows =
+                        listed_workflow_summaries(&target.contract, &target.contract_path);
                     let tasks = listed_task_summaries(
                         &target.contract,
                         false,
@@ -22004,6 +22301,16 @@ struct ProofTypedEffectAdmissionFailure {
     execution_started: bool,
 }
 
+#[derive(Serialize)]
+struct ProofSecretDeliveryAdmissionFailure<'a> {
+    ok: bool,
+    path: String,
+    code: &'static str,
+    error: String,
+    execution_started: bool,
+    secret_delivery_admission: &'a crate::secret_delivery_admission::SecretDeliveryPublicProjection,
+}
+
 fn proof_typed_effect_admission_failure_output(
     format: OutputFormat,
     command: &str,
@@ -22025,6 +22332,29 @@ fn proof_typed_effect_admission_failure_output(
             error,
             execution_started: false,
         })),
+    }
+}
+
+fn proof_secret_delivery_admission_failure_output(
+    format: OutputFormat,
+    command: &str,
+    contract_path: &Path,
+    error: RunError,
+    projection: &crate::secret_delivery_admission::SecretDeliveryPublicProjection,
+) -> CommandOutput {
+    let error = render_run_error(error);
+    match format {
+        OutputFormat::Text => CommandOutput::failure(stylize_text_failure(command, &error)),
+        OutputFormat::Json => {
+            CommandOutput::failure(to_json(&ProofSecretDeliveryAdmissionFailure {
+                ok: false,
+                path: compact_contract_path(contract_path),
+                code: crate::secret_delivery_admission::SECRET_DELIVERY_PROTECTED_TRUTH_UNAVAILABLE,
+                error,
+                execution_started: false,
+                secret_delivery_admission: projection,
+            }))
+        }
     }
 }
 
@@ -22196,22 +22526,6 @@ fn workflow_replay_input_preflight(
         policy,
         policy_load_error,
     }
-}
-
-fn workflow_replay_input_preflight_for_closure(
-    contract: &Contract,
-    contract_path: &Path,
-    workflow_name: &str,
-    closure: Vec<String>,
-) -> TaskReplayInputPreflight {
-    workflow_replay_input_preflight_for_closure_with_retained_policy(
-        contract,
-        contract_path,
-        workflow_name,
-        closure,
-        false,
-        None,
-    )
 }
 
 fn workflow_replay_input_preflight_for_closure_with_retained_policy(
@@ -23286,8 +23600,18 @@ fn render_run_preview_target(
         }
     };
     let typed_policy_observed = typed_effect_admission.is_typed();
+    if command_secret_delivery_refusal(&typed_effect_admission).is_some() {
+        return render_secret_delivery_run_preview_refusal(
+            format,
+            &target.contract_path,
+            member,
+            task_name.as_str(),
+            &typed_effect_admission.secret_delivery.projection,
+        );
+    }
     let CommandTypedEffectAdmission {
         typed: typed_effect_admission,
+        secret_delivery: _,
         loaded_policy,
     } = typed_effect_admission;
     let effect_policy_decision = typed_effect_admission.policy_decision.clone();
@@ -23805,6 +24129,36 @@ fn render_run_preview_target(
             stderr: None,
             exit_code,
         },
+    }
+}
+
+fn render_secret_delivery_run_preview_refusal(
+    format: OutputFormat,
+    contract_path: &Path,
+    member: Option<&str>,
+    task_name: &str,
+    projection: &crate::secret_delivery_admission::SecretDeliveryPublicProjection,
+) -> CommandOutput {
+    let message = "selected secret requirements require protected provider-binding truth, but no production binding loader or provider transaction is available";
+    match format {
+        OutputFormat::Text => CommandOutput::failure(stylize_text_failure(
+            "ota run",
+            &format!(
+                "Secret delivery admission refused before task startup\nWhy: {message}\nNext: inspect the requirement and wait for an activated provider transaction"
+            ),
+        )),
+        OutputFormat::Json => CommandOutput::failure(to_json_value(serde_json::json!({
+            "ok": false,
+            "path": contract_path.display().to_string(),
+            "member": member,
+            "task": task_name,
+            "dry_run": true,
+            "execution_started": false,
+            "preview_status": "BLOCKED",
+            "code": crate::secret_delivery_admission::SECRET_DELIVERY_PROTECTED_TRUTH_UNAVAILABLE,
+            "error": message,
+            "secret_delivery_admission": projection,
+        }))),
     }
 }
 
@@ -28394,6 +28748,7 @@ pub fn doctor(
                                 agent: None,
                                 execution: None,
                                 governance: None,
+                                secret_delivery_admission: None,
                                 claim_assurance: Vec::new(),
                                 replay_input_policy: None,
                                 provisioning: report.provisioning.as_ref().map(|value| &value.plan),
@@ -28905,6 +29260,19 @@ pub fn doctor(
                                 Some(mode),
                                 doctor_lifecycle,
                             );
+                            let secret_delivery_admission = match doctor_secret_delivery_projection(
+                                &target.contract,
+                                workflow_name,
+                            ) {
+                                Ok(projection) => projection,
+                                Err(error) => {
+                                    return finalize_debug(
+                                        CommandOutput::failure(error),
+                                        debug,
+                                        debug_lines,
+                                    );
+                                }
+                            };
                             let exit_code = if report.ok && !fix_failed { 0 } else { 1 };
                             CommandOutput {
                                 stdout: to_json(&DoctorSuccess {
@@ -28935,6 +29303,7 @@ pub fn doctor(
                                         &target.contract,
                                         &rewritten_findings,
                                     ),
+                                    secret_delivery_admission,
                                     claim_assurance: doctor_claim_assurance(
                                         &target.contract,
                                         &target.contract_path,
@@ -55091,6 +55460,7 @@ fn governance_evaluation_for_task_preview(
                 refusal,
             )
             .to_string(),
+            secret_delivery_admission: None,
             sandbox_admission: None,
             review_required,
             declared_safe_for_agent: Some(task.safe_for_agent),
@@ -55220,6 +55590,7 @@ fn governance_evaluation_for_workflow_preview(
         preflight: crate::output::GovernancePreflightEvaluation {
             state: governance_preflight_state(summary, safety.effective_safe, agent, refusal)
                 .to_string(),
+            secret_delivery_admission: None,
             sandbox_admission: None,
             review_required,
             declared_safe_for_agent: safety.declared_safe,
@@ -55633,7 +56004,19 @@ fn reconcile_preflight_replay(
         info_count: 0,
         primary_blocker: None,
     };
-    let expected_state = if parsed.doctor_verdict.is_some() {
+    let secret_delivery_refusal =
+        evaluation
+            .secret_delivery_admission
+            .as_ref()
+            .filter(|projection| {
+                projection.status
+                    == crate::secret_delivery_admission::SecretDeliveryAdmissionStatus::Refused
+            });
+    let secret_delivery_unavailable = evaluation.refusal_reason_family.as_deref()
+        == Some(crate::secret_delivery_admission::SECRET_DELIVERY_ADMISSION_UNAVAILABLE);
+    let expected_state = if secret_delivery_refusal.is_some() || secret_delivery_unavailable {
+        String::from("refused")
+    } else if parsed.doctor_verdict.is_some() {
         governance_preflight_state(
             &synthetic_summary,
             parsed.effective_safe_for_agent,
@@ -55653,7 +56036,7 @@ fn reconcile_preflight_replay(
             &parsed.unsafe_closure_tasks,
             lane_kind,
         );
-    let expected_basis = governance_preflight_decision_basis(
+    let mut expected_basis = governance_preflight_decision_basis(
         parsed.declared_safe_for_agent,
         parsed.effective_safe_for_agent,
         parsed.refusal.as_ref(),
@@ -55662,12 +56045,34 @@ fn reconcile_preflight_replay(
         expected_crossing_classification.as_deref(),
         expected_crossing_boundary.as_deref(),
     );
+    if let Some(projection) = secret_delivery_refusal {
+        expected_basis.push(crate::output::GovernanceDecisionBasisEntry {
+            id: format!("secret_delivery_admission:{}", projection.identity),
+            family: String::from("secret_delivery_admission"),
+            evidence_class: String::from("derived"),
+            detail: projection.refusal_code.clone(),
+        });
+    } else if secret_delivery_unavailable {
+        let reason = crate::secret_delivery_admission::SECRET_DELIVERY_ADMISSION_UNAVAILABLE;
+        expected_basis.push(crate::output::GovernanceDecisionBasisEntry {
+            id: format!("secret_delivery_admission:{reason}"),
+            family: String::from("secret_delivery_admission"),
+            evidence_class: String::from("derived"),
+            detail: Some(reason.to_string()),
+        });
+    }
 
     let mut mismatches = Vec::new();
     if evaluation.state != expected_state {
         mismatches.push(format!("state:{}!={}", evaluation.state, expected_state));
     }
-    if evaluation.review_required != parsed.effective_safe_for_agent.map(std::ops::Not::not) {
+    let expected_review_required =
+        if secret_delivery_refusal.is_some() || secret_delivery_unavailable {
+            Some(true)
+        } else {
+            parsed.effective_safe_for_agent.map(std::ops::Not::not)
+        };
+    if evaluation.review_required != expected_review_required {
         mismatches.push(String::from("review_required"));
     }
     if evaluation.crossing_required != expected_crossing_required {
@@ -56185,6 +56590,7 @@ fn governance_evaluation_for_up_result(
         .cloned()
         .unwrap_or(crate::output::GovernancePreflightEvaluation {
             state: preflight_state.to_string(),
+            secret_delivery_admission: None,
             sandbox_admission: None,
             review_required: None,
             declared_safe_for_agent: None,
@@ -63228,6 +63634,7 @@ fn render_up(
     member: Option<&str>,
     status: &str,
     phase: &str,
+    governance_preflight: Option<crate::output::GovernancePreflightEvaluation>,
     report: DoctorReport,
     ready: bool,
     service: Option<&str>,
@@ -63273,6 +63680,7 @@ fn render_up(
             status,
             phase,
             cause.map(up_failure_cause_key),
+            governance_preflight.as_ref(),
             report,
             ready,
             stderr.filter(|stderr| !stderr.is_empty()),
@@ -63362,6 +63770,7 @@ fn render_up_result(
             member_from_display_contract_target(text_path),
             result.status,
             result.phase,
+            result.governance_preflight,
             result.report,
             result.ok,
             result.service.as_deref(),
@@ -79695,6 +80104,7 @@ policies:
             super::finalize_governance_evaluation(crate::output::GovernanceEvaluation {
                 preflight: crate::output::GovernancePreflightEvaluation {
                     state: String::from("refused"),
+                    secret_delivery_admission: None,
                     sandbox_admission: None,
                     review_required: Some(true),
                     declared_safe_for_agent: Some(false),
@@ -86392,6 +86802,7 @@ tasks:
             preview: None,
             governance_preflight: Some(crate::output::GovernancePreflightEvaluation {
                 state: String::from("warning_only"),
+                secret_delivery_admission: None,
                 sandbox_admission: None,
                 review_required: Some(true),
                 declared_safe_for_agent: Some(true),
@@ -86679,6 +87090,7 @@ tasks:
             preview: None,
             governance_preflight: Some(crate::output::GovernancePreflightEvaluation {
                 state: String::from("warning_only"),
+                secret_delivery_admission: None,
                 sandbox_admission: None,
                 review_required: Some(true),
                 declared_safe_for_agent: Some(false),
@@ -86854,10 +87266,12 @@ tasks:
                     dependency_steps: Vec::new(),
                     effect_application_plans: Vec::new(),
                     effect_policy_decision: None,
+                    secret_delivery_admission: None,
                 },
                 governance: crate::output::GovernanceEvaluation {
                     preflight: crate::output::GovernancePreflightEvaluation {
                         state: String::from("blocked"),
+                        secret_delivery_admission: None,
                         sandbox_admission: None,
                         review_required: None,
                         declared_safe_for_agent: None,
@@ -110671,6 +111085,7 @@ fn run_single_contract_target(
     let typed_policy_observed = typed_effect_admission.is_typed();
     let CommandTypedEffectAdmission {
         typed: typed_effect_admission,
+        secret_delivery: _,
         loaded_policy,
     } = typed_effect_admission;
     let replay_input_preflight = task_replay_input_preflight_with_retained_policy(
@@ -110993,6 +111408,14 @@ fn enforce_typed_effect_pre_execution_boundary(
         exit_code: 1,
         receipt: None,
     })?;
+    if let Some(error) = command_secret_delivery_refusal(&admission) {
+        return Err(RunCommandFailure {
+            message: stylize_text_failure("ota run", &render_run_error(error)),
+            summary: None,
+            exit_code: 1,
+            receipt: None,
+        });
+    }
     if let Some(error) = typed_effect_admission_refusal(&admission.typed) {
         return Err(RunCommandFailure {
             message: stylize_text_failure("ota run", &render_run_error(error)),
@@ -111031,39 +111454,6 @@ fn selected_workflow_phase_task_roots(
         })
     })
     .collect()
-}
-
-fn typed_effect_closure_refusal(
-    contract: &Contract,
-    contract_path: &Path,
-    workflow_name: Option<&str>,
-    roots: &[EffectPolicyInvocation],
-    overrides: ExecutionOverrides,
-) -> Result<Option<RunError>, RunError> {
-    let admission =
-        typed_effect_closure_admission(contract, contract_path, workflow_name, roots, overrides)?;
-    Ok(typed_effect_admission_refusal(&admission))
-}
-
-fn typed_effect_closure_admission(
-    contract: &Contract,
-    contract_path: &Path,
-    workflow_name: Option<&str>,
-    roots: &[EffectPolicyInvocation],
-    overrides: ExecutionOverrides,
-) -> Result<TypedEffectAdmission, RunError> {
-    let adjusted_contract =
-        contract_adjusted_for_selected_workflow_env_profile(contract, workflow_name);
-    let contract = adjusted_contract.as_ref().unwrap_or(contract);
-    admit_typed_effect_closure(
-        contract,
-        contract_path,
-        workflow_name,
-        roots,
-        overrides,
-        Some(&current_effect_governance_overrides()),
-    )
-    .map_err(|error| *error)
 }
 
 #[derive(Debug, Clone)]
@@ -125912,6 +126302,7 @@ fn proof_runtime_doctor_artifact_json(
         agent: agent_summary,
         execution: execution_summary,
         governance: doctor_required_verification_governance(contract, &refined_findings),
+        secret_delivery_admission: doctor_secret_delivery_projection(contract, workflow_name)?,
         claim_assurance: doctor_claim_assurance(contract, contract_path, policy_snapshot),
         replay_input_policy: replay_input_policy.cloned(),
         provisioning: report.provisioning.as_ref().map(|value| &value.plan),
@@ -125922,6 +126313,23 @@ fn proof_runtime_doctor_artifact_json(
         toolchains: selected_toolchains,
         findings: &refined_findings,
     }))
+}
+
+fn doctor_secret_delivery_projection(
+    contract: &Contract,
+    workflow_name: Option<&str>,
+) -> Result<Option<crate::secret_delivery_admission::SecretDeliveryPublicProjection>, String> {
+    let Some((selected_workflow, _)) = contract.selected_workflow(workflow_name) else {
+        return Ok(None);
+    };
+    let roots = selected_workflow_phase_task_roots(contract, Some(selected_workflow));
+    harness_secret_delivery_admission(contract, Some(selected_workflow), &roots)
+        .map(|projection| projection.applicable.then_some(projection))
+        .map_err(|_| {
+            String::from(
+                "secret delivery admission could not reconcile the selected workflow; refusing Doctor output",
+            )
+        })
 }
 
 fn proof_runtime_refined_doctor_summary(
@@ -129550,6 +129958,7 @@ fn render_up_json(
     status: &str,
     phase: &str,
     cause: Option<&str>,
+    governance_preflight: Option<&crate::output::GovernancePreflightEvaluation>,
     report: DoctorReport,
     ready: bool,
     stderr: Option<&str>,
@@ -129566,7 +129975,13 @@ fn render_up_json(
             status,
             phase,
             cause,
-            governance: governance_evaluation_for_up_result(None, ready, status, phase, &receipt),
+            governance: governance_evaluation_for_up_result(
+                governance_preflight,
+                ready,
+                status,
+                phase,
+                &receipt,
+            ),
             findings: &report.findings,
             receipt,
             artifact_routing: up_artifact_routing(contract_path, None),
@@ -135413,6 +135828,7 @@ fn build_up_preview_with_actor(
         dependency_steps: Vec::new(),
         effect_application_plans: Vec::new(),
         effect_policy_decision: None,
+        secret_delivery_admission: None,
     };
     plan.actions = actions;
     plan.staged_actions = staged_actions;
@@ -138081,6 +138497,7 @@ fn typed_effect_up_pre_execution_result(
                     *error,
                     None,
                     None,
+                    false,
                 )
             } else {
                 typed_effect_up_refusal_result(
@@ -138091,11 +138508,15 @@ fn typed_effect_up_pre_execution_result(
                     agent,
                     *error,
                     None,
+                    false,
                 )
             }));
         }
     };
-    let Some(error) = typed_effect_admission_refusal(&command_admission.typed) else {
+    let secret_delivery_refusal = command_secret_delivery_refusal(&command_admission);
+    let typed_effect_refusal = typed_effect_admission_refusal(&command_admission.typed);
+    let secret_delivery_refused = secret_delivery_refusal.is_some();
+    let Some(error) = secret_delivery_refusal.or(typed_effect_refusal) else {
         if archive_effect_refusal {
             return Err(String::from(
                 "`--archive-effect-refusal` requires one eligible explicit typed policy denial; fallback, coarse, unavailable, allowed, warned, and provider-disabled outcomes are not archival authority",
@@ -138119,6 +138540,7 @@ fn typed_effect_up_pre_execution_result(
             error,
             evidence,
             Some(&command_admission),
+            secret_delivery_refused,
         )
     } else {
         typed_effect_up_refusal_result(
@@ -138129,8 +138551,29 @@ fn typed_effect_up_pre_execution_result(
             agent,
             error,
             evidence,
+            secret_delivery_refused,
         )
     };
+    if command_admission.secret_delivery.projection.applicable {
+        let projection = command_admission.secret_delivery.projection.clone();
+        if let Some(preflight) = result.governance_preflight.as_mut() {
+            bind_secret_delivery_to_harness_preflight(preflight, &projection);
+        }
+        if let Some(preview) = result.preview.as_mut() {
+            preview.plan.secret_delivery_admission = Some(projection.clone());
+            bind_secret_delivery_to_harness_preflight(
+                &mut preview.governance.preflight,
+                &projection,
+            );
+            let action =
+                String::from("refuse selected secret delivery before workflow preparation");
+            preview.plan.actions = vec![action.clone()];
+            preview.plan.staged_actions = vec![crate::output::PreviewStageAction {
+                stage_family: String::from("verify"),
+                action,
+            }];
+        }
+    }
     if archive_effect_refusal {
         archive_typed_effect_policy_refusal(
             contract,
@@ -138293,6 +138736,7 @@ fn typed_effect_up_refusal_result(
     typed_effect_policy_refusal: Option<
         crate::effect_orchestration::TypedEffectPolicyRefusalEvidence,
     >,
+    secret_delivery_refused: bool,
 ) -> RepoUpResult {
     let task_name = match &error {
         RunError::FileActionFailed { task, .. } | RunError::EffectPolicyDenied { task, .. } => {
@@ -138303,7 +138747,9 @@ fn typed_effect_up_refusal_result(
             .map(str::to_string),
     };
     let effect_policy_denied = matches!(&error, RunError::EffectPolicyDenied { .. });
-    let finding_code = if effect_policy_denied {
+    let finding_code = if secret_delivery_refused {
+        "OTA_SECRET_DELIVERY_PROTECTED_TRUTH_UNAVAILABLE"
+    } else if effect_policy_denied {
         "OTA_EFFECT_POLICY_DENIED"
     } else {
         "OTA_TYPED_EFFECT_ADMISSION_REFUSED"
@@ -138315,13 +138761,19 @@ fn typed_effect_up_refusal_result(
             owner: String::from("repo_contract"),
         }),
         severity: FindingSeverity::Error,
-        summary: if effect_policy_denied {
+        summary: if secret_delivery_refused {
+            String::from("Secret delivery protected truth is unavailable")
+        } else if effect_policy_denied {
             String::from("Typed effect denied by policy")
         } else {
             String::from("Typed effect execution is unavailable")
         },
         why: error.to_string(),
-        next: if effect_policy_denied {
+        next: if secret_delivery_refused {
+            String::from(
+                "inspect the public secret-delivery admission projection; provider binding and delivery remain unavailable in V12.1 Step 6",
+            )
+        } else if effect_policy_denied {
             String::from(
                 "inspect the effect-policy decision with `ota run <task> --dry-run --json`; policy denial cannot be weakened by a crossing grant or effect override",
             )
@@ -138399,6 +138851,7 @@ fn typed_effect_up_dry_run_refusal_result(
         crate::effect_orchestration::TypedEffectPolicyRefusalEvidence,
     >,
     admission: Option<&CommandTypedEffectAdmission>,
+    secret_delivery_refused: bool,
 ) -> RepoUpResult {
     let mut result = typed_effect_up_refusal_result(
         contract,
@@ -138408,6 +138861,7 @@ fn typed_effect_up_dry_run_refusal_result(
         agent,
         error,
         typed_effect_policy_refusal,
+        secret_delivery_refused,
     );
     let mut preview = build_up_preview_with_actor(
         contract,

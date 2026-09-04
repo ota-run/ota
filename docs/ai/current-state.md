@@ -35,6 +35,8 @@ durable agent workflow belongs in the canonical Ota skill.
 
 - branch: `1.6.28-implementation`
 - released baseline: `v1.6.27`
+- development package identity: `v1.6.28`; this is an unreleased implementation build, not a
+  release or support claim.
 - active version: V12.1 secret-delivery governance. Activated on 2026-09-02 after the released V12
   closure and feasibility review of PythiaLabs' credentialed CAEP boundary. The named first adapter
   is `google_secret_manager_github_oidc_process_environment_v1`, initially limited to a
@@ -46,8 +48,8 @@ durable agent workflow belongs in the canonical Ota skill.
   fail-closed resolution, followed by the exact first-adapter profile and implementation-subject
   descriptor model, the crate-private `secret_material_delivery` effect derivation foundation, the
   sealed provider-free evaluator/dry-run-plan model, and one retained command-scoped admission per
-  invocation. Step 6 was independently reviewed and activated at Core `2dd20ab8`; implementation is
-  authorized under that exact amendment.
+  invocation. Step 6 was independently reviewed and activated at Core `2dd20ab8`; its implementation
+  is now local and uncommitted under that exact amendment.
   No provider binding loader, concrete implementation registration, provider
   contact, materialization, injection, execution authority, positive evidence, or support claim is
   implemented yet. V12.2 and later versions remain inactive.
@@ -59,10 +61,11 @@ durable agent workflow belongs in the canonical Ota skill.
   Validation requires `metadata.ota.minimum_version` of at least `1.6.28` and rejects provider
   selectors, secret defaults, destination collisions, compatibility ownership conflicts, unknown
   or noncanonical recipients, and noncanonical environment-variable names. The Site contract
-  reference, Glossary, FAQ, canonical Skill, and both installed mirrors carry the same
-  declaration-only boundary; Learn and Examples remain unchanged because no usable delivery flow
-  exists. No command consumes the catalog for execution, no provider binding exists, and no secret
-  bytes are loaded or delivered. Step 2 is now explicitly activated under the V12.1 plan amendment
+  reference, Glossary, FAQ, Learn lesson, canonical Skill, and both installed mirrors carry the
+  current fail-closed admission boundary; Examples remain unchanged because no usable delivery flow
+  exists. Step 6 command admission now consumes exact selected recipients and refuses before setup
+  or execution while protected production binding truth is unavailable. No provider binding loader
+  exists and no secret bytes are loaded or delivered. Step 2 was explicitly activated under the V12.1 plan amendment
   after the connected proof-assurance hardening and immutable Linux/macOS evidence were inspected.
   It authorizes only the Core-owned provider-binding domain model, private canonical identities,
   opaque public disclosure, and pure fail-closed resolution of authority-sourced protected
@@ -149,8 +152,18 @@ durable agent workflow belongs in the canonical Ota skill.
   creation, mutation, or provider contact when complete Step 1-5 truth is unavailable; and permits
   only a separately derived public-safe projection that excludes private decision, realization,
   evaluation, plan, binding, source, subject, and invocation identities. Every production binding
-  loader, provider transaction, delivery, execution, receipt, archive, assurance, pressure, and
-  support path remains unauthorized. Step 7 and later steps remain unauthorized.
+  loader, provider transaction, delivery, execution, positive secret-delivery receipt,
+  secret-delivery archive, assurance, pressure, and support path remains unauthorized. Real
+  `ota up` retains only its existing generic blocked execution receipt with
+  `execution_attempted: false`. The local implementation wires this one retained admission
+  through `run`, `up`, runtime and lifecycle proof, Doctor context, CI projection/re-evaluation,
+  sandbox capability, and task/workflow harness output. Empty selections preserve existing behavior;
+  selected recipients emit only a domain-separated public negative projection with protected
+  identities excluded. Focused command and schema regressions prove refusal before fixture setup,
+  environment rendering, durable logs, proof artifacts, and command execution. Site and Skills have
+  connected uncommitted updates under explicit temporary synchronization waivers; standalone
+  Examples remain unchanged because Step 6 has no executable delivery example. Step 7 and later
+  steps remain unauthorized.
 - Vinicius' independent v1.6.27 source review confirmed that negative-control projection
   reconciliation is live on runtime proof, emitted-archive verification, and Doctor archive
   loading. It also exposed a narrower adversarial-test gap: the existing digest mutation was

@@ -774,6 +774,63 @@ fn published_contract_schema_discriminates_secret_requirements() {
 }
 
 #[test]
+fn secret_delivery_public_projection_rejects_contradictory_or_private_states() {
+    let schema = load_schema("docs/spec/json-schemas/secret-delivery-admission.json");
+    let compiled = JSONSchema::options()
+        .with_draft(Draft::Draft202012)
+        .compile(&schema)
+        .expect("secret-delivery admission schema should compile");
+    let refused = json!({
+        "schema_version": 1,
+        "identity": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "status": "refused",
+        "applicable": true,
+        "refusal_code": "secret_delivery_protected_truth_unavailable",
+        "availability": "not_checked",
+        "provider_contact": "not_attempted",
+        "delivery": "not_attempted",
+        "execution_started": false
+    });
+    assert!(compiled.is_valid(&refused));
+
+    let not_applicable = json!({
+        "schema_version": 1,
+        "identity": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "status": "not_applicable",
+        "applicable": false,
+        "availability": "not_checked",
+        "provider_contact": "not_attempted",
+        "delivery": "not_attempted",
+        "execution_started": false
+    });
+    assert!(compiled.is_valid(&not_applicable));
+
+    for (path, value) in [
+        ("status", json!("not_applicable")),
+        ("applicable", json!(false)),
+        ("provider_contact", json!("attempted")),
+        ("delivery", json!("delivered")),
+        ("execution_started", json!(true)),
+    ] {
+        let mut invalid = refused.clone();
+        invalid[path] = value;
+        assert!(!compiled.is_valid(&invalid), "mutation `{path}` passed");
+    }
+
+    let mut missing_reason = refused.clone();
+    missing_reason
+        .as_object_mut()
+        .expect("projection object")
+        .remove("refusal_code");
+    assert!(!compiled.is_valid(&missing_reason));
+
+    let mut private_identity = refused;
+    private_identity["binding_identity"] =
+        json!("sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc");
+    assert!(!compiled.is_valid(&private_identity));
+}
+
+#[test]
 fn published_contract_schema_includes_crossing_authority_reference() {
     let schema = load_schema("docs/spec/json-schemas/contract.json");
     let authority = &schema["$defs"]["governance"]["properties"]["crossing_authority"];

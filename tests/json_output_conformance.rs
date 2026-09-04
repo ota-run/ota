@@ -2376,6 +2376,697 @@ workflows:
 
 #[cfg(unix)]
 #[test]
+fn secret_delivery_admission_is_public_bounded_and_precedes_selected_side_effects() {
+    let fixture = tempfile::tempdir().expect("tempdir");
+    fs::write(
+        fixture.path().join("ota.yaml"),
+        r#"
+version: 1
+metadata:
+  ota:
+    minimum_version: 1.6.28
+project:
+  name: secret-delivery-admission
+env:
+  profiles:
+    release:
+      env:
+        RELEASE_MODE: governed
+      render:
+        dotenv:
+          path: .env.release
+          include: [RELEASE_MODE]
+tasks:
+  setup:
+    safe_for_agent: true
+    command:
+      exe: sh
+      args: ["-c", "touch setup-sentinel"]
+  publish:
+    safe_for_agent: true
+    command:
+      exe: sh
+      args: ["-c", "touch command-sentinel"]
+  check:
+    safe_for_agent: true
+    command:
+      exe: sh
+      args: ["-c", "true"]
+agent:
+  safe_tasks: [check, publish, setup]
+  writable_paths: [artifacts]
+  protected_paths: [ota.yaml]
+secret_requirements:
+  release_token:
+    secret_class: authentication_credential
+    purpose: external_api_authentication
+    delivery:
+      kind: process_environment
+      variable: RELEASE_TOKEN
+    recipients:
+      tasks: [publish]
+      workflows: [release]
+      dependencies: deny
+      hooks: deny
+      services: deny
+      helpers: deny
+      containers: deny
+      remote_execution: deny
+      proof_observers: deny
+      negative_controls: deny
+      lifecycle_children: deny
+    constraints:
+      actor_mode: ci
+      environment: test
+      execution_mode: native
+      target_platform: linux
+      runtime_boundary: process
+      capability: segmented_process_environment
+services:
+  database:
+    manager:
+      kind: compose
+      name: secret-delivery-admission
+      file: compose.yaml
+      service: database
+    lifecycle:
+      teardown_assertion: manager_inactive
+workflows:
+  default: release
+  release:
+    setup:
+      task: setup
+    env:
+      profile: release
+    run:
+      task: publish
+    proof:
+      lifecycle:
+        services: [database]
+        assertion:
+          task: check
+"#,
+    )
+    .expect("contract");
+    fs::write(
+        fixture.path().join("compose.yaml"),
+        "services:\n  database:\n    image: postgres:17\n",
+    )
+    .expect("compose fixture");
+
+    let assert_no_side_effects = || {
+        for path in [
+            "setup-sentinel",
+            "command-sentinel",
+            ".env.release",
+            ".ota/state/logs",
+            ".ota/proof",
+        ] {
+            assert!(
+                !fixture.path().join(path).exists(),
+                "unexpected residue: {path}"
+            );
+        }
+    };
+
+    let task_preview = run_ota_with_env(
+        &["run", "publish", "--dry-run", "--json"],
+        fixture.path(),
+        &[],
+        false,
+    );
+    assert_matches_schema("run-preview.json", &task_preview);
+    assert_eq!(
+        task_preview["code"],
+        "secret_delivery_protected_truth_unavailable"
+    );
+    assert_eq!(task_preview["preview_status"], "BLOCKED");
+    assert_eq!(task_preview["execution_started"], false);
+    assert_eq!(
+        task_preview["secret_delivery_admission"]["provider_contact"],
+        "not_attempted"
+    );
+    assert_eq!(
+        task_preview["secret_delivery_admission"]["delivery"],
+        "not_attempted"
+    );
+    assert_no_side_effects();
+    let serialized = serde_json::to_string(&task_preview).expect("serialized preview");
+    assert!(!serialized.contains("release_token"), "{serialized}");
+    assert!(!serialized.contains("RELEASE_TOKEN"), "{serialized}");
+
+    let task_execution_output = Command::new(env!("CARGO_BIN_EXE_ota"))
+        .args(["run", "--log", "publish", "--plain"])
+        .current_dir(fixture.path())
+        .output()
+        .expect("secret delivery execution refusal");
+    assert!(!task_execution_output.status.success());
+    let task_execution = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&task_execution_output.stdout),
+        String::from_utf8_lossy(&task_execution_output.stderr)
+    );
+    assert!(
+        task_execution.contains("protected provider-binding truth"),
+        "{task_execution}"
+    );
+    assert_no_side_effects();
+
+    let mut runnable = task_preview.clone();
+    runnable["preview_status"] = json!("RUNNABLE");
+    assert_rejected_by_schema("run-preview.json", &runnable);
+    let mut provider_contact = task_preview.clone();
+    provider_contact["secret_delivery_admission"]["provider_contact"] = json!("attempted");
+    assert_rejected_by_schema("run-preview.json", &provider_contact);
+    let mut private_field = task_preview.clone();
+    private_field["secret_delivery_admission"]["binding_identity"] =
+        json!("sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    assert_rejected_by_schema("run-preview.json", &private_field);
+
+    let workflow_preview =
+        run_ota_failure_stdout_json(&["up", "--dry-run", "--json"], fixture.path());
+    assert_matches_schema("up.json", &workflow_preview);
+    assert_eq!(workflow_preview["preview_status"], "BLOCKED");
+    assert_eq!(workflow_preview["execution_started"], false);
+    assert_eq!(
+        workflow_preview["blockers"][0]["code"], "OTA_SECRET_DELIVERY_PROTECTED_TRUTH_UNAVAILABLE",
+        "{workflow_preview}"
+    );
+    assert_eq!(
+        workflow_preview["plan"]["secret_delivery_admission"]["status"],
+        "refused"
+    );
+    assert_eq!(
+        workflow_preview["plan"]["actions"].as_array().map(Vec::len),
+        Some(1)
+    );
+    assert_no_side_effects();
+
+    let workflow_execution = run_ota_failure_stdout_json(&["up", "--json"], fixture.path());
+    assert_matches_schema("up.json", &workflow_execution);
+    assert_eq!(
+        workflow_execution["governance"]["preflight"]["secret_delivery_admission"]["execution_started"],
+        false,
+        "{workflow_execution}"
+    );
+    assert_eq!(
+        workflow_execution["findings"][0]["code"],
+        "OTA_SECRET_DELIVERY_PROTECTED_TRUTH_UNAVAILABLE"
+    );
+    assert_no_side_effects();
+
+    let proof = run_ota_with_env(
+        &["proof", "runtime", "--workflow", "release", "--json"],
+        fixture.path(),
+        &[],
+        false,
+    );
+    assert_matches_schema("proof-runtime.json", &proof);
+    assert_eq!(proof["code"], "secret_delivery_protected_truth_unavailable");
+    assert_eq!(proof["execution_started"], false);
+    assert_no_side_effects();
+
+    let lifecycle = run_ota_with_env(
+        &["proof", "lifecycle", "--workflow", "release", "--json"],
+        fixture.path(),
+        &[],
+        false,
+    );
+    assert_matches_schema("proof-lifecycle.json", &lifecycle);
+    assert_eq!(
+        lifecycle["code"],
+        "secret_delivery_protected_truth_unavailable"
+    );
+    assert_eq!(lifecycle["execution_started"], false);
+    assert_no_side_effects();
+
+    let sandbox = run_ota_with_env(
+        &[
+            "run",
+            "publish",
+            "--agent",
+            "--sandbox-target",
+            "oci_local",
+            "--dry-run",
+            "--json",
+        ],
+        fixture.path(),
+        &[],
+        false,
+    );
+    assert_matches_schema("run-preview.json", &sandbox);
+    assert_eq!(
+        sandbox["code"],
+        "secret_delivery_protected_truth_unavailable"
+    );
+    assert_eq!(sandbox["execution_started"], false);
+    assert_no_side_effects();
+
+    let doctor = run_ota(
+        &["doctor", "--workflow", "release", "--json"],
+        fixture.path(),
+    );
+    assert_matches_schema("doctor.json", &doctor);
+    assert_eq!(doctor["secret_delivery_admission"]["status"], "refused");
+    assert_no_side_effects();
+
+    let tasks = run_ota(&["tasks", "--json"], fixture.path());
+    assert_matches_schema("tasks.json", &tasks);
+    let publish = tasks["capability_profile"]["refused_tasks"]
+        .as_array()
+        .and_then(|tasks| tasks.iter().find(|task| task["name"] == "publish"))
+        .expect("publish refusal");
+    assert_eq!(
+        publish["preflight"]["refusal_reason_family"],
+        "secret_delivery_protected_truth_unavailable"
+    );
+    assert_eq!(publish["secret_delivery_admission"]["status"], "refused");
+    let publish_summary = tasks["tasks"]
+        .as_array()
+        .and_then(|tasks| tasks.iter().find(|task| task["name"] == "publish"))
+        .expect("publish task summary");
+    assert_eq!(publish_summary["use"]["agent"]["callable"], false);
+    assert_eq!(
+        publish_summary["use"]["agent"]["reason"],
+        "secret_delivery_protected_truth_unavailable"
+    );
+    assert_no_side_effects();
+
+    let workflows = run_ota(&["workflows", "--json"], fixture.path());
+    let release = &workflows["capability_profile"]["refused_workflows"][0];
+    assert_eq!(
+        release["preflight"]["refusal_reason_family"],
+        "secret_delivery_protected_truth_unavailable"
+    );
+    assert_eq!(workflows["workflows"][0]["use"]["agent"]["callable"], false);
+    assert_eq!(
+        workflows["workflows"][0]["use"]["agent"]["reason"],
+        "secret_delivery_protected_truth_unavailable"
+    );
+    assert_no_side_effects();
+
+    let ci = run_ota_with_env(
+        &[
+            "ci",
+            "projection",
+            "--workflow",
+            "release",
+            "--mode",
+            "native",
+            "--target-os",
+            "linux",
+            "--json",
+        ],
+        fixture.path(),
+        &[],
+        false,
+    );
+    assert_matches_schema("ci-projection.json", &ci);
+    assert_eq!(ci["code"], "secret_delivery_protected_truth_unavailable");
+    assert_eq!(
+        ci["projection"]["governance"]["secret_delivery_admission"]["status"],
+        "refused"
+    );
+    let refusal_identity = ci["projection"]["identity"]
+        .as_str()
+        .expect("refusal projection identity");
+    let exact_ci = run_ota_with_env(
+        &[
+            "ci",
+            "projection",
+            "--workflow",
+            "release",
+            "--mode",
+            "native",
+            "--target-os",
+            "linux",
+            "--expect-identity",
+            refusal_identity,
+            "--json",
+        ],
+        fixture.path(),
+        &[],
+        false,
+    );
+    assert_eq!(
+        exact_ci["code"],
+        "secret_delivery_protected_truth_unavailable"
+    );
+    assert_eq!(exact_ci["projection"]["identity"], refusal_identity);
+    let wrong_ci = run_ota_failure_stdout_json(
+        &[
+            "ci",
+            "projection",
+            "--workflow",
+            "release",
+            "--mode",
+            "native",
+            "--target-os",
+            "linux",
+            "--expect-identity",
+            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "--json",
+        ],
+        fixture.path(),
+    );
+    assert_eq!(wrong_ci["code"], "projection_identity_mismatch");
+    let managed_workflow = fixture.path().join(".github/workflows/ota-governance.yml");
+    let render = run_ota_failure_stdout_json(
+        &[
+            "ci",
+            "github",
+            "render",
+            "--workflow",
+            "release",
+            "--mode",
+            "native",
+            "--target-os",
+            "linux",
+            "--output",
+            ".github/workflows/ota-governance.yml",
+            "--json",
+        ],
+        fixture.path(),
+    );
+    assert_eq!(
+        render["code"],
+        "secret_delivery_protected_truth_unavailable"
+    );
+    assert!(!managed_workflow.exists());
+    assert_no_side_effects();
+
+    let unaffected = run_ota(&["run", "check", "--dry-run", "--json"], fixture.path());
+    assert_matches_schema("run-preview.json", &unaffected);
+    assert!(unaffected["plan"]["secret_delivery_admission"].is_null());
+    assert_no_side_effects();
+}
+
+#[cfg(unix)]
+#[test]
+fn secret_delivery_refusal_precedes_typed_policy_classification() {
+    let fixture = tempfile::tempdir().expect("tempdir");
+    fs::create_dir_all(fixture.path().join("migrations")).expect("migration directory");
+    let migration_bytes = b"create table secret_precedence ();\n";
+    fs::write(fixture.path().join("migrations/001.sql"), migration_bytes).expect("migration file");
+    let file_identity = format!("sha256:{:x}", Sha256::digest(migration_bytes));
+    let manifest = json!({
+        "schema_version": 1,
+        "root": "migrations",
+        "files": [{ "path": "001.sql", "identity": file_identity }]
+    });
+    let mut manifest_identity_bytes = b"ota.schema-migration-manifest.v1\0".to_vec();
+    manifest_identity_bytes
+        .extend(serde_jcs::to_vec(&manifest).expect("migration manifest canonicalizes"));
+    let manifest_identity = format!("sha256:{:x}", Sha256::digest(manifest_identity_bytes));
+    fs::write(
+        fixture.path().join("ota.yaml"),
+        format!(
+            r#"
+version: 1
+metadata:
+  ota:
+    minimum_version: 1.6.28
+project: {{ name: secret-before-typed-policy }}
+resource_bindings:
+  primary:
+    kind: database
+    provider: postgresql
+    namespace: {{ authority: dns:example.org, environment: production }}
+effect_definitions:
+  migration:
+    kind: database_schema_mutation
+    action: apply_migration_set
+    resource: {{ engine: postgresql, target_ref: primary, schema: public }}
+    bounds:
+      migration_set: {{ root: migrations, content_identity: {manifest_identity} }}
+      start_state: any_within_set
+tasks:
+  migrate:
+    safe_for_agent: true
+    action: {{ kind: database_schema_mutation, effect: migration }}
+    effects:
+      declared: [migration]
+  check:
+    safe_for_agent: true
+    command: {{ exe: sh, args: ["-c", "touch assertion-sentinel"] }}
+agent:
+  safe_tasks: [check, migrate]
+secret_requirements:
+  database_credential:
+    secret_class: authentication_credential
+    purpose: external_api_authentication
+    delivery: {{ kind: process_environment, variable: DATABASE_TOKEN }}
+    recipients:
+      tasks: [migrate]
+      workflows: [release]
+      dependencies: deny
+      hooks: deny
+      services: deny
+      helpers: deny
+      containers: deny
+      remote_execution: deny
+      proof_observers: deny
+      negative_controls: deny
+      lifecycle_children: deny
+    constraints:
+      actor_mode: ci
+      environment: production
+      execution_mode: native
+      target_platform: linux
+      runtime_boundary: process
+      capability: segmented_process_environment
+services:
+  database:
+    manager:
+      kind: compose
+      name: secret-before-typed-policy
+      file: compose.yaml
+      service: database
+    lifecycle:
+      teardown_assertion: manager_inactive
+workflows:
+  default: release
+  release:
+    run: {{ task: migrate }}
+    proof:
+      lifecycle:
+        services: [database]
+        assertion: {{ task: check }}
+"#
+        ),
+    )
+    .expect("contract");
+    fs::write(
+        fixture.path().join("compose.yaml"),
+        "services:\n  database:\n    image: postgres:17\n",
+    )
+    .expect("compose fixture");
+
+    let no_policy = run_ota_with_env(
+        &["run", "migrate", "--dry-run", "--json"],
+        fixture.path(),
+        &[],
+        false,
+    );
+    assert_eq!(
+        no_policy["code"],
+        "secret_delivery_protected_truth_unavailable"
+    );
+    let no_policy_real = Command::new(env!("CARGO_BIN_EXE_ota"))
+        .args(["run", "migrate", "--plain"])
+        .current_dir(fixture.path())
+        .output()
+        .expect("missing policy secret refusal");
+    assert!(!no_policy_real.status.success());
+    let no_policy_real = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&no_policy_real.stdout),
+        String::from_utf8_lossy(&no_policy_real.stderr)
+    );
+    assert!(
+        no_policy_real.contains("protected provider-binding truth"),
+        "{no_policy_real}"
+    );
+
+    fs::create_dir_all(fixture.path().join(".ota")).expect("policy directory");
+    fs::write(
+        fixture.path().join(".ota/org-policy.yaml"),
+        "policies: [malformed",
+    )
+    .expect("malformed policy");
+    let malformed = Command::new(env!("CARGO_BIN_EXE_ota"))
+        .args(["run", "migrate", "--plain"])
+        .current_dir(fixture.path())
+        .output()
+        .expect("malformed policy secret refusal");
+    assert!(!malformed.status.success());
+    let malformed = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&malformed.stdout),
+        String::from_utf8_lossy(&malformed.stderr)
+    );
+    assert!(
+        malformed.contains("protected provider-binding truth"),
+        "{malformed}"
+    );
+    assert!(
+        !malformed.contains("policy could not be loaded"),
+        "{malformed}"
+    );
+    let malformed_ci = run_ota_with_env(
+        &[
+            "ci",
+            "projection",
+            "--workflow",
+            "release",
+            "--mode",
+            "native",
+            "--target-os",
+            "linux",
+            "--json",
+        ],
+        fixture.path(),
+        &[],
+        false,
+    );
+    assert_eq!(
+        malformed_ci["code"],
+        "secret_delivery_protected_truth_unavailable"
+    );
+    let malformed_tasks = run_ota(&["tasks", "--json"], fixture.path());
+    let malformed_migrate = malformed_tasks["capability_profile"]["refused_tasks"]
+        .as_array()
+        .and_then(|tasks| tasks.iter().find(|task| task["name"] == "migrate"))
+        .expect("malformed-policy migrate capability");
+    assert_eq!(
+        malformed_migrate["preflight"]["refusal_reason_family"],
+        "secret_delivery_protected_truth_unavailable"
+    );
+    let malformed_workflows = run_ota(&["workflows", "--json"], fixture.path());
+    let malformed_release = malformed_workflows["capability_profile"]["refused_workflows"]
+        .as_array()
+        .and_then(|workflows| {
+            workflows
+                .iter()
+                .find(|workflow| workflow["name"] == "release")
+        })
+        .expect("malformed-policy release capability");
+    assert_eq!(
+        malformed_release["preflight"]["refusal_reason_family"],
+        "secret_delivery_protected_truth_unavailable"
+    );
+
+    fs::write(
+        fixture.path().join(".ota/org-policy.yaml"),
+        r#"
+policies:
+  effects:
+    mode: compatibility
+    typed:
+      rules:
+        - id: deny_migration
+          selector:
+            kind: database_schema_mutation
+            actions: [apply_migration_set]
+          decision: deny
+"#,
+    )
+    .expect("deny policy");
+
+    let denied_run = run_ota_with_env(
+        &["run", "migrate", "--dry-run", "--json"],
+        fixture.path(),
+        &[],
+        false,
+    );
+    assert_eq!(
+        denied_run["code"],
+        "secret_delivery_protected_truth_unavailable"
+    );
+    let denied_real = Command::new(env!("CARGO_BIN_EXE_ota"))
+        .args(["run", "migrate", "--plain"])
+        .current_dir(fixture.path())
+        .output()
+        .expect("deny-policy secret refusal");
+    assert!(!denied_real.status.success());
+    let denied_real = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&denied_real.stdout),
+        String::from_utf8_lossy(&denied_real.stderr)
+    );
+    assert!(
+        denied_real.contains("protected provider-binding truth"),
+        "{denied_real}"
+    );
+    assert!(
+        !denied_real.contains("effect policy denied"),
+        "{denied_real}"
+    );
+    let denied_up = run_ota_failure_stdout_json(&["up", "--dry-run", "--json"], fixture.path());
+    assert_eq!(
+        denied_up["blockers"][0]["code"],
+        "OTA_SECRET_DELIVERY_PROTECTED_TRUTH_UNAVAILABLE"
+    );
+    for args in [
+        vec!["proof", "runtime", "--workflow", "release", "--json"],
+        vec!["proof", "lifecycle", "--workflow", "release", "--json"],
+    ] {
+        let refusal = run_ota_with_env(&args, fixture.path(), &[], false);
+        assert_eq!(
+            refusal["code"], "secret_delivery_protected_truth_unavailable",
+            "{refusal}"
+        );
+    }
+
+    let denied_ci = run_ota_with_env(
+        &[
+            "ci",
+            "projection",
+            "--workflow",
+            "release",
+            "--mode",
+            "native",
+            "--target-os",
+            "linux",
+            "--json",
+        ],
+        fixture.path(),
+        &[],
+        false,
+    );
+    assert_eq!(
+        denied_ci["code"],
+        "secret_delivery_protected_truth_unavailable"
+    );
+
+    let tasks = run_ota(&["tasks", "--json"], fixture.path());
+    let migrate = tasks["capability_profile"]["refused_tasks"]
+        .as_array()
+        .and_then(|tasks| tasks.iter().find(|task| task["name"] == "migrate"))
+        .expect("migrate capability");
+    assert_eq!(
+        migrate["preflight"]["refusal_reason_family"],
+        "secret_delivery_protected_truth_unavailable"
+    );
+    let workflows = run_ota(&["workflows", "--json"], fixture.path());
+    let release = workflows["capability_profile"]["refused_workflows"]
+        .as_array()
+        .and_then(|workflows| {
+            workflows
+                .iter()
+                .find(|workflow| workflow["name"] == "release")
+        })
+        .expect("deny-policy release capability");
+    assert_eq!(
+        release["preflight"]["refusal_reason_family"],
+        "secret_delivery_protected_truth_unavailable"
+    );
+    assert!(!fixture.path().join("assertion-sentinel").exists());
+    assert!(!fixture.path().join(".ota/proof").exists());
+}
+
+#[cfg(unix)]
+#[test]
 fn typed_effect_up_admission_precedes_workflow_setup_and_env_mutation() {
     let fixture = tempfile::tempdir().expect("tempdir");
     fs::create_dir_all(fixture.path().join("migrations")).expect("migration directory");

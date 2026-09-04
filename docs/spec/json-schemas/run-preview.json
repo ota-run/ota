@@ -707,6 +707,9 @@
           "items": { "$ref": "#/$defs/effectApplicationPlan" }
         },
         "effect_policy_decision": { "$ref": "#/$defs/effectPolicyDecision" },
+        "secret_delivery_admission": {
+          "$ref": "./secret-delivery-admission.json"
+        },
         "notes": {
           "type": "array",
           "items": { "type": "string" }
@@ -1275,7 +1278,32 @@
           "items": { "$ref": "./shared.json#/$defs/artifactRoute" }
         },
         "plan": { "$ref": "#/$defs/plan" }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "plan": { "required": ["secret_delivery_admission"] }
+            },
+            "required": ["plan"]
+          },
+          "then": {
+            "properties": {
+              "ok": { "const": false },
+              "preview_status": { "const": "BLOCKED" },
+              "execution_started": { "const": false },
+              "plan": {
+                "properties": {
+                  "secret_delivery_admission": {
+                    "properties": { "status": { "const": "refused" } },
+                    "required": ["status"]
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
     },
     "aggregate": {
       "type": "object",
@@ -1299,14 +1327,35 @@
       "properties": {
         "ok": { "const": false },
         "path": { "type": "string" },
-        "member": { "type": "string" },
+        "member": { "type": ["string", "null"] },
         "task": { "type": "string" },
         "dry_run": { "const": true },
         "execution_started": { "const": false },
+        "preview_status": { "const": "BLOCKED" },
         "code": { "type": "string" },
         "error": { "type": "string" },
-        "replay_input_policy": { "$ref": "./doctor.json#/$defs/replayInputPolicy" }
-      }
+        "replay_input_policy": { "$ref": "./doctor.json#/$defs/replayInputPolicy" },
+        "secret_delivery_admission": {
+          "$ref": "./secret-delivery-admission.json"
+        }
+      },
+      "allOf": [
+        {
+          "if": { "required": ["secret_delivery_admission"] },
+          "then": {
+            "required": ["execution_started", "preview_status", "code"],
+            "properties": {
+              "code": {
+                "const": "secret_delivery_protected_truth_unavailable"
+              },
+              "secret_delivery_admission": {
+                "properties": { "status": { "const": "refused" } },
+                "required": ["status"]
+              }
+            }
+          }
+        }
+      ]
     },
     "crossingGrantAdmission": {
       "type": "object",

@@ -26,6 +26,22 @@
 
 ## Unreleased
 
+## 1.6.28
+
+- Added V12.1 command-scoped secret-delivery admission for `run`, `up`, runtime and lifecycle
+  proof, Doctor context, CI projection/re-evaluation, sandbox capability, and harness output. An
+  empty selected requirement set preserves existing behavior. A non-empty set now refuses before
+  setup, hydration, workflow environment rendering, durable logs, services, proof artifacts, child
+  creation, repository mutation, or provider contact because no production protected binding
+  loader or provider transaction exists yet. JSON exposes only a domain-separated public
+  projection with bounded applicability, `secret_delivery_protected_truth_unavailable`,
+  `availability: not_checked`, `provider_contact: not_attempted`, `delivery: not_attempted`, and
+  `execution_started: false`; protected binding, source, policy, realization, subject, invocation,
+  evaluation, and plan identities remain internal. Real `ota up` retains its existing generic
+  blocked execution receipt with `execution_attempted: false`; this step provides no secret
+  storage, materialization, delivery, execution authority, positive secret-delivery receipt,
+  secret-delivery archive, assurance, or support claim.
+
 - Added the sealed V12.1 provider-free secret-delivery evaluator and dry-run plan. Core now
   derives the selected requirement set from the retained contract and exact task/workflow graph,
   then independently re-verifies Step 1-4 requirement, realization,

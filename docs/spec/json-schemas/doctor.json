@@ -606,6 +606,9 @@
       }
     },
     "workflow": { "$ref": "#/$defs/workflowSummary" },
+    "secret_delivery_admission": {
+      "$ref": "./secret-delivery-admission.json"
+    },
     "claim_assurance": {
       "type": "array",
       "items": { "$ref": "#/$defs/claimAssurance" }

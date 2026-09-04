@@ -366,7 +366,10 @@ recorded explicitly as unaffected.
 Step 6 does not authorize a production provider-binding loader or new authority source, provider
 adapter registration, OIDC token request, Workload Identity Federation exchange, Google Secret
 Manager contact, network access, materialization, process-environment injection, secret-bearing
-child execution, receipt, archive, positive assurance, pressure evidence, or support claim.
+child execution, positive secret-delivery receipt, secret-delivery archive, positive assurance,
+pressure evidence, or support claim. Real `ota up` retains its pre-existing generic blocked
+execution receipt with `execution_attempted: false`; that negative failure record is not delivery
+evidence and grants no authority.
 Implementation-order step 7 and every later step remain unauthorized.
 
 Planned follow-on: [V12.2 Contract-Authored Crossing Requirements](../v12.2/plan.md) remains

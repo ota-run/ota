@@ -2137,11 +2137,20 @@ matching a variable name never satisfies a governed requirement.
 
 Ota derives `SecretRequirementIdentity` from the typed class, purpose, normalized destination,
 recipient graph, propagation posture, and requested constraints under a versioned domain. The
-contract-local requirement label does not participate. This step-1 identity is declaration truth
-only: current commands do not resolve a provider binding, evaluate secret-delivery policy, request
+contract-local requirement label does not participate. From V12.1 Step 6, `run`, `up`, proof,
+Doctor, CI projection/re-evaluation, sandbox capability, and harness surfaces consume the selected
+requirement set for admission. An empty set remains `not_applicable`. A non-empty set refuses with
+`secret_delivery_protected_truth_unavailable` before setup, hydration, environment rendering,
+durable logs, services, proof artifacts, child creation, repository mutation, or provider contact,
+because no production protected binding loader or provider transaction exists yet.
+
+The public admission projection contains only bounded applicability and negative execution state:
+`availability: not_checked`, `provider_contact: not_attempted`, `delivery: not_attempted`, and
+`execution_started: false`. It does not expose protected provider, binding, source, policy,
+realization, subject, invocation, evaluation, or plan identities. Commands still do not request
 OIDC, contact a provider, load or inject bytes, make a task agent-safe, or emit positive delivery
-evidence. A contract that validates this catalog is not evidence that secret delivery is supported
-or occurred.
+evidence. A valid declaration or refused admission is not evidence that secret delivery is
+supported or occurred.
 
 ### Typed effect definitions
 

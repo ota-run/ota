@@ -24,6 +24,7 @@
 
 version: 1
 repository: ota-run/ota-site
-mode: synced
-consumer_commit: 5036e15a4062f4a031c0740be5e9c7f6112bda3c
+mode: waived
+consumer_commit: 4169fe6cf0d790b7f23b5aedb656766af60a37fa
 reviewed_ota_commit: df6592103903804b017961fb7c58d0fe7cae20f0
+waiver_reason: "V12.1 Step 6 Site propagation is committed at the recorded consumer revision; commit the Core implementation, then replace this waiver with that exact immutable Core revision."

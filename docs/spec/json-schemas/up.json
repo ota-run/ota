@@ -117,6 +117,9 @@
               "items": { "$ref": "./run-preview.json#/$defs/effectApplicationPlan" }
             },
             "effect_policy_decision": { "$ref": "./run-preview.json#/$defs/effectPolicyDecision" },
+            "secret_delivery_admission": {
+              "$ref": "./secret-delivery-admission.json"
+            },
             "actions": {
               "type": "array",
               "items": { "type": "string" }
@@ -159,6 +162,9 @@
                     { "$ref": "./run-preview.json#/$defs/sandboxAdmission" },
                     { "$ref": "./run-preview.json#/$defs/sandboxAdmissionError" }
                   ]
+                },
+                "secret_delivery_admission": {
+                  "$ref": "./secret-delivery-admission.json"
                 },
                 "review_required": { "type": "boolean" },
                 "declared_safe_for_agent": { "type": "boolean" },
@@ -357,6 +363,9 @@
                     "items": { "$ref": "./run-preview.json#/$defs/effectApplicationPlan" }
                   },
                   "effect_policy_decision": { "$ref": "./run-preview.json#/$defs/effectPolicyDecision" },
+                  "secret_delivery_admission": {
+                    "$ref": "./secret-delivery-admission.json"
+                  },
                   "actions": {
                     "type": "array",
                     "items": { "type": "string" }
@@ -399,6 +408,9 @@
                         { "$ref": "./run-preview.json#/$defs/sandboxAdmission" },
                         { "$ref": "./run-preview.json#/$defs/sandboxAdmissionError" }
                       ]
+                    },
+                    "secret_delivery_admission": {
+                      "$ref": "./secret-delivery-admission.json"
                     },
                     "review_required": { "type": "boolean" },
                       "declared_safe_for_agent": { "type": "boolean" },
@@ -540,6 +552,9 @@
                     { "$ref": "./run-preview.json#/$defs/sandboxAdmission" },
                     { "$ref": "./run-preview.json#/$defs/sandboxAdmissionError" }
                   ]
+                },
+                "secret_delivery_admission": {
+                  "$ref": "./secret-delivery-admission.json"
                 },
                 "review_required": { "type": "boolean" },
                 "declared_safe_for_agent": { "type": "boolean" },
@@ -931,7 +946,10 @@
                         "type": "array",
                         "items": { "$ref": "./run-preview.json#/$defs/effectApplicationPlan" }
                       },
-                      "effect_policy_decision": { "$ref": "./run-preview.json#/$defs/effectPolicyDecision" }
+                      "effect_policy_decision": { "$ref": "./run-preview.json#/$defs/effectPolicyDecision" },
+                      "secret_delivery_admission": {
+                        "$ref": "./secret-delivery-admission.json"
+                      }
                     }
                   },
                   "blockers": {
@@ -1089,7 +1107,10 @@
                         "type": "array",
                         "items": { "$ref": "./run-preview.json#/$defs/effectApplicationPlan" }
                       },
-                      "effect_policy_decision": { "$ref": "./run-preview.json#/$defs/effectPolicyDecision" }
+                      "effect_policy_decision": { "$ref": "./run-preview.json#/$defs/effectPolicyDecision" },
+                      "secret_delivery_admission": {
+                        "$ref": "./secret-delivery-admission.json"
+                      }
                     }
                   },
                   "blockers": {
@@ -1203,6 +1224,29 @@
           "if": {
             "required": ["plan"],
             "properties": {
+              "plan": { "required": ["secret_delivery_admission"] }
+            }
+          },
+          "then": {
+            "properties": {
+              "ok": { "const": false },
+              "status": { "const": "BLOCKED" },
+              "execution_started": { "const": false },
+              "plan": {
+                "properties": {
+                  "secret_delivery_admission": {
+                    "properties": { "status": { "const": "refused" } },
+                    "required": ["status"]
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": ["plan"],
+            "properties": {
               "plan": {
                 "required": ["effect_policy_decision"],
                 "properties": {
@@ -1275,6 +1319,17 @@
     "typedEffectPreviewWithStatus": {
       "allOf": [
         { "$ref": "#/$defs/typedEffectPreview" },
+        {
+          "if": {
+            "required": ["plan"],
+            "properties": {
+              "plan": { "required": ["secret_delivery_admission"] }
+            }
+          },
+          "then": {
+            "properties": { "preview_status": { "const": "BLOCKED" } }
+          }
+        },
         {
           "if": {
             "required": ["plan"],

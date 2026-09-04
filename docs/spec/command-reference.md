@@ -303,6 +303,9 @@ Current behavior:
   plus task description, operational notes, and required inputs when present; plain `ota tasks` remains the full
   declaration view for dependencies, services, conditions, hooks, notes, and related metadata
 - `--safe` and `--unsafe` are mutually exclusive filters over the effective safe set
+- capability JSON places a task with an applicable `secret_requirements` recipient in
+  `refused_tasks`, with the bounded `secret_delivery_admission` projection and
+  `secret_delivery_protected_truth_unavailable`; it never presents that lane as callable
   (`safe_for_agent: true` plus `agent.safe_tasks`)
 - `--via <native|container>` filters to tasks runnable through the selected backend lane
 - `--all` includes orchestration tasks marked `internal: true`; those entries carry `internal: true` in JSON output
@@ -417,6 +420,9 @@ JSON output:
 - monorepo root summaries include grouped per-member results in `members`
 - repeated `--member` values return grouped per-member results in `members`
 - each workflow includes the resolved workflow summary plus a `default` boolean
+- capability JSON places an applicable secret-requirement workflow in `refused_workflows` with
+  `secret_delivery_protected_truth_unavailable` and the public negative projection; it is never
+  advertised as callable
 - failure: `ok`, `path`, and either `errors` or `error`
 
 Agent workflow discoverability:
@@ -720,6 +726,9 @@ Current behavior:
   evaluation, crossing admission, proof artifact creation, or child runtime startup. A typed deny
   returns `OTA_EFFECT_POLICY_DENIED` with `execution_started: false`; an admitted typed action
   still refuses because provider execution is disabled in V12
+- derives secret-delivery admission over the same selected proof invocation graph; an applicable
+  requirement refuses with `secret_delivery_protected_truth_unavailable` and the public negative
+  projection before replay, crossing, proof artifacts, child runtime startup, or provider contact
 - refuses with `replay_input_policy_unavailable` before proof artifacts or child execution when
   the active policy source cannot be loaded
 - when `governance.crossing_authority` governs the selected proof scope, requires `--grant <id>`
@@ -875,6 +884,13 @@ Current behavior:
   organization policy is present, the projection carries the complete non-secret effect-policy
   decision and binds it into `projection.identity`; an explicit typed deny refuses before the
   provider lane can start setup or execution.
+- when the exact workflow is a secret-requirement recipient, the render invocation binds only the
+  public negative `secret_delivery_admission` expectation into `projection.identity` and refuses.
+  A provider-checkout invocation independently re-derives current checkout admission and compares
+  the whole projection identity; it never inherits render-host protected binding or policy truth.
+  While Step 6 has no provider transaction, `ota ci github render` returns that bounded refusal and
+  does not emit a managed provider-checkout workflow. `ota ci projection --expect-identity` still
+  reconciles the exact refusal-projection identity before returning the refusal
 - The projection carries `run_execution` as `finite_task` or `service_runtime`. Generated adapters
   prepare every lane with `ota up`; they execute a finite run task through `ota run --agent` after
   preparation, while service and proof lanes retain their one authoritative runtime path.
@@ -1496,6 +1512,10 @@ Current behavior:
   pretending those lifecycles changed host or provider execution
 - dry-run and real execution use the same option-admission decision; refused preview JSON carries
   `execution_started: false`, the requested override, and a typed primary blocker
+- when the selected task is a `secret_requirements` recipient, dry-run and real execution share one
+  retained command admission and refuse with `secret_delivery_protected_truth_unavailable` before
+  hydration, logs, child startup, mutation, or provider contact; JSON exposes only the bounded
+  public negative projection
 - `--skip-deps` is a local execution override that skips `tasks.<name>.depends_on` for the requested task only
 - `--skip-deps` is rejected when the requested task has no declared `depends_on`
 - `--agent` enforces the declared agent-safe boundary before execution starts: ota refuses the run when the requested task is outside the safe set or when a declared-safe task still reaches an unsafe dependency / aggregate / hook closure
@@ -1827,6 +1847,9 @@ ota doctor --member api --member web --json [PATH]
   that the bootstrap release meets the floor; GitHub workflows should consume the checked source
   through `source: contract` rather than hardcoding a second install version
 - validates the contract first when one is present
+- for a selected workflow with an applicable secret requirement, JSON includes the same bounded
+  `secret_delivery_admission` context (`not_checked` / `not_attempted` / `execution_started:
+  false`) without claiming readiness, provider availability, or delivery
 - when a root contract declares `workspace.type: monorepo`, plain `ota doctor` diagnoses the root contract and grouped summaries for each declared member
 - when `--member` is set, diagnoses the merged member contract
 - repeated `--member` values diagnose those members in the provided order
@@ -2430,6 +2453,10 @@ Current behavior:
 - when `--member` is set, prepares the merged member contract
 - repeated `--member` values prepare those members in the provided order
 - `--agent` enforces the declared agent-safe task boundary before setup or workflow execution starts; ota refuses the selected workflow path when any selected prepare/setup/run/attach task sits outside the safe set or reaches an unsafe task closure
+- selected secret-requirement recipients refuse before preparation through the same command-scoped
+  admission used by `ota run`; dry-run and JSON retain the bounded public projection, while setup,
+  hydration, environment rendering, durable logs, services, child execution, mutation, and
+  provider contact remain unattempted
 - authoritative selected-workflow runtime boundaries use the same fail-closed sandbox admission as
   `ota run`. Every reachable task and conditional hook is admitted before preparation; each
   executed segment receives provider evidence, and differing segment policies use distinct

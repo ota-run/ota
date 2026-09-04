@@ -3352,6 +3352,29 @@ standalone runtime/tool fields. When fulfillment actually ran, `receipt.toolchai
 include `fulfilled: true` plus additive `commands[]` entries with the exact provider commands ota
 executed for that toolchain during the recorded run path.
 
+## Secret-delivery admission projection
+
+When the exact selected task or workflow declares a `secret_requirements` recipient, command
+surfaces expose `secret_delivery_admission` and refuse with
+`secret_delivery_protected_truth_unavailable`. The schema-v1 projection is separately derived for
+public output and contains only its SHA-256 projection identity, `status: refused`,
+`applicable: true`, `availability: not_checked`, `provider_contact: not_attempted`,
+`delivery: not_attempted`, and `execution_started: false`. It never contains requirement labels,
+destination variable names, secret material or secret-derived metadata, provider references,
+credentials, or private effect-policy, realization, binding, source, implementation-subject,
+invocation, evaluation, or plan identities.
+
+`run` and `up` refuse before setup, hydration, workflow-environment rendering, durable-log
+creation, services, proof artifacts, child creation, repository mutation, or provider contact.
+Runtime and lifecycle proof expose the same bounded refusal before proof execution. Doctor reports
+the selected workflow context without promoting readiness. Harness task/workflow lanes are refused,
+not callable. CI render invocations bind only this public projection into the projection identity;
+provider-checkout CI independently re-derives admission from the exact checkout and compares the
+whole projected expectation. An empty selected requirement set omits the field and preserves prior
+behavior. Real blocked `ota up` may retain its existing generic execution receipt with
+`execution_attempted: false`; no projection proves provider availability, delivery, execution,
+positive secret-delivery receipt, secret-delivery archive, assurance, or support.
+
 ## `ota run --dry-run --json`
 
 `ota run <task> --dry-run --json` is the read-only repo execution preview surface. It resolves the

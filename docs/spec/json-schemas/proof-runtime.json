@@ -93,6 +93,9 @@
         "crossing_grant_admission": {
           "$ref": "./tasks.json#/$defs/governanceRefusalRecord"
         },
+        "secret_delivery_admission": {
+          "$ref": "./secret-delivery-admission.json"
+        },
         "summary": {
           "type": ["object", "null"]
         },
@@ -105,7 +108,24 @@
           "type": "array",
           "items": { "type": "string" }
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": { "required": ["secret_delivery_admission"] },
+          "then": {
+            "required": ["code", "execution_started", "error"],
+            "properties": {
+              "code": {
+                "const": "secret_delivery_protected_truth_unavailable"
+              },
+              "secret_delivery_admission": {
+                "properties": { "status": { "const": "refused" } },
+                "required": ["status"]
+              }
+            }
+          }
+        }
+      ]
     }
   ],
   "$defs": {

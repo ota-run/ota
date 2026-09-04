@@ -648,6 +648,9 @@
       "properties": {
         "state": { "type": "string" },
         "review_required": { "type": "boolean" },
+        "secret_delivery_admission": {
+          "$ref": "./secret-delivery-admission.json"
+        },
         "declared_safe_for_agent": { "type": "boolean" },
         "effective_safe_for_agent": { "type": "boolean" },
         "unsafe_closure_tasks": {
@@ -656,6 +659,9 @@
         },
         "refusal_reason_family": { "type": "string" },
         "refusal": { "$ref": "#/$defs/governanceRefusalRecord" },
+        "crossing_required": { "type": "boolean" },
+        "crossing_classification": { "type": "string" },
+        "crossing_boundary_family": { "type": "string" },
         "decision_basis": {
           "type": "array",
           "items": { "$ref": "#/$defs/governanceDecisionBasisEntry" }
@@ -670,7 +676,25 @@
         },
         "receipt_expected": { "type": "boolean" },
         "proof_expected": { "type": "boolean" }
-      }
+      },
+      "allOf": [
+        {
+          "if": { "required": ["secret_delivery_admission"] },
+          "then": {
+            "properties": {
+              "secret_delivery_admission": {
+                "properties": { "status": { "const": "refused" } },
+                "required": ["status"]
+              },
+              "state": { "const": "refused" },
+              "refusal_reason_family": {
+                "const": "secret_delivery_protected_truth_unavailable"
+              }
+            },
+            "required": ["refusal_reason_family"]
+          }
+        }
+      ]
     },
     "governancePreflightEvidenceClasses": {
       "type": "object",
@@ -963,6 +987,9 @@
         "preflight": { "$ref": "#/$defs/governancePreflightEvaluation" },
         "sandbox_policy": { "$ref": "#/$defs/harnessSandboxPolicy" },
         "effect_policy": { "$ref": "#/$defs/harnessEffectPolicyBinding" },
+        "secret_delivery_admission": {
+          "$ref": "./secret-delivery-admission.json"
+        },
         "effects": { "$ref": "#/$defs/taskEffects" },
         "blocked_task": { "type": "string" },
         "closure_path": {
@@ -971,6 +998,26 @@
         }
       },
       "allOf": [
+        {
+          "if": { "required": ["secret_delivery_admission"] },
+          "then": {
+            "properties": {
+              "secret_delivery_admission": {
+                "properties": { "status": { "const": "refused" } },
+                "required": ["status"]
+              },
+              "preflight": {
+                "properties": {
+                  "state": { "const": "refused" },
+                  "refusal_reason_family": {
+                    "const": "secret_delivery_protected_truth_unavailable"
+                  }
+                },
+                "required": ["state", "refusal_reason_family"]
+              }
+            }
+          }
+        },
         {
           "if": {
             "properties": {
@@ -1079,7 +1126,8 @@
               "properties": { "status": { "const": "not_applicable" } },
               "required": ["status"]
             }
-          }
+          },
+          "not": { "required": ["secret_delivery_admission"] }
         }
       ]
     },
