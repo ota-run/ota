@@ -126,7 +126,13 @@ durable agent workflow belongs in the canonical Ota skill.
   unchanged because this internal foundation has no operator surface. Step 5 is separately
   activated under the V12.1 plan amendment after Step 4 was independently reviewed and committed at
   Core `f1178fe3`. It authorizes only one crate-private evaluator and dry-run plan consuming retained
-  Step 1-4 truth. Structural eligibility remains provider-pending and must retain
+  Step 1-4 truth. The implementation is now present locally pending independent review and commit.
+  It derives the selected-requirement set from the retained contract and exact task/workflow graph,
+  reuses the Step 1-4 semantic verifiers, preserves selected invocation order, canonicalizes
+  unordered identity sets, and independently reconstructs both evaluation and plan identities.
+  A genuinely empty selection remains `not_applicable`, policy denial
+  refuses, and allow/warn is only structural eligibility for a future provider check. Every plan
+  retains
   `availability: not_checked`, `provider_contact: not_attempted`, `delivery: not_attempted`, and
   `execution_started: false`; it is never runnable, available, delivered, supported, or assured.
   No loader, command consumer, provider interaction, execution, public output, or evidence path is

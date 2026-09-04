@@ -258,8 +258,9 @@ useful background verification but are not represented as a Step 5 activation pr
 provider evidence.
 
 This amendment authorizes only one crate-private secret-delivery evaluator and provider-free dry-run
-plan. The evaluator consumes retained, independently verifiable Step 1-4 domain records supplied by
-its caller: exact requirement and contract identities, the ordered selected invocation graph, the
+plan. The evaluator derives the selected requirement set from the retained contract and exact
+task/workflow graph, then consumes independently verifiable Step 1-4 domain records supplied by its
+caller: the ordered selected invocation graph, the
 resolved binding and source, profile and implementation subject, protected invocation binding,
 derived effect/attachment/realization records, and the exact canonical effect-policy decision. It
 must call the existing semantic verifiers rather than trust a self-consistent resolved record or
@@ -281,11 +282,11 @@ transformation, private provider reference, credential, token, or provider respo
 describe a structurally eligible lane as runnable, available, delivered, supported, or assured.
 No public JSON schema or command output is authorized at this step.
 
-An empty selected requirement set is `not_applicable` and must not inspect unrelated protected
-bindings. A non-empty set requires complete Step 1-4 reconciliation and one unambiguous decision per
-exact realization. The evaluator and plan identities must be domain-separated and independently
-recomputable from retained non-secret identity inputs; caller ordering of semantic sets must not
-change them, while selected invocation order remains semantic.
+Only a Core-derived empty selected requirement set is `not_applicable` and must not inspect
+unrelated protected bindings. A non-empty set requires complete Step 1-4 reconciliation and one
+unambiguous decision per exact realization. The evaluator and plan identities must be domain-
+separated and independently recomputable from retained non-secret identity inputs; caller ordering
+of semantic sets must not change them, while selected invocation order remains semantic.
 
 Step 5 does not authorize a provider-binding loader, policy-authoring surface, CLI route, `run`,
 `up`, proof, Doctor, CI, sandbox, or harness consumer, command-scoped admission, OIDC token request,
@@ -802,8 +803,24 @@ effects. Repeated uses of one attachment remain distinct realizations only when 
 contains each exact invocation rather than collapsing or inventing occurrences by recipient.
 No binding loader, policy-authoring surface, CLI route, dry-run plan, command admission, provider
 contact, secret delivery, execution, public output, receipt, archive, assurance promotion,
-pressure evidence, or support path consumes this model. Step 5 and later steps remain
-unauthorized.
+pressure evidence, or support path consumed this model. At the Step 4 completion boundary, Step 5
+and later steps remained unauthorized.
+
+Implementation-order step 5 is activated at Core `f455a246` and implemented locally pending
+independent review and commit. The sealed evaluator derives the selected-requirement set from the
+retained contract and exact task/workflow graph, then consumes the retained ordered invocation
+graph, Step 4 derivations, one retained policy snapshot, and the exact canonical effect-policy
+decision. It reuses Step 1-4 semantic verifiers, refuses missing,
+duplicate, stale, substituted, cross-scope, unsupported, decision-mismatched, or selection-
+mismatched truth, preserves selected invocation order, and canonicalizes unordered identity sets.
+An empty selection is `not_applicable` and accepts no effect or policy evidence; policy denial is
+`refused`; allow or warn is only `structurally_eligible` for a future provider check. The
+domain-separated evaluation and dry-run-plan identities retain only non-secret identities and the
+four negative runtime states: `availability: not_checked`, `provider_contact: not_attempted`,
+`delivery: not_attempted`, and `execution_started: false`. Plan creation independently re-verifies
+the retained evaluation rather than trusting a resolved record. No loader, command consumer,
+provider interaction, delivery, execution, public output, receipt, archive, assurance, pressure,
+or support path consumes the model. Step 6 and later steps remain unauthorized.
 
 ## Implementation Order
 

@@ -62,6 +62,7 @@ pub mod runner;
 pub(crate) mod sandbox_policy;
 pub mod schema;
 pub(crate) mod secret_delivery_effect;
+pub(crate) mod secret_delivery_evaluation;
 pub(crate) mod secret_provider_bindings;
 pub(crate) mod secret_provider_profile;
 pub mod secret_requirements;

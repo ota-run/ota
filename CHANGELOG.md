@@ -26,6 +26,16 @@
 
 ## Unreleased
 
+- Added the sealed V12.1 provider-free secret-delivery evaluator and dry-run plan. Core now
+  derives the selected requirement set from the retained contract and exact task/workflow graph,
+  then independently re-verifies Step 1-4 requirement, realization,
+  provider-binding/source, profile/subject, invocation, and effect-policy truth; empty selections
+  remain `not_applicable`, policy denial refuses, and allow/warn establishes only structural
+  eligibility for a future provider check. Every plan retains `availability: not_checked`,
+  `provider_contact: not_attempted`, `delivery: not_attempted`, and `execution_started: false`.
+  This internal step adds no loader, command consumer, provider contact, materialization, execution,
+  public output, receipt, archive, assurance, pressure evidence, or support claim.
+
 - Added the sealed V12.1 `secret_material_delivery` effect foundation. Core now derives a stable
   bounded-consequence identity separately from exact requirement, recipient, closure-role,
   invocation, protected binding/source, profile, implementation-subject, and target realization

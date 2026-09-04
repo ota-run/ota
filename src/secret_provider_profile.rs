@@ -1155,6 +1155,12 @@ mod tests {
         SecretDeliveryRecipient, SecretDeliveryRecipientKind,
         SecretMaterialDeliveryDerivationInput, derive_secret_material_delivery_effect,
     };
+    use crate::secret_delivery_evaluation::{
+        SecretDeliveryAttempt, SecretDeliveryAvailability, SecretDeliveryEvaluationInput,
+        SecretDeliveryEvaluationStatus, SecretDeliveryProviderContact, evaluate_secret_delivery,
+        plan_secret_delivery_dry_run, verify_secret_delivery_dry_run_plan,
+        verify_secret_delivery_evaluation,
+    };
     use crate::secret_provider_bindings::{
         SecretProviderBindingInput, SecretProviderBindingSnapshotInput,
         SecretProviderBindingSourceInput, SecretProviderBindingSourceKind,
@@ -1192,6 +1198,14 @@ tasks:
   publish_alt:
     command:
       exe: "true"
+  inspect:
+    command:
+      exe: "true"
+workflows:
+  default: release
+  release:
+    run:
+      task: publish
 secret_requirements:
   provider_api_token:
     secret_class: authentication_credential
@@ -1201,6 +1215,7 @@ secret_requirements:
       variable: {variable}
     recipients:
       tasks: [publish, publish_alt]
+      workflows: [release]
       dependencies: deny
       hooks: deny
       services: deny
@@ -2306,6 +2321,447 @@ secret_requirements:
                 .unwrap_err()
                 .code,
             "effect_policy_derived_scope_mismatch"
+        );
+    }
+
+    #[test]
+    fn provider_free_evaluation_reconciles_selection_policy_and_dry_run_truth() {
+        let (requirements, profile, subject, binding, source) = resolved_context();
+        let requirement = requirements.requirements.values().next().unwrap();
+        let contract = contract_with_variable("GOOGLE_API_KEY");
+        let retained = invocation_input(&profile, &subject, requirement, &binding, &source);
+        let invocation = resolve_secret_delivery_invocation_binding(
+            &profile,
+            &subject,
+            requirement,
+            &binding,
+            &source,
+            &retained,
+        )
+        .unwrap();
+        let recipient = SecretDeliveryRecipient {
+            kind: SecretDeliveryRecipientKind::Task,
+            name: "publish".to_string(),
+        };
+        let origin = SecretDeliveryEffectOrigin {
+            contract_snapshot_identity: semantic_contract_identity(&contract).unwrap(),
+            selected_subject: vec!["task".to_string(), "publish".to_string()],
+            closure_role: SecretDeliveryClosureRole::SelectedTask,
+            invocation: SecretDeliveryInvocationOrigin {
+                task: "publish".to_string(),
+                origin: "run:publish".to_string(),
+            },
+        };
+        let derivation = SecretMaterialDeliveryDerivationInput {
+            contract: &contract,
+            requirement,
+            recipient: &recipient,
+            origin: &origin,
+            provider_binding: &binding,
+            provider_binding_source: &source,
+            profile: &profile,
+            implementation_subject: &subject,
+            retained_invocation_input: &retained,
+            invocation_binding: &invocation,
+        };
+        let derived = derive_secret_material_delivery_effect(derivation).unwrap();
+        let effects = vec![SecretDeliveryEffectPolicyInput {
+            resolved: &derived,
+            derivation,
+        }];
+        let invocations = vec![EffectPolicyInvocation {
+            task: "publish".to_string(),
+            origin: "run:publish".to_string(),
+        }];
+        let selected_subject = vec!["task".to_string(), "publish".to_string()];
+        let compatibility_pack: OrgPolicyPack =
+            serde_yaml::from_str("policies:\n  effects:\n    mode: compatibility\n").unwrap();
+        let compatibility_policy = LoadedOrgPolicyPack {
+            source_identity: Some(semantic_contract_identity(&compatibility_pack).unwrap()),
+            pack: compatibility_pack,
+            path: Path::new(".ota/org-policy.yaml").to_path_buf(),
+            source: PolicyPackSource::RepoPolicy,
+        };
+        let policy_scope = SecretDeliveryEffectPolicyScope {
+            contract_snapshot_identity: &origin.contract_snapshot_identity,
+            selected_subject: &selected_subject,
+            workflow_name: None,
+            ordered_invocations: &invocations,
+            effects: &effects,
+        };
+        let decision =
+            evaluate_secret_delivery_effect_policy(policy_scope, &compatibility_policy).unwrap();
+        let input = SecretDeliveryEvaluationInput {
+            contract: &contract,
+            selected_subject: &selected_subject,
+            workflow_name: None,
+            ordered_invocations: &invocations,
+            effects: &effects,
+            loaded_policy: Some(&compatibility_policy),
+            policy_decision: Some(&decision),
+        };
+        let evaluation = evaluate_secret_delivery(input).unwrap();
+        assert_eq!(
+            evaluation.status,
+            SecretDeliveryEvaluationStatus::StructurallyEligible
+        );
+        assert_eq!(
+            evaluation.availability,
+            SecretDeliveryAvailability::NotChecked
+        );
+        assert_eq!(
+            evaluation.provider_contact,
+            SecretDeliveryProviderContact::NotAttempted
+        );
+        assert_eq!(evaluation.delivery, SecretDeliveryAttempt::NotAttempted);
+        assert!(!evaluation.execution_started);
+        verify_secret_delivery_evaluation(&evaluation, input).unwrap();
+
+        let plan = plan_secret_delivery_dry_run(&evaluation, input).unwrap();
+        assert_eq!(
+            plan.status,
+            SecretDeliveryEvaluationStatus::StructurallyEligible
+        );
+        assert_eq!(plan.availability, SecretDeliveryAvailability::NotChecked);
+        assert_eq!(
+            plan.provider_contact,
+            SecretDeliveryProviderContact::NotAttempted
+        );
+        assert_eq!(plan.delivery, SecretDeliveryAttempt::NotAttempted);
+        assert!(!plan.execution_started);
+        verify_secret_delivery_dry_run_plan(&plan, &evaluation, input).unwrap();
+        let serialized_plan = serde_json::to_string(&plan).unwrap();
+        for private_value in [
+            "control-plane://tenant/repository",
+            "CAEP_API-Key_1",
+            "ota-pressure@ota-pressure.iam.gserviceaccount.com",
+            "repo:ota-run/pythialabs:ref:refs/heads/main",
+        ] {
+            assert!(!serialized_plan.contains(private_value));
+        }
+        let mut forged_plan = plan.clone();
+        forged_plan.execution_started = true;
+        assert_eq!(
+            verify_secret_delivery_dry_run_plan(&forged_plan, &evaluation, input)
+                .unwrap_err()
+                .code,
+            "secret_delivery_dry_run_plan_reconciliation_failed"
+        );
+        let mut forged_evaluation = evaluation.clone();
+        forged_evaluation.status = SecretDeliveryEvaluationStatus::Refused;
+        assert_eq!(
+            plan_secret_delivery_dry_run(&forged_evaluation, input)
+                .unwrap_err()
+                .code,
+            "secret_delivery_evaluation_reconciliation_failed"
+        );
+
+        let empty_effects = Vec::new();
+        let unrelated_subject = vec!["task".to_string(), "inspect".to_string()];
+        let unrelated_invocations = vec![
+            EffectPolicyInvocation {
+                task: "inspect".to_string(),
+                origin: "run:inspect".to_string(),
+            },
+            EffectPolicyInvocation {
+                task: "publish".to_string(),
+                origin: "dependency:publish".to_string(),
+            },
+        ];
+        let not_applicable_input = SecretDeliveryEvaluationInput {
+            selected_subject: &unrelated_subject,
+            ordered_invocations: &unrelated_invocations,
+            effects: &empty_effects,
+            loaded_policy: None,
+            policy_decision: None,
+            ..input
+        };
+        let not_applicable = evaluate_secret_delivery(not_applicable_input).unwrap();
+        assert_eq!(
+            not_applicable.status,
+            SecretDeliveryEvaluationStatus::NotApplicable
+        );
+        assert!(not_applicable.policy_decision_identity.is_none());
+        let not_applicable_plan =
+            plan_secret_delivery_dry_run(&not_applicable, not_applicable_input).unwrap();
+        assert_eq!(
+            not_applicable_plan.status,
+            SecretDeliveryEvaluationStatus::NotApplicable
+        );
+        assert_eq!(
+            evaluate_secret_delivery(SecretDeliveryEvaluationInput {
+                loaded_policy: Some(&compatibility_policy),
+                ..not_applicable_input
+            })
+            .unwrap_err()
+            .code,
+            "secret_delivery_evaluation_not_applicable_evidence"
+        );
+        let unknown_subject = vec!["task".to_string(), "unknown".to_string()];
+        assert_eq!(
+            evaluate_secret_delivery(SecretDeliveryEvaluationInput {
+                selected_subject: &unknown_subject,
+                ..not_applicable_input
+            })
+            .unwrap_err()
+            .code,
+            "secret_delivery_evaluation_subject_unknown"
+        );
+
+        assert_eq!(
+            evaluate_secret_delivery(SecretDeliveryEvaluationInput {
+                loaded_policy: None,
+                policy_decision: None,
+                ..input
+            })
+            .unwrap_err()
+            .code,
+            "secret_delivery_evaluation_policy_missing"
+        );
+        assert_eq!(
+            evaluate_secret_delivery(SecretDeliveryEvaluationInput {
+                policy_decision: None,
+                ..input
+            })
+            .unwrap_err()
+            .code,
+            "secret_delivery_evaluation_decision_missing"
+        );
+        let no_effects = Vec::new();
+        assert_eq!(
+            evaluate_secret_delivery(SecretDeliveryEvaluationInput {
+                effects: &no_effects,
+                ..input
+            })
+            .unwrap_err()
+            .code,
+            "secret_delivery_evaluation_effects_missing"
+        );
+        let workflow_subject = vec!["workflow".to_string(), "release".to_string()];
+        let no_invocations = Vec::new();
+        assert_eq!(
+            evaluate_secret_delivery(SecretDeliveryEvaluationInput {
+                selected_subject: &workflow_subject,
+                workflow_name: Some("release"),
+                ordered_invocations: &no_invocations,
+                effects: &no_effects,
+                loaded_policy: None,
+                policy_decision: None,
+                ..input
+            })
+            .unwrap_err()
+            .code,
+            "secret_delivery_evaluation_effects_missing"
+        );
+        let workflow_recipient = SecretDeliveryRecipient {
+            kind: SecretDeliveryRecipientKind::Workflow,
+            name: "release".to_string(),
+        };
+        let workflow_origin = SecretDeliveryEffectOrigin {
+            contract_snapshot_identity: semantic_contract_identity(&contract).unwrap(),
+            selected_subject: workflow_subject.clone(),
+            closure_role: SecretDeliveryClosureRole::SelectedWorkflow,
+            invocation: SecretDeliveryInvocationOrigin {
+                task: "release".to_string(),
+                origin: "run:release".to_string(),
+            },
+        };
+        let workflow_derivation = SecretMaterialDeliveryDerivationInput {
+            contract: &contract,
+            requirement,
+            recipient: &workflow_recipient,
+            origin: &workflow_origin,
+            provider_binding: &binding,
+            provider_binding_source: &source,
+            profile: &profile,
+            implementation_subject: &subject,
+            retained_invocation_input: &retained,
+            invocation_binding: &invocation,
+        };
+        let workflow_derived = derive_secret_material_delivery_effect(workflow_derivation).unwrap();
+        let workflow_effects = vec![SecretDeliveryEffectPolicyInput {
+            resolved: &workflow_derived,
+            derivation: workflow_derivation,
+        }];
+        let workflow_invocations = vec![EffectPolicyInvocation {
+            task: "release".to_string(),
+            origin: "run:release".to_string(),
+        }];
+        let workflow_policy_scope = SecretDeliveryEffectPolicyScope {
+            contract_snapshot_identity: &workflow_origin.contract_snapshot_identity,
+            selected_subject: &workflow_subject,
+            workflow_name: Some("release"),
+            ordered_invocations: &workflow_invocations,
+            effects: &workflow_effects,
+        };
+        let workflow_decision =
+            evaluate_secret_delivery_effect_policy(workflow_policy_scope, &compatibility_policy)
+                .unwrap();
+        let workflow_input = SecretDeliveryEvaluationInput {
+            contract: &contract,
+            selected_subject: &workflow_subject,
+            workflow_name: Some("release"),
+            ordered_invocations: &workflow_invocations,
+            effects: &workflow_effects,
+            loaded_policy: Some(&compatibility_policy),
+            policy_decision: Some(&workflow_decision),
+        };
+        let workflow_evaluation = evaluate_secret_delivery(workflow_input).unwrap();
+        assert_eq!(
+            workflow_evaluation.status,
+            SecretDeliveryEvaluationStatus::StructurallyEligible
+        );
+        let workflow_plan =
+            plan_secret_delivery_dry_run(&workflow_evaluation, workflow_input).unwrap();
+        assert_eq!(
+            workflow_plan.status,
+            SecretDeliveryEvaluationStatus::StructurallyEligible
+        );
+        assert!(!workflow_plan.execution_started);
+
+        let unknown_workflow_subject = vec!["workflow".to_string(), "unknown".to_string()];
+        assert_eq!(
+            evaluate_secret_delivery(SecretDeliveryEvaluationInput {
+                selected_subject: &unknown_workflow_subject,
+                workflow_name: Some("unknown"),
+                ordered_invocations: &no_invocations,
+                effects: &no_effects,
+                loaded_policy: None,
+                policy_decision: None,
+                ..input
+            })
+            .unwrap_err()
+            .code,
+            "secret_delivery_evaluation_subject_unknown"
+        );
+        let changed_contract = contract_with_variable("OTHER_GOOGLE_API_KEY");
+        assert_eq!(
+            evaluate_secret_delivery(SecretDeliveryEvaluationInput {
+                contract: &changed_contract,
+                ..input
+            })
+            .unwrap_err()
+            .code,
+            "effect_policy_derived_scope_mismatch"
+        );
+
+        let mut tampered_decision = decision.clone();
+        tampered_decision.aggregate_decision = PolicyEffectDecision::Deny;
+        assert_eq!(
+            evaluate_secret_delivery(SecretDeliveryEvaluationInput {
+                policy_decision: Some(&tampered_decision),
+                ..input
+            })
+            .unwrap_err()
+            .code,
+            "effect_policy_decision_reconciliation_failed"
+        );
+
+        let strict_pack: OrgPolicyPack =
+            serde_yaml::from_str("policies:\n  effects:\n    mode: strict\n").unwrap();
+        let strict_policy = LoadedOrgPolicyPack {
+            source_identity: Some(semantic_contract_identity(&strict_pack).unwrap()),
+            pack: strict_pack,
+            path: Path::new(".ota/org-policy.yaml").to_path_buf(),
+            source: PolicyPackSource::RepoPolicy,
+        };
+        let strict_decision =
+            evaluate_secret_delivery_effect_policy(policy_scope, &strict_policy).unwrap();
+        let strict_input = SecretDeliveryEvaluationInput {
+            loaded_policy: Some(&strict_policy),
+            policy_decision: Some(&strict_decision),
+            ..input
+        };
+        let refused = evaluate_secret_delivery(strict_input).unwrap();
+        assert_eq!(refused.status, SecretDeliveryEvaluationStatus::Refused);
+        assert_eq!(
+            refused.refusal_code.as_deref(),
+            Some("effect_policy_denied")
+        );
+        let refused_plan = plan_secret_delivery_dry_run(&refused, strict_input).unwrap();
+        assert_eq!(refused_plan.status, SecretDeliveryEvaluationStatus::Refused);
+        assert_eq!(
+            refused_plan.refusal_code.as_deref(),
+            Some("effect_policy_denied")
+        );
+        assert_eq!(
+            refused_plan.provider_contact,
+            SecretDeliveryProviderContact::NotAttempted
+        );
+        assert!(!refused_plan.execution_started);
+
+        let repeated_origin = SecretDeliveryEffectOrigin {
+            invocation: SecretDeliveryInvocationOrigin {
+                task: "publish".to_string(),
+                origin: "run:publish:repeat".to_string(),
+            },
+            ..origin.clone()
+        };
+        let repeated_derivation = SecretMaterialDeliveryDerivationInput {
+            origin: &repeated_origin,
+            ..derivation
+        };
+        let repeated = derive_secret_material_delivery_effect(repeated_derivation).unwrap();
+        let repeated_effects = vec![
+            effects[0],
+            SecretDeliveryEffectPolicyInput {
+                resolved: &repeated,
+                derivation: repeated_derivation,
+            },
+        ];
+        let repeated_invocations = vec![
+            invocations[0].clone(),
+            EffectPolicyInvocation {
+                task: "publish".to_string(),
+                origin: "run:publish:repeat".to_string(),
+            },
+        ];
+        let repeated_policy_scope = SecretDeliveryEffectPolicyScope {
+            ordered_invocations: &repeated_invocations,
+            effects: &repeated_effects,
+            ..policy_scope
+        };
+        let repeated_decision =
+            evaluate_secret_delivery_effect_policy(repeated_policy_scope, &compatibility_policy)
+                .unwrap();
+        let repeated_input = SecretDeliveryEvaluationInput {
+            ordered_invocations: &repeated_invocations,
+            effects: &repeated_effects,
+            policy_decision: Some(&repeated_decision),
+            ..input
+        };
+        let repeated_evaluation = evaluate_secret_delivery(repeated_input).unwrap();
+        let reordered_effects = vec![repeated_effects[1], repeated_effects[0]];
+        let reordered_evaluation = evaluate_secret_delivery(SecretDeliveryEvaluationInput {
+            effects: &reordered_effects,
+            ..repeated_input
+        })
+        .unwrap();
+        assert_eq!(repeated_evaluation.identity, reordered_evaluation.identity);
+        assert_eq!(
+            plan_secret_delivery_dry_run(&repeated_evaluation, repeated_input).unwrap(),
+            plan_secret_delivery_dry_run(
+                &reordered_evaluation,
+                SecretDeliveryEvaluationInput {
+                    effects: &reordered_effects,
+                    ..repeated_input
+                }
+            )
+            .unwrap()
+        );
+
+        let reordered_invocations = vec![
+            repeated_invocations[1].clone(),
+            repeated_invocations[0].clone(),
+        ];
+        assert_eq!(
+            evaluate_secret_delivery(SecretDeliveryEvaluationInput {
+                ordered_invocations: &reordered_invocations,
+                ..repeated_input
+            })
+            .unwrap_err()
+            .code,
+            "effect_policy_decision_reconciliation_failed"
         );
     }
 }
