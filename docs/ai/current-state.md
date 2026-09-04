@@ -45,7 +45,8 @@ durable agent workflow belongs in the canonical Ota skill.
   `SecretRequirementIdentity`, and the Core-owned provider-binding domain model with pure
   fail-closed resolution, followed by the exact first-adapter profile and implementation-subject
   descriptor model, the crate-private `secret_material_delivery` effect derivation foundation, and
-  the sealed provider-free evaluator/dry-run-plan model.
+  the sealed provider-free evaluator/dry-run-plan model. A proposed Step 6 activation amendment is
+  present locally pending independent review and commit; it does not authorize implementation yet.
   No provider binding loader, concrete implementation registration, provider
   contact, materialization, injection, execution authority, positive evidence, or support claim is
   implemented yet. V12.2 and later versions remain inactive.
@@ -126,7 +127,8 @@ durable agent workflow belongs in the canonical Ota skill.
   unchanged because this internal foundation has no operator surface. Step 5 is separately
   activated under the V12.1 plan amendment after Step 4 was independently reviewed and committed at
   Core `f1178fe3`. It authorizes only one crate-private evaluator and dry-run plan consuming retained
-  Step 1-4 truth. The implementation is now present locally pending independent review and commit.
+  Step 1-4 truth. The implementation was independently reviewed and committed at Core
+  `9fd4b4fb8f991b7dca8c2a2df2c2b6be5e5a0baa`.
   It derives the selected-requirement set from the retained contract and exact task/workflow graph,
   reuses the Step 1-4 semantic verifiers, preserves selected invocation order, canonicalizes
   unordered identity sets, and independently reconstructs both evaluation and plan identities.
@@ -135,8 +137,19 @@ durable agent workflow belongs in the canonical Ota skill.
   retains
   `availability: not_checked`, `provider_contact: not_attempted`, `delivery: not_attempted`, and
   `execution_started: false`; it is never runnable, available, delivered, supported, or assured.
-  No loader, command consumer, provider interaction, execution, public output, or evidence path is
-  authorized. Step 6 and later steps remain unauthorized.
+  No loader, command consumer, provider interaction, execution, public output, or evidence path was
+  authorized at the Step 5 completion boundary. The proposed Step 6 amendment authorizes, only
+  after independent review and commit, one retained command-scoped admission per invocation across
+  `run`, `up`, proof, Doctor context, sandbox capability, and harness output. CI projection carries
+  only a bounded public expectation; provider-checkout CI independently re-derives admission from
+  its exact checkout and reconciles the public projection rather than inheriting render-host truth.
+  The amendment preserves existing behavior for empty selections; refuses non-empty selections
+  before setup, hydration, environment rendering, durable logs, services, proof artifacts, child
+  creation, mutation, or provider contact when complete Step 1-5 truth is unavailable; and permits
+  only a separately derived public-safe projection that excludes private decision, realization,
+  evaluation, plan, binding, source, subject, and invocation identities. Every production binding
+  loader, provider transaction, delivery, execution, receipt, archive, assurance, pressure, and
+  support path remains unauthorized. Step 7 and later steps remain unauthorized.
 - Vinicius' independent v1.6.27 source review confirmed that negative-control projection
   reconciliation is live on runtime proof, emitted-archive verification, and Doctor archive
   loading. It also exposed a narrower adversarial-test gap: the existing digest mutation was

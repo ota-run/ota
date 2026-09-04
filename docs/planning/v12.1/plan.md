@@ -295,6 +295,80 @@ materialization, process-environment injection, child execution, receipt, archiv
 assurance promotion, pressure evidence, or support claim. Implementation-order step 6 and every
 later step remain unauthorized.
 
+### Step 6 Activation Gate
+
+Step 6 is not authorized by any earlier activation record. It may be activated only after the
+step-5 evaluator and provider-free dry-run plan are independently reviewed and committed. The
+activation amendment must preserve one retained command-scoped admission per command invocation,
+with CI projection carrying only a bounded public expectation and provider-checkout CI independently
+deriving its own admission. It must keep contracts without selected secret requirements compatible,
+define an honest negative output boundary for governed requirements while no production binding
+loader or provider transaction exists, and preserve zero provider contact and zero secret delivery.
+Clearing those prerequisites does not activate step 6 by itself.
+
+#### Step 6 Activation Amendment
+
+Implementation-order step 6 is activated by the commit carrying this amendment after independent
+review. The prerequisite sealed evaluator and provider-free dry-run plan are independently reviewed
+and committed at Core `9fd4b4fb8f991b7dca8c2a2df2c2b6be5e5a0baa`.
+
+This amendment authorizes one command-scoped secret-delivery admission object per command
+invocation and the minimum orchestration needed for `run`, `up`, proof commands, Doctor context,
+sandbox capability, and harness output to consume it. Each invocation must derive the selected
+subject and ordered execution graph once, retain one requirement selection and one Step 5
+evaluation/plan, and pass that exact admission to every downstream consumer within that invocation.
+No downstream consumer within the invocation may reload the contract, re-resolve bindings, derive
+another invocation origin, reconstruct policy truth, or create a parallel secret-specific admission
+decision.
+
+CI projection and provider-checkout CI re-evaluation are separate command invocations. Projection
+may carry only a bounded public-safe expectation derived by the render invocation. The provider-
+checkout invocation must independently derive current contract, selected graph, policy, protected
+truth, and command-scoped admission from the exact checkout, then reconcile its public projection
+with the projected expectation. It must never inherit or reuse render-host admission, policy,
+binding, source, evaluation, or plan truth.
+
+Only a Core-derived empty selected requirement set is `not_applicable`; it must preserve existing
+behavior and must not load or inspect secret-delivery policy, bindings, profiles, or provider state.
+A non-empty selected set may become `structurally_eligible` only from complete independently
+reverified Step 1-5 records. Missing production binding/source, profile/subject, invocation,
+effect/policy, or evaluator truth must produce one stable unavailable or refused admission before
+setup, hydration, workflow environment rendering, durable execution-log creation, replay, crossing,
+sandbox execution, services, hooks, proof artifacts, child creation, repository mutation, or any
+provider interaction. An unavailable production source must not be represented as policy denial,
+provider unavailability, or `not_applicable`.
+
+Dry-run and every other public consumer must use a separately derived public projection and
+domain-separated projection identity over only fields individually classified as public-safe. The
+projection may retain bounded applicability, stable reason codes, approved non-secret contract or
+effect classes, and `availability: not_checked`, `provider_contact: not_attempted`,
+`delivery: not_attempted`, and `execution_started: false`. Private effect-policy decision,
+realization, evaluation, plan, binding, source, implementation-subject, and invocation identities
+remain internal unless a later plan explicitly classifies one exact projection as public-safe. A
+public projection must not transitively hash, correlate, or reveal protected provider-reference or
+authority truth.
+
+Real execution must refuse after the same structural admission because no Step 7 provider
+transaction or delivery adapter exists. Doctor, CI, sandbox, and harness projections may report
+only the same bounded public applicability and refusal posture; they cannot promote a lane to
+callable, runnable, available, delivered, supported, or assured. Human and JSON output must use
+stable reason codes, preserve `--plain`, and reject locally contradictory states through published
+schemas where a public schema exists.
+
+The implementation must regression-lock task and workflow roots, dependencies, hooks, repeated
+roles, proof-only roots, selected-mode exclusion, dry-run/real-execution parity, malformed or absent
+protected truth, and denial before every material side-effect boundary. Existing contracts with no
+selected secret requirements must retain their current output and execution behavior. Connected
+Core references, command/output specifications, JSON schemas, Site reference/docs, Learn, FAQ,
+Glossary, standalone Examples, and canonical Skills/mirrors must each be updated when affected or
+recorded explicitly as unaffected.
+
+Step 6 does not authorize a production provider-binding loader or new authority source, provider
+adapter registration, OIDC token request, Workload Identity Federation exchange, Google Secret
+Manager contact, network access, materialization, process-environment injection, secret-bearing
+child execution, receipt, archive, positive assurance, pressure evidence, or support claim.
+Implementation-order step 7 and every later step remain unauthorized.
+
 Planned follow-on: [V12.2 Contract-Authored Crossing Requirements](../v12.2/plan.md) remains
 inactive and may be activated only after V12.1 completes or is formally deferred. This sequencing
 link does not authorize implementation.
@@ -806,11 +880,11 @@ contact, secret delivery, execution, public output, receipt, archive, assurance 
 pressure evidence, or support path consumed this model. At the Step 4 completion boundary, Step 5
 and later steps remained unauthorized.
 
-Implementation-order step 5 is activated at Core `f455a246` and implemented locally pending
-independent review and commit. The sealed evaluator derives the selected-requirement set from the
-retained contract and exact task/workflow graph, then consumes the retained ordered invocation
-graph, Step 4 derivations, one retained policy snapshot, and the exact canonical effect-policy
-decision. It reuses Step 1-4 semantic verifiers, refuses missing,
+Implementation-order step 5 is activated at Core `f455a246`, independently reviewed, and committed
+at Core `9fd4b4fb8f991b7dca8c2a2df2c2b6be5e5a0baa`. The sealed evaluator derives the selected-
+requirement set from the retained contract and exact task/workflow graph, then consumes the retained
+ordered invocation graph, Step 4 derivations, one retained policy snapshot, and the exact canonical
+effect-policy decision. It reuses Step 1-4 semantic verifiers, refuses missing,
 duplicate, stale, substituted, cross-scope, unsupported, decision-mismatched, or selection-
 mismatched truth, preserves selected invocation order, and canonicalizes unordered identity sets.
 An empty selection is `not_applicable` and accepts no effect or policy evidence; policy denial is
@@ -820,7 +894,8 @@ four negative runtime states: `availability: not_checked`, `provider_contact: no
 `delivery: not_attempted`, and `execution_started: false`. Plan creation independently re-verifies
 the retained evaluation rather than trusting a resolved record. No loader, command consumer,
 provider interaction, delivery, execution, public output, receipt, archive, assurance, pressure,
-or support path consumes the model. Step 6 and later steps remain unauthorized.
+or support path consumes the model. At the Step 5 completion boundary, Step 6 and later steps
+remained unauthorized.
 
 ## Implementation Order
 
