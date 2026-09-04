@@ -34,9 +34,10 @@ at Core `9218151b`. Implementation-order step 3 was separately activated and com
 `9ac9274f`; implementation-order step 4 was separately activated at Core `a7dd07ba` and committed
 at Core `f1178fe3`. Implementation-order step 5 was separately activated and committed at Core
 `9fd4b4fb`; implementation-order step 6 was separately activated at Core `2dd20ab8` and committed
-at Core `67de2b4d`. Step 7 remains unauthorized; the amendment below is proposed for independent
-review and does not activate implementation. These activations do not establish provider support,
-secret delivery, execution authority, or pressure evidence.
+at Core `67de2b4d`. Implementation-order step 7 was independently reviewed and activated by the
+amendment committed at Core `ad14ae8b`. That activation does not establish provider support,
+secret delivery, execution authority, or pressure evidence; Step 8 and later steps remain
+unauthorized.
 
 ## Activation Gates
 
@@ -385,12 +386,13 @@ the exact provider transaction, recipient process-tree, interruption, and cleanu
 any OIDC request or provider contact is implemented. Clearing those prerequisites does not activate
 Step 7 by itself.
 
-#### Proposed Step 7 Activation Amendment (Not Active)
+#### Step 7 Activation Amendment (Active At Core `ad14ae8b`)
 
 The prerequisite Step 6 implementation is independently reviewed and committed at Core
 `67de2b4d9d6773e8b7ea0506669d4635f5feaf3f`; immutable Site and Skills reconciliation is committed
 at Core `9d6696f02b939e9366cffe4bd6b7121ede89d822`, and the completion handoff is committed at Core
-`0d5bc93b`. This proposed amendment remains inactive until independently reviewed and committed.
+`0d5bc93b`. Independent review found no remaining material issue, and Core `ad14ae8b` committed and
+activated this amendment. Only the exact boundaries below are authorized.
 
 The first executable target is narrower than generic GitHub Actions: `linux/x86_64`, native
 execution, a transient selected recipient process tree, and an administrator-controlled self-hosted
@@ -547,11 +549,14 @@ must poison proxy, CA, netrc, client-certificate, DNS result, OIDC URL, OIDC bea
 configuration independently and prove that none redirects credentials or changes trust. Protocol
 regressions must substitute every method, origin, media type, field, token type, audience, scope,
 lifetime, service account, secret resource, numeric version, response identity, and payload checksum.
-Before any provider-contact implementation begins, one real protected self-hosted runner fixture
-must retain its runner version and non-secret request URL components, prove the endpoint profile
+Before any provider-contact implementation begins, one real `linux/x86_64` protected self-hosted
+runner fixture using the admitted launcher profile must retain its runner version, protected-
+launcher capability identity, and non-secret request URL components; prove the endpoint profile
 accepts that exact shape, prove the Actions Toolkit calls the supplied request URL rather than the
 JWT issuer, and reject changed scheme, host, port, path, query keys, duplicate audience, userinfo,
-fragment, and alternate origin. Process regressions must include a daemonizing descendant,
+fragment, and alternate origin. The provider-free ARM64 discovery run `33919324208` confirms the
+regional request-service and JWT-issuer distinction but cannot satisfy this target-specific gate.
+Process regressions must include a daemonizing descendant,
 interruption at every provider and child
 boundary, cgroup-kill failure, populated-state timeout, and terminal refusal unless the retained
 cgroup is empty. Every pre-provider refusal must retain zero provider requests and zero selected
