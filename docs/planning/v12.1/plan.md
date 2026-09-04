@@ -900,6 +900,20 @@ provider interaction, delivery, execution, public output, receipt, archive, assu
 or support path consumes the model. At the Step 5 completion boundary, Step 6 and later steps
 remained unauthorized.
 
+Implementation-order step 6 was activated at Core `2dd20ab8`, independently reviewed, and committed
+at Core `67de2b4d9d6773e8b7ea0506669d4635f5feaf3f`. It retains one command-scoped admission per
+invocation across `run`, `up`, runtime and lifecycle proof, Doctor context, CI projection and
+provider-checkout re-evaluation, sandbox capability, and task/workflow harness output. Empty
+selections preserve existing behavior. Non-empty selections refuse with the public-safe
+`secret_delivery_protected_truth_unavailable` projection before setup, hydration, environment
+rendering, durable logs, services, proof artifacts, child creation, mutation, or provider contact
+while production protected truth is unavailable. Real `ota up` may retain only its generic blocked
+execution receipt with `execution_attempted: false`; no positive secret-delivery receipt, archive,
+assurance, provider transaction, or delivery exists. Site `4169fe6cf0d790b7f23b5aedb656766af60a37fa`
+and Skills `082ce38088e8208b6492334bb09ce19bbd8276af` carry the connected guidance, reconciled by Core
+`9d6696f02b939e9366cffe4bd6b7121ede89d822`. At the Step 6 completion boundary, step 7 and every
+later step remain unauthorized.
+
 ## Implementation Order
 
 1. Add the additive provider-neutral requirement schema, parser model, canonical destinations,

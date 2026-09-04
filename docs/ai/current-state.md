@@ -49,7 +49,8 @@ durable agent workflow belongs in the canonical Ota skill.
   descriptor model, the crate-private `secret_material_delivery` effect derivation foundation, the
   sealed provider-free evaluator/dry-run-plan model, and one retained command-scoped admission per
   invocation. Step 6 was independently reviewed and activated at Core `2dd20ab8`; its implementation
-  is now local and uncommitted under that exact amendment.
+  is independently reviewed and committed at Core `67de2b4d`, with immutable consumer reconciliation
+  recorded at Core `9d6696f0`.
   No provider binding loader, concrete implementation registration, provider
   contact, materialization, injection, execution authority, positive evidence, or support claim is
   implemented yet. V12.2 and later versions remain inactive.
@@ -155,15 +156,15 @@ durable agent workflow belongs in the canonical Ota skill.
   loader, provider transaction, delivery, execution, positive secret-delivery receipt,
   secret-delivery archive, assurance, pressure, and support path remains unauthorized. Real
   `ota up` retains only its existing generic blocked execution receipt with
-  `execution_attempted: false`. The local implementation wires this one retained admission
+  `execution_attempted: false`. The committed implementation wires this one retained admission
   through `run`, `up`, runtime and lifecycle proof, Doctor context, CI projection/re-evaluation,
   sandbox capability, and task/workflow harness output. Empty selections preserve existing behavior;
   selected recipients emit only a domain-separated public negative projection with protected
   identities excluded. Focused command and schema regressions prove refusal before fixture setup,
-  environment rendering, durable logs, proof artifacts, and command execution. Site and Skills have
-  connected uncommitted updates under explicit temporary synchronization waivers; standalone
-  Examples remain unchanged because Step 6 has no executable delivery example. Step 7 and later
-  steps remain unauthorized.
+  environment rendering, durable logs, proof artifacts, and command execution. Site `4169fe6` and
+  Skills `082ce38` carry the connected public and agent guidance; Core `9d6696f0` pins both immutable
+  consumer revisions. Standalone Examples remain unchanged because Step 6 has no executable delivery
+  example. Step 7 and later steps remain unauthorized.
 - Vinicius' independent v1.6.27 source review confirmed that negative-control projection
   reconciliation is live on runtime proof, emitted-archive verification, and Doctor archive
   loading. It also exposed a narrower adversarial-test gap: the existing digest mutation was
