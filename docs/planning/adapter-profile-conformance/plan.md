@@ -209,6 +209,36 @@ cleanup support and must refuse creation when terminal cleanup is required. A tr
 recipient identity, explicit acceptance evidence, and successor cleanup obligation; it cannot erase
 the original creation and ownership history.
 
+### Recorded demand: external sandbox lifecycle reconciliation
+
+Daytona issue [#5140](https://github.com/daytonaio/daytona/issues/5140) is one public demand signal
+for this inactive boundary: a previously running sandbox remained reported as `started` for several
+minutes after its execution daemon failed under memory pressure, then became `stopped` without a
+useful error reason. Failed-startup resource leakage is a separate pressure hypothesis and remains
+unproved by this cited issue. These are product-runtime observations, not proof that Ota currently
+governs Daytona or another sandbox provider.
+
+The Ota gap is a provider-specific profile defining stable observation and reconciliation semantics
+for external sandbox runtime and lifecycle posture. Per-run `EffectiveRuntimeObservation` evidence,
+not the stable profile identity, must bind the exact sandbox instance, runtime/session, selected
+work unit, challenge, control-plane state, independently observed command capability, observation
+authority, freshness, and completeness. A provider's `started` label, API acknowledgement, command
+response, or missing error field cannot independently satisfy that posture.
+
+When Ota creates the sandbox, the existing creation-intent boundary requires an
+`OwnedResourceCreationIntent`, exactly one `OwnedResourceHandle`, and terminal evidence reconciling
+the resource to cleaned, retained-by-contract, transferred, or cleanup-uncertain. A sandbox created
+outside Ota instead binds an external-resource identity and explicit ownership posture in runtime
+evidence; it cannot be represented as Ota-owned or support an Ota cleanup claim.
+
+A repository task may exercise a bounded provider fixture today, but its result remains
+repository-owned test evidence. It cannot be promoted into Ota effective-runtime assurance without
+the registered observation, reconciliation, and disclosure controls defined by this plan, plus the
+owned-resource controls when Ota creates the sandbox. Daytona is therefore a candidate future
+pressure integration only after an active version slice authorizes the runtime-facing profile.
+This demand record does not activate this plan, widen V12.1, authorize provider contact, or claim
+sandbox lifecycle or cleanup support.
+
 ### Disclosure
 
 Core owns one versioned disclosure profile per effective-observation, reconciliation,
