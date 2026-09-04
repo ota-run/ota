@@ -32,9 +32,11 @@ connected v1.6.28 proof-assurance hardening passed immutable Linux/macOS Release
 that evidence was reconciled at Core `a582b948`; step 2 was independently reviewed and committed
 at Core `9218151b`. Implementation-order step 3 was separately activated and committed at Core
 `9ac9274f`; implementation-order step 4 was separately activated at Core `a7dd07ba` and committed
-at Core `f1178fe3`. Implementation-order step 5 is separately activated under the amendment below.
-These activations do not establish provider support, secret delivery, execution authority, or
-pressure evidence.
+at Core `f1178fe3`. Implementation-order step 5 was separately activated and committed at Core
+`9fd4b4fb`; implementation-order step 6 was separately activated at Core `2dd20ab8` and committed
+at Core `67de2b4d`. Step 7 remains unauthorized; the amendment below is proposed for independent
+review and does not activate implementation. These activations do not establish provider support,
+secret delivery, execution authority, or pressure evidence.
 
 ## Activation Gates
 
@@ -371,6 +373,196 @@ pressure evidence, or support claim. Real `ota up` retains its pre-existing gene
 execution receipt with `execution_attempted: false`; that negative failure record is not delivery
 evidence and grants no authority.
 Implementation-order step 7 and every later step remain unauthorized.
+
+### Step 7 Activation Gate
+
+Step 7 is not authorized by any earlier activation record. It may be activated only after the
+Step 6 command admission and its connected Site and Skill propagation are independently reviewed,
+committed, immutably reconciled, and pushed. The activation amendment must name one production
+provider-binding loader whose authority cannot be created or redirected by `ota.yaml`, repository
+content, workflow YAML, inherited environment, CLI arguments, or caller labels. It must also define
+the exact provider transaction, recipient process-tree, interruption, and cleanup boundaries before
+any OIDC request or provider contact is implemented. Clearing those prerequisites does not activate
+Step 7 by itself.
+
+#### Proposed Step 7 Activation Amendment (Not Active)
+
+The prerequisite Step 6 implementation is independently reviewed and committed at Core
+`67de2b4d9d6773e8b7ea0506669d4635f5feaf3f`; immutable Site and Skills reconciliation is committed
+at Core `9d6696f02b939e9366cffe4bd6b7121ede89d822`, and the completion handoff is committed at Core
+`0d5bc93b`. This proposed amendment remains inactive until independently reviewed and committed.
+
+The first executable target is narrower than generic GitHub Actions: `linux/x86_64`, native
+execution, a transient selected recipient process tree, and an administrator-controlled self-hosted
+runner with a protected launch boundary. GitHub-hosted runners, repository-provisioned runners,
+local execution, macOS, Windows, containers, remote execution, persistent runtimes, raw shell, and
+unowned descendants remain unsupported or unproved. This is a capability and target change, so
+Step 7 must introduce a new versioned protected-runner profile and
+`profile_semantic_identity`; it cannot reinterpret
+`google_secret_manager_github_oidc_process_environment_v1`. The new profile binds the protected
+launcher, retained process ownership, transport, and target semantics. Its concrete implementation
+subject separately binds the exact launcher and Ota build artifacts and the `linux/x86_64`
+protected-runner target. Registration and lifecycle identities remain uncreated.
+
+Root-owned files alone do not establish authority. The selected job must enter Ota through one
+administrator-installed root service exposed through a fixed root-owned Unix socket; the repository
+runner account has permission to request an admitted launch but has no `sudo` authorization or
+other privilege-escalation path. The service's executable, socket, request protocol, launch policy,
+service account, authority descriptors, and cgroup-v2 ownership are outside repository and workflow
+control. Its versioned request accepts only an untrusted checkout descriptor, one selected Ota
+command/task-or-workflow identity, and the two OIDC capability values; Ota re-derives the checkout,
+contract, selection, and claims instead of treating request fields as authority. The service accepts
+no caller-selected executable, authority path, inherited environment, network setting, privilege,
+or arbitrary launch option. It opens the authority store, creates one invocation cgroup, and passes
+retained read-only descriptors plus a fresh launch capability to the fixed unprivileged Ota
+implementation subject. Ota must refuse when its
+real, effective, or saved identity is root; when any effective, permitted, inheritable, or ambient
+Linux capability is present; when `no_new_privs` is absent; when its parent, launch policy, service
+identity, retained descriptors, or cgroup do not reconcile; or when repository code can select or
+replace the launcher inputs. A domain-separated `ProtectedLauncherCapabilityIdentity` binds the
+launcher executable and policy identities, runner-administrator identity, bounded request identity,
+service UID/GID,
+invocation nonce, boot identity, cgroup identity, inherited socket and authority-descriptor metadata,
+and exact Ota implementation-subject identity. Ota derives these facts from the retained descriptors,
+Linux credentials, process state, and cgroup state rather than trusting caller fields. Admission and
+the secret-delivery transaction both bind that identity. A normal root shell, `sudo`, repository-
+owned wrapper, direct invocation of the Ota binary, or caller-constructed local descriptor cannot
+satisfy it.
+
+The launcher reads `/etc/ota/secret-delivery/verifiers-v1.json` and
+`/etc/ota/secret-delivery/bindings-v1.json` from a root-owned `0700` authority directory. Every path
+component must be a real root-owned directory that is not group- or world-writable. Linux lookup
+must use an `openat2`-equivalent beneath the retained authority-directory descriptor with
+no-symlink, no-magic-link, no-mount-crossing resolution; final-component `O_NOFOLLOW` alone is
+insufficient. Both files must be regular, root-owned, mode `0400`, versioned, and opened before the
+unprivileged Ota process starts. Ota reconciles retained descriptor device, inode, owner, mode,
+size, and exact bytes before admission and again before the first provider request. The binding
+bundle must be domain-separated and Ed25519-signed by exactly one admitted verifier from the
+protected verifier store. The verifier store names the authority, admitted key, signature domain,
+validity bounds, signed generation, and exactly one active binding-bundle identity; a merely valid
+signature over another bundle is not current within that retained snapshot. Missing files,
+aliases, ownership or mode drift, unknown or duplicate verifiers, invalid signatures, expired
+authority, generation mismatch, unpinned bundles, replacement, descriptor drift, or byte drift
+refuse. No repository path, workspace path, environment variable, workflow input, CLI flag, or
+fallback search may change the store paths or trust roots. The initial slice proves snapshot
+consistency and intra-invocation drift refusal only; rollback by the independent runner
+administrator to an older still-valid verifier-store and bundle pair remains explicitly unproved.
+
+After every ordinary execution, crossing, sandbox, typed-effect, secret-policy, protected-binding,
+profile, target, and command admission passes, real execution may open one in-memory, invocation-
+scoped secret-delivery transaction and register interruption and cleanup authority before the first
+network request. Dry-run, Doctor, CI rendering, harness output, and every refused invocation remain
+provider-free. The transaction binds the exact contract, selected invocation graph, requirement,
+effect decision, secret-delivery decision, protected binding/source bytes, profile, implementation
+subject, target, GitHub run claims, Google resources, and numeric Secret Manager version. No prior
+receipt, projection, provider response, token, handle, or availability result can satisfy a new
+transaction.
+
+The provider client uses a closed transport profile bound into the new profile and implementation-
+subject identities. It performs direct TLS with build-pinned public Web PKI roots and exact DNS/TLS
+hostname verification; ignores `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, `NO_PROXY`, custom CA,
+`SSL_CERT_*`, netrc, client-certificate, and generic HTTP-client configuration; accepts no caller
+trust root; rejects IP literals, userinfo, fragments, redirects, alternate origins, and authority
+changes; and never forwards credentials across an origin. GitHub's
+`ACTIONS_ID_TOKEN_REQUEST_URL` and `ACTIONS_ID_TOKEN_REQUEST_TOKEN` are untrusted capability inputs,
+not independent identity evidence. A separate versioned
+`GitHubActionsOidcRequestEndpointProfile` binds the narrowly admitted HTTPS request-service host,
+port, path grammar, existing query-key grammar, audience-append rule, and transport behavior derived
+from retained real self-hosted-runner evidence. It is part of the new profile semantic identity and
+must not equate the request-service origin with the JWT issuer. Ota uses the bearer only at the exact
+validated request origin and locally reconciles the complete protected claim set of the returned JWT,
+including exact issuer `https://token.actions.githubusercontent.com`, before exchange. Google STS
+acceptance is the initial slice's provider acknowledgement of JWT signature and configured WIF
+issuer acceptance; it is not independent Ota verification of GitHub's signing key. Substituted
+ambient values must refuse and cannot change the endpoint grammar or transport configuration.
+
+The only authorized byte-exact provider sequence is:
+
+1. parse the GitHub Actions OIDC request URL and bearer capability supplied to the selected job as
+   untrusted inputs, require the URL to match the exact versioned self-hosted request-endpoint
+   profile, and serialize neither value into arguments, logs, public output, or durable state;
+2. request one JWT with audience equal to the exact protected WIF provider URL;
+3. require JWT issuer `https://token.actions.githubusercontent.com` and reconcile the audience and
+   complete required claim set to the protected invocation binding before exchange, while treating
+   Google acceptance as provider acknowledgement rather than independent proof of every claim;
+4. `POST https://sts.googleapis.com/v1/token` as `application/x-www-form-urlencoded` with exactly
+   `grant_type=urn:ietf:params:oauth:grant-type:token-exchange`, the protected WIF audience,
+   `scope=https://www.googleapis.com/auth/cloud-platform`,
+   `requested_token_type=urn:ietf:params:oauth:token-type:access_token`, the reconciled JWT as
+   `subject_token`, and `subject_token_type=urn:ietf:params:oauth:token-type:jwt`; send no
+   authorization header or `options`, and accept only `Bearer`, the requested issued-token type,
+   and a positive `expires_in` no greater than 3600 seconds;
+5. `POST` the exact
+   `https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/{ACCOUNT}:generateAccessToken`
+   path as JSON containing only one cloud-platform `scope` and `lifetime: "600s"`, with `delegates`
+   omitted; require one nonempty access token and an `expireTime` after the response time and no
+   later than 600 seconds after it;
+6. `GET` exactly
+   `https://secretmanager.googleapis.com/v1/projects/{PROJECT}/secrets/{SECRET}/versions/{NUMERIC_VERSION}:access`
+   with an empty body and the service-account bearer token; require the returned resource name to
+   equal the requested numeric version, decode only canonical base64 payload data, and verify the
+   returned CRC32C before use; and
+7. inject the returned bytes only into the exact selected native recipient process-tree environment.
+
+The GitHub request is one `GET` to the exact request-service origin and path admitted by
+`GitHubActionsOidcRequestEndpointProfile`, preserving only its admitted existing query keys and
+appending exactly one canonically encoded protected audience parameter, with one bearer
+authorization header. The request endpoint is not accepted as JWT issuer or identity authority.
+Its bounded JSON response must contain exactly one nonempty JWT value, which must reconcile before
+Google exchange. The accepted STS federated-token lifetime is at most 3600 seconds; the requested
+and accepted IAM service-account-token lifetime and the Ota transaction lifetime are each at most
+600 seconds. Ota does not claim provider-side revocation of the longer-lived STS credential after
+its owned buffer is dropped. Every request has bounded connect/read/overall timeouts and response
+sizes and performs no implicit retry or provider fallback in the initial slice. The transaction
+rejects changed method, media type,
+field set, response shape, audience, claims, repository/ref/workflow/run identity, WIF pool/provider,
+service account, project, secret resource, numeric version, token lifetime, provider origin,
+transport posture, launcher capability, or implementation subject. Provider aliases such as
+`latest` remain forbidden.
+
+Ota must construct the complete recipient environment without copying a same-named ambient value,
+start no recipient until materialization and injection succeed, and start no non-recipient helper,
+hook, service, proof observer, negative control, or lifecycle child with the delivered variable.
+The selected recipient process tree may inherit the value. The protected launcher must place Ota
+and every selected descendant in one fresh cgroup-v2 subtree before provider contact, prevent the
+unprivileged process from moving itself or descendants to another cgroup, and retain the cgroup
+descriptor and identity in transaction truth. A target without cgroup-v2 kill and populated-state
+observation refuses before provider contact. Failure before child start leaves every selected child
+unstarted. Failure or interruption after child start invokes cgroup kill, waits for the retained
+subtree's populated state to reach zero, and only then terminalizes; timeout or observation failure
+is cleanup-uncertain and cannot be reported as cleaned. Processes outside the retained cgroup,
+kernel or privileged escape, and exfiltration after receipt remain unproved. Ota must drop and
+best-effort zeroize its owned secret and credential buffers and remove every adapter-owned transient
+handle, while explicitly not claiming process-memory erasure, provider revocation, rotation,
+absence of prior copying, or absence of exfiltration.
+
+The implementation acceptance matrix must prove that the new profile identity differs from the
+provider-free v1 profile and that direct Ota invocation, root execution, any Linux capability,
+missing `no_new_privs`, substituted launcher/socket/cgroup metadata, and caller-created authority
+descriptors refuse before provider contact. Store regressions must cover readable binding files,
+writable or aliased parent components, final aliases, mount crossing, descriptor replacement,
+byte drift, signature/generation/current-bundle mismatch, and an explicit record that a complete
+older administrator-installed snapshot is not detected across invocations. Transport regressions
+must poison proxy, CA, netrc, client-certificate, DNS result, OIDC URL, OIDC bearer, and generic HTTP
+configuration independently and prove that none redirects credentials or changes trust. Protocol
+regressions must substitute every method, origin, media type, field, token type, audience, scope,
+lifetime, service account, secret resource, numeric version, response identity, and payload checksum.
+Before any provider-contact implementation begins, one real protected self-hosted runner fixture
+must retain its runner version and non-secret request URL components, prove the endpoint profile
+accepts that exact shape, prove the Actions Toolkit calls the supplied request URL rather than the
+JWT issuer, and reject changed scheme, host, port, path, query keys, duplicate audience, userinfo,
+fragment, and alternate origin. Process regressions must include a daemonizing descendant,
+interruption at every provider and child
+boundary, cgroup-kill failure, populated-state timeout, and terminal refusal unless the retained
+cgroup is empty. Every pre-provider refusal must retain zero provider requests and zero selected
+children; no test-only injector may exist in default builds.
+
+The implementation must have a non-default pressure feature until Step 8 evidence and Step 10 real-
+repository pressure are complete. It may return the ordinary selected-task outcome for local test
+control, but it cannot emit a positive secret-delivery receipt, archive, assurance, support claim,
+or release-enabled adapter posture. Step 8 and later work remain unauthorized. Connected public
+documentation must continue to describe provider delivery as unavailable until a later reviewed
+step authorizes and ships the operator surface.
 
 Planned follow-on: [V12.2 Contract-Authored Crossing Requirements](../v12.2/plan.md) remains
 inactive and may be activated only after V12.1 completes or is formally deferred. This sequencing

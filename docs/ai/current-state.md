@@ -165,6 +165,19 @@ durable agent workflow belongs in the canonical Ota skill.
   Skills `082ce38` carry the connected public and agent guidance; Core `9d6696f0` pins both immutable
   consumer revisions. Standalone Examples remain unchanged because Step 6 has no executable delivery
   example. Step 7 and later steps remain unauthorized.
+- A proposed V12.1 Step 7 activation amendment is now under review. It would authorize only the
+  first real provider transaction on a `linux/x86_64` GitHub Actions self-hosted protected runner:
+  a new protected-runner profile; an administrator-installed launcher that starts unprivileged Ota
+  with retained authority descriptors, no privilege-escalation posture, and cgroup-v2 process
+  ownership; a caller-independent TLS transport; byte-exact GitHub OIDC, Google WIF, service-account,
+  and numeric Secret Manager version requests; selected native process-tree environment injection;
+  interruption; and terminal cleanup observation. The proposal proves only intra-invocation store
+  consistency and leaves independent-administrator rollback, privileged escape, exfiltration, and
+  memory erasure unproved. It separately binds a real-self-hosted-runner-derived OIDC request-
+  endpoint profile and exact JWT issuer; provider contact cannot be implemented until that
+  compatibility fixture exists. It keeps GitHub-hosted and repository-provisioned runners, other
+  targets, positive receipts/archives/assurance, adapter support, Step 8, and V12.2 inactive. It
+  does not authorize implementation until independently reviewed and committed.
 - Vinicius' independent v1.6.27 source review confirmed that negative-control projection
   reconciliation is live on runtime proof, emitted-archive verification, and Doctor archive
   loading. It also exposed a narrower adversarial-test gap: the existing digest mutation was
