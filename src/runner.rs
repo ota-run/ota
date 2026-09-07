@@ -9759,7 +9759,7 @@ fn record_readiness_probe_failure(
 }
 
 fn format_readiness_probe_progress(report: &ReadinessProbeReport) -> String {
-    let mut lines = vec![String::from("Readiness")];
+    let mut lines = vec![String::from("🦦 Ota Readiness")];
     if let Some(listener) = report.listener.as_deref() {
         lines.push(format!("→ listener: `{listener}`"));
     }
@@ -9789,7 +9789,7 @@ fn emit_readiness_probe_progress(
     if let Some(notifier) = notifier {
         notifier.wait_for_quiet_output(Duration::from_millis(300), stop);
         let _guard = notifier.begin_output();
-        eprintln!("{progress}");
+        eprintln!("\n{progress}");
     }
 }
 
