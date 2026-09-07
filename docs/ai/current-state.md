@@ -179,6 +179,19 @@ durable agent workflow belongs in the canonical Ota skill.
   `linux/x86_64` protected-launcher fixture; provider contact cannot be implemented until that exact
   compatibility fixture exists. Step 7 keeps GitHub-hosted and repository-provisioned runners,
   other targets, positive receipts/archives/assurance, adapter support, Step 8, and V12.2 inactive.
+- Step 7 endpoint-compatibility work is in progress. Core `777c42ab` commits a no-checkout
+  Linux/X64 discovery workflow that binds the live OIDC request URL shape to the protected runner
+  service posture and administrator installation identity. A separate no-`id-token` job uses
+  pinned Actions Toolkit code with a loopback fake capability to prove it calls the supplied URL
+  rather than the JWT issuer; the protected job reads that retained probe and observes the live
+  endpoint shape.
+  OIDC and provider contact are not instrumented or claimed.
+  Run `34137753776` was cancelled from its queue because no matching protected Linux/X64 runner is
+  currently registered to Core. The workflow explicitly records `capability_identity: null` and
+  `capability_derivation: not_attempted`; installation identity is not accepted as a substitute.
+  A crate-private endpoint profile and semantic observation verifier are implemented locally and
+  await independent review. No real OIDC request, provider contact, launcher-capability
+  transmission, transaction, delivery, execution, receipt, archive, or assurance is claimed.
 - Vinicius' independent v1.6.27 source review confirmed that negative-control projection
   reconciliation is live on runtime proof, emitted-archive verification, and Doctor archive
   loading. It also exposed a narrower adversarial-test gap: the existing digest mutation was

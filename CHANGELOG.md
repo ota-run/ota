@@ -26,6 +26,17 @@
 
 ## Unreleased
 
+- Add a crate-private, provider-free GitHub Actions OIDC request-endpoint profile and semantic
+  observation verifier for the activated V12.1 Linux/X64 protected-runner target. The initial
+  profile is fail-closed to the exact host, path shape, and query shape retained by the earlier
+  ARM64 discovery; target, endpoint, profile, capability-identity, and recomputed-observation
+  substitutions refuse. A separate no-checkout X64 discovery workflow verifies the protected
+  runner posture and administrator installation identity. A separate no-`id-token` job proves a
+  pinned Actions Toolkit uses a supplied loopback URL rather than the JWT issuer; the protected
+  job reads that retained probe and records the live endpoint shape. The workflow intentionally records that real
+  `ProtectedLauncherCapabilityIdentity` derivation remains unattempted. It does not instrument or
+  claim OIDC or provider contact and activates no loader, transaction, delivery, or execution.
+
 ## 1.6.28
 
 - Added V12.1 command-scoped secret-delivery admission for `run`, `up`, runtime and lifecycle
