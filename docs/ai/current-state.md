@@ -186,6 +186,14 @@ durable agent workflow belongs in the canonical Ota skill.
   rather than the JWT issuer; the protected job reads that retained probe and observes the live
   endpoint shape.
   OIDC and provider contact are not instrumented or claimed.
+  Successful Core run [34153231585](https://github.com/ota-run/ota/actions/runs/34153231585), at
+  exact Core `f921209561b26f38cdb74c5f20f71e0b6734ae0d`, separately proves the retained endpoint
+  shape on self-hosted `linux/x64` Runner `2.337.0` and that the pinned Toolkit used its supplied
+  loopback URL rather than the JWT issuer. Its public evidence retains
+  `capability_identity: null`, `capability_derivation: not_attempted`, and
+  `provider_contact_observation: not_instrumented`; it retains neither a bearer nor a protected
+  request URL value. It does not derive protected-launcher capability, make an OIDC request, or
+  contact a provider.
   The earlier Core discovery run `34137753776` was cancelled from its queue and remains no
   compatibility evidence. The subsequent independently reviewed Launcher witness
   [34159892077](https://github.com/ota-run/authority-launcher/actions/runs/34159892077), at exact
