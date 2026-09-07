@@ -113,7 +113,7 @@ boundary.
 
 ## Existing Roadmap Ownership
 
-This strategy maps existing plans; it does not duplicate or reorder them:
+This strategy maps owned plans; it does not duplicate, implicitly activate or reorder them:
 
 - V12 owns typed effects, realizations, shared policy admission, refusal controls, and bounded
   negative evidence.
@@ -126,6 +126,12 @@ This strategy maps existing plans; it does not duplicate or reorder them:
 - V12.6 is demand-gated by an independent evidence consumer and a real organizational
   interoperability need. It owns OSS evidence portability, repository reporting, authority
   history, and external interoperability without allowing consumers to redefine Core truth.
+- V13 owns one protected repository adoption path where independently controlled enrollment,
+  approved verification obligations, exact candidate inputs, trusted evidence and a provider-owned
+  gate determine whether a change can be accepted.
+- V13.1 owns one demand-gated governed agent/runtime integration. It adds bounded in-session
+  capability enforcement without treating agent identity, instructions or V13's post-work gate as
+  whole-session control.
 - the adapter/profile conformance plan owns registration, capability, effective-runtime
   observation, pressure, support, deprecation, and revocation requirements;
 - the authority-distribution lifecycle plan owns protected artifact installation, upgrade,
@@ -242,10 +248,11 @@ problem with less integration cost.
 Committing this strategy makes it a review and sequencing reference only. It never becomes an active
 implementation version.
 
-The active implementation remains V12.1 Step 6. No later step or version activates through this
+The active implementation remains V12.1 Step 7. No later step or version activates through this
 strategy. V12.2 may activate only after V12.1 completes or is formally deferred and V12.2's own
-gates are satisfied. Every later version and cross-cutting plan retains its own activation and
-demand requirements.
+gates are satisfied. V13 and V13.1 remain planned and inactive under their separate adoption,
+enforcement, sequencing and independent-review gates. Every later version and cross-cutting plan
+retains its own activation and demand requirements.
 
 New work not already owned by those plans requires a separately reviewed inactive plan that names
 one bounded capability, one implementation owner, one pressure target, one proof boundary, and its

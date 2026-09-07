@@ -1821,9 +1821,20 @@ record. The following version plans remain inactive:
 separates portable export, repository reporting, authority history, and authority references into
 independently activated and closed sub-slices rather than one trust-sensitive batch. Completion of
 V11.22 did not implicitly activate V12; the explicit V11 parent reconciliation and reviewed V12
-activation record did. V12 activation does not activate any later slice. One successor may activate
-only after its predecessor completes or is formally deferred and its own feasibility, pressure, and
-independent-review gates are met.
+activation record did. V12 activation does not activate any later slice. One successor in a roadmap
+chain may activate only after its predecessor completes or is formally deferred and its own
+feasibility, pressure, and independent-review gates are met. An independent branch must name its
+own predecessor and dependencies, and no branch may activate while another implementation version
+is active. V13 is such a branch: it follows V12.1's completion or formal deferral, while V12.2-V12.6
+remain in their own planned successor chain unless its selected profile explicitly depends on one.
+Two later adoption plans are also explicit and inactive:
+[V13 Protected Repository Adoption](../planning/v13/plan.md) owns independently controlled
+repository enrollment, approved verification obligations, exact candidate inputs, trusted evidence
+and one provider-owned acceptance gate;
+[V13.1 Governed Agent Runtime Integration](../planning/v13.1/plan.md) owns one demand-backed exact
+agent/runtime capability boundary during authorship. V13 establishes agent-agnostic acceptance
+governance and does not claim whole-session containment. V13.1 cannot infer enforcement from agent
+identity, instructions or V13's gate. Neither plan activates through roadmap order or this handoff.
 The completed V12 `effect_assurance` candidate remains archive-bound, `unknown`, and review-only
 even when its private archive and current typed graph reconcile exactly. Its writable ratchet is
 owned separately by the planned inactive
@@ -1852,6 +1863,11 @@ vertical slice and forbids a mandatory-chokepoint claim until an adopted externa
 the required capability outside admitted Ota execution. It is strategy and sequencing guidance only;
 it does not activate a version, implementation slice, provider, adapter, command, schema, evidence
 claim, or support posture;
+[the inactive adoption-gap assessment](../planning/agent-execution-governance-core/adoption-gap-assessment.md)
+turns that strategy into 17 builder work packages, an explicit dependency map, acceptance controls,
+and proof limits. It allocates inactive ownership without activating or amending any implementation
+version, and separates agent-agnostic required-verification adoption from later whole-session agent
+governance;
 [OSS adapter and profile conformance](../planning/adapter-profile-conformance/plan.md)
 defines registration, capability, pressure, support, deprecation, and revocation rules for V12+
 implementations. Shared behavior derives `profile_semantic_identity`, while owner, source, build,
