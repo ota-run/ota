@@ -186,12 +186,25 @@ durable agent workflow belongs in the canonical Ota skill.
   rather than the JWT issuer; the protected job reads that retained probe and observes the live
   endpoint shape.
   OIDC and provider contact are not instrumented or claimed.
-  Run `34137753776` was cancelled from its queue because no matching protected Linux/X64 runner is
-  currently registered to Core. The workflow explicitly records `capability_identity: null` and
-  `capability_derivation: not_attempted`; installation identity is not accepted as a substitute.
-  A crate-private endpoint profile and semantic observation verifier are implemented locally and
-  await independent review. No real OIDC request, provider contact, launcher-capability
-  transmission, transaction, delivery, execution, receipt, archive, or assurance is claimed.
+  The earlier Core discovery run `34137753776` was cancelled from its queue and remains no
+  compatibility evidence. The subsequent independently reviewed Launcher witness
+  [34159892077](https://github.com/ota-run/authority-launcher/actions/runs/34159892077), at exact
+  Launcher `79f2b5e81a7454c7c56394520b27a5f4f3fb9f48`, Core
+  `f921209561b26f38cdb74c5f20f71e0b6734ae0d`, and Protocol
+  `ae3c8e99164c2d1db7f387f061f875272015bb36`, proves one bounded protected-runner governed
+  invocation: installed client identity/help reconciliation, completed selected execution, terminal
+  child reap, scope removal, empty-or-absent cgroup, active-slot removal, and one valid protected
+  receipt archive with zero invalid archives. The exact public hosted payload is retained by
+  `authority-launcher` commit `a2cdd23b82472b4c4b7ae07ae28356f0d7338d71` at
+  `docs/pressure/retained-artifacts/systemd-v3-independently-administered-34159892077.zip`
+  (`sha256:0b15512fe736bee4b35a2dd205a5e9e3d68a9af496ee86f812c364b4f322258f`). Current runner-group
+  configuration was independently checked to allow exactly the two documented repositories and
+  four branch-pinned workflows, but that mutable configuration is not run-bound artifact evidence.
+  This witness does not derive `ProtectedLauncherCapabilityIdentity`, execute the Core endpoint
+  workflow, contact OIDC or a provider, materialize or deliver a secret, establish provider
+  compatibility, or prove general agent/repository governance. The endpoint profile and semantic
+  observation verifier remain crate-private; provider contact stays blocked on the exact protected
+  Linux/X64 capability fixture.
 - Vinicius' independent v1.6.27 source review confirmed that negative-control projection
   reconciliation is live on runtime proof, emitted-archive verification, and Doctor archive
   loading. It also exposed a narrower adversarial-test gap: the existing digest mutation was
