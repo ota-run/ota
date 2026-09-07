@@ -431,6 +431,82 @@ the secret-delivery transaction both bind that identity. A normal root shell, `s
 owned wrapper, direct invocation of the Ota binary, or caller-constructed local descriptor cannot
 satisfy it.
 
+`ProtectedLauncherCapabilityIdentity` is protected transaction truth, not a public CI identity: it
+transitively binds protected authority-store and descriptor observations. The launcher may retain it
+only in the protected invocation and Core transaction carriers. A hosted compatibility workflow may
+receive only a separately derived, domain-separated public capability-observation projection whose
+inputs are individually approved as public-safe and which cannot hash, correlate, or reveal the
+protected capability, store, descriptor, request, binding, source, or invocation identities.
+
+The root-owned launcher is the sole derivation owner. For one probe it accepts the Core-generated
+fresh public challenge, canonicalizes and reserves its identity before child preparation, derives
+the protected capability from the same retained child, cgroup, session, and authority observations,
+records the private capability-to-challenge reconciliation link in the protected transaction, and
+consumes the challenge exactly once before returning the projection. The caller cannot select a
+capability, descriptor, authority path, profile, signature, or completion state. Missing, malformed,
+duplicate, expired, replayed, or substituted challenges and a missing, duplicate, stale, replayed,
+or substituted projection must refuse. A recovered or copied projection cannot satisfy a new
+workflow because Core generates and retains its expected fresh challenge before contacting the
+launcher and requires exact equality after signature verification. The private reconciliation link
+and raw capability identity are never serialized into workflow, log, artifact, receipt, archive, or
+public output.
+
+`ProtectedLauncherCapabilityObservationChallengeV1` is a closed, shared Protocol record. It contains
+exactly `schema_version: 1`; message kind
+`protected_launcher_capability_observation_challenge`; a domain-separated `identity`; canonical
+positive-decimal GitHub workflow run and attempt identifiers; the canonical exact workflow reference;
+a 256-bit Core-generated random nonce commitment; and canonical issued/expiry Unix seconds. The raw
+nonce is passed only in the fixed local launcher request and is never logged, persisted in a public
+artifact, or projected. Core generates it from the operating-system CSPRNG immediately before the
+probe, permits a maximum five-minute lifetime, and retains the expected challenge only for that
+workflow invocation. Launcher recomputes the commitment and identity, requires issuance not in the
+future and expiry within the bounded lifetime, and atomically reserves the challenge identity in one
+fixed root-owned, no-follow, durable replay store before child preparation. It records consumption
+only after protected derivation and projection signing; an unexpired reservation, a consumed record,
+or any filesystem/lock/durability ambiguity refuses. The Protocol owns canonicalization and identity
+derivation; the root launcher owns durable reservation/consumption; Core owns its in-memory expected
+challenge reconciliation. No workflow file, environment value, artifact, or client response may
+replace those owners.
+
+The first public `ProtectedLauncherCapabilityObservationProjectionV1` is closed and rejects unknown
+fields. Its unsigned canonical payload contains exactly: `schema_version: 1`; evidence kind
+`protected_launcher_capability_observation`; the canonical public challenge identity;
+`derivation: verified`; target posture `environment: self_hosted`, `os: linux`,
+`architecture: x64`; the approved class `systemd_protected_launcher_v3`; the observed canonical
+runner version; and the launcher public signing-key identity. `projection_identity` is the SHA-256
+identity of precisely that JCS payload under
+`ota.protected-launcher-capability-observation-projection.v1\0`; it is not an input to its own
+derivation. The outer projection adds only that `projection_identity` and one Ed25519 signature over
+the canonical byte sequence `ota.protected-launcher-capability-observation-signature.v1\0` followed
+by the projection identity. The signature is not an input to either payload or identity derivation.
+
+The projection contains no raw capability or protected-transaction identity, descriptor or store
+metadata/content identity, request or repository path, binding/source/provider reference, principal,
+PID, cgroup, nonce, boot identity, implementation subject, timestamp, token, credential, response,
+or provider result. `verified` is the sole initial derivation state. The signer is the root-owned
+launcher/attestor boundary; Core's compatibility verifier owns schema, closed-vocabulary, payload,
+identity, signature, expected-challenge, one-result, and target/profile/runner-version
+reconciliation. It must reject any other state or public class. The projection is neither authority
+nor evidence of provider contact, delivery, execution approval, or cleanup beyond the exact retained
+launcher result.
+
+Core obtains the projection verifier only from the administrator-installed fixed path
+`/usr/share/ota/authority-launcher/capability-projection-verifier-v1.json`. This closed, versioned,
+root-owned regular record has a protected ownership chain, no symlink or writable ancestor, and
+contains exactly `schema_version: 1`; record kind `protected_launcher_capability_projection_verifier`;
+its domain-separated record identity; one approved Ed25519 public key; that key's identity; key usage
+`protected_launcher_capability_observation_projection`; and required signature domain
+`ota.protected-launcher-capability-observation-signature.v1\0`. The root installer writes it
+atomically and binds its record identity into the administrator-controlled public installation
+evidence; the launcher signs only with the matching protected attestor key. Core reopens and
+rederives the fixed record and installation evidence before signature verification, requires the
+projection signer-key identity, key usage, and signature domain to equal the independently loaded
+record, then verifies the signature over the specified domain and identity. It must never trust a
+key, key identity, trust root, or verification result from the projection, caller, workflow,
+repository, CLI, environment, or artifact; the projection signature is untrusted verification input
+only. Missing, duplicate, substituted, malformed, unverifiable, or installation-mismatched verifier
+records refuse.
+
 The launcher reads `/etc/ota/secret-delivery/verifiers-v1.json` and
 `/etc/ota/secret-delivery/bindings-v1.json` from a root-owned `0700` authority directory. Every path
 component must be a real root-owned directory that is not group- or world-writable. Linux lookup
@@ -550,12 +626,19 @@ configuration independently and prove that none redirects credentials or changes
 regressions must substitute every method, origin, media type, field, token type, audience, scope,
 lifetime, service account, secret resource, numeric version, response identity, and payload checksum.
 Before any provider-contact implementation begins, one real `linux/x86_64` protected self-hosted
-runner fixture using the admitted launcher profile must retain its runner version, protected-
-launcher capability identity, and non-secret request URL components; prove the endpoint profile
-accepts that exact shape, prove the Actions Toolkit calls the supplied request URL rather than the
-JWT issuer, and reject changed scheme, host, port, path, query keys, duplicate audience, userinfo,
-fragment, and alternate origin. The provider-free ARM64 discovery run `33919324208` confirms the
-regional request-service and JWT-issuer distinction but cannot satisfy this target-specific gate.
+runner fixture using the admitted launcher profile must retain the protected launcher capability in
+its protected transaction carrier and a separately derived, signed public capability-observation
+projection, plus its runner version and non-secret request URL components. Core must generate one
+fresh public challenge, verify one exact signed projection against that challenge, and refuse missing,
+duplicate, stale, replayed, substituted, malformed, or signature-invalid records before accepting
+the endpoint fixture. The matrix must independently substitute the verifier record/key identity,
+challenge nonce/commitment, run/attempt/workflow context, expiry, projection signer, signature,
+target/profile class, and derivation status; every mutation must refuse. It must prove the endpoint
+profile accepts that exact shape, prove the Actions Toolkit calls the supplied request URL rather
+than the JWT issuer, and reject changed scheme, host, port, path, query keys, duplicate audience,
+userinfo, fragment, and alternate origin. The
+provider-free ARM64 discovery run `33919324208` confirms the regional request-service and JWT-issuer
+distinction but cannot satisfy this target-specific gate.
 Process regressions must include a daemonizing descendant,
 interruption at every provider and child
 boundary, cgroup-kill failure, populated-state timeout, and terminal refusal unless the retained

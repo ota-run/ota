@@ -211,8 +211,15 @@ durable agent workflow belongs in the canonical Ota skill.
   This witness does not derive `ProtectedLauncherCapabilityIdentity`, execute the Core endpoint
   workflow, contact OIDC or a provider, materialize or deliver a secret, establish provider
   compatibility, or prove general agent/repository governance. The endpoint profile and semantic
-  observation verifier remain crate-private; provider contact stays blocked on the exact protected
-  Linux/X64 capability fixture.
+  observation verifier remain crate-private. Provider contact stays blocked on the exact protected
+  Linux/X64 capability fixture: the raw capability identity must remain in the protected launcher
+  transaction, while the workflow must verify one exact signed, closed public observation projection
+  against a fresh canonical one-use public challenge and refuse replay, substitution, duplication,
+  staleness, or signature/schema mismatch. Core must load the matching projection verification key
+  only from the fixed administrator-owned verifier record reconciled with protected installation
+  evidence; it cannot trust a workflow- or projection-supplied key. Root launcher state owns atomic
+  challenge reservation and consumption; Core owns its expected challenge for the exact workflow
+  invocation.
 - Vinicius' independent v1.6.27 source review confirmed that negative-control projection
   reconciliation is live on runtime proof, emitted-archive verification, and Doctor archive
   loading. It also exposed a narrower adversarial-test gap: the existing digest mutation was
