@@ -24,6 +24,18 @@
 
 # Lessons
 
+## 2026-09-07
+
+- Pattern: Design-partner qualification was narrowed to failures Ota could already prove, causing
+  strong pressure candidates to be rejected because their most valuable boundary exposed an
+  unfinished Ota capability.
+- Correction: Evaluate present adoption value and product-widening value separately. Require one
+  useful bounded contract or execution lane now, but allow the strongest pressure boundary to
+  remain explicitly `not_proved` when it identifies a reusable Ota-owned capability gap.
+- Rule: Never reject a design-partner candidate solely because Ota cannot yet prove the highlighted
+  runtime outcome. Reject only when there is no useful current artifact, the gap is repo-specific,
+  the pressure is unsafe or inaccessible, or honest scoping cannot prevent an overclaim.
+
 ## 2026-06-08
 
 - Pattern: While validating sibling repos, it is easy to fall back to direct `npm`, `pnpm`, or
