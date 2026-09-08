@@ -13263,6 +13263,29 @@ fn execute_task_with_hooks(
             },
         }
     };
+    let prepared_execution = match prepared_execution {
+        PreparedTaskExecution::NativeCommand {
+            exe,
+            args,
+            cwd,
+            interaction,
+        } if matches!(backend, ResolvedExecutionBackend::Native { .. }) => {
+            let (exe, args) = native_corepack_command_for_task(
+                Some(contract),
+                task_name,
+                current_os,
+                exe.as_str(),
+                args.as_slice(),
+            );
+            PreparedTaskExecution::NativeCommand {
+                exe,
+                args,
+                cwd,
+                interaction,
+            }
+        }
+        execution => execution,
+    };
     let mut prepared_execution = if let Some((selection, spec)) = orchestrator_execution {
         match &prepared_execution {
             PreparedTaskExecution::Preparation { prepare }
@@ -14676,6 +14699,13 @@ fn execute_task_command_with_replay_baseline_mounts(
                 ..
             },
         ) => {
+            let (exe, args) = native_corepack_command_for_task(
+                contract,
+                task_name,
+                current_os(),
+                exe.as_str(),
+                args.as_slice(),
+            );
             let native_compose_override = task
                 .zip(contract)
                 .map(|(task, _)| {
@@ -14722,8 +14752,8 @@ fn execute_task_command_with_replay_baseline_mounts(
                     task,
                     task_name,
                     effective_runtime,
-                    exe,
-                    args,
+                    exe.as_str(),
+                    args.as_slice(),
                     *interaction,
                     effective_working_dir.as_path(),
                     &resolved_env,
@@ -15059,6 +15089,69 @@ fn execute_prepare_task(
                 task_name,
                 runtime,
                 &prepared_structured_command_spec_for_backend(backend, &command),
+                working_dir,
+                env_overrides,
+                path_export,
+                secret_env_names,
+                backend,
+                deferred_backend_fulfillment,
+                host_port_override,
+                mode.clone(),
+                ephemeral_sessions.as_deref_mut(),
+            )?;
+            stdout.push_str(&step_output.stdout);
+            stderr.push_str(&step_output.stderr);
+            last_exit_code = step_output.exit_code;
+        }
+        return Ok(TaskCommandOutput {
+            exit_code: last_exit_code,
+            stdout,
+            stderr,
+            target: None,
+            runtime: None,
+            service_termination: None,
+            execution_note: None,
+            interrupted: false,
+        });
+    }
+
+    if let crate::schema::TaskPrepareSpec::DependencyHydration(spec) = prepare
+        && matches!(backend, ResolvedExecutionBackend::Native { .. })
+        && matches!(
+            spec.source,
+            crate::schema::TaskDependencyHydrationSourceSpec::NodePackageManager(_)
+        )
+    {
+        let mut stdout = String::new();
+        let mut stderr = String::new();
+        let mut last_exit_code = 0;
+        for command in dependency_hydration_command_specs(&spec.source) {
+            let (exe, args) = native_corepack_command_for_task(
+                contract,
+                task_name,
+                current_os(),
+                command.exe.as_str(),
+                command.args.as_slice(),
+            );
+            let command = crate::schema::TaskCommandSpec {
+                exe,
+                args,
+                ..command
+            };
+            let prepared_execution = wrapped_prepare_execution_for_orchestrator(
+                contract,
+                task,
+                task_name,
+                prepare,
+                backend,
+                prepared_structured_command_spec_for_backend(backend, &command),
+            )?;
+            let step_output = execute_task_command(
+                contract,
+                task,
+                task_name,
+                runtime,
+                &prepared_execution,
                 working_dir,
                 env_overrides,
                 path_export,
@@ -19369,62 +19462,80 @@ fn wrap_container_command_for_corepack_activation(
     task_name: &str,
     command: &str,
 ) -> String {
-    let Some(contract) = contract else {
-        return command.to_string();
-    };
-    let Some(task) = contract.tasks.get(task_name) else {
-        return command.to_string();
-    };
-
-    let selected_container_context =
-        selected_task_context_for_backend(contract, task_name, Backend::Container)
-            .map(|(name, _)| name);
+    let package_managers =
+        corepack_package_managers_for_task(contract, task_name, Backend::Container, "linux", false);
     let mut command_parts = Vec::new();
-    let mut uses_corepack = false;
-    for toolchain_name in contract
-        .task_toolchain_names_for_execution_for_os(
-            task,
-            Backend::Container,
-            selected_container_context,
-            "linux",
-        )
-        .into_iter()
-    {
-        let Some(toolchain) = contract.toolchains.get(toolchain_name.as_str()) else {
-            continue;
-        };
-        if toolchain.fulfillment_source()
-            != Some(crate::schema::ToolchainFulfillmentSource::Corepack)
-            || !toolchain.active_for_os("linux")
-        {
-            continue;
-        }
-        uses_corepack = true;
-        for (package_name, version) in toolchain.package_managers_for_os("linux") {
-            command_parts.push(format!(
-                "corepack prepare {package_name}@{version} --activate"
-            ));
-            command_parts.push(format!(
-                "{package_name}() {{ corepack {package_name} \"$@\"; }}"
-            ));
-        }
+    for (package_name, version) in &package_managers {
+        command_parts.push(format!(
+            "corepack prepare {package_name}@{version} --activate"
+        ));
+        command_parts.push(format!(
+            "{package_name}() {{ corepack {package_name} \"$@\"; }}"
+        ));
     }
     if command_parts.is_empty() {
         return command.to_string();
     }
-    if uses_corepack {
-        // Container tasks run as the workspace user. Keep Corepack's cache off the root-owned
-        // image filesystem while preserving the container-scoped activation across commands.
-        command_parts.insert(
-            0,
-            String::from(
-                "export COREPACK_HOME=\"${COREPACK_HOME:-/tmp/ota-corepack}\"; mkdir -p \"$COREPACK_HOME\"",
-            ),
-        );
-    }
+    // Container tasks run as the workspace user. Keep Corepack's cache off the root-owned image
+    // filesystem while preserving the container-scoped activation across commands.
+    command_parts.insert(
+        0,
+        String::from(
+            "export COREPACK_HOME=\"${COREPACK_HOME:-/tmp/ota-corepack}\"; mkdir -p \"$COREPACK_HOME\"",
+        ),
+    );
     command_parts.push(command.to_string());
 
     format!("set -e\n{}", command_parts.join("\n"))
+}
+
+fn corepack_package_managers_for_task(
+    contract: Option<&Contract>,
+    task_name: &str,
+    backend_kind: Backend,
+    target_os: &str,
+    require_run_fulfillment: bool,
+) -> Vec<(String, String)> {
+    let Some(contract) = contract else {
+        return Vec::new();
+    };
+    let Some(task) = contract.tasks.get(task_name) else {
+        return Vec::new();
+    };
+    let selected_context =
+        selected_task_context_for_backend(contract, task_name, backend_kind).map(|(name, _)| name);
+    contract
+        .task_toolchain_names_for_execution_for_os(task, backend_kind, selected_context, target_os)
+        .into_iter()
+        .filter_map(|toolchain_name| contract.toolchains.get(toolchain_name.as_str()))
+        .filter(|toolchain| {
+            toolchain.fulfillment_source()
+                == Some(crate::schema::ToolchainFulfillmentSource::Corepack)
+                && (!require_run_fulfillment
+                    || toolchain.fulfillment_mode() == ToolchainFulfillmentMode::Run)
+                && toolchain.active_for_os(target_os)
+        })
+        .flat_map(|toolchain| toolchain.package_managers_for_os(target_os))
+        .collect()
+}
+
+fn native_corepack_command_for_task(
+    contract: Option<&Contract>,
+    task_name: &str,
+    current_os: &str,
+    exe: &str,
+    args: &[String],
+) -> (String, Vec<String>) {
+    if !corepack_package_managers_for_task(contract, task_name, Backend::Native, current_os, true)
+        .into_iter()
+        .any(|(package_name, _)| package_name == exe)
+    {
+        return (exe.to_string(), args.to_vec());
+    }
+
+    let mut corepack_args = vec![exe.to_string()];
+    corepack_args.extend(args.iter().cloned());
+    (String::from("corepack"), corepack_args)
 }
 
 fn toolchain_fulfillment_cache_key(
@@ -54871,12 +54982,24 @@ orchestrators:
       - devbox.json
     prepare:
       install: true
+toolchains:
+  node:
+    provider: corepack
+    version: "*"
+    package_managers:
+      pnpm: "10.24.0"
+    fulfillment:
+      source: corepack
+      mode: run
 tasks:
   setup:
     command:
-      exe: git
+      exe: pnpm
       args:
-        - --version
+        - test
+    requirements:
+      toolchains:
+        - node
     execution:
       orchestrator:
         ref: devbox
@@ -54902,6 +55025,17 @@ exit 0
 "#,
         )
         .unwrap();
+        let corepack_path = bin_dir.join("corepack");
+        fs::write(
+            &corepack_path,
+            r#"#!/bin/sh
+set -eu
+if [ "${1:-}" = "--version" ]; then
+  printf '0.34.0\n'
+fi
+"#,
+        )
+        .unwrap();
         fs::write(
             &node_path,
             r#"#!/bin/sh
@@ -54917,6 +55051,9 @@ printf 'node stub\n'
         let mut permissions = fs::metadata(&devbox_path).unwrap().permissions();
         permissions.set_mode(0o755);
         fs::set_permissions(&devbox_path, permissions).unwrap();
+        let mut corepack_permissions = fs::metadata(&corepack_path).unwrap().permissions();
+        corepack_permissions.set_mode(0o755);
+        fs::set_permissions(&corepack_path, corepack_permissions).unwrap();
         let mut node_permissions = fs::metadata(&node_path).unwrap().permissions();
         node_permissions.set_mode(0o755);
         fs::set_permissions(&node_path, node_permissions).unwrap();
@@ -54943,7 +55080,10 @@ printf 'node stub\n'
         assert_eq!(outcome.exit_code, 0);
         let log = fs::read_to_string(bin_dir.join("devbox.log")).unwrap();
         assert!(log.contains("install"), "{log}");
-        assert!(log.contains("run -- git --version"), "{log}");
+        assert!(
+            log.contains("run -- corepack pnpm test"),
+            "Corepack must remain inside the orchestrator boundary: {log}"
+        );
     }
 
     #[cfg(unix)]
@@ -55061,6 +55201,105 @@ printf 'node stub\n'
         assert!(log.contains("run -- sh -lc"), "{log}");
         assert!(log.contains("pnpm"), "{log}");
         assert!(log.contains("install"), "{log}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn devbox_orchestrator_wraps_corepack_owned_node_hydration() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: native
+  supported:
+    - native
+orchestrators:
+  devbox:
+    kind: devbox
+    required: true
+    config_files:
+      - devbox.json
+    prepare:
+      install: true
+toolchains:
+  node:
+    provider: corepack
+    version: "^22.12.0"
+    package_managers:
+      pnpm: "10.24.0"
+    fulfillment:
+      source: corepack
+      mode: run
+tasks:
+  setup:
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: node_package_manager
+        cwd: .
+        manager: pnpm
+        mode: install
+    requirements:
+      toolchains:
+        - node
+    effects:
+      writes:
+        - node_modules
+      network: true
+      network_kind: dependency_hydration
+    execution:
+      orchestrator:
+        ref: devbox
+        mode: exec
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let devbox_log = bin_dir.join("devbox.log");
+        write_fake_bin(
+            &bin_dir,
+            "devbox",
+            &format!(
+                "#!/bin/sh\nset -eu\nif [ \"${{1:-}}\" = \"--version\" ]; then\n  printf '0.14.2\\n'\n  exit 0\nfi\nprintf '%s\\n' \"$*\" >> '{}'\n",
+                devbox_log.display()
+            ),
+        );
+        write_fake_bin(&bin_dir, "node", "#!/bin/sh\nprintf 'v22.12.0\\n'\n");
+        write_fake_bin(
+            &bin_dir,
+            "corepack",
+            "#!/bin/sh\nset -eu\nif [ \"${1:-}\" = \"--version\" ]; then\n  printf '0.34.0\\n'\nfi\n",
+        );
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        unsafe {
+            env::set_var("PATH", env::join_paths(path_entries).unwrap());
+        }
+
+        let outcome = run_task(&fixture.contract, fixture.file_path(), "setup")
+            .expect("devbox should wrap Corepack-owned hydration");
+
+        match original_path {
+            Some(path) => unsafe { env::set_var("PATH", path) },
+            None => unsafe { env::remove_var("PATH") },
+        }
+
+        assert_eq!(outcome.exit_code, 0, "{outcome:?}");
+        let log = fs::read_to_string(devbox_log).unwrap();
+        assert!(log.contains("install"), "{log}");
+        assert!(
+            log.contains("run -- corepack pnpm install"),
+            "Corepack must remain inside the orchestrator boundary: {log}"
+        );
     }
 
     #[cfg(unix)]
@@ -75340,27 +75579,32 @@ tasks:
         write_fake_bin(&bin_dir, "node", node_body);
         let activation_log = fixture.dir.path().join("corepack.log");
         let pnpm_log = fixture.dir.path().join("pnpm.log");
-        let pnpm_path = if cfg!(windows) {
-            bin_dir.join("pnpm.cmd")
-        } else {
-            bin_dir.join("pnpm")
-        };
         let corepack_body = if cfg!(windows) {
             format!(
-                "@echo off\r\n>>\"{activation}\" echo %*\r\nif /I \"%1\"==\"prepare\" (\r\n  >\"{pnpm}\" (\r\n    echo @echo off\r\n    echo if \"%%1\"==\"--version\" ^(\r\n    echo   echo 10.24.0\r\n    echo   exit /b 0\r\n    echo ^)\r\n    echo ^>^>\"{pnpm_log}\" echo %%CD%%^|%%*\r\n    echo exit /b 0\r\n  )\r\n)\r\nexit /b 0\r\n",
+                "@echo off\r\n>>\"{activation}\" echo %*\r\nif /I \"%1\"==\"pnpm\" >>\"{pnpm_log}\" echo corepack^|%*\r\nexit /b 0\r\n",
                 activation = activation_log.display(),
-                pnpm = pnpm_path.display(),
                 pnpm_log = pnpm_log.display(),
             )
         } else {
             format!(
-                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{activation}'\nif [ \"$1\" = \"prepare\" ]; then\ncat <<'EOF' > '{pnpm}'\n#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  printf '10.24.0\\n'\n  exit 0\nfi\nprintf '%s|%s\\n' \"$PWD\" \"$*\" >> '{pnpm_log}'\nEOF\nchmod +x '{pnpm}'\nfi\nexit 0\n",
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{activation}'\nif [ \"$1\" = \"pnpm\" ]; then\n  printf 'corepack|%s\\n' \"$*\" >> '{pnpm_log}'\nfi\nexit 0\n",
                 activation = activation_log.display(),
-                pnpm = pnpm_path.display(),
                 pnpm_log = pnpm_log.display(),
             )
         };
         write_fake_bin(&bin_dir, "corepack", &corepack_body);
+        let ambient_pnpm_body = if cfg!(windows) {
+            format!(
+                "@echo off\r\n>>\"{}\" echo ambient^|%*\r\nexit /b 0\r\n",
+                pnpm_log.display()
+            )
+        } else {
+            format!(
+                "#!/bin/sh\nprintf 'ambient|%s\\n' \"$*\" >> '{}'\n",
+                pnpm_log.display()
+            )
+        };
+        write_fake_bin(&bin_dir, "pnpm", &ambient_pnpm_body);
 
         let original_path = env::var_os("PATH");
         let mut path_entries = vec![bin_dir.clone()];
@@ -75386,7 +75630,78 @@ tasks:
             "{activation}"
         );
         let logged = fs::read_to_string(&pnpm_log).unwrap();
-        assert!(logged.contains("install"), "{logged}");
+        assert!(logged.contains("corepack|pnpm install"), "{logged}");
+        assert!(!logged.contains("ambient|"), "{logged}");
+    }
+
+    #[test]
+    fn native_corepack_command_replaces_ambient_structured_package_manager() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  node:
+    provider: corepack
+    version: "^22.12.0"
+    package_managers:
+      pnpm: "10.24.0"
+    fulfillment:
+      source: corepack
+      mode: run
+tasks:
+  test:
+    command:
+      exe: pnpm
+      args: [test]
+    requirements:
+      toolchains: [node]
+"#,
+        );
+
+        let (exe, args) = super::native_corepack_command_for_task(
+            Some(&fixture.contract),
+            "test",
+            current_os(),
+            "pnpm",
+            &[String::from("test")],
+        );
+        assert_eq!(exe, "corepack");
+        assert_eq!(args, vec![String::from("pnpm"), String::from("test")]);
+
+        let diagnose_only = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  node:
+    provider: corepack
+    version: "^22.12.0"
+    package_managers:
+      pnpm: "10.24.0"
+    fulfillment:
+      source: corepack
+      mode: none
+tasks:
+  test:
+    command:
+      exe: pnpm
+      args: [test]
+    requirements:
+      toolchains: [node]
+"#,
+        );
+        let (exe, args) = super::native_corepack_command_for_task(
+            Some(&diagnose_only.contract),
+            "test",
+            current_os(),
+            "pnpm",
+            &[String::from("test")],
+        );
+        assert_eq!(exe, "pnpm");
+        assert_eq!(args, vec![String::from("test")]);
     }
 
     #[cfg(unix)]

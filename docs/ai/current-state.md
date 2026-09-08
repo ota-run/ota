@@ -294,12 +294,13 @@ durable agent workflow belongs in the canonical Ota skill.
   canonical graph roots rather than rebuilding a task-name closure. Adversarial regressions also
   keep unselected mode branches out of strict replay snapshot creation, service cleanup, sandbox
   diagnosis, uv provenance findings, and workflow env artifact consumer evidence. Final
-  independent selected-graph re-review remains open. Core's command and JSON
-  references, the Site contract/command references, and the canonical Skill plus installed mirrors
-  carry the corrected semantics. The standalone Node service example now demonstrates the same
-  mode-selected dependency boundary: native setup materializes one host-only prerequisite while
-  container verification omits it. Learn, FAQ, and Glossary remain unchanged because this repair
-  adds no contract syntax, public term, or operator workflow.
+  independent selected-graph re-review passed. Native pressure additionally found that a declared
+  Corepack package manager could resolve through an ambient native shim; the reviewed Core repair
+  routes structured task commands and typed Node hydration through Corepack before any declared
+  exec-mode orchestrator wraps them. Immutable Site, Skills, and Examples commits plus final Core
+  reconciliation remain pending: the standalone Node service example materializes one host-only
+  prerequisite for native setup while container verification omits it. Learn, FAQ, and Glossary
+  remain unchanged because this repair adds no contract syntax, public term, or operator workflow.
 - Eris adoption pressure exposed and repaired two bounded Core defects without changing the
   released `v1.6.27` runtime used by that partner contract: detector output no longer promotes
   named GitHub Actions bodies containing unresolved matrix or shell expressions into runnable task

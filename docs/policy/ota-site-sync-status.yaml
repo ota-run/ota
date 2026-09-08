@@ -24,6 +24,6 @@
 
 version: 1
 repository: ota-run/ota-site
-mode: synced
-consumer_commit: 7f410e37e071b2f5b113c55ada1b8792816cb042
-reviewed_ota_commit: 60f2fccc7620374899f4aba3e4c2d0be8edb0f6e
+mode: waived
+waiver_reason: "Site reference update for the uncommitted native Corepack repair is pending its immutable Site commit and final Core reconciliation."
+reviewed_ota_commit: 0bb8b6b9063fb0298ebac9b27540241c500cff8a

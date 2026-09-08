@@ -26,6 +26,11 @@
 
 ## Unreleased
 
+- Fix native Corepack run fulfillment so declared package managers are dispatched through
+  `corepack <manager>` for structured task commands and typed Node dependency hydration instead
+  of resolving an ambient global shim. Diagnose-only Corepack declarations remain non-provisioning;
+  opaque shell bodies remain unchanged.
+
 - Add a crate-private, provider-free GitHub Actions OIDC request-endpoint profile and semantic
   observation verifier for the activated V12.1 Linux/X64 protected-runner target. The initial
   profile is fail-closed to the exact host, path shape, and query shape retained by the earlier
