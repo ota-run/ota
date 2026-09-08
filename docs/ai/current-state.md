@@ -208,9 +208,26 @@ durable agent workflow belongs in the canonical Ota skill.
   (`sha256:0b15512fe736bee4b35a2dd205a5e9e3d68a9af496ee86f812c364b4f322258f`). Current runner-group
   configuration was independently checked to allow exactly the two documented repositories and
   four branch-pinned workflows, but that mutable configuration is not run-bound artifact evidence.
-  This witness does not derive `ProtectedLauncherCapabilityIdentity`, execute the Core endpoint
-  workflow, contact OIDC or a provider, materialize or deliver a secret, establish provider
-  compatibility, or prove general agent/repository governance. The endpoint profile and semantic
+  A later independently reviewed Launcher witness,
+  [34241049867](https://github.com/ota-run/authority-launcher/actions/runs/34241049867) job
+  `102111003771`, at exact Launcher `8ca4763c1e5c6ef5ac06c2be5b778c49344c5030`, Core
+  `f921209561b26f38cdb74c5f20f71e0b6734ae0d`, and Protocol
+  `e0af492ba8a6fbe01e805c79762909c9cda28198`, proves the run reconciled the replay directory
+  through the provisioning-owned exact fresh-state inventory, the consumer workflow's exact
+  inventory check, and the protected Launcher's effective systemd `ReadWritePaths` verification.
+  The bounded production client then completed one governed invocation with child reap, scope
+  removal, empty-or-absent cgroup, active-slot removal, and one valid protected receipt archive
+  with zero invalid archives. The exact eight-file public artifact is retained by `authority-launcher`
+  commit `a272fbe863715f04996340591a9ae29dc80ccedc` at
+  `docs/pressure/retained-artifacts/systemd-v3-independently-administered-34241049867.zip`
+  (`sha256:090f3ac9fa2b516370b8d844520d4759bce877fae7b0f6a541bd5e23539d6496`).
+  This later witness still does not prove production capability-observation routing, exact
+  production context ownership, accepted-session provenance, Core capability-projection
+  reconciliation, provider contact, real OIDC exchange, secret materialization or delivery,
+  Step 8, V12.2, or general agent/repository governance.
+  Neither Launcher witness derives `ProtectedLauncherCapabilityIdentity`, executes the Core endpoint
+  workflow, contacts OIDC or a provider, materializes or delivers a secret, establishes provider
+  compatibility, or proves general agent/repository governance. The endpoint profile and semantic
   observation verifier remain crate-private. Provider contact stays blocked on the exact protected
   Linux/X64 capability fixture: the raw capability identity must remain in the protected launcher
   transaction, while the workflow must verify one exact signed, closed public observation projection
