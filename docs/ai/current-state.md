@@ -297,10 +297,14 @@ durable agent workflow belongs in the canonical Ota skill.
   independent selected-graph re-review passed. Native pressure additionally found that a declared
   Corepack package manager could resolve through an ambient native shim; the reviewed Core repair
   routes structured task commands and typed Node hydration through Corepack before any declared
-  exec-mode orchestrator wraps them. Immutable Site, Skills, and Examples commits plus final Core
-  reconciliation remain pending: the standalone Node service example materializes one host-only
-  prerequisite for native setup while container verification omits it. Learn, FAQ, and Glossary
-  remain unchanged because this repair adds no contract syntax, public term, or operator workflow.
+  exec-mode orchestrator wraps them. Immutable propagation is Site
+  `16b75bf531bfc788eb41a9e095a071b45cdca351`, Skills
+  `f981911f2c21eb35e97fff6e077971e90aa4df1b`, and Examples
+  `a565b22ae86e1840c9ecfe7fb97dd0c0bff9cc4b`; this Core reconciliation records the Site and
+  Skills revisions against reviewed Core `a6b66b59ef255acb66726f022b572c41b6df5dd8`. The
+  standalone Node service example materializes one host-only prerequisite for native setup while
+  container verification omits it. Learn, FAQ, and Glossary remain unchanged because this repair
+  adds no contract syntax, public term, or operator workflow.
 - Eris adoption pressure exposed and repaired two bounded Core defects without changing the
   released `v1.6.27` runtime used by that partner contract: detector output no longer promotes
   named GitHub Actions bodies containing unresolved matrix or shell expressions into runnable task

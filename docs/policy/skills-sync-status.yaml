@@ -24,6 +24,6 @@
 
 version: 1
 repository: ota-run/skills
-mode: waived
-waiver_reason: "Canonical Skill update for the uncommitted native Corepack repair is pending its immutable Skills commit and final Core reconciliation."
-reviewed_ota_commit: 0bb8b6b9063fb0298ebac9b27540241c500cff8a
+mode: synced
+consumer_commit: f981911f2c21eb35e97fff6e077971e90aa4df1b
+reviewed_ota_commit: a6b66b59ef255acb66726f022b572c41b6df5dd8
