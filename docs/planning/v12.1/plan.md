@@ -468,6 +468,14 @@ launcher and requires exact equality after signature verification. The private r
 and raw capability identity are never serialized into workflow, log, artifact, receipt, archive, or
 public output.
 
+The fixed local Core-to-Launcher observation request also binds the expected protected Launcher
+invocation-request identity. The Launcher recomputes that identity from its accepted invocation and
+refuses a mismatch before reserving replay state, capability derivation, or Attestor signing. This
+identity is protected local transport truth: it is not included in the public challenge, projection,
+workflow output, log, artifact, receipt, or archive. The protected local response retains only its
+domain-separated request-identity commitment for exact reconciliation; it never directly serializes
+the raw invocation identity, and neither value enters the public projection or workflow output.
+
 `ProtectedLauncherCapabilityObservationChallengeV1` is a closed, shared Protocol record. It contains
 exactly `schema_version: 1`; message kind
 `protected_launcher_capability_observation_challenge`; a domain-separated `identity`; canonical

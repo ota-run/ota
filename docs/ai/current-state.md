@@ -236,7 +236,10 @@ durable agent workflow belongs in the canonical Ota skill.
   only from the fixed administrator-owned verifier record reconciled with protected installation
   evidence; it cannot trust a workflow- or projection-supplied key. Root launcher state owns atomic
   challenge reservation and consumption; Core owns its expected challenge for the exact workflow
-  invocation.
+  invocation. The fixed local request also binds the expected protected Launcher invocation identity;
+  the Launcher must recompute it from its accepted invocation and refuse mismatch before replay
+  reservation, capability derivation, or Attestor signing. That identity remains protected and is
+  excluded from the public projection and workflow-visible output.
 - Vinicius' independent v1.6.27 source review confirmed that negative-control projection
   reconciliation is live on runtime proof, emitted-archive verification, and Doctor archive
   loading. It also exposed a narrower adversarial-test gap: the existing digest mutation was

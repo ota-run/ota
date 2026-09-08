@@ -78,6 +78,7 @@ pub(crate) fn issue_protected_capability_observation_v1(
     workflow_run_attempt: &str,
     workflow_reference: &str,
     runner_version: &str,
+    expected_launcher_request_identity: &str,
 ) -> Result<PendingProtectedCapabilityObservationV1, ProtectedCapabilityObservationError> {
     let issued_at_unix_seconds = u64::try_from(OffsetDateTime::now_utc().unix_timestamp())
         .map_err(|_| ProtectedCapabilityObservationError::ChallengeUnavailable)?;
@@ -89,6 +90,7 @@ pub(crate) fn issue_protected_capability_observation_v1(
         workflow_run_attempt,
         workflow_reference,
         runner_version,
+        expected_launcher_request_identity,
         issued_at_unix_seconds,
         nonce,
     )
@@ -99,6 +101,7 @@ fn issue_at_v1(
     workflow_run_attempt: &str,
     workflow_reference: &str,
     runner_version: &str,
+    expected_launcher_request_identity: &str,
     issued_at_unix_seconds: u64,
     nonce: [u8; 32],
 ) -> Result<PendingProtectedCapabilityObservationV1, ProtectedCapabilityObservationError> {
@@ -127,6 +130,7 @@ fn issue_at_v1(
         challenge,
         nonce: URL_SAFE_NO_PAD.encode(nonce),
         runner_version: runner_version.into(),
+        expected_launcher_request_identity: expected_launcher_request_identity.into(),
     };
     request.identity = protected_launcher_capability_observation_request_v1_identity(&request)
         .map_err(|_| ProtectedCapabilityObservationError::ChallengeUnavailable)?;
@@ -237,6 +241,8 @@ mod tests {
 
     const NOW: u64 = 1_800_000_000;
     const WORKFLOW: &str = "ota-run/ota/.github/workflows/secret-delivery-oidc-endpoint-evidence.yml@refs/heads/1.6.28-implementation";
+    const LAUNCHER_REQUEST_IDENTITY: &str =
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
     fn verifier(signing_key: &SigningKey) -> ProtectedLauncherCapabilityProjectionVerifierV1 {
         let public_key = URL_SAFE_NO_PAD.encode(signing_key.verifying_key().to_bytes());
@@ -306,12 +312,44 @@ mod tests {
 
     #[test]
     fn exact_signed_projection_reconciles_only_to_its_pending_invocation() {
-        let mut pending =
-            issue_at_v1("123", "2", WORKFLOW, "2.337.0", NOW, [7; 32]).expect("pending request");
+        let mut pending = issue_at_v1(
+            "123",
+            "2",
+            WORKFLOW,
+            "2.337.0",
+            LAUNCHER_REQUEST_IDENTITY,
+            NOW,
+            [7; 32],
+        )
+        .expect("pending request");
         let signing_key = SigningKey::from_bytes(&[9; 32]);
         let verifier = verifier(&signing_key);
         let response = response(&pending, &verifier, &signing_key);
         let verifier = retained_verifier(verifier);
+
+        let mut substituted_launcher_invocation = issue_at_v1(
+            "123",
+            "2",
+            WORKFLOW,
+            "2.337.0",
+            "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            NOW,
+            [7; 32],
+        )
+        .expect("substituted launcher invocation request");
+        assert_ne!(
+            pending.request().identity,
+            substituted_launcher_invocation.request().identity
+        );
+        assert_eq!(
+            reconcile_at_v1(
+                &mut substituted_launcher_invocation,
+                &response,
+                &verifier,
+                NOW,
+            ),
+            Err(ProtectedCapabilityObservationError::InvocationMismatch)
+        );
 
         reconcile_at_v1(&mut pending, &response, &verifier, NOW).expect("exact response");
 
@@ -320,8 +358,16 @@ mod tests {
             Err(ProtectedCapabilityObservationError::AlreadyReconciled)
         );
 
-        let mut foreign =
-            issue_at_v1("124", "2", WORKFLOW, "2.337.0", NOW, [8; 32]).expect("foreign request");
+        let mut foreign = issue_at_v1(
+            "124",
+            "2",
+            WORKFLOW,
+            "2.337.0",
+            LAUNCHER_REQUEST_IDENTITY,
+            NOW,
+            [8; 32],
+        )
+        .expect("foreign request");
         assert_eq!(
             reconcile_at_v1(&mut foreign, &response, &verifier, NOW),
             Err(ProtectedCapabilityObservationError::InvocationMismatch)
@@ -330,8 +376,16 @@ mod tests {
 
     #[test]
     fn substitutions_and_invalid_signatures_refuse_before_acceptance() {
-        let mut pending =
-            issue_at_v1("123", "2", WORKFLOW, "2.337.0", NOW, [7; 32]).expect("pending request");
+        let mut pending = issue_at_v1(
+            "123",
+            "2",
+            WORKFLOW,
+            "2.337.0",
+            LAUNCHER_REQUEST_IDENTITY,
+            NOW,
+            [7; 32],
+        )
+        .expect("pending request");
         let signing_key = SigningKey::from_bytes(&[9; 32]);
         let verifier = verifier(&signing_key);
         let response = response(&pending, &verifier, &signing_key);
@@ -383,8 +437,16 @@ mod tests {
 
     #[test]
     fn expired_challenge_and_alternate_signer_refuse() {
-        let mut expired =
-            issue_at_v1("123", "2", WORKFLOW, "2.337.0", NOW, [7; 32]).expect("request");
+        let mut expired = issue_at_v1(
+            "123",
+            "2",
+            WORKFLOW,
+            "2.337.0",
+            LAUNCHER_REQUEST_IDENTITY,
+            NOW,
+            [7; 32],
+        )
+        .expect("request");
         let signing_key = SigningKey::from_bytes(&[9; 32]);
         let expired_verifier = verifier(&signing_key);
         let expired_response = response(&expired, &expired_verifier, &signing_key);
@@ -394,8 +456,16 @@ mod tests {
             Err(ProtectedCapabilityObservationError::InvocationMismatch)
         );
 
-        let mut pending =
-            issue_at_v1("123", "2", WORKFLOW, "2.337.0", NOW, [8; 32]).expect("request");
+        let mut pending = issue_at_v1(
+            "123",
+            "2",
+            WORKFLOW,
+            "2.337.0",
+            LAUNCHER_REQUEST_IDENTITY,
+            NOW,
+            [8; 32],
+        )
+        .expect("request");
         let trusted_key = SigningKey::from_bytes(&[9; 32]);
         let trusted_verifier = verifier(&trusted_key);
         let mut response = response(&pending, &trusted_verifier, &trusted_key);
@@ -423,9 +493,14 @@ mod tests {
 
     #[test]
     fn production_wrappers_own_nonce_and_freshness() {
-        let mut pending =
-            issue_protected_capability_observation_v1("123", "2", WORKFLOW, "2.337.0")
-                .expect("production pending request");
+        let mut pending = issue_protected_capability_observation_v1(
+            "123",
+            "2",
+            WORKFLOW,
+            "2.337.0",
+            LAUNCHER_REQUEST_IDENTITY,
+        )
+        .expect("production pending request");
         let signing_key = SigningKey::from_bytes(&[9; 32]);
         let verifier = verifier(&signing_key);
         let response = response(&pending, &verifier, &signing_key);
