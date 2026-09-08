@@ -205,9 +205,9 @@ use crate::replay_baseline::{
 };
 use crate::replay_input_policy::{
     ReplayInputPolicyEvaluation, ReplayInputPolicyObservations, ReplayInputPolicySubject,
-    evaluate_replay_input_policy, evaluate_replay_input_policy_for_closure_with_observations,
-    evaluate_replay_input_policy_with_observations, observe_replay_inputs,
-    replay_input_observation_key, selected_replay_input_policy_closure,
+    evaluate_replay_input_policy_for_closure_with_observations,
+    evaluate_replay_input_policy_for_plan_with_observations,
+    observe_replay_inputs_for_selected_closure, replay_input_observation_key,
 };
 use crate::replay_inputs::{ReplayInputIdentityEvaluation, evaluate_replay_input_identity};
 use crate::runner::{
@@ -228,15 +228,17 @@ use crate::runner::{
     ensure_task_adapter_inputs_ready, ensure_task_env_files_ready_with_planned_outputs,
     env_resolution_source_label, ephemeral_container_name, host_runtime_readiness_observed,
     load_declared_env_sources, load_policy_env_overlay, named_execution_context,
-    persistent_container_name, plan_task_execution_with_overrides,
-    planned_env_file_outputs_for_task_closure, preflight_native_runtime_listener_binds,
+    persistent_container_name, plan_task_execution_structure_with_overrides,
+    plan_task_execution_with_overrides, plan_workflow_execution_structure_with_additional_roots,
+    plan_workflow_execution_structure_with_overrides, preflight_native_runtime_listener_binds,
     read_execution_boundary_trace, reported_task_context_for_backend,
     resolve_command_terminal_passthrough, resolve_declared_env_source_value,
     resolve_effective_task_container_backend, resolve_execution_backend,
     resolve_execution_backend_with_contract_path, resolve_named_readiness_probe,
-    resolve_task_env_details, resolve_task_env_details_for_task,
-    resolve_task_env_details_for_task_with_policy, resolve_task_env_details_with_policy,
-    run_streaming_command_with_loader, run_task_captured_with_args_with_overrides_with_policy,
+    resolve_run_plan_env_details_with_policy, resolve_task_env_details,
+    resolve_task_env_details_for_task, resolve_task_env_details_for_task_with_policy,
+    resolve_task_env_details_with_policy, run_streaming_command_with_loader,
+    run_task_captured_with_args_with_overrides_with_policy,
     run_task_with_args_with_overrides_and_stream_capture,
     run_task_with_progress_and_args_and_overrides_with_policy, selected_task_context_for_backend,
     selected_workflow_compose_services_started_by_proof,
@@ -2030,37 +2032,8 @@ fn ci_projection_for_contract(
         Backend::Container => "container",
         Backend::Remote => "remote",
     };
-    let unsupported_task = contract
-        .task_dependency_closure_names([task.to_string()])
-        .into_iter()
-        .filter_map(|task_name| {
-            contract
-                .tasks
-                .get(task_name.as_str())
-                .map(|candidate| (task_name, candidate))
-        })
-        // Aggregate nodes are orchestration-only. Their selected executable closure owns mode support.
-        .find(|(_, candidate)| {
-            candidate.aggregate.is_none()
-                && (!candidate.active_for_os(target_os)
-                    || !candidate.supports_execution_backend(
-                        contract.execution.as_ref(),
-                        effective.backend,
-                        target_os,
-                    ))
-        })
-        .map(|(task_name, _)| task_name);
-    if let Some(unsupported_task) = unsupported_task {
-        return Err((
-            String::from("projection_mode_unavailable"),
-            format!(
-                "workflow `{workflow}` task closure member `{unsupported_task}` does not support `{mode}` execution on `{target_os}`"
-            ),
-            None,
-        ));
-    }
     let projection = build_ci_projection(contract, workflow, mode, target_os)
-        .map_err(|message| (String::from("projection_unavailable"), message, None))?;
+        .map_err(|error| (String::from(error.code), error.to_string(), None))?;
     let secret_roots = selected_workflow_phase_task_roots(contract, Some(workflow));
     let secret_delivery_applicable =
         crate::secret_delivery_admission::secret_delivery_applies_to_selected_subject(
@@ -2123,6 +2096,15 @@ fn apply_ci_projection_governance(
         }),
         ..ExecutionOverrides::default()
     };
+    let selected_plan =
+        plan_workflow_execution_structure_with_overrides(contract, Some(workflow), overrides)
+            .map_err(|error| {
+                (
+                    String::from("projection_selected_graph_unavailable"),
+                    error.to_string(),
+                    Some(projection.clone()),
+                )
+            })?;
     // Project the same selected phase roots as `ota up`; the typed planner expands their active
     // dependencies and hooks without admitting an unselected mode's dependency graph.
     let effect_policy_roots = selected_workflow_phase_task_roots(contract, Some(workflow));
@@ -2271,11 +2253,18 @@ fn apply_ci_projection_governance(
         }
     }
     if let Some(loaded_policy) = loaded_policy {
-        let evaluation = evaluate_replay_input_policy(
+        let selected_closure = selected_plan.selected_task_names();
+        let observations = observe_replay_inputs_for_selected_closure(
             contract,
             contract_path.parent().unwrap_or_else(|| Path::new(".")),
+            selected_closure.clone(),
+        );
+        let evaluation = evaluate_replay_input_policy_for_plan_with_observations(
+            contract,
             &loaded_policy.pack,
             ReplayInputPolicySubject::Workflow(workflow),
+            &selected_plan,
+            &observations,
         );
         if evaluation.required {
             projection.governance.replay_input_policy =
@@ -2286,10 +2275,7 @@ fn apply_ci_projection_governance(
                         .iter()
                         .map(|rule| rule.identity.clone())
                         .collect(),
-                    selected_closure: selected_replay_input_policy_closure(
-                        contract,
-                        ReplayInputPolicySubject::Workflow(workflow),
-                    ),
+                    selected_closure,
                     unknown_selector_identities: evaluation
                         .unknown_selectors
                         .iter()
@@ -2960,12 +2946,11 @@ pub fn execution_plan(
             Ok(target) => {
                 let contract_path_display = target.contract_path.display().to_string();
                 let contract_identity = repo_contract_identity(&target.contract);
-                let declared_execution =
-                    ExecutionSummary::from_contract(&target.contract, &target.contract_path);
-                let workflow_summary = match resolve_selected_workflow_summary(
+                let workflow_summary = match resolve_selected_workflow_summary_with_overrides(
                     &target.contract,
                     &target.contract_path,
                     workflow_name,
+                    overrides,
                 ) {
                     Ok(summary) => summary,
                     Err(error) => {
@@ -2985,12 +2970,28 @@ pub fn execution_plan(
                     workflow_name,
                 ) {
                     Ok(resolved_execution) => {
+                        let declared_execution = match resolve_selected_workflow_execution_summary(
+                            &target.contract,
+                            &target.contract_path,
+                            workflow_name,
+                            overrides,
+                        ) {
+                            Ok(summary) => summary,
+                            Err(error) => {
+                                return finalize_debug(
+                                    CommandOutput::failure_with_code(error.to_string(), 2),
+                                    debug,
+                                    debug_lines,
+                                );
+                            }
+                        };
                         let applied_overrides = execution_plan_overrides(overrides);
                         let workflow_env_artifacts =
                             selected_workflow_env_profile_rendered_artifact_entries(
                                 &target.contract,
                                 &target.contract_path,
                                 workflow_name,
+                                overrides,
                             );
 
                         match format {
@@ -3326,8 +3327,12 @@ fn lifecycle_assertion_secret_values(
     contract: &Contract,
     contract_path: &Path,
     task: &str,
+    overrides: ExecutionOverrides,
 ) -> Vec<String> {
-    resolve_task_env_details_for_task(contract, contract_path, task, None)
+    plan_task_execution_structure_with_overrides(contract, task, overrides)
+        .and_then(|plan| {
+            resolve_run_plan_env_details_with_policy(contract, contract_path, &plan, None)
+        })
         .map(|resolved| {
             let mut values = resolved
                 .into_values()
@@ -3461,6 +3466,21 @@ pub fn proof_lifecycle_with_grant(
             2,
         );
     };
+    let selected_workflow_plan = match plan_workflow_execution_structure_with_overrides(
+        &contract,
+        Some(workflow_key),
+        overrides,
+    ) {
+        Ok(plan) => plan,
+        Err(error) => {
+            return CommandOutput::failure_with_code(
+                format!(
+                    "lifecycle proof could not resolve workflow `{workflow_key}` before execution: {error}"
+                ),
+                2,
+            );
+        }
+    };
     let mut typed_effect_roots = selected_workflow_phase_task_roots(&contract, Some(workflow_key));
     if let Some(assertion) = lifecycle.assertion.as_ref() {
         typed_effect_roots.push(EffectPolicyInvocation {
@@ -3503,32 +3523,49 @@ pub fn proof_lifecycle_with_grant(
             error,
         );
     }
-    let mut proof_task_closure = contract.selected_workflow_task_closure_names(Some(workflow_key));
-    if let Some(assertion) = lifecycle.assertion.as_ref() {
-        proof_task_closure.extend(contract.task_dependency_closure_names([assertion.task.clone()]));
-    }
-    proof_task_closure.sort();
-    proof_task_closure.dedup();
+    let additional_roots = lifecycle
+        .assertion
+        .as_ref()
+        .map(|assertion| {
+            vec![(
+                String::from("proof_lifecycle_assertion"),
+                assertion.task.clone(),
+            )]
+        })
+        .unwrap_or_default();
+    let proof_plan = match plan_workflow_execution_structure_with_additional_roots(
+        &contract,
+        Some(workflow_key),
+        overrides,
+        &additional_roots,
+    ) {
+        Ok(plan) => plan,
+        Err(error) => {
+            return CommandOutput::failure_with_code(
+                format!(
+                    "lifecycle proof could not resolve its complete selected execution graph: {error}"
+                ),
+                2,
+            );
+        }
+    };
     let typed_policy_observed = typed_effect_admission.is_typed();
     let CommandTypedEffectAdmission {
         typed: typed_effect_admission,
         secret_delivery: _,
         loaded_policy,
     } = typed_effect_admission;
-    let replay_input_preflight = workflow_replay_input_preflight_for_closure_with_retained_policy(
+    let replay_input_preflight = workflow_replay_input_preflight_for_plan_with_retained_policy(
         &contract,
         &target.contract_path,
         workflow_key,
-        proof_task_closure.clone(),
+        proof_plan,
         typed_policy_observed,
         loaded_policy,
     );
-    if let Err(failure) = evaluate_replay_input_admission(
-        &contract,
-        &target.contract_path,
-        proof_task_closure,
-        &replay_input_preflight,
-    ) {
+    if let Err(failure) =
+        evaluate_replay_input_admission(&contract, &target.contract_path, &replay_input_preflight)
+    {
         return proof_replay_input_admission_failure_output(
             format,
             "ota proof lifecycle",
@@ -3679,32 +3716,26 @@ pub fn proof_lifecycle_with_grant(
 
     // The validator prevents this closure from declaring lifecycle services, so prerequisites
     // cannot acquire service ownership before this transaction observes initial state.
-    for task_name in contract.selected_workflow_task_closure_names(Some(workflow_key)) {
-        let skip_deps = contract
-            .tasks
-            .get(task_name.as_str())
-            .is_some_and(|task| !task.all_depends_on().is_empty());
+    for root in &selected_workflow_plan.roots {
+        let task_name = root.task.as_str();
         let outcome = crate::runner::run_task_captured_with_overrides(
             &contract,
             &target.contract_path,
-            task_name.as_str(),
-            crate::runner::ExecutionOverrides {
-                skip_deps,
-                ..overrides
-            },
+            task_name,
+            overrides,
         );
         match outcome {
             Ok(outcome) if outcome.exit_code == 0 => {}
             Ok(outcome) => {
                 error = Some(format!(
-                    "prerequisite task `{task_name}` exited with code {}",
+                    "workflow phase task `{task_name}` exited with code {}",
                     outcome.exit_code
                 ));
                 break;
             }
             Err(run_error) => {
                 error = Some(format!(
-                    "prerequisite task `{task_name}` could not run: {run_error}"
+                    "workflow phase task `{task_name}` could not run: {run_error}"
                 ));
                 break;
             }
@@ -3758,6 +3789,7 @@ pub fn proof_lifecycle_with_grant(
                             &contract,
                             &target.contract_path,
                             assertion.task.as_str(),
+                            overrides,
                         );
                         match crate::runner::run_task_captured_with_started_services_and_overrides(
                             &contract,
@@ -4149,10 +4181,11 @@ pub fn proof_runtime_with_grant(
                     workflow_name,
                 );
                 let contract = adjusted_contract.as_ref().unwrap_or(&target.contract);
-                let workflow_summary = match resolve_selected_workflow_summary(
+                let workflow_summary = match resolve_selected_workflow_summary_with_overrides(
                     contract,
                     &target.contract_path,
                     workflow_name,
+                    overrides,
                 ) {
                     Ok(summary) => summary,
                     Err(error) => return CommandOutput::failure_with_code(error, 2),
@@ -4229,25 +4262,43 @@ pub fn proof_runtime_with_grant(
                     secret_delivery: _,
                     loaded_policy: retained_effect_policy,
                 } = command_admission;
-                let mut proof_task_closure = contract
-                    .selected_workflow_task_closure_names(effective_workflow_selector.as_deref());
-                for observation in &selected_seam_observations {
-                    proof_task_closure
-                        .extend(contract.task_dependency_closure_names([observation.task.clone()]));
-                }
+                let mut additional_roots = selected_seam_observations
+                    .iter()
+                    .enumerate()
+                    .map(|(ordinal, observation)| {
+                        (
+                            format!("proof_seam_observer:{ordinal:04}"),
+                            observation.task.clone(),
+                        )
+                    })
+                    .collect::<Vec<_>>();
                 if let Some(control) = selected_negative_control.as_ref() {
-                    proof_task_closure
-                        .extend(contract.task_dependency_closure_names([control.task.clone()]));
+                    additional_roots
+                        .push((String::from("proof_negative_control"), control.task.clone()));
                 }
-                proof_task_closure.sort();
-                proof_task_closure.dedup();
+                let proof_plan = match plan_workflow_execution_structure_with_additional_roots(
+                    contract,
+                    effective_workflow_selector.as_deref(),
+                    overrides,
+                    &additional_roots,
+                ) {
+                    Ok(plan) => plan,
+                    Err(error) => {
+                        return CommandOutput::failure_with_code(
+                            format!(
+                                "runtime proof could not resolve its complete selected execution graph: {error}"
+                            ),
+                            2,
+                        );
+                    }
+                };
                 let proof_replay_input_preflight =
                     if let Some(workflow_name) = effective_workflow_selector.as_deref() {
-                        workflow_replay_input_preflight_for_closure_with_retained_policy(
+                        workflow_replay_input_preflight_for_plan_with_retained_policy(
                             contract,
                             &target.contract_path,
                             workflow_name,
-                            proof_task_closure.clone(),
+                            proof_plan,
                             retained_effect_policy.is_some(),
                             retained_effect_policy,
                         )
@@ -4256,12 +4307,12 @@ pub fn proof_runtime_with_grant(
                             contract,
                             &target.contract_path,
                             effective_workflow_selector.as_deref(),
+                            overrides,
                         )
                     };
                 if let Err(failure) = evaluate_replay_input_admission(
                     contract,
                     &target.contract_path,
-                    proof_task_closure,
                     &proof_replay_input_preflight,
                 ) {
                     return proof_replay_input_admission_failure_output(
@@ -4467,6 +4518,7 @@ pub fn proof_runtime_with_grant(
                         contract,
                         &target.contract_path,
                         effective_workflow_selector.as_deref(),
+                        overrides,
                     ) {
                         Ok(services) => services,
                         Err(error) => {
@@ -4820,6 +4872,7 @@ pub fn proof_runtime_with_grant(
                         &target.contract,
                         &target.contract_path,
                         effective_workflow_selector.as_deref(),
+                        overrides,
                     );
                 let proof_scope = proof_runtime_scope(
                     &target.contract,
@@ -4893,11 +4946,12 @@ pub fn proof_runtime_with_grant(
                         proof_execution_id.as_str(),
                     );
                 }
-                let mut not_proved = proof_runtime_not_proved(
+                let mut not_proved = proof_runtime_not_proved_with_overrides(
                     &target.contract,
                     &target.contract_path,
                     effective_workflow_selector.as_deref(),
                     &dependency_evidence,
+                    overrides,
                 );
                 proof_runtime_append_dependency_scope_boundaries(
                     &mut not_proved,
@@ -4995,6 +5049,7 @@ pub fn proof_runtime_with_grant(
                         let execution_boundary = match proof_runtime_execution_boundary_with_runner(
                             contract,
                             effective_workflow_selector.as_deref(),
+                            overrides,
                             runner_execution_boundary,
                         ) {
                             Ok(boundary) => boundary,
@@ -6203,6 +6258,7 @@ fn declared_only_effect_refusal_run_preview_plan(task_name: &str) -> RunPreviewP
 fn execution_option_refusal_up_preview_plan(task_name: &str) -> UpPreviewPlan {
     let action = format!("refuse unsupported execution option before task `{task_name}` startup");
     UpPreviewPlan {
+        selected_execution_graph_identity: None,
         actions: vec![action.clone()],
         staged_actions: vec![crate::output::PreviewStageAction {
             stage_family: String::from("verify"),
@@ -15058,6 +15114,41 @@ fn build_env_report_with_overrides(
     task_name: Option<&str>,
     overrides: ExecutionOverrides,
 ) -> Result<EnvReport, String> {
+    build_env_report_with_overrides_and_scope(
+        contract,
+        contract_path,
+        workflow_name,
+        task_name,
+        overrides,
+        false,
+    )
+}
+
+fn build_selected_env_report_with_overrides(
+    contract: &Contract,
+    contract_path: &Path,
+    workflow_name: Option<&str>,
+    task_name: Option<&str>,
+    overrides: ExecutionOverrides,
+) -> Result<EnvReport, String> {
+    build_env_report_with_overrides_and_scope(
+        contract,
+        contract_path,
+        workflow_name,
+        task_name,
+        overrides,
+        true,
+    )
+}
+
+fn build_env_report_with_overrides_and_scope(
+    contract: &Contract,
+    contract_path: &Path,
+    workflow_name: Option<&str>,
+    task_name: Option<&str>,
+    overrides: ExecutionOverrides,
+    selected_execution_only: bool,
+) -> Result<EnvReport, String> {
     let adjusted_contract =
         contract_adjusted_for_selected_workflow_env_profile(contract, workflow_name);
     let contract = adjusted_contract.as_ref().unwrap_or(contract);
@@ -15077,7 +15168,9 @@ fn build_env_report_with_overrides(
                 current_os(),
             );
             let planned_env_files =
-                planned_env_file_outputs_for_task_closure(contract, task_name, backend);
+                crate::runner::planned_env_file_outputs_for_selected_task_closure(
+                    contract, task_name, overrides,
+                );
             ensure_task_env_files_ready_with_planned_outputs(
                 task_name,
                 task,
@@ -15108,14 +15201,45 @@ fn build_env_report_with_overrides(
     };
 
     let policy_env = load_policy_env_overlay(contract_path).map_err(|error| error.to_string())?;
-    let declared_sources = load_declared_env_sources(contract, contract_path);
-    let selected_required_env_names = match (task_name, workflow_name) {
-        (Some(task_name), _) => Some(contract.task_required_env_names(task_name)),
-        (None, Some(_workflow_name)) => {
-            let names = contract.selected_workflow_required_env_names(workflow_name);
-            (!names.is_empty()).then_some(names)
+    let selected_plan = if selected_execution_only {
+        match task_name {
+            Some(task_name) => {
+                plan_task_execution_structure_with_overrides(contract, task_name, overrides).ok()
+            }
+            None if workflow_name.is_some() => {
+                plan_workflow_execution_structure_with_overrides(contract, workflow_name, overrides)
+                    .ok()
+            }
+            None => None,
         }
-        (None, None) => None,
+    } else {
+        None
+    };
+    let selected_required_env_names = if selected_execution_only {
+        Some(
+            selected_plan
+                .as_ref()
+                .map(|plan| crate::runner::selected_plan_contract_env_names(contract, plan))
+                .unwrap_or_default(),
+        )
+    } else {
+        match (task_name, workflow_name) {
+            (Some(task_name), _) => Some(contract.task_required_env_names(task_name)),
+            (None, Some(_workflow_name)) => {
+                let names = contract.selected_workflow_required_env_names(workflow_name);
+                (!names.is_empty()).then_some(names)
+            }
+            (None, None) => None,
+        }
+    };
+    let declared_sources = if selected_execution_only
+        && selected_required_env_names
+            .as_ref()
+            .is_some_and(BTreeSet::is_empty)
+    {
+        Vec::new()
+    } else {
+        load_declared_env_sources(contract, contract_path)
     };
     let mut env = Vec::new();
     let mut sources = Vec::new();
@@ -15123,6 +15247,7 @@ fn build_env_report_with_overrides(
         contract,
         contract_path,
         workflow_name,
+        overrides,
     );
     let mut contract_resolved_count = 0usize;
     let mut missing_count = 0usize;
@@ -15152,6 +15277,13 @@ fn build_env_report_with_overrides(
     }
 
     for (name, requirement) in &contract.env {
+        if selected_execution_only
+            && selected_required_env_names
+                .as_ref()
+                .is_some_and(|names| !names.contains(name))
+        {
+            continue;
+        }
         let task_override = task_env.as_ref().and_then(|task_env| task_env.get(name));
         let required_for_selected_path = requirement.required
             || selected_required_env_names
@@ -15327,7 +15459,10 @@ fn build_env_report_with_overrides(
             .selected_workflow_env_profile_name(workflow_name)
             .map(ToString::to_string),
         summary: EnvSummary {
-            contract_count: contract.env.len(),
+            contract_count: env
+                .iter()
+                .filter(|entry| matches!(entry.kind, EnvEntryKind::Contract))
+                .count(),
             source_count: declared_sources.len(),
             source_issue_count,
             task_count,
@@ -16899,11 +17034,23 @@ fn verify_proof_parent_authority_capability(
             Ok(())
         }
         "workflow_task" => {
+            let overrides = proof_scope_overrides(&rederived);
             let selected = match rederived.lane.kind {
-                crate::sandbox_policy::SandboxLaneKind::Workflow => contract
-                    .selected_workflow_task_closure_names(Some(rederived.lane.name.as_str())),
+                crate::sandbox_policy::SandboxLaneKind::Workflow => {
+                    crate::runner::selected_workflow_execution_closure_names(
+                        contract,
+                        Some(rederived.lane.name.as_str()),
+                        overrides,
+                    )
+                    .map_err(|error| error.to_string())?
+                }
                 crate::sandbox_policy::SandboxLaneKind::Task => {
-                    contract.task_dependency_closure_names([rederived.lane.name.clone()])
+                    crate::runner::selected_task_execution_closure_names(
+                        contract,
+                        rederived.lane.name.as_str(),
+                        overrides,
+                    )
+                    .map_err(|error| error.to_string())?
                 }
             };
             selected
@@ -21864,53 +22011,9 @@ fn collect_reachable_task_names_for_visibility(
     root_task_name: &str,
     overrides: ExecutionOverrides,
 ) -> Vec<String> {
-    let mut ordered = Vec::new();
-    let mut visited = BTreeSet::new();
-    let mut stack = vec![(root_task_name.to_string(), overrides)];
-    while let Some((task_name, current_overrides)) = stack.pop() {
-        let backend =
-            effective_task_execution(contract, task_name.as_str(), current_overrides).backend;
-        if !visited.insert((task_name.clone(), format_backend(backend).to_string())) {
-            continue;
-        }
-        ordered.push(task_name.clone());
-        let Some(task) = contract.tasks.get(task_name.as_str()) else {
-            continue;
-        };
-        for dependency in task
-            .aggregate
-            .iter()
-            .flat_map(|aggregate| aggregate.tasks.iter())
-        {
-            if contract.tasks.contains_key(dependency) {
-                stack.push((dependency.clone(), ExecutionOverrides::default()));
-            }
-        }
-        for dependency in task.depends_on_for_backend(backend) {
-            let Some(dependency_task) = contract.tasks.get(dependency) else {
-                continue;
-            };
-            stack.push((
-                dependency.clone(),
-                ExecutionOverrides {
-                    backend: dependency_task
-                        .dependency_backend_override_for_parent(current_overrides.backend, backend),
-                    ..current_overrides
-                },
-            ));
-        }
-        for hook in task
-            .after_success
-            .iter()
-            .chain(task.after_failure.iter())
-            .chain(task.after_always.iter())
-        {
-            if contract.tasks.contains_key(hook) {
-                stack.push((hook.clone(), ExecutionOverrides::default()));
-            }
-        }
-    }
-    ordered
+    plan_task_execution_structure_with_overrides(contract, root_task_name, overrides)
+        .map(|plan| plan.selected_task_names())
+        .unwrap_or_else(|_| vec![root_task_name.to_string()])
 }
 
 fn first_unsafe_task_path_for_visibility(
@@ -21921,101 +22024,59 @@ fn first_unsafe_task_path_for_visibility(
     if !task_is_declared_agent_safe(contract, root_task_name) {
         return vec![root_task_name.to_string()];
     }
+    let Ok(plan) =
+        plan_task_execution_structure_with_overrides(contract, root_task_name, overrides)
+    else {
+        return vec![root_task_name.to_string()];
+    };
+    let mut adjacency = BTreeMap::<String, Vec<String>>::new();
+    for edge in &plan.edges {
+        let (parent, child) = match &edge.relation {
+            TaskExecutionRelation::DependsOn { parent }
+            | TaskExecutionRelation::AggregateMember { parent } => {
+                (parent.clone(), edge.source.clone())
+            }
+            TaskExecutionRelation::AfterSuccess { parent }
+            | TaskExecutionRelation::AfterFailure { parent }
+            | TaskExecutionRelation::AfterAlways { parent } => {
+                (parent.clone(), edge.destination.clone())
+            }
+            TaskExecutionRelation::Requested => continue,
+        };
+        adjacency.entry(parent).or_default().push(child);
+    }
 
-    fn visit(
+    fn visit_selected_graph(
         contract: &Contract,
         current: &str,
-        overrides: ExecutionOverrides,
+        adjacency: &BTreeMap<String, Vec<String>>,
         path: &mut Vec<String>,
-        visited: &mut BTreeSet<(String, String)>,
+        visited: &mut BTreeSet<String>,
     ) -> Option<Vec<String>> {
-        let backend = effective_task_execution(contract, current, overrides).backend;
-        if !visited.insert((current.to_string(), format_backend(backend).to_string())) {
+        if !visited.insert(current.to_string()) {
             return None;
         }
         path.push(current.to_string());
-        let Some(task) = contract.tasks.get(current) else {
-            path.pop();
-            return None;
-        };
-
-        for dependency in task
-            .aggregate
-            .iter()
-            .flat_map(|aggregate| aggregate.tasks.iter())
-        {
-            if !contract.tasks.contains_key(dependency) {
-                continue;
-            }
-            if !task_is_declared_agent_safe(contract, dependency) {
+        for child in adjacency.get(current).into_iter().flatten() {
+            if !task_is_declared_agent_safe(contract, child) {
                 let mut refusal_path = path.clone();
-                refusal_path.push(dependency.clone());
+                refusal_path.push(child.clone());
                 path.pop();
                 return Some(refusal_path);
             }
-            if let Some(found) = visit(
-                contract,
-                dependency,
-                ExecutionOverrides::default(),
-                path,
-                visited,
-            ) {
+            if let Some(found) = visit_selected_graph(contract, child, adjacency, path, visited) {
                 path.pop();
                 return Some(found);
             }
         }
-
-        for dependency in task.depends_on_for_backend(backend) {
-            let Some(dependency_task) = contract.tasks.get(dependency) else {
-                continue;
-            };
-            let dependency_overrides = ExecutionOverrides {
-                backend: dependency_task
-                    .dependency_backend_override_for_parent(overrides.backend, backend),
-                ..overrides
-            };
-            if !task_is_declared_agent_safe(contract, dependency) {
-                let mut refusal_path = path.clone();
-                refusal_path.push(dependency.to_string());
-                path.pop();
-                return Some(refusal_path);
-            }
-            if let Some(found) = visit(contract, dependency, dependency_overrides, path, visited) {
-                path.pop();
-                return Some(found);
-            }
-        }
-
-        for hook in task
-            .after_success
-            .iter()
-            .chain(task.after_failure.iter())
-            .chain(task.after_always.iter())
-        {
-            if !contract.tasks.contains_key(hook) {
-                continue;
-            }
-            if !task_is_declared_agent_safe(contract, hook) {
-                let mut refusal_path = path.clone();
-                refusal_path.push(hook.clone());
-                path.pop();
-                return Some(refusal_path);
-            }
-            if let Some(found) = visit(contract, hook, ExecutionOverrides::default(), path, visited)
-            {
-                path.pop();
-                return Some(found);
-            }
-        }
-
         path.pop();
         None
     }
 
-    visit(
+    visit_selected_graph(
         contract,
         root_task_name,
-        overrides,
+        &adjacency,
         &mut Vec::new(),
         &mut BTreeSet::new(),
     )
@@ -22162,51 +22223,9 @@ fn doctor_claim_assurance(
     )
 }
 
-fn doctor_replay_input_policy_with_observations(
-    contract: &Contract,
-    workflow_name: Option<&str>,
-    observations: &ReplayInputPolicyObservations,
-    loaded_policy: Option<&LoadedOrgPolicyPack>,
-) -> Option<ReplayInputPolicyEvaluation> {
-    let loaded_policy = loaded_policy?;
-    let evaluation = if let Some((name, _)) = contract.selected_workflow(workflow_name) {
-        evaluate_replay_input_policy_with_observations(
-            contract,
-            &loaded_policy.pack,
-            ReplayInputPolicySubject::Workflow(name),
-            observations,
-        )
-    } else {
-        let Some(task_name) = contract.selected_run_task_name_for(None) else {
-            return None;
-        };
-        evaluate_replay_input_policy_with_observations(
-            contract,
-            &loaded_policy.pack,
-            ReplayInputPolicySubject::Task(task_name),
-            observations,
-        )
-    };
-    (evaluation.required || !evaluation.unknown_selectors.is_empty()).then_some(evaluation)
-}
-
-fn task_replay_input_policy_with_observations(
-    contract: &Contract,
-    task_name: &str,
-    observations: &ReplayInputPolicyObservations,
-    loaded_policy: Option<&LoadedOrgPolicyPack>,
-) -> Option<ReplayInputPolicyEvaluation> {
-    let loaded_policy = loaded_policy?;
-    let evaluation = evaluate_replay_input_policy_with_observations(
-        contract,
-        &loaded_policy.pack,
-        ReplayInputPolicySubject::Task(task_name),
-        observations,
-    );
-    (evaluation.required || !evaluation.unknown_selectors.is_empty()).then_some(evaluation)
-}
-
 struct TaskReplayInputPreflight {
+    selected_closure: Vec<String>,
+    selected_plan: Option<crate::runner::RunPlan>,
     observations: ReplayInputPolicyObservations,
     loaded_policy: Option<LoadedOrgPolicyPack>,
     policy: Option<ReplayInputPolicyEvaluation>,
@@ -22226,18 +22245,68 @@ impl TaskReplayInputPreflight {
         contract: &Contract,
         contract_path: &Path,
         workflow_name: Option<&str>,
+        overrides: ExecutionOverrides,
     ) {
-        self.observations = observe_replay_inputs(
+        self.selected_plan =
+            plan_workflow_execution_structure_with_overrides(contract, workflow_name, overrides)
+                .ok();
+        self.selected_closure = self
+            .selected_plan
+            .as_ref()
+            .map(crate::runner::RunPlan::selected_task_names)
+            .unwrap_or_default();
+        self.observations = observe_replay_inputs_for_selected_closure(
             contract,
             contract_path.parent().unwrap_or_else(|| Path::new(".")),
-            contract.selected_workflow_task_closure_names(workflow_name),
+            self.selected_closure.clone(),
         );
-        self.policy = doctor_replay_input_policy_with_observations(
-            contract,
-            workflow_name,
-            &self.observations,
-            self.loaded_policy.as_ref(),
-        );
+        self.policy = self.loaded_policy.as_ref().and_then(|loaded| {
+            let subject = selected_workflow_replay_policy_subject(contract, workflow_name)?;
+            let evaluation = self.selected_plan.as_ref().map_or_else(
+                || {
+                    evaluate_replay_input_policy_for_closure_with_observations(
+                        contract,
+                        &loaded.pack,
+                        subject,
+                        self.selected_closure.clone(),
+                        &self.observations,
+                    )
+                },
+                |plan| {
+                    evaluate_replay_input_policy_for_plan_with_observations(
+                        contract,
+                        &loaded.pack,
+                        subject,
+                        plan,
+                        &self.observations,
+                    )
+                },
+            );
+            (evaluation.required || !evaluation.unknown_selectors.is_empty()).then_some(evaluation)
+        });
+    }
+}
+
+fn selected_workflow_execution_closure(
+    contract: &Contract,
+    workflow_name: Option<&str>,
+    overrides: ExecutionOverrides,
+) -> Vec<String> {
+    plan_workflow_execution_structure_with_overrides(contract, workflow_name, overrides)
+        .map(|plan| plan.selected_task_names())
+        .unwrap_or_default()
+}
+
+fn selected_workflow_replay_policy_subject<'a>(
+    contract: &'a Contract,
+    workflow_name: Option<&str>,
+) -> Option<ReplayInputPolicySubject<'a>> {
+    if let Some((name, _)) = contract.selected_workflow(workflow_name) {
+        Some(ReplayInputPolicySubject::Workflow(name))
+    } else {
+        contract
+            .selected_run_task_name_for(None)
+            .map(ReplayInputPolicySubject::Task)
     }
 }
 
@@ -22455,7 +22524,6 @@ fn proof_crossing_grant_admission_failure_output(
 fn evaluate_replay_input_admission(
     contract: &Contract,
     contract_path: &Path,
-    roots: impl IntoIterator<Item = String>,
     preflight: &TaskReplayInputPreflight,
 ) -> Result<Vec<ExecutionReceiptEvaluatedInput>, ReplayInputAdmissionFailure> {
     if let Some(error) = preflight.policy_load_error.as_ref() {
@@ -22466,7 +22534,7 @@ fn evaluate_replay_input_admission(
     let captured = match capture_replay_inputs_from_observations(
         contract,
         contract_path,
-        roots,
+        preflight.selected_closure.clone(),
         &preflight.observations,
     ) {
         Ok(captured) => captured,
@@ -22503,24 +22571,51 @@ fn workflow_replay_input_preflight(
     contract: &Contract,
     contract_path: &Path,
     workflow_name: Option<&str>,
+    overrides: ExecutionOverrides,
 ) -> TaskReplayInputPreflight {
-    let observations = observe_replay_inputs(
+    let selected_plan =
+        plan_workflow_execution_structure_with_overrides(contract, workflow_name, overrides).ok();
+    let selected_closure = selected_plan
+        .as_ref()
+        .map(crate::runner::RunPlan::selected_task_names)
+        .unwrap_or_default();
+    let observations = observe_replay_inputs_for_selected_closure(
         contract,
         contract_path.parent().unwrap_or_else(|| Path::new(".")),
-        contract.selected_workflow_task_closure_names(workflow_name),
+        selected_closure.clone(),
     );
     let (loaded_policy, policy_load_error) = match load_org_policy_pack_auto_details(contract_path)
     {
         Ok(policy) => (policy, None),
         Err(error) => (None, Some(error.to_string())),
     };
-    let policy = doctor_replay_input_policy_with_observations(
-        contract,
-        workflow_name,
-        &observations,
-        loaded_policy.as_ref(),
-    );
+    let policy = loaded_policy.as_ref().and_then(|loaded| {
+        let subject = selected_workflow_replay_policy_subject(contract, workflow_name)?;
+        let evaluation = selected_plan.as_ref().map_or_else(
+            || {
+                evaluate_replay_input_policy_for_closure_with_observations(
+                    contract,
+                    &loaded.pack,
+                    subject,
+                    selected_closure.clone(),
+                    &observations,
+                )
+            },
+            |plan| {
+                evaluate_replay_input_policy_for_plan_with_observations(
+                    contract,
+                    &loaded.pack,
+                    subject,
+                    plan,
+                    &observations,
+                )
+            },
+        );
+        (evaluation.required || !evaluation.unknown_selectors.is_empty()).then_some(evaluation)
+    });
     TaskReplayInputPreflight {
+        selected_closure,
+        selected_plan,
         observations,
         loaded_policy,
         policy,
@@ -22528,15 +22623,16 @@ fn workflow_replay_input_preflight(
     }
 }
 
-fn workflow_replay_input_preflight_for_closure_with_retained_policy(
+fn workflow_replay_input_preflight_for_plan_with_retained_policy(
     contract: &Contract,
     contract_path: &Path,
     workflow_name: &str,
-    closure: Vec<String>,
+    selected_plan: crate::runner::RunPlan,
     policy_observed: bool,
     retained_policy: Option<LoadedOrgPolicyPack>,
 ) -> TaskReplayInputPreflight {
-    let observations = observe_replay_inputs(
+    let closure = selected_plan.selected_task_names();
+    let observations = observe_replay_inputs_for_selected_closure(
         contract,
         contract_path.parent().unwrap_or_else(|| Path::new(".")),
         closure.clone(),
@@ -22550,17 +22646,19 @@ fn workflow_replay_input_preflight_for_closure_with_retained_policy(
         }
     };
     let policy = loaded_policy.as_ref().map(|loaded| {
-        evaluate_replay_input_policy_for_closure_with_observations(
+        evaluate_replay_input_policy_for_plan_with_observations(
             contract,
             &loaded.pack,
             ReplayInputPolicySubject::Workflow(workflow_name),
-            closure,
+            &selected_plan,
             &observations,
         )
     });
     let policy =
         policy.filter(|evaluation| evaluation.required || !evaluation.unknown_selectors.is_empty());
     TaskReplayInputPreflight {
+        selected_closure: closure,
+        selected_plan: Some(selected_plan),
         observations,
         loaded_policy,
         policy,
@@ -22572,11 +22670,13 @@ fn task_replay_input_preflight(
     contract: &Contract,
     contract_path: &Path,
     task_name: &str,
+    overrides: ExecutionOverrides,
 ) -> TaskReplayInputPreflight {
     task_replay_input_preflight_with_retained_policy(
         contract,
         contract_path,
         task_name,
+        overrides,
         false,
         None,
     )
@@ -22586,13 +22686,20 @@ fn task_replay_input_preflight_with_retained_policy(
     contract: &Contract,
     contract_path: &Path,
     task_name: &str,
+    overrides: ExecutionOverrides,
     policy_observed: bool,
     retained_policy: Option<LoadedOrgPolicyPack>,
 ) -> TaskReplayInputPreflight {
-    let observations = observe_replay_inputs(
+    let selected_plan =
+        plan_task_execution_structure_with_overrides(contract, task_name, overrides).ok();
+    let selected_closure = selected_plan
+        .as_ref()
+        .map(crate::runner::RunPlan::selected_task_names)
+        .unwrap_or_else(|| vec![task_name.to_string()]);
+    let observations = observe_replay_inputs_for_selected_closure(
         contract,
         contract_path.parent().unwrap_or_else(|| Path::new(".")),
-        [task_name.to_string()],
+        selected_closure.clone(),
     );
     let (loaded_policy, policy_load_error) = if policy_observed {
         (retained_policy, None)
@@ -22602,13 +22709,33 @@ fn task_replay_input_preflight_with_retained_policy(
             Err(error) => (None, Some(error.to_string())),
         }
     };
-    let policy = task_replay_input_policy_with_observations(
-        contract,
-        task_name,
-        &observations,
-        loaded_policy.as_ref(),
-    );
+    let policy = loaded_policy.as_ref().and_then(|loaded| {
+        let subject = ReplayInputPolicySubject::Task(task_name);
+        let evaluation = selected_plan.as_ref().map_or_else(
+            || {
+                evaluate_replay_input_policy_for_closure_with_observations(
+                    contract,
+                    &loaded.pack,
+                    subject,
+                    selected_closure.clone(),
+                    &observations,
+                )
+            },
+            |plan| {
+                evaluate_replay_input_policy_for_plan_with_observations(
+                    contract,
+                    &loaded.pack,
+                    subject,
+                    plan,
+                    &observations,
+                )
+            },
+        );
+        (evaluation.required || !evaluation.unknown_selectors.is_empty()).then_some(evaluation)
+    });
     TaskReplayInputPreflight {
+        selected_closure,
+        selected_plan,
         observations,
         loaded_policy,
         policy,
@@ -23551,7 +23678,7 @@ fn render_run_preview_target(
     persist_logs: bool,
 ) -> CommandOutput {
     let task_name = canonical_declared_task_name(&target.contract, requested_task_name);
-    if workflow_env_profile_applies_to_task(&target.contract, None, task_name.as_str())
+    if workflow_env_profile_applies_to_task(&target.contract, None, task_name.as_str(), overrides)
         && let Some(adjusted) =
             contract_adjusted_for_selected_workflow_env_profile(&target.contract, None)
     {
@@ -23626,6 +23753,7 @@ fn render_run_preview_target(
         &target.contract,
         &target.contract_path,
         task_name.as_str(),
+        overrides,
         typed_policy_observed,
         loaded_policy,
     );
@@ -23642,7 +23770,7 @@ fn render_run_preview_target(
     if let Err(error) = capture_replay_inputs_from_observations(
         &target.contract,
         &target.contract_path,
-        [task_name.clone()],
+        replay_input_preflight.selected_closure.clone(),
         &replay_input_preflight.observations,
     ) {
         return render_replay_input_preflight_failure(
@@ -23721,11 +23849,17 @@ fn render_run_preview_target(
     let text_path_display =
         display_contract_target(&compact_contract_path(&target.contract_path), member);
     let contract_identity = repo_contract_identity(&target.contract);
-    let required_env_names = target.contract.task_required_env_names(task_name.as_str());
-    let declared_execution = ExecutionSummary::from_contract_with_required_env_names(
+    let selected_env_names = crate::runner::plan_task_execution_structure_with_overrides(
+        &target.contract,
+        task_name.as_str(),
+        overrides,
+    )
+    .map(|plan| crate::runner::selected_plan_contract_env_names(&target.contract, &plan))
+    .unwrap_or_default();
+    let declared_execution = ExecutionSummary::from_contract_with_selected_env_names(
         &target.contract,
         &target.contract_path,
-        (!required_env_names.is_empty()).then_some(&required_env_names),
+        &selected_env_names,
     );
     let applied_overrides = execution_plan_overrides(overrides);
     let requested_effective =
@@ -23742,7 +23876,7 @@ fn render_run_preview_target(
         &target.contract,
         overrides,
     );
-    let env_report = match build_env_report_with_overrides(
+    let env_report = match build_selected_env_report_with_overrides(
         &target.contract,
         &target.contract_path,
         None,
@@ -24767,6 +24901,7 @@ fn build_run_preview_plan(
     } else if let Ok(task_plan) =
         crate::runner::plan_task_execution_with_overrides(contract, task_name, overrides)
     {
+        plan.selected_execution_graph_identity = Some(task_plan.identity.clone());
         plan.dependency_chain = task_plan.tasks.clone();
         plan.dependency_steps = planned_dependency_steps_from_run_plan(contract, task_plan);
     } else {
@@ -28830,8 +28965,12 @@ pub fn doctor(
                     doctor_mode_for_contract(contract, overrides, workflow_name)
                 });
                 let diagnosis_overrides = doctor_mode_execution_overrides(mode, doctor_lifecycle);
-                let mut replay_input_preflight =
-                    workflow_replay_input_preflight(contract, &target.contract_path, workflow_name);
+                let mut replay_input_preflight = workflow_replay_input_preflight(
+                    contract,
+                    &target.contract_path,
+                    workflow_name,
+                    diagnosis_overrides,
+                );
                 let mut report =
                     diagnose_contract_with_mode_and_lifecycle_for_workflow_with_overrides_and_replay_input_policy(
                         contract,
@@ -28852,6 +28991,7 @@ pub fn doctor(
                     contract,
                     &target.contract_path,
                     workflow_name,
+                    diagnosis_overrides,
                     &mut report.findings,
                 );
                 let fix_summary = if fix {
@@ -28860,7 +29000,6 @@ pub fn doctor(
                             evaluate_replay_input_admission(
                                 contract,
                                 &target.contract_path,
-                                contract.selected_workflow_task_closure_names(workflow_name),
                                 &replay_input_preflight,
                             )
                         })
@@ -28898,6 +29037,7 @@ pub fn doctor(
                             contract,
                             &target.contract_path,
                             workflow_name,
+                            diagnosis_overrides,
                         );
                         report =
                             diagnose_contract_with_mode_and_lifecycle_for_workflow_with_overrides_and_replay_input_policy(
@@ -28919,6 +29059,7 @@ pub fn doctor(
                             contract,
                             &target.contract_path,
                             workflow_name,
+                            diagnosis_overrides,
                             &mut report.findings,
                         );
                     }
@@ -28934,10 +29075,11 @@ pub fn doctor(
                     .agent
                     .as_ref()
                     .and_then(AgentSummary::from_config);
-                let workflow_summary = match resolve_selected_workflow_summary(
+                let workflow_summary = match resolve_selected_workflow_summary_with_overrides(
                     contract,
                     &target.contract_path,
                     workflow_name,
+                    diagnosis_overrides,
                 ) {
                     Ok(summary) => summary,
                     Err(error) => {
@@ -28948,13 +29090,17 @@ pub fn doctor(
                         );
                     }
                 };
-                let required_env_names = target
-                    .contract
-                    .selected_workflow_required_env_names(workflow_name);
-                let execution_summary = ExecutionSummary::from_contract_with_required_env_names(
+                let selected_env_names = plan_workflow_execution_structure_with_overrides(
+                    contract,
+                    workflow_name,
+                    diagnosis_overrides,
+                )
+                .map(|plan| crate::runner::selected_plan_contract_env_names(contract, &plan))
+                .unwrap_or_default();
+                let execution_summary = ExecutionSummary::from_contract_with_selected_env_names(
                     contract,
                     &target.contract_path,
-                    (!required_env_names.is_empty()).then_some(&required_env_names),
+                    &selected_env_names,
                 );
                 let selected_toolchains = selected_workflow_toolchain_summaries(
                     contract,
@@ -29072,6 +29218,7 @@ pub fn doctor(
                                 &member_target.contract,
                                 &member_target.contract_path,
                                 workflow_name,
+                                diagnosis_overrides,
                             );
                             let mut member_report =
                                 diagnose_contract_with_mode_and_lifecycle_for_workflow_with_overrides_and_replay_input_policy(
@@ -29093,6 +29240,7 @@ pub fn doctor(
                                 &member_target.contract,
                                 &member_target.contract_path,
                                 workflow_name,
+                                diagnosis_overrides,
                                 &mut member_report.findings,
                             );
                             if !member_report.ok {
@@ -29103,29 +29251,40 @@ pub fn doctor(
                                 .agent
                                 .as_ref()
                                 .and_then(AgentSummary::from_config);
-                            let member_workflow = match resolve_selected_workflow_summary(
-                                &member_target.contract,
-                                &member_target.contract_path,
-                                workflow_name,
-                            ) {
-                                Ok(summary) => summary,
-                                Err(error) => {
-                                    return finalize_debug(
-                                        CommandOutput::failure_with_code(error, 2),
-                                        debug,
-                                        debug_lines,
-                                    );
-                                }
-                            };
-                            let member_required_env_names = member_target
-                                .contract
-                                .selected_workflow_required_env_names(workflow_name);
-                            let member_execution =
-                                ExecutionSummary::from_contract_with_required_env_names(
+                            let member_workflow =
+                                match resolve_selected_workflow_summary_with_overrides(
                                     &member_target.contract,
                                     &member_target.contract_path,
-                                    (!member_required_env_names.is_empty())
-                                        .then_some(&member_required_env_names),
+                                    workflow_name,
+                                    diagnosis_overrides,
+                                ) {
+                                    Ok(summary) => summary,
+                                    Err(error) => {
+                                        return finalize_debug(
+                                            CommandOutput::failure_with_code(error, 2),
+                                            debug,
+                                            debug_lines,
+                                        );
+                                    }
+                                };
+                            let member_selected_env_names =
+                                plan_workflow_execution_structure_with_overrides(
+                                    &member_target.contract,
+                                    workflow_name,
+                                    diagnosis_overrides,
+                                )
+                                .map(|plan| {
+                                    crate::runner::selected_plan_contract_env_names(
+                                        &member_target.contract,
+                                        &plan,
+                                    )
+                                })
+                                .unwrap_or_default();
+                            let member_execution =
+                                ExecutionSummary::from_contract_with_selected_env_names(
+                                    &member_target.contract,
+                                    &member_target.contract_path,
+                                    &member_selected_env_names,
                                 );
                             let member_toolchains = selected_workflow_toolchain_summaries(
                                 &member_target.contract,
@@ -29292,13 +29451,7 @@ pub fn doctor(
                                     ),
                                     workflow: workflow_summary,
                                     agent: agent_summary,
-                                    execution:
-                                        ExecutionSummary::from_contract_with_required_env_names(
-                                            &target.contract,
-                                            &target.contract_path,
-                                            (!required_env_names.is_empty())
-                                                .then_some(&required_env_names),
-                                        ),
+                                    execution: execution_summary,
                                     governance: doctor_required_verification_governance(
                                         &target.contract,
                                         &rewritten_findings,
@@ -29394,6 +29547,7 @@ pub fn doctor(
                         &target.contract,
                         &target.contract_path,
                         workflow_name,
+                        diagnosis_overrides,
                     );
                     let mut report =
                         diagnose_contract_with_mode_and_lifecycle_for_workflow_with_overrides_and_replay_input_policy(
@@ -29444,8 +29598,13 @@ pub fn doctor(
                         &rewritten_findings,
                         crate::workspace::agent_verdict_from_agent(target.contract.agent.as_ref()),
                     );
-                    let execution_summary =
-                        ExecutionSummary::from_contract(&target.contract, &target.contract_path);
+                    let execution_summary = resolve_selected_workflow_execution_summary(
+                        &target.contract,
+                        &target.contract_path,
+                        workflow_name,
+                        diagnosis_overrides,
+                    )
+                    .unwrap_or(None);
                     let selected_toolchains = selected_workflow_toolchain_summaries(
                         &target.contract,
                         diagnosis_overrides,
@@ -31663,8 +31822,13 @@ pub fn check(
                         );
                     }
                 };
-                let execution_summary =
-                    ExecutionSummary::from_contract(&target.contract, &target.contract_path);
+                let execution_summary = resolve_selected_workflow_execution_summary(
+                    &target.contract,
+                    &target.contract_path,
+                    workflow_name,
+                    ExecutionOverrides::default(),
+                )
+                .unwrap_or(None);
                 let selected_toolchains = selected_workflow_toolchain_summaries(
                     &target.contract,
                     ExecutionOverrides::default(),
@@ -31853,10 +32017,13 @@ pub fn check(
                                     );
                                 }
                             };
-                            let member_execution = ExecutionSummary::from_contract(
+                            let member_execution = resolve_selected_workflow_execution_summary(
                                 &member_target.contract,
                                 &member_target.contract_path,
-                            );
+                                workflow_name,
+                                ExecutionOverrides::default(),
+                            )
+                            .unwrap_or(None);
                             let member_agent = member_target
                                 .contract
                                 .agent
@@ -32136,8 +32303,13 @@ pub fn check(
                             );
                         }
                     };
-                    let execution_summary =
-                        ExecutionSummary::from_contract(&target.contract, &target.contract_path);
+                    let execution_summary = resolve_selected_workflow_execution_summary(
+                        &target.contract,
+                        &target.contract_path,
+                        workflow_name,
+                        ExecutionOverrides::default(),
+                    )
+                    .unwrap_or(None);
                     let selected_toolchains = selected_workflow_toolchain_summaries(
                         &target.contract,
                         ExecutionOverrides::default(),
@@ -32490,10 +32662,29 @@ pub fn receipt(
                     selected_workflow_name,
                     &report,
                 );
-                let captured_replay_inputs = match capture_replay_inputs_before_execution(
+                let selected_plan =
+                    match crate::runner::plan_workflow_execution_structure_with_overrides(
+                        contract,
+                        selected_workflow_name,
+                        diagnosis_overrides,
+                    ) {
+                        Ok(plan) => plan,
+                        Err(error) => return CommandOutput::failure(error.to_string()),
+                    };
+                ensure_receipt_selected_execution_graph_input(&mut receipt, &selected_plan);
+                let replay_observations = observe_replay_inputs_for_selected_closure(
+                    contract,
+                    target
+                        .contract_path
+                        .parent()
+                        .unwrap_or_else(|| Path::new(".")),
+                    selected_plan.tasks.clone(),
+                );
+                let captured_replay_inputs = match capture_replay_inputs_from_observations(
                     contract,
                     &target.contract_path,
-                    contract.selected_workflow_task_closure_names(selected_workflow_name),
+                    selected_plan.tasks.clone(),
+                    &replay_observations,
                 ) {
                     Ok(inputs) if !inputs.is_empty() => Some(inputs),
                     Ok(_) => None,
@@ -32505,7 +32696,7 @@ pub fn receipt(
                 match capture_witnessed_observations_before_execution(
                     contract,
                     &target.contract_path,
-                    contract.selected_workflow_task_closure_names(selected_workflow_name),
+                    selected_plan.tasks.clone(),
                 ) {
                     Ok(observations) if !observations.is_empty() => {
                         attach_witnessed_observations(&mut receipt, &observations);
@@ -32582,12 +32773,15 @@ pub fn receipt(
                         receipt: receipt.clone(),
                         archive_path: Some(archive_path_display.as_str()),
                         archive_context: Some(crate::output::ReceiptArchiveContext {
-                            schema_version: 1,
+                            schema_version: 4,
                             kind: String::from("readiness"),
-                            lane_kind: None,
-                            lane_name: None,
+                            lane_kind: Some(String::from("workflow")),
+                            lane_name: Some(
+                                selected_workflow_name.unwrap_or("default").to_string(),
+                            ),
                             semantic_scope: None,
                             effect_policy_refusal: None,
+                            selected_execution_graph: Some(selected_plan.clone()),
                         }),
                         promoted_baseline: None,
                         artifact_routing: receipt_artifact_routing(
@@ -43967,6 +44161,7 @@ fn read_repo_receipt_archive_record_from_bytes(
             },
         )?,
     );
+    verify_archived_selected_execution_graph(&record, &crossing_contract, path)?;
     verify_archived_effect_policy_refusal(&record, &crossing_contract, path)?;
     if let Some(evidence) = record
         .payload
@@ -44238,6 +44433,79 @@ fn read_repo_receipt_archive_record_from_bytes(
     Ok(record)
 }
 
+fn verify_archived_selected_execution_graph(
+    record: &RepoReceiptArchiveRecord,
+    contract: &Contract,
+    path: &Path,
+) -> Result<(), String> {
+    let Some(context) = record.payload.archive_context.as_ref() else {
+        return Ok(());
+    };
+    let Some(plan) = context.selected_execution_graph.as_ref() else {
+        return Ok(());
+    };
+    let lane_kind = context.lane_kind.as_deref().ok_or_else(|| {
+        format!(
+            "receipt archive `{}` carries a selected execution graph without a lane kind",
+            compact_path(path, ".")
+        )
+    })?;
+    let lane_name = context.lane_name.as_deref().ok_or_else(|| {
+        format!(
+            "receipt archive `{}` carries a selected execution graph without a lane name",
+            compact_path(path, ".")
+        )
+    })?;
+    crate::runner::verify_archived_run_plan(contract, lane_kind, lane_name, plan).map_err(
+        |error| {
+            format!(
+                "receipt archive `{}` contains an unreconciled selected execution graph: {error}",
+                compact_path(path, ".")
+            )
+        },
+    )?;
+    let graph_inputs = record
+        .payload
+        .receipt
+        .evaluated_inputs
+        .iter()
+        .filter(|input| input.id == "execution_graph:selected")
+        .collect::<Vec<_>>();
+    if graph_inputs.len() != 1
+        || graph_inputs[0].kind != "selected_execution_graph"
+        || graph_inputs[0].input_class != ReplayInputClass::ContractTruth
+        || graph_inputs[0].identity != plan.identity
+    {
+        return Err(format!(
+            "receipt archive `{}` selected execution graph does not reconcile with its receipt input",
+            compact_path(path, ".")
+        ));
+    }
+    Ok(())
+}
+
+fn receipt_archive_has_selected_execution_graph(record: &RepoReceiptArchiveRecord) -> bool {
+    record
+        .payload
+        .archive_context
+        .as_ref()
+        .and_then(|context| context.selected_execution_graph.as_ref())
+        .is_some()
+}
+
+fn require_receipt_archive_selected_execution_graph(
+    record: &RepoReceiptArchiveRecord,
+) -> Result<(), String> {
+    if receipt_archive_has_selected_execution_graph(record) {
+        Ok(())
+    } else {
+        Err(format!(
+            "receipt archive `{}` is legacy_unverified because it lacks canonical selected execution graph evidence",
+            compact_path(&record.archive_path, ".")
+        ))
+    }
+}
+
 fn verify_receipt_launcher_finalization_sidecar(
     archive_path: &Path,
     receipt_archive_identity: &str,
@@ -44315,16 +44583,23 @@ fn archived_receipt_crossing_required(
     };
     match context.kind.as_str() {
         "readiness" => {
-            if context.lane_kind.is_some()
-                || context.lane_name.is_some()
-                || context.semantic_scope.is_some()
-            {
-                return Err(format!(
-                    "receipt archive `{}` has readiness context with an execution lane",
-                    compact_path(path, ".")
-                ));
+            match context.schema_version {
+                1 if context.lane_kind.is_none()
+                    && context.lane_name.is_none()
+                    && context.semantic_scope.is_none()
+                    && context.selected_execution_graph.is_none() => {}
+                4 if context.lane_kind.as_deref() == Some("workflow")
+                    && context.lane_name.is_some()
+                    && context.semantic_scope.is_none()
+                    && context.selected_execution_graph.is_some() => {}
+                _ => {
+                    return Err(format!(
+                        "receipt archive `{}` has an invalid readiness archive context",
+                        compact_path(path, ".")
+                    ));
+                }
             }
-            if context.schema_version != 1 {
+            if !matches!(context.schema_version, 1 | 4) {
                 return Err(format!(
                     "receipt archive `{}` has unsupported readiness archive context schema version `{}`",
                     compact_path(path, "."),
@@ -44334,6 +44609,73 @@ fn archived_receipt_crossing_required(
             Ok(false)
         }
         "execution" => {
+            if context.schema_version == 5 {
+                if context.selected_execution_graph.is_none() {
+                    return Err(format!(
+                        "receipt archive `{}` omits canonical selected execution graph evidence",
+                        compact_path(path, ".")
+                    ));
+                }
+                if let Some(scope) = context.semantic_scope.as_ref() {
+                    let lane_kind = context.lane_kind.as_deref().ok_or_else(|| {
+                        format!(
+                            "receipt archive `{}` omits execution lane kind from archive context",
+                            compact_path(path, ".")
+                        )
+                    })?;
+                    let lane_name = context.lane_name.as_deref().ok_or_else(|| {
+                        format!(
+                            "receipt archive `{}` omits execution lane name from archive context",
+                            compact_path(path, ".")
+                        )
+                    })?;
+                    let scope_lane_kind = match scope.lane.kind {
+                        crate::sandbox_policy::SandboxLaneKind::Task => "task",
+                        crate::sandbox_policy::SandboxLaneKind::Workflow => "workflow",
+                    };
+                    if lane_kind != scope_lane_kind || lane_name != scope.lane.name {
+                        return Err(format!(
+                            "receipt archive `{}` has lane context that does not match its canonical selected-invocation scope",
+                            compact_path(path, ".")
+                        ));
+                    }
+                    return rederive_archived_crossing_scope(contract, scope, path);
+                }
+                if authority_configured {
+                    return Err(format!(
+                        "receipt archive `{}` omits canonical selected-invocation scope required by its archived crossing authority",
+                        compact_path(path, ".")
+                    ));
+                }
+                let lane_kind = context.lane_kind.as_deref().ok_or_else(|| {
+                    format!(
+                        "receipt archive `{}` omits execution lane kind from archive context",
+                        compact_path(path, ".")
+                    )
+                })?;
+                let lane_name = context.lane_name.as_deref().ok_or_else(|| {
+                    format!(
+                        "receipt archive `{}` omits execution lane name from archive context",
+                        compact_path(path, ".")
+                    )
+                })?;
+                return match lane_kind {
+                    "task" => Ok(!task_effective_safety(contract, lane_name).effective_safe),
+                    "workflow" => {
+                        let workflow_name = (lane_name != "default").then_some(lane_name);
+                        let safety = selected_up_workflow_effective_safety(
+                            contract,
+                            workflow_name,
+                            UpRunBehaviorPreference::Auto,
+                        );
+                        Ok(safety.effective_safe == Some(false))
+                    }
+                    _ => Err(format!(
+                        "receipt archive `{}` has unsupported execution lane kind `{lane_kind}`",
+                        compact_path(path, ".")
+                    )),
+                };
+            }
             if context.schema_version == 2 {
                 let scope = context.semantic_scope.as_ref().ok_or_else(|| {
                     format!(
@@ -44417,11 +44759,13 @@ fn archived_receipt_crossing_required(
             }
         }
         "effect_policy_refusal" => {
-            if context.schema_version != 1
+            if !matches!(context.schema_version, 1 | 4)
                 || context.lane_kind.as_deref() != Some("workflow")
                 || context.lane_name.is_none()
                 || context.semantic_scope.is_some()
                 || context.effect_policy_refusal.is_none()
+                || (context.schema_version == 4 && context.selected_execution_graph.is_none())
+                || (context.schema_version == 1 && context.selected_execution_graph.is_some())
             {
                 return Err(format!(
                     "receipt archive `{}` has incomplete effect-policy refusal context",
@@ -44818,7 +45162,16 @@ fn scan_repo_receipt_archives(root: &Path) -> Result<RepoReceiptArchiveScan, Str
         #[cfg(not(unix))]
         let record = read_repo_receipt_archive_record(&path);
         match record {
-            Ok(record) => archives.push(record),
+            Ok(record) if receipt_archive_has_selected_execution_graph(&record) => {
+                archives.push(record)
+            }
+            Ok(_) => invalid_archives.push(ReceiptHistoryInvalidArchive {
+                archive_path: receipt_storage_path_display(&path),
+                posture: String::from("legacy_unverified"),
+                error: String::from(
+                    "receipt archive predates canonical selected execution graph evidence",
+                ),
+            }),
             Err(error) => invalid_archives.push(ReceiptHistoryInvalidArchive {
                 archive_path: receipt_storage_path_display(&path),
                 #[cfg(unix)]
@@ -44909,15 +45262,20 @@ fn receipt_history_invalid_archive_posture_from_bytes(contents: &[u8]) -> String
         return String::from("invalid");
     };
     if payload
-        .receipt
-        .contract_snapshot_ref
-        .as_deref()
-        .is_none_or(|value| value.trim().is_empty())
-        && payload
+        .archive_context
+        .as_ref()
+        .and_then(|context| context.selected_execution_graph.as_ref())
+        .is_none()
+        || payload
             .receipt
-            .contract_snapshot_hash
+            .contract_snapshot_ref
             .as_deref()
             .is_none_or(|value| value.trim().is_empty())
+            && payload
+                .receipt
+                .contract_snapshot_hash
+                .as_deref()
+                .is_none_or(|value| value.trim().is_empty())
     {
         String::from("legacy_unverified")
     } else {
@@ -44986,7 +45344,7 @@ fn load_protected_repo_receipt_history(
             Some(&entry.contract_snapshot),
             Some(&entry.sidecar),
         ) {
-            Ok(mut record) => {
+            Ok(mut record) if receipt_archive_has_selected_execution_graph(&record) => {
                 record.archive_path = PathBuf::from(format!(
                     "systemd_protected_launcher:{}",
                     entry.archive_identity
@@ -44996,6 +45354,16 @@ fn load_protected_repo_receipt_history(
                 history_entry.catalog_identity = Some(entry.catalog_identity);
                 archives.push(history_entry);
             }
+            Ok(_) => invalid_archives.push(ReceiptHistoryInvalidArchive {
+                archive_path: format!(
+                    "systemd_protected_launcher:{}:{}",
+                    entry.catalog_identity, entry.archive_identity
+                ),
+                posture: String::from("legacy_unverified"),
+                error: String::from(
+                    "receipt archive predates canonical selected execution graph evidence",
+                ),
+            }),
             Err(error) => invalid_archives.push(ReceiptHistoryInvalidArchive {
                 archive_path: format!(
                     "systemd_protected_launcher:{}:{}",
@@ -45307,6 +45675,7 @@ fn load_promoted_repo_receipt_baseline(
     }
     let archive_path = receipt_archive_dir(root).join(&promoted.archive_file);
     let record = read_repo_receipt_archive_record(&archive_path)?;
+    require_receipt_archive_selected_execution_graph(&record)?;
     if let Some(record_identity) = repo_receipt_contract_identity_from_archive_record(&record)
         && record_identity != current_identity
     {
@@ -45333,7 +45702,9 @@ fn load_explicit_repo_receipt_baseline(path: &Path) -> Result<RepoReceiptArchive
             path.display()
         ));
     }
-    read_repo_receipt_archive_record(path)
+    let record = read_repo_receipt_archive_record(path)?;
+    require_receipt_archive_selected_execution_graph(&record)?;
+    Ok(record)
 }
 
 fn load_repo_receipt_baseline(
@@ -65642,7 +66013,12 @@ policies:
         let contract =
             parse_contract_str(&contract_path, &fs::read_to_string(&contract_path).unwrap())
                 .unwrap();
-        let preflight = super::task_replay_input_preflight(&contract, &contract_path, "mutate");
+        let preflight = super::task_replay_input_preflight(
+            &contract,
+            &contract_path,
+            "mutate",
+            ExecutionOverrides::default(),
+        );
 
         let success = super::run_single_contract_target_captured(
             "mutate",
@@ -65697,8 +66073,12 @@ tasks:
         let denied_contract =
             parse_contract_str(&contract_path, &fs::read_to_string(&contract_path).unwrap())
                 .unwrap();
-        let denied_preflight =
-            super::task_replay_input_preflight(&denied_contract, &contract_path, "mutate");
+        let denied_preflight = super::task_replay_input_preflight(
+            &denied_contract,
+            &contract_path,
+            "mutate",
+            ExecutionOverrides::default(),
+        );
         let failure = match super::run_single_contract_target_captured(
             "mutate",
             ExecutionOverrides::default(),
@@ -66324,7 +66704,13 @@ workflows:
         let contract = parse_contract_str(&contract_path, yaml).expect("parse contract");
         let mut findings = Vec::new();
 
-        append_uv_local_project_findings(&contract, &contract_path, Some("verify"), &mut findings);
+        append_uv_local_project_findings(
+            &contract,
+            &contract_path,
+            Some("verify"),
+            ExecutionOverrides::default(),
+            &mut findings,
+        );
 
         assert_eq!(findings.len(), 1);
         let finding = &findings[0];
@@ -70085,6 +70471,29 @@ workflows:
         let app_archive_body: serde_json::Value =
             serde_json::from_str(&app_archive.stdout).unwrap();
         assert_eq!(app_archive_body["workflow"], "app");
+        let archive_path = PathBuf::from(
+            app_archive_body["archive_path"]
+                .as_str()
+                .expect("archive path"),
+        );
+        let archive_path = if archive_path.is_absolute() {
+            archive_path
+        } else {
+            fixture.path().join(archive_path)
+        };
+        let archived_app: serde_json::Value =
+            serde_json::from_slice(&fs::read(&archive_path).expect("archived receipt"))
+                .expect("archived receipt JSON");
+        assert_eq!(
+            archived_app["archive_context"]["selected_execution_graph"]["identity"],
+            archived_app["receipt"]["evaluated_inputs"]
+                .as_array()
+                .expect("evaluated inputs")
+                .iter()
+                .find(|input| input["id"] == "execution_graph:selected")
+                .expect("selected graph input")["identity"]
+        );
+        let original_archived = archived_app.clone();
 
         let docs_archive = super::receipt(
             Some(contract_path.as_path()),
@@ -70134,6 +70543,112 @@ workflows:
             diff_body["current"]["contract_identity"],
             "ota.yaml#workflow:app"
         );
+
+        let mut altered: serde_json::Value =
+            serde_json::from_slice(&fs::read(&archive_path).expect("archived receipt"))
+                .expect("archived receipt JSON");
+        altered["archive_context"]["selected_execution_graph"]["identity"] =
+            serde_json::Value::String(format!("sha256:{}", "0".repeat(64)));
+        fs::write(
+            &archive_path,
+            serde_json::to_vec(&altered).expect("altered archive JSON"),
+        )
+        .expect("write altered archive");
+        let scan = super::scan_repo_receipt_archives(fixture.path()).expect("scan archives");
+        assert_eq!(scan.archives.len(), 1);
+        assert_eq!(scan.invalid_archives.len(), 1);
+        assert_eq!(scan.invalid_archives[0].posture, "invalid");
+        assert!(
+            scan.invalid_archives[0]
+                .error
+                .contains("identity does not match"),
+            "{}",
+            scan.invalid_archives[0].error
+        );
+
+        let unknown_field_mutations = [
+            ("graph", serde_json::json!({"unexpected_graph_field": true})),
+            (
+                "service",
+                serde_json::json!({"unexpected_service_field": true}),
+            ),
+            ("step", serde_json::json!({"unexpected_step_field": true})),
+            ("edge", serde_json::json!({"unexpected_edge_field": true})),
+            (
+                "relation",
+                serde_json::json!({"unexpected_relation_field": true}),
+            ),
+        ];
+        for (kind, mutation) in unknown_field_mutations {
+            let mut altered = original_archived.clone();
+            let graph = altered["archive_context"]["selected_execution_graph"]
+                .as_object_mut()
+                .expect("selected graph object");
+            match kind {
+                "graph" => {
+                    graph.extend(mutation.as_object().expect("graph mutation").clone());
+                }
+                "service" => {
+                    graph.insert(
+                        String::from("services"),
+                        serde_json::json!([{
+                            "name": "injected",
+                            "identity": format!("sha256:{}", "0".repeat(64)),
+                            "unexpected_service_field": true
+                        }]),
+                    );
+                }
+                "step" => {
+                    graph["steps"][0]
+                        .as_object_mut()
+                        .expect("selected graph step")
+                        .extend(mutation.as_object().expect("step mutation").clone());
+                }
+                "edge" => {
+                    graph.insert(
+                        String::from("edges"),
+                        serde_json::json!([{
+                            "source": "setup",
+                            "destination": "build",
+                            "source_invocation_id": "invocation-0",
+                            "destination_invocation_id": "invocation-1",
+                            "relation": {"kind": "depends_on", "parent": "build"},
+                            "unexpected_edge_field": true
+                        }]),
+                    );
+                }
+                "relation" => {
+                    graph.insert(
+                        String::from("edges"),
+                        serde_json::json!([{
+                            "source": "setup",
+                            "destination": "build",
+                            "source_invocation_id": "invocation-0",
+                            "destination_invocation_id": "invocation-1",
+                            "relation": {
+                                "kind": "depends_on",
+                                "parent": "build",
+                                "unexpected_relation_field": true
+                            }
+                        }]),
+                    );
+                }
+                _ => unreachable!("fixed mutation set"),
+            }
+            fs::write(
+                &archive_path,
+                serde_json::to_vec(&altered).expect("unknown-field archive JSON"),
+            )
+            .expect("write unknown-field archive");
+            let scan = super::scan_repo_receipt_archives(fixture.path()).expect("scan archives");
+            assert_eq!(scan.archives.len(), 1, "{kind}");
+            assert_eq!(scan.invalid_archives.len(), 1, "{kind}");
+            assert!(
+                scan.invalid_archives[0].error.contains("unknown field"),
+                "{kind}: {}",
+                scan.invalid_archives[0].error
+            );
+        }
     }
 
     #[test]
@@ -71227,6 +71742,7 @@ workflows:
                         &contract,
                         &contract_path,
                         Some("docker-build"),
+                        ExecutionOverrides::default(),
                     ),
                 artifact_routing: Vec::new(),
                 failure_class: None,
@@ -72085,8 +72601,12 @@ policies:
         let contract =
             parse_contract_str(&contract_path, &fs::read_to_string(&contract_path).unwrap())
                 .expect("contract should parse");
-        let preflight =
-            super::workflow_replay_input_preflight(&contract, &contract_path, Some("app"));
+        let preflight = super::workflow_replay_input_preflight(
+            &contract,
+            &contract_path,
+            Some("app"),
+            ExecutionOverrides::default(),
+        );
         assert_eq!(
             preflight
                 .policy
@@ -74484,6 +75004,54 @@ workflows:
                 String::from("redis"),
             ]
         );
+    }
+
+    #[test]
+    fn workflow_summary_uses_selected_mode_service_closure() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: selected-workflow-services
+tasks:
+  native-db:
+    requires_services: [postgres]
+    run: echo native
+  verify:
+    execution:
+      default_mode: container
+      modes:
+        native:
+          depends_on: [native-db]
+        container: {}
+    run: echo verify
+workflows:
+  default: ci
+  ci:
+    run:
+      task: verify
+"#,
+        )
+        .unwrap();
+
+        let default_summary =
+            crate::output::WorkflowSummary::from_contract_selected(&contract, Some("ci"))
+                .expect("default workflow summary");
+        assert!(default_summary.required_services.is_empty());
+
+        let native_summary = super::resolve_selected_workflow_summary_with_overrides(
+            &contract,
+            Path::new("ota.yaml"),
+            Some("ci"),
+            ExecutionOverrides {
+                backend: Some(Backend::Native),
+                ..ExecutionOverrides::default()
+            },
+        )
+        .expect("native workflow summary")
+        .expect("selected workflow");
+        assert_eq!(native_summary.required_services, vec!["postgres"]);
     }
 
     #[test]
@@ -77901,6 +78469,9 @@ tasks:
 
         super::read_repo_receipt_archive_record(&archive_path)
             .expect("readiness archive should not require a crossing");
+        let error = super::load_explicit_repo_receipt_baseline(&archive_path)
+            .expect_err("legacy archive cannot become comparison authority");
+        assert!(error.contains("legacy_unverified"), "{error}");
     }
 
     #[test]
@@ -81514,17 +82085,37 @@ tasks:
         .expect("contract should parse");
         let steps = vec![
             crate::runner::RunPlanStep {
+                invocation_id: String::from("requested:0:prepare"),
                 task: String::from("prepare"),
                 parent: Some(String::from("verify")),
+                parent_invocation_id: Some(String::from("requested:1:verify")),
+                origin: String::from("requested"),
+                role: String::from("depends_on"),
                 backend: Backend::Container,
                 context: Some(String::from("windows")),
+                target_os: String::from("windows"),
+                lifecycle: Some(crate::schema::Lifecycle::Ephemeral),
+                execution_kind: String::from("run"),
+                selected_semantics_identity: String::from(
+                    "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+                ),
                 backend_selection_source: String::from("task"),
             },
             crate::runner::RunPlanStep {
+                invocation_id: String::from("requested:1:verify"),
                 task: String::from("verify"),
                 parent: None,
+                parent_invocation_id: None,
+                origin: String::from("requested"),
+                role: String::from("requested"),
                 backend: Backend::Container,
                 context: Some(String::from("linux")),
+                target_os: String::from("linux"),
+                lifecycle: Some(crate::schema::Lifecycle::Ephemeral),
+                execution_kind: String::from("run"),
+                selected_semantics_identity: String::from(
+                    "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+                ),
                 backend_selection_source: String::from("task"),
             },
         ];
@@ -81614,6 +82205,155 @@ tasks:
         assert_eq!(dependency_steps[0]["backend"], "native");
         assert_eq!(dependency_steps[0]["backend_selection_source"], "default");
         assert_eq!(dependency_steps[2]["task"], "lint");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_agent_container_dry_run_ignores_unsafe_native_only_dependency() {
+        let _guard = crate::test_support::env_mutex_lock();
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        let bin = repo.path().join("bin");
+        fs::create_dir_all(&bin).expect("create fake bin");
+        write_executable_script(&bin.join("docker"), "#!/bin/sh\nexit 0\n");
+        fs::write(
+            repo.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: selected-agent-aggregate
+env:
+  vars:
+    DISCORD_TOKEN:
+      secret: true
+      required: false
+  sources:
+    - kind: dotenv
+      path: .env.local
+execution:
+  lifecycle: ephemeral
+  contexts:
+    host:
+      backend: native
+    app:
+      backend: container
+      container:
+        image: oven/bun:1.2
+tasks:
+  setup:env:local:
+    context: host
+    replay_inputs:
+      - id: host-env-template
+        kind: static_file
+        path: missing-host-env-template
+        expected_identity: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    run: echo local-only
+  setup:
+    execution:
+      default_mode: container
+      modes:
+        native:
+          context: host
+          depends_on: [setup:env:local]
+          run: echo native-setup
+        container:
+          context: app
+          run: echo container-setup
+  build:
+    depends_on: [setup]
+    execution:
+      default_mode: container
+      modes:
+        native:
+          context: host
+          run: echo native-build
+        container:
+          context: app
+          run: echo container-build
+  test:
+    depends_on: [setup]
+    execution:
+      default_mode: container
+      modes:
+        native:
+          context: host
+          run: echo native-test
+        container:
+          context: app
+          run: echo container-test
+  ci:
+    aggregate:
+      tasks: [build, test]
+agent:
+  safe_tasks: [setup, build, test, ci]
+"#,
+        )
+        .expect("write contract");
+        fs::write(
+            repo.path().join(".env.local"),
+            "DISCORD_TOKEN=host-secret\n",
+        )
+        .expect("write unselected host env source");
+        let original_path = env::var_os("PATH");
+        let mut entries = vec![bin];
+        if let Some(path) = original_path.as_ref() {
+            entries.extend(env::split_paths(path));
+        }
+        unsafe {
+            env::set_var("PATH", env::join_paths(entries).expect("join fake PATH"));
+        }
+
+        let output = super::run_command_with_agent(
+            "ci",
+            Some(repo.path()),
+            None,
+            OutputFormat::Json,
+            ExecutionOverrides {
+                backend: Some(Backend::Container),
+                ..ExecutionOverrides::default()
+            },
+            &[],
+            &[],
+            &[],
+            true,
+            true,
+            false,
+            false,
+            false,
+            false,
+        );
+
+        match original_path {
+            Some(path) => unsafe { env::set_var("PATH", path) },
+            None => unsafe { env::remove_var("PATH") },
+        }
+        assert_eq!(output.exit_code, 0, "{output:?}");
+        let json: serde_json::Value =
+            serde_json::from_str(&output.stdout).expect("dry-run JSON preview");
+        let chain = json["plan"]["dependency_chain"]
+            .as_array()
+            .expect("dependency chain")
+            .iter()
+            .filter_map(|value| value.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(chain, vec!["setup", "build", "test", "ci"]);
+        assert!(
+            json.get("sources")
+                .and_then(serde_json::Value::as_array)
+                .is_none_or(Vec::is_empty),
+            "{}",
+            output.stdout
+        );
+        assert!(
+            json["env"].as_array().is_some_and(|entries| entries
+                .iter()
+                .all(|entry| entry["name"] != "DISCORD_TOKEN")),
+            "{}",
+            output.stdout
+        );
+        assert_eq!(
+            json["governance"]["evaluation"]["preflight"]["state"],
+            "warning_only"
+        );
     }
 
     #[test]
@@ -87258,6 +87998,7 @@ tasks:
                 },
                 overrides: None,
                 plan: UpPreviewPlan {
+                    selected_execution_graph_identity: None,
                     actions: Vec::new(),
                     staged_actions: Vec::new(),
                     skipped: Vec::new(),
@@ -88937,8 +89678,13 @@ workflows:
         unsafe {
             std::env::set_var("DATABASE_URL", "postgres://workflow-owned");
         }
-        super::materialize_selected_workflow_env_profile_for_task(&mut target, None, "build")
-            .expect("workflow env materialization should succeed");
+        super::materialize_selected_workflow_env_profile_for_task(
+            &mut target,
+            None,
+            "build",
+            ExecutionOverrides::default(),
+        )
+        .expect("workflow env materialization should succeed");
 
         let rendered = fs::read_to_string(fixture.path().join(".env.docker-build")).unwrap();
         assert_eq!(
@@ -89007,8 +89753,13 @@ workflows:
         unsafe {
             std::env::set_var("DATABASE_URL", "postgres://workflow-owned");
         }
-        super::materialize_selected_workflow_env_profile_for_task(&mut target, None, "build")
-            .expect("workflow env materialization should succeed");
+        super::materialize_selected_workflow_env_profile_for_task(
+            &mut target,
+            None,
+            "build",
+            ExecutionOverrides::default(),
+        )
+        .expect("workflow env materialization should succeed");
 
         let rendered = fs::read_to_string(fixture.path().join(".env.docker-build")).unwrap();
         assert_eq!(
@@ -89088,8 +89839,13 @@ workflows:
         unsafe {
             std::env::set_var("DATABASE_URL", "postgres://workflow-owned");
         }
-        super::materialize_selected_workflow_env_profile_for_task(&mut target, None, "build")
-            .expect("workflow env materialization should succeed");
+        super::materialize_selected_workflow_env_profile_for_task(
+            &mut target,
+            None,
+            "build",
+            ExecutionOverrides::default(),
+        )
+        .expect("workflow env materialization should succeed");
 
         let task = target.contract.tasks.get("build").expect("task present");
         assert!(task.env_files.is_empty());
@@ -89145,8 +89901,13 @@ workflows:
             contract,
             contract_path,
         };
-        super::materialize_selected_workflow_env_profile_for_task(&mut target, None, "build")
-            .expect("workflow compose overlays should materialize");
+        super::materialize_selected_workflow_env_profile_for_task(
+            &mut target,
+            None,
+            "build",
+            ExecutionOverrides::default(),
+        )
+        .expect("workflow compose overlays should materialize");
 
         let task = target.contract.tasks.get("build").expect("task present");
         assert!(task.adapter_inputs.compose.is_none());
@@ -89207,9 +89968,13 @@ workflows:
             contract,
             contract_path: contract_path.clone(),
         };
-        let error =
-            super::materialize_selected_workflow_env_profile_for_task(&mut target, None, "build")
-                .expect_err("invalid policy overlay should fail workflow env materialization");
+        let error = super::materialize_selected_workflow_env_profile_for_task(
+            &mut target,
+            None,
+            "build",
+            ExecutionOverrides::default(),
+        )
+        .expect_err("invalid policy overlay should fail workflow env materialization");
         assert!(error.contains("policy"), "{error}");
 
         match original_policy {
@@ -93380,6 +94145,85 @@ workflows:
     }
 
     #[test]
+    fn doctor_json_excludes_unselected_mode_env_source() {
+        let _guard = env_mutex_lock();
+        let fixture = TempDir::new().expect("temp dir");
+        let contract_path = fixture.path().join("ota.yaml");
+        fs::write(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: selected-doctor-env
+env:
+  vars:
+    UNSELECTED_SECRET:
+      secret: true
+  sources:
+    - kind: dotenv
+      path: .env.local
+tasks:
+  native-env:
+    requirements:
+      env: [UNSELECTED_SECRET]
+    run: echo native
+  verify:
+    execution:
+      default_mode: container
+      modes:
+        native:
+          depends_on: [native-env]
+        container: {}
+    run: echo verify
+workflows:
+  default: ci
+  ci:
+    run:
+      task: verify
+"#,
+        )
+        .expect("write contract");
+        fs::write(
+            fixture.path().join(".env.local"),
+            "UNSELECTED_SECRET=host-secret\n",
+        )
+        .expect("write host env source");
+
+        let output = super::doctor(
+            Some(fixture.path()),
+            None,
+            &[],
+            Some("ci"),
+            false,
+            false,
+            ExecutionOverrides {
+                backend: Some(Backend::Container),
+                ..ExecutionOverrides::default()
+            },
+            OutputFormat::Json,
+            false,
+        );
+        let json: serde_json::Value =
+            serde_json::from_str(&output.stdout).expect("doctor json should parse");
+        assert!(
+            json["execution"]["env"]
+                .as_array()
+                .is_none_or(|entries| entries
+                    .iter()
+                    .all(|entry| entry["name"] != "UNSELECTED_SECRET")),
+            "{}",
+            output.stdout
+        );
+        assert!(
+            json["execution"]["sources"]
+                .as_array()
+                .is_none_or(Vec::is_empty),
+            "{}",
+            output.stdout
+        );
+    }
+
+    #[test]
     fn doctor_group_summaries_distinguish_probe_issues_from_version_mismatches() {
         let findings = [
             Finding {
@@ -95866,6 +96710,83 @@ tasks:
     }
 
     #[test]
+    fn execution_receipt_excludes_unselected_mode_env_source() {
+        let _guard = env_mutex_lock();
+        let fixture = TempDir::new().unwrap();
+        let contract_path = fixture.path().join("ota.yaml");
+        let contract = parse_contract_str(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: selected-receipt-env
+env:
+  vars:
+    UNSELECTED_SECRET:
+      secret: true
+  sources:
+    - kind: dotenv
+      path: .env.local
+tasks:
+  native-env:
+    requirements:
+      env: [UNSELECTED_SECRET]
+    run: echo native
+  verify:
+    execution:
+      default_mode: container
+      modes:
+        native:
+          depends_on: [native-env]
+        container: {}
+    run: echo verify
+"#,
+        )
+        .unwrap();
+        fs::write(
+            fixture.path().join(".env.local"),
+            "UNSELECTED_SECRET=host-secret\n",
+        )
+        .unwrap();
+
+        let receipt = run_execution_receipt(
+            &contract,
+            &contract_path,
+            ExecutionOverrides {
+                backend: Some(Backend::Container),
+                ..ExecutionOverrides::default()
+            },
+            "verify",
+            None,
+            &[ExecutedTaskStep {
+                name: String::from("verify"),
+                exit_code: 0,
+                relation: TaskExecutionRelation::Requested,
+                generation: 0,
+                execution_note: None,
+            }],
+            &[],
+            &[],
+            0,
+            true,
+            None,
+            None,
+            None,
+        );
+
+        assert!(!receipt.env.contains_key("UNSELECTED_SECRET"));
+        assert!(receipt.env_sources.is_empty(), "{:?}", receipt.env_sources);
+        assert!(
+            receipt
+                .evaluated_inputs
+                .iter()
+                .all(|input| input.kind != "env_source_identity"),
+            "{:?}",
+            receipt.evaluated_inputs
+        );
+    }
+
+    #[test]
     fn doctor_mode_execution_overrides_select_expected_backend() {
         assert_eq!(
             doctor_mode_execution_overrides(DoctorMode::Native, None).backend,
@@ -97532,6 +98453,15 @@ tasks:
             Some("build"),
             "RUN SUMMARY",
         ));
+
+        let selected_graph = receipt
+            .evaluated_inputs
+            .iter()
+            .find(|input| input.id == "execution_graph:selected")
+            .expect("run receipt should bind the selected execution graph");
+        assert_eq!(selected_graph.kind, "selected_execution_graph");
+        assert_eq!(selected_graph.input_class, ReplayInputClass::ContractTruth);
+        assert!(selected_graph.identity.starts_with("sha256:"));
 
         assert!(!rendered.contains("Context:     app"), "{rendered}");
         assert!(!rendered.contains("\nContext:"), "{rendered}");
@@ -107236,8 +108166,18 @@ services:
     lifecycle:
       teardown_assertion: manager_inactive
 tasks:
+  container-only:
+    command:
+      exe: sh
+      args: [-c, "exit 99"]
   build:
     run: echo build
+    execution:
+      default_mode: native
+      modes:
+        native: {}
+        container:
+          depends_on: [container-only]
   assert-database:
     run: echo assertion-ran
     requires_services: [database]
@@ -110042,6 +110982,20 @@ fn resolve_selected_workflow_summary<'a>(
     contract_path: &Path,
     workflow_name: Option<&'a str>,
 ) -> Result<Option<WorkflowSummary<'a>>, String> {
+    resolve_selected_workflow_summary_with_overrides(
+        contract,
+        contract_path,
+        workflow_name,
+        ExecutionOverrides::default(),
+    )
+}
+
+fn resolve_selected_workflow_summary_with_overrides<'a>(
+    contract: &'a Contract,
+    contract_path: &Path,
+    workflow_name: Option<&'a str>,
+    overrides: ExecutionOverrides,
+) -> Result<Option<WorkflowSummary<'a>>, String> {
     if let Some(workflow_name) = workflow_name {
         if !selected_workflow_selector_is_valid(contract, workflow_name) {
             return Err(workflow_selection_error(
@@ -110051,10 +111005,32 @@ fn resolve_selected_workflow_summary<'a>(
             ));
         }
     }
-    Ok(WorkflowSummary::from_contract_selected_with_path(
+    let mut summary =
+        WorkflowSummary::from_contract_selected_with_path(contract, contract_path, workflow_name);
+    if let Some(summary) = summary.as_mut() {
+        summary.required_services = crate::runner::selected_workflow_required_service_names(
+            contract,
+            workflow_name,
+            overrides,
+        )
+        .map_err(|error| error.to_string())?;
+    }
+    Ok(summary)
+}
+
+fn resolve_selected_workflow_execution_summary<'a>(
+    contract: &'a Contract,
+    contract_path: &Path,
+    workflow_name: Option<&str>,
+    overrides: ExecutionOverrides,
+) -> Result<Option<ExecutionSummary<'a>>, RunError> {
+    let plan =
+        plan_workflow_execution_structure_with_overrides(contract, workflow_name, overrides)?;
+    let selected_env_names = crate::runner::selected_plan_contract_env_names(contract, &plan);
+    Ok(ExecutionSummary::from_contract_with_selected_env_names(
         contract,
         contract_path,
-        workflow_name,
+        &selected_env_names,
     ))
 }
 
@@ -111092,6 +112068,7 @@ fn run_single_contract_target(
         &target.contract,
         &target.contract_path,
         selected_task_name.as_str(),
+        overrides,
         typed_policy_observed,
         loaded_policy,
     );
@@ -111616,16 +112593,19 @@ fn resolve_task_sandbox_admission(
         .as_ref()
         .and_then(|execution| execution.runtime_boundary.as_ref())
         .is_some_and(|boundary| !boundary.is_empty())
-        || contract
-            .task_execution_closure_names([task_name.to_string()])
-            .iter()
-            .any(|closure_task| {
+        || crate::runner::plan_task_execution_structure_with_overrides(
+            contract, task_name, overrides,
+        )
+        .ok()
+        .is_some_and(|plan| {
+            plan.steps.iter().any(|step| {
                 contract
                     .tasks
-                    .get(closure_task)
+                    .get(step.task.as_str())
                     .and_then(|task| task.runtime_boundary.as_ref())
                     .is_some_and(|boundary| !boundary.is_empty())
-            });
+            })
+        });
     let policy_has_runtime_boundary = loaded_policy
         .and_then(|loaded| loaded.pack.policies.sandbox.as_ref())
         .is_some_and(|sandbox| sandbox.filesystem.is_some() || sandbox.network.is_some());
@@ -111709,20 +112689,26 @@ fn resolve_workflow_sandbox_admission(
             .selected_workflow(workflow_name)
             .and_then(|(_, workflow)| workflow.runtime_boundary.as_ref())
             .is_some_and(|boundary| !boundary.is_empty())
-        || contract
-            .task_execution_closure_names(
-                contract.selected_workflow_task_closure_names(workflow_name),
-            )
-            .iter()
-            .map(String::as_str)
-            .chain(contract.selected_attach_task_name_for(workflow_name))
-            .any(|task_name| {
+        || crate::runner::plan_workflow_execution_structure_with_overrides(
+            contract,
+            workflow_name,
+            overrides,
+        )
+        .ok()
+        .is_some_and(|plan| {
+            plan.steps.iter().any(|step| {
                 contract
                     .tasks
-                    .get(task_name)
+                    .get(step.task.as_str())
                     .and_then(|task| task.runtime_boundary.as_ref())
                     .is_some_and(|boundary| !boundary.is_empty())
-            });
+            })
+        })
+        || contract
+            .selected_attach_task_name_for(workflow_name)
+            .and_then(|task_name| contract.tasks.get(task_name))
+            .and_then(|task| task.runtime_boundary.as_ref())
+            .is_some_and(|boundary| !boundary.is_empty());
     let policy_has_runtime_boundary = loaded_policy
         .and_then(|loaded| loaded.pack.policies.sandbox.as_ref())
         .is_some_and(|sandbox| sandbox.filesystem.is_some() || sandbox.network.is_some());
@@ -112476,7 +113462,7 @@ fn run_selected_precondition_failure(
             evaluation,
         ));
     }
-    let env_report = build_env_report_with_overrides(
+    let env_report = build_selected_env_report_with_overrides(
         contract,
         contract_path,
         None,
@@ -112778,12 +113764,7 @@ fn enforce_task_replay_input_preflight(
     show_receipt: bool,
     preflight: &TaskReplayInputPreflight,
 ) -> Result<(), RunCommandFailure> {
-    match evaluate_replay_input_admission(
-        contract,
-        contract_path,
-        [task_name.to_string()],
-        preflight,
-    ) {
+    match evaluate_replay_input_admission(contract, contract_path, preflight) {
         Ok(_) => {}
         Err(ReplayInputAdmissionFailure::Identity { mismatch, policy }) => {
             return Err(replay_input_identity_run_failure(
@@ -113102,7 +114083,7 @@ fn run_single_contract_target_streaming(
     replay_input_preflight: TaskReplayInputPreflight,
 ) -> Result<String, RunCommandFailure> {
     if let Err(error) =
-        materialize_selected_workflow_env_profile_for_task(&mut target, None, task_name)
+        materialize_selected_workflow_env_profile_for_task(&mut target, None, task_name, overrides)
     {
         return Err(RunCommandFailure {
             message: stylize_text_failure("ota run", &error),
@@ -113116,7 +114097,7 @@ fn run_single_contract_target_streaming(
     let replay_inputs = match capture_replay_inputs_from_observations(
         &target.contract,
         &target.contract_path,
-        [task_name.clone()],
+        replay_input_preflight.selected_closure.clone(),
         &replay_input_preflight.observations,
     ) {
         Ok(inputs) => inputs,
@@ -113159,7 +114140,7 @@ fn run_single_contract_target_streaming(
     let witnessed_observations = capture_witnessed_observations_before_execution(
         &target.contract,
         &target.contract_path,
-        [task_name.clone()],
+        replay_input_preflight.selected_closure.clone(),
     )
     .map_err(|message| RunCommandFailure {
         message: message.to_string(),
@@ -113502,7 +114483,7 @@ fn run_single_contract_target_captured(
     replay_input_preflight: TaskReplayInputPreflight,
 ) -> Result<CapturedTaskRunSuccess, RunCommandFailure> {
     if let Err(error) =
-        materialize_selected_workflow_env_profile_for_task(&mut target, None, task_name)
+        materialize_selected_workflow_env_profile_for_task(&mut target, None, task_name, overrides)
     {
         return Err(RunCommandFailure {
             message: stylize_text_failure("ota run", &error),
@@ -113516,7 +114497,7 @@ fn run_single_contract_target_captured(
     let replay_inputs = match capture_replay_inputs_from_observations(
         &target.contract,
         &target.contract_path,
-        [task_name.clone()],
+        replay_input_preflight.selected_closure.clone(),
         &replay_input_preflight.observations,
     ) {
         Ok(inputs) => inputs,
@@ -113559,7 +114540,7 @@ fn run_single_contract_target_captured(
     let witnessed_observations = capture_witnessed_observations_before_execution(
         &target.contract,
         &target.contract_path,
-        [task_name.clone()],
+        replay_input_preflight.selected_closure.clone(),
     )
     .map_err(|message| RunCommandFailure {
         message,
@@ -113918,8 +114899,12 @@ pub(crate) fn replay_baseline_record(
                 "replay baseline producer `{producer}` requires a clean Git source identity before recording: {reason}"
             )
         })?;
-        let replay_input_preflight =
-            task_replay_input_preflight(&target.contract, &target.contract_path, producer.as_str());
+        let replay_input_preflight = task_replay_input_preflight(
+            &target.contract,
+            &target.contract_path,
+            producer.as_str(),
+            ExecutionOverrides::default(),
+        );
         enforce_task_replay_input_preflight(
             &target.contract,
             &target.contract_path,
@@ -116631,8 +117616,19 @@ fn selected_workflow_toolchain_summaries(
     workflow_name: Option<&str>,
     fallback_backend: Backend,
 ) -> Vec<ToolchainSelectionSummary> {
-    let task_names = contract.selected_workflow_task_closure_names(workflow_name);
-    selected_toolchain_summaries_for_task_names(contract, &task_names, overrides, fallback_backend)
+    let Ok(plan) = crate::runner::plan_workflow_execution_structure_with_overrides(
+        contract,
+        workflow_name,
+        overrides,
+    ) else {
+        return selected_toolchain_summaries_for_task_names(
+            contract,
+            &[],
+            overrides,
+            fallback_backend,
+        );
+    };
+    selected_toolchain_summaries_for_plan(contract, &plan)
 }
 
 fn selected_task_toolchain_summaries(
@@ -116640,16 +117636,59 @@ fn selected_task_toolchain_summaries(
     task_name: &str,
     overrides: ExecutionOverrides,
 ) -> Vec<ToolchainSelectionSummary> {
-    let task_names =
-        crate::runner::plan_task_execution_with_overrides(contract, task_name, overrides)
-            .map(|plan| plan.tasks)
-            .unwrap_or_else(|_| vec![task_name.to_string()]);
-    selected_toolchain_summaries_for_task_names(
-        contract,
-        &task_names,
-        overrides,
-        effective_task_execution(contract, task_name, overrides).backend,
-    )
+    crate::runner::plan_task_execution_with_overrides(contract, task_name, overrides)
+        .map(|plan| selected_toolchain_summaries_for_plan(contract, &plan))
+        .unwrap_or_else(|_| {
+            selected_toolchain_summaries_for_task_names(
+                contract,
+                &[task_name.to_string()],
+                overrides,
+                effective_task_execution(contract, task_name, overrides).backend,
+            )
+        })
+}
+
+fn selected_toolchain_summaries_for_plan(
+    contract: &Contract,
+    plan: &crate::runner::RunPlan,
+) -> Vec<ToolchainSelectionSummary> {
+    let mut seen = BTreeSet::new();
+    let mut summaries = Vec::new();
+    for step in &plan.steps {
+        let Some(task) = contract.tasks.get(step.task.as_str()) else {
+            continue;
+        };
+        for toolchain_name in contract.task_toolchain_names_for_execution_for_os(
+            task,
+            step.backend,
+            step.context.as_deref(),
+            step.target_os.as_str(),
+        ) {
+            let Some(toolchain) = contract.toolchains.get(toolchain_name.as_str()) else {
+                continue;
+            };
+            let Some(summary) = selected_toolchain_summary(
+                toolchain_name.as_str(),
+                toolchain,
+                step.backend,
+                step.target_os.as_str(),
+            ) else {
+                continue;
+            };
+            let key = format!(
+                "{}:{}:{}:{}:{}",
+                summary.name,
+                summary.backend,
+                summary.target_os,
+                summary.version,
+                summary.fulfillment
+            );
+            if seen.insert(key) {
+                summaries.push(summary);
+            }
+        }
+    }
+    summaries
 }
 
 fn fallback_toolchain_summaries_for_backend(
@@ -118656,6 +119695,7 @@ fn receipt_evaluated_inputs(
             loaded: loaded_policy.as_ref(),
             load_error: None,
         }),
+        None,
     )
 }
 
@@ -118665,31 +119705,74 @@ fn receipt_evaluated_inputs_with_policy_snapshot(
     task_names: impl IntoIterator<Item = String>,
     overrides: ExecutionOverrides,
     policy_snapshot: Option<DoctorPolicySnapshot<'_>>,
+    selected_plan: Option<&crate::runner::RunPlan>,
 ) -> Vec<ExecutionReceiptEvaluatedInput> {
     let task_names = task_names.into_iter().collect::<Vec<_>>();
     let root = contract_path.parent().unwrap_or_else(|| Path::new("."));
     let mut inputs = BTreeMap::new();
     collect_receipt_source_identity_input(root, &mut inputs);
     collect_receipt_policy_ruleset_identity_input(policy_snapshot, root, &mut inputs);
-    collect_receipt_declared_env_source_inputs(contract, contract_path, &task_names, &mut inputs);
-    for task_name in task_names {
-        let Some(task) = contract.tasks.get(&task_name) else {
-            continue;
-        };
-        let backend = effective_task_execution(contract, task_name.as_str(), overrides).backend;
-        if let Some(prepare) = task.prepare.as_ref() {
-            collect_receipt_hydration_inputs(prepare, root, &mut inputs);
+    if let Some(plan) = selected_plan {
+        let input = selected_execution_graph_receipt_input(plan.identity.as_str());
+        inputs.insert(input.id.clone(), input);
+    }
+    collect_receipt_declared_env_source_inputs(
+        contract,
+        contract_path,
+        &task_names,
+        selected_plan,
+        &mut inputs,
+    );
+    if let Some(plan) = selected_plan {
+        for step in &plan.steps {
+            let Some(task) = contract.tasks.get(&step.task) else {
+                continue;
+            };
+            if let Some(prepare) = task.prepare.as_ref() {
+                collect_receipt_hydration_inputs(prepare, root, &mut inputs);
+            }
+            collect_receipt_compose_image_inputs(task, root, step.backend, &mut inputs);
+            collect_receipt_generated_artifact_inputs(
+                contract,
+                root,
+                step.task.as_str(),
+                task,
+                &mut inputs,
+            );
         }
-        collect_receipt_compose_image_inputs(task, root, backend, &mut inputs);
-        collect_receipt_generated_artifact_inputs(
-            contract,
-            root,
-            task_name.as_str(),
-            task,
-            &mut inputs,
-        );
+    } else {
+        for task_name in task_names {
+            let Some(task) = contract.tasks.get(&task_name) else {
+                continue;
+            };
+            let backend = effective_task_execution(contract, task_name.as_str(), overrides).backend;
+            if let Some(prepare) = task.prepare.as_ref() {
+                collect_receipt_hydration_inputs(prepare, root, &mut inputs);
+            }
+            collect_receipt_compose_image_inputs(task, root, backend, &mut inputs);
+            collect_receipt_generated_artifact_inputs(
+                contract,
+                root,
+                task_name.as_str(),
+                task,
+                &mut inputs,
+            );
+        }
     }
     inputs.into_values().collect()
+}
+
+fn selected_execution_graph_receipt_input(identity: &str) -> ExecutionReceiptEvaluatedInput {
+    ExecutionReceiptEvaluatedInput {
+        id: String::from("execution_graph:selected"),
+        kind: String::from("selected_execution_graph"),
+        input_class: ReplayInputClass::ContractTruth,
+        identity: identity.to_string(),
+        expected_identity: None,
+        execution_started: None,
+        hydration_provenance: None,
+        artifact_lineage: None,
+    }
 }
 
 // Clean git HEAD is the first honest source-identity carrier. Dirty trees and non-git directories
@@ -118821,6 +119904,7 @@ fn collect_receipt_declared_env_source_inputs(
     contract: &Contract,
     contract_path: &Path,
     task_names: &[String],
+    selected_plan: Option<&crate::runner::RunPlan>,
     inputs: &mut BTreeMap<String, ExecutionReceiptEvaluatedInput>,
 ) {
     let root = contract_path.parent().unwrap_or_else(|| Path::new("."));
@@ -118828,19 +119912,34 @@ fn collect_receipt_declared_env_source_inputs(
     let declared_sources = load_declared_env_sources(contract, contract_path);
     let mut used_labels = BTreeSet::new();
 
-    for task_name in task_names {
-        let Ok(resolved) = resolve_task_env_details_for_task_with_policy(
+    if let Some(plan) = selected_plan {
+        if let Ok(resolved) = resolve_run_plan_env_details_with_policy(
             contract,
             contract_path,
-            task_name,
-            None,
+            plan,
             policy_env.as_ref().map(|overlay| &overlay.values),
-        ) else {
-            continue;
-        };
-        for resolved in resolved.values() {
-            if let EnvResolutionSource::Source(label) = &resolved.source {
-                used_labels.insert(label.clone());
+        ) {
+            for resolved in resolved.values() {
+                if let EnvResolutionSource::Source(label) = &resolved.source {
+                    used_labels.insert(label.clone());
+                }
+            }
+        }
+    } else {
+        for task_name in task_names {
+            let Ok(resolved) = resolve_task_env_details_for_task_with_policy(
+                contract,
+                contract_path,
+                task_name,
+                None,
+                policy_env.as_ref().map(|overlay| &overlay.values),
+            ) else {
+                continue;
+            };
+            for resolved in resolved.values() {
+                if let EnvResolutionSource::Source(label) = &resolved.source {
+                    used_labels.insert(label.clone());
+                }
             }
         }
     }
@@ -118915,14 +120014,15 @@ impl std::fmt::Display for ReplayInputCaptureError {
     }
 }
 
+#[cfg(test)]
 fn capture_replay_inputs_before_execution(
     contract: &Contract,
     contract_path: &Path,
     roots: impl IntoIterator<Item = String>,
 ) -> Result<Vec<ExecutionReceiptEvaluatedInput>, ReplayInputCaptureError> {
-    let roots = roots.into_iter().collect::<Vec<_>>();
+    let roots = contract.task_execution_closure_names(roots);
     let root = contract_path.parent().unwrap_or_else(|| Path::new("."));
-    let observations = observe_replay_inputs(contract, root, roots.clone());
+    let observations = observe_replay_inputs_for_selected_closure(contract, root, roots.clone());
     capture_replay_inputs_from_observations(contract, contract_path, roots, &observations)
 }
 
@@ -118933,7 +120033,7 @@ fn capture_replay_inputs_from_observations(
     observations: &ReplayInputPolicyObservations,
 ) -> Result<Vec<ExecutionReceiptEvaluatedInput>, ReplayInputCaptureError> {
     let mut captured = BTreeMap::new();
-    for task_name in contract.task_execution_closure_names(roots) {
+    for task_name in roots {
         let Some(task) = contract.tasks.get(&task_name) else {
             continue;
         };
@@ -119394,7 +120494,7 @@ fn capture_witnessed_observations_before_execution(
 ) -> Result<ExecutionReceiptWitnessedObservations, String> {
     let root = contract_path.parent().unwrap_or_else(|| Path::new("."));
     let mut query_traces = BTreeMap::new();
-    for task_name in contract.task_dependency_closure_names(roots) {
+    for task_name in roots {
         let Some(task) = contract.tasks.get(&task_name) else {
             continue;
         };
@@ -119505,7 +120605,7 @@ fn capture_hydration_provenance_before_execution(
     roots: impl IntoIterator<Item = String>,
 ) -> Vec<ExecutionReceiptEvaluatedInput> {
     let mut provenance = Vec::new();
-    for task_name in contract.task_dependency_closure_names(roots) {
+    for task_name in roots {
         let Some(task) = contract.tasks.get(&task_name) else {
             continue;
         };
@@ -119904,15 +121004,15 @@ fn archive_sandbox_execution_receipt(
     terminal_exit_code: Option<i32>,
 ) -> Result<Option<PathBuf>, String> {
     finalize_and_attach_active_crossing_transaction(receipt, terminal_exit_code)?;
-    let application = receipt.witnessed_observations.sandbox_application.as_ref();
+    let application = receipt.witnessed_observations.sandbox_application.clone();
     let crossing_authority = receipt
         .crossing
         .as_ref()
-        .and_then(|crossing| crossing.authority.as_ref());
+        .and_then(|crossing| crossing.authority.clone());
     if application.is_none() && crossing_authority.is_none() {
         return Ok(None);
     }
-    if let Some(application) = application {
+    if let Some(application) = application.as_ref() {
         crate::sandbox_policy::validate_application_evidence_against_contract(
             contract,
             application,
@@ -119932,18 +121032,21 @@ fn archive_sandbox_execution_receipt(
     let archive_path_display = receipt_storage_path_display(&archive_path);
     let path_display = compact_path(contract_path, ".");
     let workflow = application
+        .as_ref()
         .filter(|application| {
             application.lane.kind == crate::sandbox_policy::SandboxLaneKind::Workflow
         })
-        .map(|application| application.lane.name.as_str())
+        .map(|application| application.lane.name.clone())
         .or_else(|| {
             receipt
                 .crossing
                 .as_ref()
                 .filter(|crossing| crossing.lane_kind == "workflow")
                 .and_then(|crossing| crossing.lane_id.strip_prefix("workflow:"))
+                .map(str::to_string)
         });
     let authority_scope = crossing_authority
+        .as_ref()
         .map(|authority| {
             serde_json::from_value::<ArchivedCrossingAuthorityEvidence>(
                 authority.archive_evidence.clone(),
@@ -119954,9 +121057,41 @@ fn archive_sandbox_execution_receipt(
             })
         })
         .transpose()?;
-    let archive_context = if let Some(application) = application {
+    let (lane_kind, lane_name, execution_selection) =
+        if let Some(application) = application.as_ref() {
+            (
+                match application.lane.kind {
+                    crate::sandbox_policy::SandboxLaneKind::Task => "task",
+                    crate::sandbox_policy::SandboxLaneKind::Workflow => "workflow",
+                },
+                application.lane.name.as_str(),
+                application.execution_selection,
+            )
+        } else {
+            let scope = authority_scope.as_ref().ok_or_else(|| {
+                String::from("execution receipt archive cannot derive its selected graph lane")
+            })?;
+            (
+                match scope.lane.kind {
+                    crate::sandbox_policy::SandboxLaneKind::Task => "task",
+                    crate::sandbox_policy::SandboxLaneKind::Workflow => "workflow",
+                },
+                scope.lane.name.as_str(),
+                crate::sandbox_policy::SandboxExecutionSelection {
+                    backend: scope.execution_selection.backend,
+                    lifecycle: scope.execution_selection.lifecycle,
+                    host_port: scope.execution_selection.host_port,
+                    memory: scope.execution_selection.memory,
+                    skip_dependencies: scope.execution_selection.skip_dependencies,
+                },
+            )
+        };
+    let selected_execution_graph =
+        selected_execution_graph_for_archive(contract, lane_kind, lane_name, execution_selection)?;
+    ensure_receipt_selected_execution_graph_input(receipt, &selected_execution_graph);
+    let archive_context = if let Some(application) = application.as_ref() {
         crate::output::ReceiptArchiveContext {
-            schema_version: authority_scope.as_ref().map_or(1, |_| 2),
+            schema_version: 5,
             kind: String::from("execution"),
             lane_kind: Some(match application.lane.kind {
                 crate::sandbox_policy::SandboxLaneKind::Task => String::from("task"),
@@ -119965,10 +121100,11 @@ fn archive_sandbox_execution_receipt(
             lane_name: Some(application.lane.name.clone()),
             semantic_scope: authority_scope.clone(),
             effect_policy_refusal: None,
+            selected_execution_graph: Some(selected_execution_graph.clone()),
         }
     } else if let Some(crossing) = receipt.crossing.as_ref() {
         crate::output::ReceiptArchiveContext {
-            schema_version: authority_scope.as_ref().map_or(1, |_| 2),
+            schema_version: 5,
             kind: String::from("execution"),
             lane_kind: Some(crossing.lane_kind.clone()),
             lane_name: crossing
@@ -119977,6 +121113,7 @@ fn archive_sandbox_execution_receipt(
                 .map(|(_, lane_name)| lane_name.to_string()),
             semantic_scope: authority_scope,
             effect_policy_refusal: None,
+            selected_execution_graph: Some(selected_execution_graph),
         }
     } else {
         return Err(String::from(
@@ -119988,7 +121125,7 @@ fn archive_sandbox_execution_receipt(
         ok: receipt.ok,
         path: path_display.as_str(),
         mode: "receipt",
-        workflow,
+        workflow: workflow.as_deref(),
         summary: receipt.summary,
         receipt: receipt.clone(),
         archive_path: Some(archive_path_display.as_str()),
@@ -119996,7 +121133,7 @@ fn archive_sandbox_execution_receipt(
         promoted_baseline: None,
         artifact_routing: receipt_artifact_routing(
             contract_path,
-            workflow,
+            workflow.as_deref(),
             receipt,
             Some(archive_path_display.as_str()),
         ),
@@ -120019,6 +121156,48 @@ fn archive_sandbox_execution_receipt(
         Some(&archive_path),
     )?;
     Ok(Some(archive_path))
+}
+
+fn selected_execution_graph_for_archive(
+    contract: &Contract,
+    lane_kind: &str,
+    lane_name: &str,
+    selection: crate::sandbox_policy::SandboxExecutionSelection,
+) -> Result<crate::runner::RunPlan, String> {
+    let overrides = ExecutionOverrides {
+        backend: selection.backend,
+        lifecycle: selection.lifecycle,
+        host_port: selection.host_port,
+        memory: selection.memory,
+        skip_deps: selection.skip_dependencies,
+    };
+    match lane_kind {
+        "task" => crate::runner::plan_task_execution_structure_with_overrides(
+            contract, lane_name, overrides,
+        ),
+        "workflow" => crate::runner::plan_workflow_execution_structure_with_overrides(
+            contract,
+            (lane_name != "default").then_some(lane_name),
+            overrides,
+        ),
+        _ => return Err(format!("unsupported archive lane kind `{lane_kind}`")),
+    }
+    .map_err(|error| error.to_string())
+}
+
+fn ensure_receipt_selected_execution_graph_input(
+    receipt: &mut ExecutionReceipt,
+    plan: &crate::runner::RunPlan,
+) {
+    receipt
+        .evaluated_inputs
+        .retain(|input| input.id != "execution_graph:selected");
+    receipt
+        .evaluated_inputs
+        .push(selected_execution_graph_receipt_input(&plan.identity));
+    receipt
+        .evaluated_inputs
+        .sort_by(|left, right| left.id.cmp(&right.id));
 }
 
 fn validate_sandbox_application_against_receipt_steps(
@@ -120731,13 +121910,22 @@ fn run_execution_receipt_with_shared(
             .get(task_name)
             .map(|task| task.env_for_backend(contract.execution.as_ref(), backend)),
     };
-    let env_details = resolve_task_env_details_for_task(
-        contract,
-        contract_path,
-        task_name,
-        effective_task_env.as_ref(),
-    )
-    .unwrap_or_default();
+    let selected_plan =
+        crate::runner::plan_task_execution_with_overrides(contract, task_name, overrides).ok();
+    let env_details = selected_plan
+        .as_ref()
+        .and_then(|plan| {
+            resolve_run_plan_env_details_with_policy(contract, contract_path, plan, None).ok()
+        })
+        .unwrap_or_else(|| {
+            resolve_task_env_details_for_task(
+                contract,
+                contract_path,
+                task_name,
+                effective_task_env.as_ref(),
+            )
+            .unwrap_or_default()
+        });
     let declared_sources = load_declared_env_sources(contract, contract_path);
     let steps = executed_steps
         .iter()
@@ -120824,6 +122012,7 @@ fn run_execution_receipt_with_shared(
             .chain(std::iter::once(task_name.to_string())),
         overrides,
         policy_snapshot,
+        selected_plan.as_ref(),
     );
 
     ExecutionReceipt {
@@ -125169,11 +126358,12 @@ fn proof_runtime_scope(
 fn proof_runtime_execution_boundary(
     contract: &Contract,
     workflow_name: Option<&str>,
+    overrides: ExecutionOverrides,
 ) -> Result<ExecutionBoundaryRecord, String> {
     let mut prerequisites = BTreeMap::new();
     let mut asserted_target_closure = Vec::new();
     let mut derivation_input_closure = Vec::new();
-    for task_name in contract.selected_workflow_task_closure_names(workflow_name) {
+    for task_name in selected_workflow_execution_closure(contract, workflow_name, overrides) {
         let Some(task) = contract.tasks.get(task_name.as_str()) else {
             continue;
         };
@@ -125230,9 +126420,10 @@ fn proof_runtime_execution_boundary(
 fn proof_runtime_execution_boundary_with_runner(
     contract: &Contract,
     workflow_name: Option<&str>,
+    overrides: ExecutionOverrides,
     runner_boundary: Option<ExecutionBoundaryRecord>,
 ) -> Result<ExecutionBoundaryRecord, String> {
-    let mut boundary = proof_runtime_execution_boundary(contract, workflow_name)?;
+    let mut boundary = proof_runtime_execution_boundary(contract, workflow_name, overrides)?;
     let Some(runner_boundary) = runner_boundary else {
         return Ok(boundary);
     };
@@ -125752,11 +126943,28 @@ fn proof_runtime_execute_negative_control(
     }
 }
 
+#[cfg(test)]
 fn proof_runtime_not_proved(
     contract: &Contract,
     contract_path: &Path,
     workflow_name: Option<&str>,
     dependency_evidence: &[ProofRuntimeDependencyEvidence],
+) -> Vec<crate::output::ProofRuntimeNotProved> {
+    proof_runtime_not_proved_with_overrides(
+        contract,
+        contract_path,
+        workflow_name,
+        dependency_evidence,
+        ExecutionOverrides::default(),
+    )
+}
+
+fn proof_runtime_not_proved_with_overrides(
+    contract: &Contract,
+    contract_path: &Path,
+    workflow_name: Option<&str>,
+    dependency_evidence: &[ProofRuntimeDependencyEvidence],
+    overrides: ExecutionOverrides,
 ) -> Vec<crate::output::ProofRuntimeNotProved> {
     let workflow_summary =
         resolve_selected_workflow_summary(contract, contract_path, workflow_name)
@@ -125781,7 +126989,7 @@ fn proof_runtime_not_proved(
     }
     let selected_workflow_name = workflow_summary.as_ref().map(|summary| summary.name);
     let selected_external_state = selected_workflow_name
-        .map(|name| proof_runtime_workflow_external_state(contract, name))
+        .map(|name| proof_runtime_workflow_external_state(contract, name, overrides))
         .unwrap_or_default();
     let external_network_workflows = contract
         .workflows
@@ -125793,8 +127001,7 @@ fn proof_runtime_not_proved(
                 .keys()
                 .filter(|name| Some(name.as_str()) != selected_workflow_name)
                 .filter(|name| {
-                    contract
-                        .selected_workflow_task_closure_names(Some(name.as_str()))
+                    selected_workflow_execution_closure(contract, Some(name.as_str()), overrides)
                         .into_iter()
                         .filter_map(|task_name| contract.tasks.get(task_name.as_str()))
                         .any(|task| {
@@ -125839,7 +127046,9 @@ fn proof_runtime_not_proved(
         .map(|entry| entry.dependency_id.clone())
         .collect::<BTreeSet<_>>();
     let declared_service_seams = selected_workflow_name
-        .map(|workflow_name| proof_runtime_declared_service_seam_owners(contract, workflow_name))
+        .map(|workflow_name| {
+            proof_runtime_declared_service_seam_owners(contract, workflow_name, overrides)
+        })
         .unwrap_or_default();
     for (service_name, tasks) in declared_service_seams {
         if exercised_dependencies.contains(&format!("service:{service_name}")) {
@@ -126092,8 +127301,11 @@ fn proof_runtime_dependency_evidence(
         return Vec::new();
     }
 
-    let owners =
-        proof_runtime_declared_service_seam_owners(contract, selected_workflow_name.as_str());
+    let owners = proof_runtime_declared_service_seam_owners(
+        contract,
+        selected_workflow_name.as_str(),
+        ExecutionOverrides::default(),
+    );
 
     let mut evidence = Vec::new();
     for (service_name, tasks) in &owners {
@@ -126154,9 +127366,10 @@ fn proof_runtime_dependency_evidence(
 fn proof_runtime_declared_service_seam_owners(
     contract: &Contract,
     workflow_name: &str,
+    overrides: ExecutionOverrides,
 ) -> BTreeMap<String, BTreeSet<String>> {
     let mut owners = BTreeMap::<String, BTreeSet<String>>::new();
-    for task_name in contract.selected_workflow_task_closure_names(Some(workflow_name)) {
+    for task_name in selected_workflow_execution_closure(contract, Some(workflow_name), overrides) {
         let Some(task) = contract.tasks.get(task_name.as_str()) else {
             continue;
         };
@@ -126246,9 +127459,9 @@ fn proof_runtime_not_proved_order_key(entry: &crate::output::ProofRuntimeNotProv
 fn proof_runtime_workflow_external_state(
     contract: &Contract,
     workflow_name: &str,
+    overrides: ExecutionOverrides,
 ) -> BTreeSet<String> {
-    contract
-        .selected_workflow_task_closure_names(Some(workflow_name))
+    selected_workflow_execution_closure(contract, Some(workflow_name), overrides)
         .into_iter()
         .filter_map(|task_name| contract.tasks.get(task_name.as_str()))
         .flat_map(|task| task.effects.external_state.iter().cloned())
@@ -126276,14 +127489,21 @@ fn proof_runtime_doctor_artifact_json(
     );
     let refined_findings = proof_runtime_refined_doctor_findings(rewritten_findings, likely_cause);
     let refined_summary = proof_runtime_refined_doctor_summary(summary, likely_cause);
-    let workflow_summary =
-        resolve_selected_workflow_summary(contract, contract_path, workflow_name)?;
-    let agent_summary = contract.agent.as_ref().and_then(AgentSummary::from_config);
-    let required_env_names = contract.selected_workflow_required_env_names(workflow_name);
-    let execution_summary = ExecutionSummary::from_contract_with_required_env_names(
+    let workflow_summary = resolve_selected_workflow_summary_with_overrides(
         contract,
         contract_path,
-        (!required_env_names.is_empty()).then_some(&required_env_names),
+        workflow_name,
+        overrides,
+    )?;
+    let agent_summary = contract.agent.as_ref().and_then(AgentSummary::from_config);
+    let selected_env_names =
+        plan_workflow_execution_structure_with_overrides(contract, workflow_name, overrides)
+            .map(|plan| crate::runner::selected_plan_contract_env_names(contract, &plan))
+            .unwrap_or_default();
+    let execution_summary = ExecutionSummary::from_contract_with_selected_env_names(
+        contract,
+        contract_path,
+        &selected_env_names,
     );
     let selected_toolchains = selected_workflow_toolchain_summaries(
         contract,
@@ -132303,20 +133523,44 @@ fn repo_execution_receipt_with_overrides_and_policy_snapshot(
     policy_snapshot: Option<DoctorPolicySnapshot<'_>>,
 ) -> ExecutionReceipt {
     let execution_backend = phase_execution_backend(&context).unwrap_or(Backend::Native);
+    let receipt_overrides = execution_overrides.unwrap_or_default();
+    let selected_plan = task
+        .and_then(|task_name| {
+            crate::runner::plan_task_execution_with_overrides(
+                contract,
+                task_name,
+                receipt_overrides,
+            )
+            .ok()
+        })
+        .or_else(|| {
+            crate::runner::plan_workflow_execution_structure_with_overrides(
+                contract,
+                workflow_name,
+                receipt_overrides,
+            )
+            .ok()
+        });
     let effective_task_env = task
         .and_then(|task_name| contract.tasks.get(task_name))
         .map(|task| task.env_for_backend(contract.execution.as_ref(), execution_backend));
-    let env_details = task
-        .map(|task_name| {
-            resolve_task_env_details_for_task(
-                contract,
-                path,
-                task_name,
-                effective_task_env.as_ref(),
-            )
-        })
-        .unwrap_or_else(|| resolve_task_env_details(contract, path, effective_task_env.as_ref()))
-        .unwrap_or_default();
+    let env_details = selected_plan
+        .as_ref()
+        .and_then(|plan| resolve_run_plan_env_details_with_policy(contract, path, plan, None).ok())
+        .unwrap_or_else(|| {
+            task.map(|task_name| {
+                resolve_task_env_details_for_task(
+                    contract,
+                    path,
+                    task_name,
+                    effective_task_env.as_ref(),
+                )
+            })
+            .unwrap_or_else(|| {
+                resolve_task_env_details(contract, path, effective_task_env.as_ref())
+            })
+            .unwrap_or_default()
+        });
     let declared_sources = load_declared_env_sources(contract, path);
     let detail = service
         .map(|service| format!("service `{service}`"))
@@ -132347,10 +133591,13 @@ fn repo_execution_receipt_with_overrides_and_policy_snapshot(
     let evaluated_inputs = receipt_evaluated_inputs_with_policy_snapshot(
         contract,
         path,
-        task.map(|task_name| contract.task_dependency_closure_names([task_name.to_string()]))
-            .unwrap_or_else(|| contract.selected_workflow_task_closure_names(workflow_name)),
-        execution_overrides.unwrap_or_default(),
+        selected_plan
+            .as_ref()
+            .map(|plan| plan.tasks.clone())
+            .unwrap_or_default(),
+        receipt_overrides,
         policy_snapshot,
+        selected_plan.as_ref(),
     );
     ExecutionReceipt {
         ok,
@@ -132392,6 +133639,7 @@ fn repo_execution_receipt_with_overrides_and_policy_snapshot(
             contract,
             path,
             workflow_name,
+            receipt_overrides,
         ),
         native_prerequisites,
         toolchains,
@@ -134102,7 +135350,7 @@ fn selected_workflow_task_requirement_surface(
     overrides: ExecutionOverrides,
     workflow_name: Option<&str>,
 ) -> Option<RequirementSurface> {
-    let task_names = contract.selected_workflow_task_closure_names(workflow_name);
+    let task_names = selected_workflow_execution_closure(contract, workflow_name, overrides);
     if task_names.is_empty() {
         return None;
     }
@@ -134262,7 +135510,7 @@ fn up_policy_requirement_surface(
 ) -> RequirementSurface {
     let mut surface = up_requirement_surface(contract, overrides, workflow_name);
     let required_tool_names = surface.tools.keys().cloned().collect::<BTreeSet<_>>();
-    let task_names = contract.selected_workflow_task_closure_names(workflow_name);
+    let task_names = selected_workflow_execution_closure(contract, workflow_name, overrides);
     if task_names.is_empty() {
         let toolchain_names = contract.selected_workflow_required_toolchain_names(workflow_name);
         return requirement_surface_with_toolchain_owned_capabilities_for_required_tools(
@@ -134544,7 +135792,7 @@ fn selected_workflow_activation_candidates(
     workflow_name: Option<&str>,
     fallback_backend: Backend,
 ) -> Vec<RequirementActivationAction> {
-    let task_names = contract.selected_workflow_task_closure_names(workflow_name);
+    let task_names = selected_workflow_execution_closure(contract, workflow_name, overrides);
     if task_names.is_empty() {
         return requirement_surface_activation_actions(
             &up_activation_requirement_surface(contract, overrides, workflow_name),
@@ -134615,7 +135863,7 @@ fn up_activation_requirement_surface(
         .keys()
         .cloned()
         .collect::<BTreeSet<_>>();
-    let task_names = contract.selected_workflow_task_closure_names(workflow_name);
+    let task_names = selected_workflow_execution_closure(contract, workflow_name, overrides);
     if task_names.is_empty() {
         let toolchain_names = contract.selected_workflow_required_toolchain_names(workflow_name);
         return requirement_surface_with_toolchain_owned_tools_for_required_tools(
@@ -134668,7 +135916,7 @@ fn selected_workflow_toolchain_targets(
     workflow_name: Option<&str>,
     fallback_backend: Backend,
 ) -> BTreeSet<(String, String)> {
-    let task_names = contract.selected_workflow_task_closure_names(workflow_name);
+    let task_names = selected_workflow_execution_closure(contract, workflow_name, overrides);
     if task_names.is_empty() {
         let target_os = requirement_target_os_for_backend(fallback_backend).to_string();
         return contract
@@ -134711,7 +135959,7 @@ fn selected_up_toolchain_preview_actions(
                     .into_keys()
                     .collect()
             });
-    let task_names = contract.selected_workflow_task_closure_names(workflow_name);
+    let task_names = selected_workflow_execution_closure(contract, workflow_name, overrides);
     let mut actions = Vec::new();
     let mut seen = BTreeSet::new();
 
@@ -134766,7 +136014,7 @@ fn selected_up_toolchain_run_fulfillment_targets(
     workflow_name: Option<&str>,
     fallback_backend: Backend,
 ) -> Vec<ToolchainRunFulfillmentTarget> {
-    let task_names = contract.selected_workflow_task_closure_names(workflow_name);
+    let task_names = selected_workflow_execution_closure(contract, workflow_name, overrides);
     let mut targets = BTreeSet::new();
 
     if task_names.is_empty() {
@@ -134830,7 +136078,7 @@ fn selected_up_receipt_native_prerequisites(
     let current_os = current_requirement_platform();
     let mut prerequisites = Vec::new();
     let mut seen = BTreeSet::new();
-    for task_name in contract.selected_workflow_task_closure_names(workflow_name) {
+    for task_name in selected_workflow_execution_closure(contract, workflow_name, overrides) {
         if !matches!(
             effective_task_execution(contract, task_name.as_str(), overrides).backend,
             Backend::Native
@@ -134985,7 +136233,7 @@ fn selected_up_native_package_provisioning_actions_for_os(
 ) -> Vec<crate::policy_pack::ProvisioningAction> {
     let mut actions = Vec::new();
     let mut seen = BTreeSet::new();
-    for task_name in contract.selected_workflow_task_closure_names(workflow_name) {
+    for task_name in selected_workflow_execution_closure(contract, workflow_name, overrides) {
         let Some(task) = contract.tasks.get(task_name.as_str()) else {
             continue;
         };
@@ -135155,7 +136403,7 @@ fn selected_up_native_preparation_actions_for_os(
 ) -> Vec<NativeRequirementPreparationAction> {
     let mut actions = Vec::new();
     let mut seen = BTreeSet::new();
-    for task_name in contract.selected_workflow_task_closure_names(workflow_name) {
+    for task_name in selected_workflow_execution_closure(contract, workflow_name, overrides) {
         let Some(task) = contract.tasks.get(task_name.as_str()) else {
             continue;
         };
@@ -135207,7 +136455,7 @@ fn selected_up_native_activation_actions_for_os(
 ) -> Vec<NativeRequirementActivationAction> {
     let mut actions = Vec::new();
     let mut seen = BTreeSet::new();
-    for task_name in contract.selected_workflow_task_closure_names(workflow_name) {
+    for task_name in selected_workflow_execution_closure(contract, workflow_name, overrides) {
         let Some(task) = contract.tasks.get(task_name.as_str()) else {
             continue;
         };
@@ -135820,6 +137068,14 @@ fn build_up_preview_with_actor(
     }
 
     let mut plan = UpPreviewPlan {
+        selected_execution_graph_identity:
+            crate::runner::plan_workflow_execution_structure_with_overrides(
+                contract,
+                workflow_name,
+                overrides,
+            )
+            .ok()
+            .map(|selected| selected.identity),
         actions: Vec::new(),
         staged_actions: Vec::new(),
         skipped: Vec::new(),
@@ -137029,9 +138285,10 @@ fn workflow_env_profile_applies_to_task(
     contract: &Contract,
     workflow_name: Option<&str>,
     task_name: &str,
+    overrides: ExecutionOverrides,
 ) -> bool {
-    contract
-        .selected_workflow_task_closure_names(workflow_name)
+    crate::runner::selected_workflow_execution_closure_names(contract, workflow_name, overrides)
+        .unwrap_or_default()
         .iter()
         .any(|declared| declared == task_name)
 }
@@ -137040,6 +138297,7 @@ fn materialize_selected_workflow_env_profile_for_task(
     target: &mut LoadedContractTarget,
     workflow_name: Option<&str>,
     task_name: &str,
+    overrides: ExecutionOverrides,
 ) -> Result<(), String> {
     let task_name = canonical_declared_task_name(&target.contract, task_name);
     let has_workflow_env_or_adapter_inputs = target
@@ -137051,6 +138309,7 @@ fn materialize_selected_workflow_env_profile_for_task(
             &target.contract,
             workflow_name,
             task_name.as_str(),
+            overrides,
         )
     {
         return Ok(());
@@ -137237,6 +138496,7 @@ fn selected_workflow_env_profile_rendered_artifact_entries(
     contract: &Contract,
     contract_path: &Path,
     workflow_name: Option<&str>,
+    overrides: ExecutionOverrides,
 ) -> Vec<EnvRenderedArtifactEntry> {
     let Some(profile_name) = contract
         .selected_workflow_env_profile_name(workflow_name)
@@ -137257,7 +138517,13 @@ fn selected_workflow_env_profile_rendered_artifact_entries(
         .as_ref()
         .map(|dotenv| dotenv.path.trim().to_string());
     let mut consumers = Vec::new();
-    for task_name in contract.selected_workflow_task_closure_names(workflow_name) {
+    let task_names = crate::runner::selected_workflow_execution_closure_names(
+        contract,
+        workflow_name,
+        overrides,
+    )
+    .unwrap_or_default();
+    for task_name in task_names {
         let Some(task) = adjusted.tasks.get(task_name.as_str()) else {
             continue;
         };
@@ -137269,7 +138535,10 @@ fn selected_workflow_env_profile_rendered_artifact_entries(
             consumers.push(format!("task:{task_name}"));
         }
     }
-    for service_name in contract.selected_workflow_required_service_names(workflow_name) {
+    let service_names =
+        crate::runner::selected_workflow_required_service_names(contract, workflow_name, overrides)
+            .unwrap_or_default();
+    for service_name in service_names {
         let Some(service) = adjusted.services.get(service_name.as_str()) else {
             continue;
         };
@@ -138156,9 +139425,16 @@ fn append_uv_local_project_findings(
     contract: &Contract,
     contract_path: &Path,
     workflow_name: Option<&str>,
+    overrides: ExecutionOverrides,
     findings: &mut Vec<Finding>,
 ) {
-    for task_name in contract.selected_workflow_task_closure_names(workflow_name) {
+    let task_names = crate::runner::selected_workflow_execution_closure_names(
+        contract,
+        workflow_name,
+        overrides,
+    )
+    .unwrap_or_default();
+    for task_name in task_names {
         let Some(task) = contract.tasks.get(task_name.as_str()) else {
             continue;
         };
@@ -138650,9 +139926,22 @@ fn archive_typed_effect_policy_refusal(
         .as_mut()
         .expect("refusal evidence was verified above")
         .refusal_archive_path = Some(refusal_archive_ref);
+    let selected_execution_graph = selected_execution_graph_for_archive(
+        archived_contract,
+        "workflow",
+        workflow_name,
+        crate::sandbox_policy::SandboxExecutionSelection {
+            backend: overrides.backend,
+            lifecycle: overrides.lifecycle,
+            host_port: overrides.host_port,
+            memory: overrides.memory,
+            skip_dependencies: overrides.skip_deps,
+        },
+    )?;
+    ensure_receipt_selected_execution_graph_input(receipt, &selected_execution_graph);
     let path_display = compact_path(contract_path, ".");
     let archive_context = crate::output::ReceiptArchiveContext {
-        schema_version: 1,
+        schema_version: 4,
         kind: String::from("effect_policy_refusal"),
         lane_kind: Some(String::from("workflow")),
         lane_name: Some(workflow_name.to_string()),
@@ -138669,6 +139958,7 @@ fn archive_typed_effect_policy_refusal(
             skip_dependencies: overrides.skip_deps,
             application_plans: admission.typed.closure.application_plans.clone(),
         }),
+        selected_execution_graph: Some(selected_execution_graph),
     };
     let findings = Vec::<Finding>::new();
     let payload = ReceiptSuccess {
@@ -138918,7 +140208,7 @@ fn execute_repo_up_with_behavior_with_agent_and_authority_activation(
     activate_authority: &mut dyn FnMut() -> Result<(), String>,
 ) -> Result<RepoUpResult, String> {
     let replay_input_preflight =
-        workflow_replay_input_preflight(contract, resolved_path, workflow_name);
+        workflow_replay_input_preflight(contract, resolved_path, workflow_name, overrides);
     if let Some(error) = replay_input_preflight.policy_load_error.as_ref() {
         return Ok(up_replay_input_policy_unavailable_result(
             contract,
@@ -138932,7 +140222,7 @@ fn execute_repo_up_with_behavior_with_agent_and_authority_activation(
     let captured_replay_inputs = match capture_replay_inputs_from_observations(
         contract,
         resolved_path,
-        contract.selected_workflow_task_closure_names(workflow_name),
+        replay_input_preflight.selected_closure.clone(),
         &replay_input_preflight.observations,
     ) {
         Ok(inputs) => inputs,
@@ -138983,7 +140273,7 @@ fn execute_repo_up_with_behavior_with_agent_and_authority_activation(
         capture_witnessed_observations_before_execution(
             contract,
             resolved_path,
-            contract.selected_workflow_task_closure_names(workflow_name),
+            replay_input_preflight.selected_closure.clone(),
         )?
     };
     let captured_hydration_provenance = if dry_run {
@@ -138992,7 +140282,7 @@ fn execute_repo_up_with_behavior_with_agent_and_authority_activation(
         capture_hydration_provenance_before_execution(
             contract,
             resolved_path,
-            contract.selected_workflow_task_closure_names(workflow_name),
+            replay_input_preflight.selected_closure.clone(),
         )
     };
     let adjusted_contract =

@@ -942,6 +942,7 @@ Success:
     "projection": {
       "workflow": "verify",
       "task": "verify",
+      "selected_execution_graph_identity": "sha256:...",
       "run_execution": "finite_task",
       "mode": "native",
       "target_os": "linux",
@@ -1007,6 +1008,15 @@ receipts. `bootstrap` carries the portable contract-owned bootstrap posture, and
 names the declared proof requirement. A denied provider-neutral projection still returns its
 evaluated `projection` plus a typed `refusal` in JSON, so CI consumers can inspect the exact
 identity, decision, and basis rather than infer them from an error string.
+
+`selected_execution_graph_identity` binds the exact provider-neutral execution selection: ordered
+prepare/setup/run root occurrences, dependency/aggregate/hook edge endpoints, effective backends,
+contexts, lifecycles, execution kinds, target operating systems, and requested lifecycle,
+host-port, and memory overrides. Every selected occurrence also carries a SHA-256 digest of its
+resolved executable semantics, requirements, environment, runtime/effect surface, and selected
+named resources. A task reused by separate workflow phases retains separate invocation identities.
+The graph excludes unselected mode branches. Interactive post-readiness attach remains outside the
+managed CI transaction.
 
 `projection.toolchains[]` is the normalized, selected-closure toolchain requirement for the target
 OS. It is contract truth, not a runner-image assumption. Provider adapters may render supported
@@ -2414,11 +2424,26 @@ Each task summary now also carries a canonical `use` object:
   `native`, and when advertised `remote` in a stable order
 - every `use.modes[]` entry carries `default`, `availability`, and separate human/agent callable
   truth, including the exact command when callable
-- aggregate task entries derive mode availability from their concrete dependency closure: a mode is
-  supported only when every executable member supports that backend on the current platform
+- aggregate task entries derive mode availability from their backend-selected execution graph: a
+  mode is supported only when every selected executable node supports that backend on its declared
+  target platform; dependencies that belong only to another mode branch are excluded
+
+Run and workflow dry-run plans carry `plan.selected_execution_graph_identity` when Core can derive
+the selected graph. The same identity appears in execution receipts as
+`evaluated_inputs[id=execution_graph:selected]`, allowing preview and execution evidence to bind
+the same ordered selection without treating all authored mode branches as executed truth.
+Environment entries and declared-source evidence in selected run/workflow previews follow that
+same graph. Optional host dotenv or structured env sources are omitted when no selected occurrence
+requires or explicitly binds their contract variables.
 
 Receipt `evaluated_inputs[]` also includes task-declared `replay_inputs` captured before execution.
-These records use `kind: static_file` and `input_class: declared_replay_input`; matching identities
+Run and selected-workflow receipts additionally carry
+`id: execution_graph:selected`, `kind: selected_execution_graph`, and
+`input_class: contract_truth`. Its SHA-256 identity binds the exact backend-selected graph, each
+selected occurrence's resolved execution semantics, the selected required-service closure and
+service-definition identities, plus requested lifecycle, host-port, and memory overrides; it must
+not be compared with the older all-branch inventory closure.
+Replay-input records use `kind: static_file` and `input_class: declared_replay_input`; matching identities
 only prove the named file held still and remain narrowing evidence rather than a hermetic replay
 claim. When the contract declares `expected_identity`, the record retains both the observed
 `identity` and `expected_identity`. A missing or mismatched pin does not begin execution: Ota emits
@@ -5626,15 +5651,18 @@ The nested `receipt` object can also include:
   read-only receipt JSON can still emit the hash without emitting a local archive ref. A persisted
   repo receipt archive requires both this reference and the matching `contract_snapshot_hash`;
   receipt history does not load the current contract as a substitute
-- `archive_context` on a persisted repo receipt archive: `readiness` records a diagnosis-only
-  lane. Authority-bearing `execution` archives use schema v2 and carry a canonical
+- `archive_context` on a persisted repo receipt archive: current readiness, effect-refusal, and
+  execution archives retain `selected_execution_graph`, which history re-derives from the
+  immutable contract snapshot and exact lane before reconciling
+  `evaluated_inputs[id=execution_graph:selected]`. `readiness` remains diagnosis-only.
+  Authority-bearing `execution` archives additionally carry a canonical
   `semantic_scope` identity with the exact lane, closure graph, target platform, execution
   selection, workflow run behavior, and effect overrides. History re-derives it from the archived
   contract before deciding crossing necessity; it does not infer authority from global contract
   configuration or trust an editable lane label
 - `invalid_archives[].posture: legacy_unverified` when an older archive lacks the immutable
-  snapshot pair. These entries are visible for operator inspection but are never valid baseline,
-  proof, or authority inputs
+  snapshot pair or reconstructable selected-graph truth. These entries are visible for operator
+  inspection but are never valid baseline, proof, or authority inputs
 - `assumption_set_hash` with the canonical extracted assumption-set identity used for this
   receipt; the hash is derived from the normalized semantic path/value map rather than the raw
   archived snapshot file

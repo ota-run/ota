@@ -1049,9 +1049,33 @@
   `actions/setup-dotnet` revision. Container-owned .NET toolchains remain owned by their declared
   execution image.
 
-- fixed aggregate-task execution-mode admission to use the same concrete member-closure rule as
-  task discovery and CI projection. A container-capable aggregate can no longer render a valid
-  projection while `ota up --mode container` rejects it before its member tasks run.
+- fixed aggregate-task execution-mode admission, task discovery, agent admission, replay-input
+  preflight, managed CI projection, and Doctor prerequisite selection to use the runner's
+  backend-selected execution plan instead of the all-branch inventory closure. A native-only
+  dependency declared only by a native mode branch no longer makes the container aggregate
+  unavailable or contributes host requirements, replay pins, or unsafe-task state to that
+  invocation. Possible outcome hooks retain their own runtime backend, and any concrete selected
+  node that resolves outside the requested aggregate mode still refuses before execution rather
+  than creating a silent mixed-backend invocation. Dry-run plans, execution receipts, and managed
+  CI projections bind the ordered selection through one SHA-256 selected-graph identity. Each
+  selected occurrence contributes a digest of its resolved executable semantics, requirements,
+  environment, runtime/effect surface, and task resources; the selected workflow-required service
+  closure and each service definition identity, plus requested lifecycle, host-port, and memory
+  overrides, are identity-bound as well. Workflow
+  phase roots and edge endpoints retain distinct invocation identities, so reusing one task across
+  prepare, setup, or run phases cannot collapse separate executions into one node. Receipt evidence
+  carries the graph identity as typed contract truth. Persisted receipt archives retain the
+  canonical graph and re-derive it from the immutable contract snapshot before acceptance. Older
+  archives without reconstructable graph truth remain inspectable as `legacy_unverified` and
+  cannot become latest, promoted, proof, or authority inputs. Selected task execution and dry-run
+  environment reports now resolve only globally required variables plus env obligations and
+  explicit bindings carried by the selected occurrences; optional host dotenv sources belonging
+  only to an unselected branch are neither read nor reported by Doctor or successful receipts.
+  Per-task replay-input rules follow selected occurrence edges even when another workflow or proof
+  root independently selects the same task name, and workflow summaries report only services in
+  the selected mode closure. Lifecycle proof, runtime-proof observers and controls, strict replay
+  snapshots, cleanup ownership, sandbox diagnosis, uv provenance findings, and workflow env
+  artifact consumers use the same selected graph rather than widening back to inventory truth.
 
 - extended managed CI projection with provider-neutral selected-closure `toolchains[]`. The first
   GitHub adapter renders Go from contract-owned `source: go` version truth using an immutable

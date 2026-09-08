@@ -329,9 +329,13 @@ Text output:
 - each task may include `Description` and `Notes`, where `Notes` can describe purpose and usage
 - each task includes `Human Run`, with every advertised mode in stable `Container`, `Native`, then
   `Remote` order; the selected lane is marked `(Default)`
-- aggregate tasks inherit a mode only when every concrete task in their dependency closure
-  supports that backend on the current platform; the aggregate itself never needs a duplicate
+- aggregate tasks inherit a mode only when every concrete task in the backend-selected execution
+  graph supports that backend on its declared target platform; dependencies from unselected mode
+  branches do not make the aggregate unavailable, and the aggregate itself never needs a duplicate
   command body merely to make its runnable modes discoverable
+- selected execution and dry-run environment evidence resolves only globally required variables
+  plus the selected occurrences' scoped requirements and explicit env bindings; optional declared
+  sources owned only by an unselected mode branch are not read or reported
 - `Container` and `Native` remain visible when unavailable, with an explicit unsupported status
   instead of a fabricated command or silent omission
 - each task includes `Agent Run`; it prints `ota run <task> --agent` only when the full dependency
@@ -875,9 +879,10 @@ Current behavior:
 
 - `render` is pure: it prints deterministic reusable-workflow YAML and never writes the optional
   `--output` target.
-- `ota ci projection` is the provider-neutral source of truth. It evaluates the full selected
-  workflow agent closure, including declared prepare, setup, run, and attach task roots, and any
-  declared proof assurance before rendering; policy-denied or review-required
+- `ota ci projection` is the provider-neutral source of truth. It evaluates the full selected CI
+  transaction closure, including declared prepare, setup, and run task roots plus every possible
+  dependency and outcome hook. Interactive post-readiness `attach` remains outside the managed CI
+  transaction. Declared proof assurance is evaluated before rendering; policy-denied or review-required
   lanes fail projection with the same canonical reason the runner would enforce. `--mode` selects its native,
   container, or remote plane; provider adapters consume that exact projection rather than
   reconstructing contract authority. When that closure contains a typed V12 effect and an
@@ -898,6 +903,11 @@ Current behavior:
   explicit projection truth and must match the intended CI operating system. Supplying an
   unavailable mode for that target is refused before rendering. A denied projection remains inspectable in
   JSON with its evaluated identity, governance decision, and refusal basis.
+- The provider-neutral projection carries `selected_execution_graph_identity`. That identity binds
+  the ordered selected roots, executable edges, effective backends, contexts, lifecycles, execution
+  kinds, target operating systems, requested lifecycle/host-port/memory overrides, and each
+  occurrence's resolved execution-semantics digest. Provider adapters bind this identity rather
+  than an all-branch inventory closure.
 - The generated workflow owns checkout, immutable adapter revisions, `ota-run/setup` with
   `source: contract`, provider-adapter setup for contract-required toolchains, selected `ota validate`, `ota doctor --workflow`, safe-surface discovery,
   agent dry-run, and either agent execution plus receipt archival or, for a proof-required lane,
@@ -1635,6 +1645,11 @@ Current behavior:
 - preview JSON includes additive `plan.dependency_steps[]`, so automation can inspect each planned
   task step's selected backend, context, parent task, and backend-selection source instead of
   inferring dependency-plane inheritance from the task names alone
+- preview JSON also carries `plan.selected_execution_graph_identity`, binding the ordered selected
+  roots, distinct workflow-phase invocation identities, dependency/aggregate/hook edge endpoints,
+  effective backends, contexts, lifecycles, execution kinds, target operating systems, requested
+  lifecycle/host-port/memory overrides, and a digest of each occurrence's resolved execution
+  semantics used by admission
 - by default, interactive terminals stream raw child output live, while non-interactive text runs buffer output into the final report for a cleaner failure/success surface
 - `--stream` forces raw live child output in text mode when you want the old firehose behavior explicitly
 - agent refusals are ota-authored execution outcomes, not generic task failures: text output renders `AGENT EXECUTION REFUSED`, receipts use blocked status, and no task process or dependency path starts before the refusal returns
@@ -1800,6 +1815,8 @@ ota run build --skip-deps
 - task-backed execution receipts also carry additive `dependency_steps[]`, so the archived run path
   preserves each executed dependency step's selected backend, optional context, parent task, and
   backend-selection source instead of only the flattened dependency order
+- selected run receipts carry the same graph identity as
+  `evaluated_inputs[id=execution_graph:selected]` with `input_class: contract_truth`
 - returns the child process exit code
 
 Use this when the contract is already the source of truth and you want deterministic task execution.
@@ -2321,7 +2338,10 @@ Current behavior:
   reference and its content identity, and keeps the newest 50 archives. Receipt history verifies
   only that archived pair; a snapshot-less or hash-mismatched archive is unverifiable rather than
   falling back to the current `ota.yaml`
-- authority-bearing execution archives use archive-context schema v2. It carries the canonical
+- current readiness, effect-refusal, and authority-bearing execution archives retain the canonical
+  backend-selected execution graph and reconcile its typed receipt input. History re-derives that
+  graph from the archived contract and exact lane before accepting the archive
+- authority-bearing execution archives additionally carry the canonical
   selected-invocation scope and identity: lane, ordered closure graph and hooks, target platform,
   backend/lifecycle, workflow run behavior, sandbox target, and effect overrides. History
   re-derives that scope from the archived contract before deciding whether a grant was required.
@@ -2344,9 +2364,10 @@ Current behavior:
   catalog-entry identity; ordinary local history omits those protected-selection fields
 - operator deployment, fixed Linux layout, ownership, and bounded trust claims are documented in
   the public [Broker Crossing Authority reference](https://ota.run/docs/reference/broker-crossing-authority)
-- archives created before normalized snapshot references are retained under `invalid_archives[]`
-  with `posture: legacy_unverified`. They remain inspectable, but cannot be selected as a latest or
-  promoted baseline, proof input, or crossing-authority record
+- archives created before normalized snapshot references or canonical selected-graph evidence are
+  retained under `invalid_archives[]` with `posture: legacy_unverified`. They remain inspectable,
+  but cannot be selected as a latest or promoted baseline, proof input, or crossing-authority
+  record
 - `--baseline promoted` compares the current receipt against the explicit promoted baseline pointer under `.ota/receipts/repo-baseline.json`
 - `--baseline latest` compares the current receipt against the newest valid archived repo receipt for the same contract under `.ota/receipts`
 - `--baseline <file>` compares the current receipt against an explicit repo receipt JSON file

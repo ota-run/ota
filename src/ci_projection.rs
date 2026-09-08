@@ -25,16 +25,21 @@
 
 use crate::contract_drift::{merge_check_id_for_lane_task, merge_check_id_for_refusal_canary};
 use crate::effect_policy::EffectPolicyDecision;
+use crate::runner::{
+    ExecutionOverrides, RunPlan, RunPlanStep, plan_workflow_execution_structure_for_target_os,
+};
 use crate::schema::{Backend, Contract, TaskRuntimeKind, ToolchainFulfillmentSource};
 use crate::semantic_identity::semantic_contract_identity;
 use serde::Serialize;
 use sha2::Digest;
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt;
 
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct CiProjection {
     pub schema_version: u8,
     pub semantic_contract_identity: String,
+    pub selected_execution_graph_identity: String,
     pub workflow: String,
     pub task: String,
     /// The selected workflow run task's execution shape. Provider adapters use this to preserve
@@ -107,6 +112,34 @@ pub(crate) struct CiProjectionGovernance {
     pub replay_input_policy: Option<CiProjectionReplayInputPolicyRequirement>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CiProjectionBuildError {
+    pub code: &'static str,
+    message: String,
+}
+
+impl CiProjectionBuildError {
+    fn unavailable(message: impl Into<String>) -> Self {
+        Self {
+            code: "projection_unavailable",
+            message: message.into(),
+        }
+    }
+
+    fn mode_unavailable(message: impl Into<String>) -> Self {
+        Self {
+            code: "projection_mode_unavailable",
+            message: message.into(),
+        }
+    }
+}
+
+impl fmt::Display for CiProjectionBuildError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.message.as_str())
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct CiProjectionReplayInputPolicyRequirement {
     pub policy_identity: String,
@@ -132,6 +165,7 @@ pub(crate) struct CiProjectionProofAssurance {
 struct CiProjectionIdentity<'a> {
     version: u8,
     semantic_contract_identity: &'a str,
+    selected_execution_graph_identity: &'a str,
     workflow: &'a str,
     task: &'a str,
     run_execution: &'a CiProjectionRunExecution,
@@ -151,30 +185,37 @@ pub(crate) fn build_ci_projection(
     workflow_name: &str,
     mode: &str,
     target_os: &str,
-) -> Result<CiProjection, String> {
+) -> Result<CiProjection, CiProjectionBuildError> {
     if !matches!(mode, "native" | "container" | "remote") {
-        return Err(format!("unsupported execution mode `{mode}`"));
+        return Err(CiProjectionBuildError::unavailable(format!(
+            "unsupported execution mode `{mode}`"
+        )));
     }
     if !matches!(target_os, "linux" | "macos" | "windows") {
-        return Err(format!("unsupported projection target OS `{target_os}`"));
+        return Err(CiProjectionBuildError::unavailable(format!(
+            "unsupported projection target OS `{target_os}`"
+        )));
     }
     let workflows = contract
         .workflows
         .as_ref()
-        .ok_or_else(|| String::from("contract declares no workflows"))?;
-    let workflow = workflows
-        .items
-        .get(workflow_name)
-        .ok_or_else(|| format!("workflow `{workflow_name}` is not declared"))?;
+        .ok_or_else(|| CiProjectionBuildError::unavailable("contract declares no workflows"))?;
+    let workflow = workflows.items.get(workflow_name).ok_or_else(|| {
+        CiProjectionBuildError::unavailable(format!("workflow `{workflow_name}` is not declared"))
+    })?;
     let task = workflow
         .run
         .as_ref()
         .map(|run| run.task.clone())
-        .ok_or_else(|| format!("workflow `{workflow_name}` does not declare `run.task`"))?;
+        .ok_or_else(|| {
+            CiProjectionBuildError::unavailable(format!(
+                "workflow `{workflow_name}` does not declare `run.task`"
+            ))
+        })?;
     if !contract.tasks.contains_key(&task) {
-        return Err(format!(
+        return Err(CiProjectionBuildError::unavailable(format!(
             "workflow `{workflow_name}` references missing task `{task}`"
-        ));
+        )));
     }
     let backend = match mode {
         "native" => Backend::Native,
@@ -182,6 +223,9 @@ pub(crate) fn build_ci_projection(
         "remote" => Backend::Remote,
         _ => unreachable!("projection mode was validated above"),
     };
+    let selected_plan = selected_workflow_plan(contract, workflow_name, backend, target_os)
+        .map_err(CiProjectionBuildError::unavailable)?;
+    let selected_steps = &selected_plan.steps;
     let run_execution = contract
         .tasks
         .get(task.as_str())
@@ -189,33 +233,33 @@ pub(crate) fn build_ci_projection(
         .is_some_and(|runtime| runtime.kind == TaskRuntimeKind::Service)
         .then_some(CiProjectionRunExecution::ServiceRuntime)
         .unwrap_or(CiProjectionRunExecution::FiniteTask);
-    let unsupported_task = contract
-        .selected_workflow_task_closure_names(Some(workflow_name))
-        .into_iter()
-        .filter_map(|task_name| {
+    let unsupported_task = selected_steps
+        .iter()
+        .filter_map(|step| {
             contract
                 .tasks
-                .get(task_name.as_str())
-                .map(|candidate| (task_name, candidate))
+                .get(step.task.as_str())
+                .map(|candidate| (step, candidate))
         })
-        // Aggregate nodes orchestrate their concrete closure; they do not execute directly.
-        .find(|(_, candidate)| {
+        .find(|(step, candidate)| {
             candidate.aggregate.is_none()
-                && (!candidate.active_for_os(target_os)
+                && (step.backend != backend
+                    || !candidate.active_for_os(target_os)
                     || !candidate.supports_execution_backend(
                         contract.execution.as_ref(),
-                        backend,
+                        step.backend,
                         target_os,
                     )
-                    || !contract.task_active_for_backend_on_os(candidate, backend, target_os))
+                    || !contract.task_active_for_backend_on_os(candidate, step.backend, target_os))
         })
-        .map(|(task_name, _)| task_name);
+        .map(|(step, _)| step.task.clone());
     if let Some(unsupported_task) = unsupported_task {
-        return Err(format!(
+        return Err(CiProjectionBuildError::mode_unavailable(format!(
             "workflow `{workflow_name}` task closure member `{unsupported_task}` does not support `{mode}` execution on `{target_os}`"
-        ));
+        )));
     }
-    let semantic_contract_identity = semantic_contract_identity(contract)?;
+    let semantic_contract_identity =
+        semantic_contract_identity(contract).map_err(CiProjectionBuildError::unavailable)?;
     let mut refusal_canaries = contract
         .agent
         .as_ref()
@@ -259,10 +303,10 @@ pub(crate) fn build_ci_projection(
     let mut refusal_check_ids = BTreeSet::new();
     for canary in &refusal_canaries {
         if !refusal_check_ids.insert(canary.merge_check_id.clone()) {
-            return Err(format!(
+            return Err(CiProjectionBuildError::unavailable(format!(
                 "refusal canaries produce the same merge check identity `{}`; rename one target to avoid a normalized identity collision",
                 canary.merge_check_id
-            ));
+            )));
         }
     }
     let mut merge_check_ids = vec![merge_check_id_for_lane_task(&task)];
@@ -273,7 +317,8 @@ pub(crate) fn build_ci_projection(
     );
     let proof_required = workflow.proof.claim_value().is_some();
     let proof_claim = workflow.proof.claim_value().map(str::to_string);
-    let toolchains = selected_projection_toolchains(contract, workflow_name, backend, target_os)?;
+    let toolchains = selected_projection_toolchains(contract, &selected_steps, target_os)
+        .map_err(CiProjectionBuildError::unavailable)?;
     let bootstrap = contract
         .agent
         .as_ref()
@@ -301,6 +346,7 @@ pub(crate) fn build_ci_projection(
     let mut projection = CiProjection {
         schema_version: 1,
         semantic_contract_identity,
+        selected_execution_graph_identity: selected_plan.identity,
         workflow: workflow_name.to_string(),
         task,
         run_execution,
@@ -342,7 +388,7 @@ pub(crate) fn build_ci_projection(
         },
         identity: String::new(),
     };
-    refresh_ci_projection_identity(&mut projection)?;
+    refresh_ci_projection_identity(&mut projection).map_err(CiProjectionBuildError::unavailable)?;
     Ok(projection)
 }
 
@@ -353,6 +399,7 @@ pub(crate) fn refresh_ci_projection_identity(projection: &mut CiProjection) -> R
             serde_json::to_vec(&CiProjectionIdentity {
                 version: 1,
                 semantic_contract_identity: &projection.semantic_contract_identity,
+                selected_execution_graph_identity: &projection.selected_execution_graph_identity,
                 workflow: &projection.workflow,
                 task: &projection.task,
                 run_execution: &projection.run_execution,
@@ -372,29 +419,46 @@ pub(crate) fn refresh_ci_projection_identity(projection: &mut CiProjection) -> R
     Ok(())
 }
 
-fn selected_projection_toolchains(
+fn selected_workflow_plan(
     contract: &Contract,
     workflow_name: &str,
     backend: Backend,
     target_os: &str,
+) -> Result<RunPlan, String> {
+    plan_workflow_execution_structure_for_target_os(
+        contract,
+        Some(workflow_name),
+        ExecutionOverrides {
+            backend: Some(backend),
+            ..ExecutionOverrides::default()
+        },
+        target_os,
+    )
+    .map_err(|error| error.to_string())
+}
+
+fn selected_projection_toolchains(
+    contract: &Contract,
+    selected_steps: &[RunPlanStep],
+    target_os: &str,
 ) -> Result<Vec<CiProjectionToolchain>, String> {
-    let execution_scope = match backend {
-        Backend::Native => "native",
-        Backend::Container => "container",
-        Backend::Remote => "remote",
-    };
     let mut scopes = BTreeMap::<String, BTreeSet<String>>::new();
-    for task_name in contract.selected_workflow_task_closure_names(Some(workflow_name)) {
-        let Some(task) = contract.tasks.get(task_name.as_str()) else {
+    for step in selected_steps {
+        let Some(task) = contract.tasks.get(step.task.as_str()) else {
             continue;
         };
         if task.aggregate.is_some() {
             continue;
         }
-        let context_name = task.context_for_backend(contract.execution.as_ref(), backend);
+        let execution_scope = match step.backend {
+            Backend::Native => "native",
+            Backend::Container => "container",
+            Backend::Remote => "remote",
+        };
+        let context_name = task.context_for_backend(contract.execution.as_ref(), step.backend);
         for toolchain_name in contract.task_toolchain_names_for_execution_for_os(
             task,
-            backend,
+            step.backend,
             context_name,
             target_os,
         ) {
@@ -563,6 +627,38 @@ workflows:
     }
 
     #[test]
+    fn projection_identity_binds_the_provider_target_os() {
+        let contract: Contract = serde_yaml::from_str(
+            r#"
+version: 1
+project:
+  name: target-os-identity-fixture
+tasks:
+  verify:
+    run: echo verify
+    only_on: [linux, macos]
+workflows:
+  default: verify
+  verify:
+    run:
+      task: verify
+"#,
+        )
+        .expect("fixture contract should parse");
+
+        let linux = build_ci_projection(&contract, "verify", "native", "linux")
+            .expect("Linux projection should build");
+        let macos = build_ci_projection(&contract, "verify", "native", "macos")
+            .expect("macOS projection should build");
+
+        assert_ne!(
+            linux.selected_execution_graph_identity,
+            macos.selected_execution_graph_identity
+        );
+        assert_ne!(linux.identity, macos.identity);
+    }
+
+    #[test]
     fn projection_keeps_container_owned_toolchains_out_of_provider_scope() {
         let contract: Contract = serde_yaml::from_str(
             r#"
@@ -604,6 +700,77 @@ workflows:
     }
 
     #[test]
+    fn projection_excludes_dependencies_from_unselected_mode_branches() {
+        let contract: Contract = serde_yaml::from_str(
+            r#"
+version: 1
+project:
+  name: selected-aggregate-projection
+execution:
+  preferred: container
+  contexts:
+    host:
+      backend: native
+    app:
+      backend: container
+      container:
+        image: oven/bun:1.2
+tasks:
+  setup:env:local:
+    context: host
+    command:
+      exe: cp
+      args: [.env.example, .env.local]
+  setup:
+    execution:
+      default_mode: container
+      modes:
+        native:
+          context: host
+          depends_on: [setup:env:local]
+          command:
+            exe: bun
+            args: [install]
+        container:
+          context: app
+          command:
+            exe: bun
+            args: [install]
+  test:
+    depends_on: [setup]
+    execution:
+      default_mode: container
+      modes:
+        native:
+          context: host
+          command:
+            exe: bun
+            args: [test]
+        container:
+          context: app
+          command:
+            exe: bun
+            args: [test]
+  ci:
+    aggregate:
+      tasks: [test]
+workflows:
+  default: verify
+  verify:
+    run:
+      task: ci
+"#,
+        )
+        .expect("contract should parse");
+
+        let projection = build_ci_projection(&contract, "verify", "container", "linux")
+            .expect("unselected native dependency must not block container projection");
+
+        assert_eq!(projection.mode, "container");
+        assert_eq!(projection.task, "ci");
+    }
+
+    #[test]
     fn projection_rejects_a_target_os_outside_the_selected_context_scope() {
         let contract: Contract = serde_yaml::from_str(
             r#"
@@ -630,7 +797,12 @@ workflows:
 
         let error = build_ci_projection(&contract, "verify", "native", "windows")
             .expect_err("Windows projection must reject a Linux/macOS-only context");
-        assert!(error.contains("does not support `native` execution on `windows`"));
+        assert_eq!(error.code, "projection_mode_unavailable");
+        assert!(
+            error
+                .to_string()
+                .contains("does not support `native` execution on `windows`")
+        );
     }
 
     #[test]
@@ -662,6 +834,10 @@ agent:
 
         let error = build_ci_projection(&contract, "verify", "native", "linux")
             .expect_err("normalized identity collisions must be rejected");
-        assert!(error.contains("ota.refusal-canary.task.publish-release"));
+        assert!(
+            error
+                .to_string()
+                .contains("ota.refusal-canary.task.publish-release")
+        );
     }
 }

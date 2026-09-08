@@ -6727,6 +6727,8 @@ tasks:
       exe: sh
       args: ["-c", "exit 99"]
     depends_on: [install, hydrate:images]
+    requirements:
+      env: [APP_MODE]
 agent:
   safe_tasks: [install, hydrate:images]
   refusal_canaries:
@@ -7512,7 +7514,7 @@ policies:
     );
     assert_eq!(
         json["replay_input_policy"]["applicable_rules"][0]["closure_tasks"],
-        serde_json::json!(["observe-database", "setup"])
+        serde_json::json!(["setup", "observe-database"])
     );
     assert!(!fixture.path().join("task-ran").exists());
     assert!(!fixture.path().join("observer-ran").exists());
@@ -7603,7 +7605,7 @@ policies:
     assert_eq!(json["replay_input_policy"]["decision"], "deny");
     assert_eq!(
         json["replay_input_policy"]["applicable_rules"][0]["closure_tasks"],
-        serde_json::json!(["assert-database", "build"])
+        serde_json::json!(["build", "assert-database"])
     );
     assert!(!fixture.path().join("build-ran").exists());
     assert!(!fixture.path().join("assertion-ran").exists());
@@ -9226,6 +9228,63 @@ tasks:
         fixture.path(),
     );
     assert_matches_schema("receipt.json", &json);
+}
+
+#[test]
+fn archived_receipt_selected_execution_graph_matches_published_schema() {
+    let fixture = TempDir::new().expect("fixture");
+    write_contract(
+        &fixture,
+        r#"
+version: 1
+project:
+  name: archived-receipt-demo
+tasks:
+  setup:
+    command:
+      exe: echo
+      args: [setup]
+  verify:
+    depends_on: [setup]
+    command:
+      exe: echo
+      args: [verify]
+workflows:
+  default: verify
+  verify:
+    run:
+      task: verify
+"#,
+    );
+
+    let result = run_ota(
+        &[
+            "receipt",
+            "--archive",
+            "--json",
+            fixture.path().to_str().unwrap(),
+        ],
+        fixture.path(),
+    );
+    assert_matches_schema("receipt.json", &result);
+    let archive_path = PathBuf::from(
+        result["archive_path"]
+            .as_str()
+            .expect("receipt archive path"),
+    );
+    let archived: Value =
+        serde_json::from_slice(&fs::read(archive_path).expect("read persisted receipt archive"))
+            .expect("persisted receipt archive JSON");
+    assert_matches_schema("receipt.json", &archived);
+    assert_eq!(
+        archived["archive_context"]["selected_execution_graph"]["identity"],
+        archived["receipt"]["evaluated_inputs"]
+            .as_array()
+            .expect("evaluated inputs")
+            .iter()
+            .find(|input| input["id"] == "execution_graph:selected")
+            .expect("selected graph receipt input")["identity"]
+    );
 }
 
 #[test]

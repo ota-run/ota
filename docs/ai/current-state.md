@@ -263,6 +263,43 @@ durable agent workflow belongs in the canonical Ota skill.
   behavior, external mutation prevention, or positive proof assurance. Site, Skills, Learn, FAQ,
   Glossary, and standalone Examples remain unchanged by this test-harness correction because it
   changes no operator behavior, public vocabulary, or shared reference content.
+- Discord contract pressure activated the aggregate mode-eligibility follow-on as a bounded V12.1
+  correctness repair. Core now derives aggregate mode admission, task-discovery availability,
+  agent-safety closure, task/workflow replay-input admission, managed CI projection, and
+  task/workflow Doctor prerequisite selection from the existing backend-selected runner plan
+  instead of contaminating the selected invocation with dependencies from unselected mode
+  branches. Possible outcome hooks retain their own runtime backend and provenance rather than
+  inheriting a caller override that execution would not apply. Projection failures use typed
+  internal classifications rather than parsing display text. Core dry-run plans, run receipts,
+  and managed CI projections bind the ordered selection through one SHA-256 selected graph
+  identity. Each selected occurrence binds a digest of its resolved execution semantics; selected
+  workflow-required services and their transitive definitions, plus requested lifecycle, host-port,
+  and memory overrides, participate in the graph identity.
+  Distinct workflow-phase roots and their edge endpoints retain separate invocation
+  identities, including when phases reuse the same task. The Discord contract now makes
+  `DISCORD_TOKEN` task-scoped and moves
+  `setup:env:local` under the native `setup` mode branch while preserving explicit workflow host
+  preparation. Selected task execution and dry-run reporting no longer read or expose optional
+  host dotenv truth unless a selected occurrence declares the corresponding env obligation. A
+  disposable clean fixture passed real container CI without `.env.local` and real native CI with
+  `setup:env:local`; the live contract's dry-runs select those same distinct chains and omit
+  `DISCORD_TOKEN` from container admission evidence.
+  Persisted receipt archives now retain that canonical graph, reconcile its typed receipt input,
+  and re-derive it from the immutable contract snapshot; older archives without reconstructable
+  graph truth remain inspectable only as `legacy_unverified` and cannot become baseline, proof, or
+  authority inputs. The first independent review found four remaining inventory reopenings;
+  successful receipt env evidence, Doctor env reporting, occurrence-aware replay-rule scope, and
+  workflow service summaries now consume the selected graph, with focused adversarial regressions.
+  Lifecycle and runtime proof add assertions, seam observers, and negative controls as explicit
+  canonical graph roots rather than rebuilding a task-name closure. Adversarial regressions also
+  keep unselected mode branches out of strict replay snapshot creation, service cleanup, sandbox
+  diagnosis, uv provenance findings, and workflow env artifact consumer evidence. Final
+  independent selected-graph re-review remains open. Core's command and JSON
+  references, the Site contract/command references, and the canonical Skill plus installed mirrors
+  carry the corrected semantics. The standalone Node service example now demonstrates the same
+  mode-selected dependency boundary: native setup materializes one host-only prerequisite while
+  container verification omits it. Learn, FAQ, and Glossary remain unchanged because this repair
+  adds no contract syntax, public term, or operator workflow.
 - Eris adoption pressure exposed and repaired two bounded Core defects without changing the
   released `v1.6.27` runtime used by that partner contract: detector output no longer promotes
   named GitHub Actions bodies containing unresolved matrix or shell expressions into runnable task
@@ -271,13 +308,13 @@ durable agent workflow belongs in the canonical Ota skill.
   at immutable revisions pinned by Core. The same pressure review exposed a task-discovery UX gap:
   `ota tasks --use`, including `ota tasks --safe --use`, now renders task `notes` alongside
   descriptions and runnable commands so agents see declared proof limits and external-boundary
-  guidance before selecting a lane. JSON already carried the notes and remains unchanged. Six
-  non-blocking follow-ons are now recorded in the
-  inactive [execution-contract follow-on plan](../planning/execution-contract-follow-ons/plan.md):
-  lock-strict Cargo hydration, aggregate mode eligibility, mixed-mode preview selection, Doctor
+  guidance before selecting a lane. JSON already carried the notes and remains unchanged. Five
+  remaining non-blocking follow-ons are recorded in the
+  [execution-contract follow-on plan](../planning/execution-contract-follow-ons/plan.md):
+  lock-strict Cargo hydration, mixed-mode preview selection, Doctor
   cause reconciliation, opaque-shell evidence boundaries, and identity-bound container cleanup.
-  The plan does not delay the Eris draft or interrupt V12.1; every sub-slice requires a future
-  version owner and independent activation.
+  The remaining inactive items do not delay the Eris draft or interrupt V12.1; each requires a
+  future version owner and independent activation.
 - V12 closure: implementation-order steps 1-10, the bounded real-repository pressure bar, and
   independent closure reconciliation are complete. Plausible and Outline retain exact
   selected-closure denial with

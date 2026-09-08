@@ -63,21 +63,24 @@ use crate::provisioning::{
 use crate::replay_baseline::verify_promoted_replay_baseline;
 use crate::replay_input_policy::{
     ReplayInputPolicyEvaluation, ReplayInputPolicySubject, ReplayInputPolicyUnknownSelector,
-    evaluate_replay_input_policy, replay_input_policy_unknown_selectors,
+    evaluate_replay_input_policy_for_closure_with_observations,
+    observe_replay_inputs_for_selected_closure, replay_input_policy_unknown_selectors,
+    selected_replay_input_policy_closure_with_overrides,
 };
 use crate::runner::{
     DeclaredEnvSourceStatus, ExecutionOverrides, HttpReadinessRequest, HttpReadinessStatus,
     LoadedDeclaredEnvSource, ResolvedExecutionBackend, ResolvedNamedReadinessProbe,
-    ResolvedNamedReadinessProbeContract, RunError, capture_declared_native_activation_env,
-    combine_readiness_probe_paths, effective_execution, effective_task_execution,
-    evaluate_declared_env_check, host_runtime_readiness_observed, http_readiness_endpoint_status,
-    load_declared_env_sources, parse_http_probe_url, resolve_context_execution_backend,
-    resolve_declared_env_source_value, resolve_named_readiness_probe,
-    resolve_named_readiness_probe_contract, resolve_task_target_binding_url_with_contract_path,
-    run_backend_argv_command_captured, run_backend_command_captured,
-    run_backend_precondition_probe_argv_captured, run_backend_precondition_probe_captured,
-    target_os_for_declared_backend, task_runtime_host_readiness_probe_for_backend,
-    task_surface_host_readiness_probe_for_backend,
+    ResolvedNamedReadinessProbeContract, RunError, RunPlanStep,
+    capture_declared_native_activation_env, combine_readiness_probe_paths, effective_execution,
+    effective_task_execution, evaluate_declared_env_check, host_runtime_readiness_observed,
+    http_readiness_endpoint_status, load_declared_env_sources, parse_http_probe_url,
+    plan_task_execution_structure_with_overrides, plan_workflow_execution_structure_with_overrides,
+    resolve_context_execution_backend, resolve_declared_env_source_value,
+    resolve_named_readiness_probe, resolve_named_readiness_probe_contract,
+    resolve_task_target_binding_url_with_contract_path, run_backend_argv_command_captured,
+    run_backend_command_captured, run_backend_precondition_probe_argv_captured,
+    run_backend_precondition_probe_captured, target_os_for_declared_backend,
+    task_runtime_host_readiness_probe_for_backend, task_surface_host_readiness_probe_for_backend,
 };
 use crate::schema::{
     Backend, CheckKind, CheckSeverity, ContainerBackend, Contract, ExtensionKind, Lifecycle,
@@ -286,10 +289,10 @@ fn selected_context_names_for_mode(
     overrides: ExecutionOverrides,
 ) -> BTreeSet<String> {
     let backend = backend_for_mode(mode);
-    let task_names = contract.selected_workflow_task_closure_names(workflow_name);
+    let selected_steps = selected_workflow_plan_steps(contract, workflow_name, overrides);
     let mut context_names = BTreeSet::new();
 
-    if task_names.is_empty() {
+    if selected_steps.is_empty() {
         if let Some(context_name) = matching_declared_execution_context_name(
             contract.execution.as_ref(),
             backend,
@@ -300,14 +303,11 @@ fn selected_context_names_for_mode(
         return context_names;
     }
 
-    for task_name in task_names {
-        let Some(task) = contract.tasks.get(task_name.as_str()) else {
-            continue;
-        };
-        if effective_task_execution(contract, task_name.as_str(), overrides).backend != backend {
+    for step in selected_steps {
+        if step.backend != backend {
             continue;
         }
-        if let Some(context_name) = task.context_for_backend(contract.execution.as_ref(), backend) {
+        if let Some(context_name) = step.context {
             context_names.insert(context_name.to_string());
         }
     }
@@ -542,30 +542,20 @@ fn task_target_os(contract: &Contract, task_name: &str, backend: Backend) -> Str
     target_os_for_declared_backend(backend, effective.container, current_os()).to_string()
 }
 
-fn task_closure_is_available_on_host(
+fn selected_plan_step_is_available(contract: &Contract, step: &RunPlanStep) -> bool {
+    contract.tasks.get(step.task.as_str()).is_some_and(|task| {
+        contract.task_active_for_backend_on_os(task, step.backend, step.target_os.as_str())
+    })
+}
+
+fn selected_workflow_plan_steps(
     contract: &Contract,
-    task_name: &str,
+    workflow_name: Option<&str>,
     overrides: ExecutionOverrides,
-) -> bool {
-    contract
-        .task_dependency_closure_names([task_name.to_string()])
-        .into_iter()
-        .all(|closure_task_name| {
-            contract
-                .tasks
-                .get(closure_task_name.as_str())
-                .is_some_and(|task| {
-                    let effective =
-                        effective_task_execution(contract, closure_task_name.as_str(), overrides);
-                    let target_os =
-                        task_target_os(contract, closure_task_name.as_str(), effective.backend);
-                    contract.task_active_for_backend_on_os(
-                        task,
-                        effective.backend,
-                        target_os.as_str(),
-                    )
-                })
-        })
+) -> Vec<RunPlanStep> {
+    plan_workflow_execution_structure_with_overrides(contract, workflow_name, overrides)
+        .map(|plan| plan.steps)
+        .unwrap_or_default()
 }
 
 fn looks_like_repo_local_executable(name: &str) -> bool {
@@ -587,40 +577,38 @@ fn selected_backend_precondition_selections(
     workflow_name: Option<&str>,
     overrides: ExecutionOverrides,
 ) -> Vec<BackendPreconditionSelection> {
-    let task_names = contract
-        .selected_workflow_task_closure_names(workflow_name)
-        .into_iter()
-        .filter(|task_name| task_closure_is_available_on_host(contract, task_name, overrides))
-        .collect::<Vec<_>>();
-    if task_names.is_empty() {
+    let selected_steps =
+        plan_workflow_execution_structure_with_overrides(contract, workflow_name, overrides)
+            .map(|plan| plan.steps)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|step| selected_plan_step_is_available(contract, step))
+            .collect::<Vec<_>>();
+    if selected_steps.is_empty() {
         return Vec::new();
     }
 
-    let scoped_runtimes = task_names.iter().any(|task_name| {
-        contract.tasks.get(task_name.as_str()).is_some_and(|task| {
-            let backend = effective_task_execution(contract, task_name.as_str(), overrides).backend;
-            let context_name = task.context_for_backend(contract.execution.as_ref(), backend);
-            let target_os = task_target_os(contract, task_name.as_str(), backend);
+    let scoped_runtimes = selected_steps.iter().any(|step| {
+        contract.tasks.get(step.task.as_str()).is_some_and(|task| {
+            let target_os = task_target_os(contract, step.task.as_str(), step.backend);
             !contract
                 .resolved_task_requirement_surface_for_execution_for_os(
                     task,
-                    backend,
-                    context_name,
+                    step.backend,
+                    step.context.as_deref(),
                     target_os.as_str(),
                 )
                 .runtimes
                 .is_empty()
         })
     });
-    let scoped_env = task_names.iter().any(|task_name| {
-        contract.tasks.get(task_name.as_str()).is_some_and(|task| {
-            let backend = effective_task_execution(contract, task_name.as_str(), overrides).backend;
-            let context_name = task.context_for_backend(contract.execution.as_ref(), backend);
-            let target_os = task_target_os(contract, task_name.as_str(), backend);
+    let scoped_env = selected_steps.iter().any(|step| {
+        contract.tasks.get(step.task.as_str()).is_some_and(|task| {
+            let target_os = task_target_os(contract, step.task.as_str(), step.backend);
             !task
                 .scoped_env_requirements_for_execution_for_os(
-                    backend,
-                    context_name,
+                    step.backend,
+                    step.context.as_deref(),
                     target_os.as_str(),
                 )
                 .is_empty()
@@ -631,15 +619,16 @@ fn selected_backend_precondition_selections(
     let mut selected_tool_names_by_backend =
         BTreeMap::<(String, Option<String>, Option<String>), BTreeSet<String>>::new();
 
-    for task_name in task_names {
+    for step in selected_steps {
+        let task_name = step.task;
         let Some(task) = contract.tasks.get(task_name.as_str()) else {
             continue;
         };
-        let backend = effective_task_execution(contract, task_name.as_str(), overrides).backend;
-        let context_name = task.context_for_backend(contract.execution.as_ref(), backend);
+        let backend = step.backend;
+        let context_name = step.context.as_deref();
         let target_os = task_target_os(contract, task_name.as_str(), backend);
         let selection_context_name = matches!(backend, Backend::Container)
-            .then(|| context_name.map(str::to_string))
+            .then(|| step.context.clone())
             .flatten();
         let segment_id = (backend == Backend::Container).then(|| format!("task:{task_name}"));
         let selection = if let Some(existing) = selections.iter_mut().find(|item| {
@@ -741,7 +730,7 @@ fn selected_backend_precondition_selections(
             selected_tool_names.insert(exe);
         }
 
-        if let Some(context_name) = task.context_for_backend(contract.execution.as_ref(), backend)
+        if let Some(context_name) = step.context.as_deref()
             && let Some(context) = contract
                 .execution
                 .as_ref()
@@ -783,38 +772,38 @@ fn selected_task_backend_precondition_selections(
     task_name: &str,
     overrides: ExecutionOverrides,
 ) -> Vec<BackendPreconditionSelection> {
-    let task_names = contract
-        .task_dependency_closure_names([task_name.to_string()])
-        .into_iter()
-        .filter(|task_name| task_closure_is_available_on_host(contract, task_name, overrides))
-        .collect::<Vec<_>>();
-    if task_names.is_empty() {
+    let selected_steps =
+        plan_task_execution_structure_with_overrides(contract, task_name, overrides)
+            .map(|plan| plan.steps)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|step| selected_plan_step_is_available(contract, step))
+            .collect::<Vec<_>>();
+    if selected_steps.is_empty() {
         return Vec::new();
     }
 
-    let scoped_runtimes = task_names.iter().any(|task_name| {
-        contract.tasks.get(task_name.as_str()).is_some_and(|task| {
-            let effective = effective_task_execution(contract, task_name.as_str(), overrides);
-            let target_os = task_target_os(contract, task_name.as_str(), effective.backend);
+    let scoped_runtimes = selected_steps.iter().any(|step| {
+        contract.tasks.get(step.task.as_str()).is_some_and(|task| {
+            let target_os = task_target_os(contract, step.task.as_str(), step.backend);
             !contract
                 .resolved_task_requirement_surface_for_execution_for_os(
                     task,
-                    effective.backend,
-                    effective.context_name,
+                    step.backend,
+                    step.context.as_deref(),
                     target_os.as_str(),
                 )
                 .runtimes
                 .is_empty()
         })
     });
-    let scoped_env = task_names.iter().any(|task_name| {
-        contract.tasks.get(task_name.as_str()).is_some_and(|task| {
-            let effective = effective_task_execution(contract, task_name.as_str(), overrides);
-            let target_os = task_target_os(contract, task_name.as_str(), effective.backend);
+    let scoped_env = selected_steps.iter().any(|step| {
+        contract.tasks.get(step.task.as_str()).is_some_and(|task| {
+            let target_os = task_target_os(contract, step.task.as_str(), step.backend);
             !task
                 .scoped_env_requirements_for_execution_for_os(
-                    effective.backend,
-                    effective.context_name,
+                    step.backend,
+                    step.context.as_deref(),
                     target_os.as_str(),
                 )
                 .is_empty()
@@ -825,26 +814,25 @@ fn selected_task_backend_precondition_selections(
     let mut selected_tool_names_by_backend =
         BTreeMap::<(String, Option<String>, Option<String>), BTreeSet<String>>::new();
 
-    for task_name in task_names {
+    for step in selected_steps {
+        let task_name = step.task;
         let Some(task) = contract.tasks.get(task_name.as_str()) else {
             continue;
         };
-        let effective = effective_task_execution(contract, task_name.as_str(), overrides);
-        let target_os = task_target_os(contract, task_name.as_str(), effective.backend);
-        let selection_context_name = matches!(effective.backend, Backend::Container)
-            .then(|| effective.context_name.map(str::to_string))
+        let target_os = task_target_os(contract, task_name.as_str(), step.backend);
+        let selection_context_name = matches!(step.backend, Backend::Container)
+            .then(|| step.context.clone())
             .flatten();
-        let segment_id =
-            (effective.backend == Backend::Container).then(|| format!("task:{task_name}"));
+        let segment_id = (step.backend == Backend::Container).then(|| format!("task:{task_name}"));
         let selection = if let Some(existing) = selections.iter_mut().find(|item| {
-            item.backend == effective.backend
+            item.backend == step.backend
                 && item.context_name == selection_context_name
                 && item.segment_id == segment_id
         }) {
             existing
         } else {
             selections.push(BackendPreconditionSelection {
-                backend: effective.backend,
+                backend: step.backend,
                 context_name: selection_context_name.clone(),
                 segment_id: segment_id.clone(),
                 requirement_surface: RequirementSurface::default(),
@@ -858,7 +846,7 @@ fn selected_task_backend_precondition_selections(
         };
         let selected_tool_names = selected_tool_names_by_backend
             .entry((
-                backend_key(effective.backend).to_string(),
+                backend_key(step.backend).to_string(),
                 selection_context_name.clone(),
                 segment_id.clone(),
             ))
@@ -868,12 +856,12 @@ fn selected_task_backend_precondition_selections(
             contract,
             task_name.as_str(),
             task,
-            effective.backend,
+            step.backend,
         );
         let scoped_surface = contract.resolved_task_requirement_surface_for_execution_for_os(
             task,
-            effective.backend,
-            effective.context_name,
+            step.backend,
+            step.context.as_deref(),
             target_os.as_str(),
         );
         for (name, requirement) in &scoped_surface.runtimes {
@@ -893,21 +881,21 @@ fn selected_task_backend_precondition_selections(
             .toolchain_names
             .extend(contract.task_toolchain_names_for_execution_for_os(
                 task,
-                effective.backend,
-                effective.context_name,
+                step.backend,
+                step.context.as_deref(),
                 target_os.as_str(),
             ));
         selection
             .env_names
             .extend(task.scoped_env_requirements_for_execution_for_os(
-                effective.backend,
-                effective.context_name,
+                step.backend,
+                step.context.as_deref(),
                 target_os.as_str(),
             ));
-        if matches!(effective.backend, Backend::Native) {
+        if matches!(step.backend, Backend::Native) {
             let scoped_native = task.scoped_native_requirements_for_execution_for_os(
-                effective.backend,
-                effective.context_name,
+                step.backend,
+                step.context.as_deref(),
                 target_os.as_str(),
             );
             let native_toolchains = contract.native_prerequisite_required_toolchain_names_for_os(
@@ -930,16 +918,16 @@ fn selected_task_backend_precondition_selections(
         merge_effective_launch_command_tool_requirement(
             &mut selection.requirement_surface,
             task,
-            effective.backend,
+            step.backend,
             target_os.as_str(),
         );
-        if let Some(exe) = task
-            .effective_command_launch_executable_for_backend(effective.backend, target_os.as_str())
+        if let Some(exe) =
+            task.effective_command_launch_executable_for_backend(step.backend, target_os.as_str())
         {
             selected_tool_names.insert(exe);
         }
 
-        if let Some(context_name) = effective.context_name
+        if let Some(context_name) = step.context.as_deref()
             && let Some(context) = contract
                 .execution
                 .as_ref()
@@ -980,9 +968,14 @@ fn scoped_precondition_selection(
     contract: &Contract,
     mode: DoctorMode,
     workflow_name: Option<&str>,
+    overrides: ExecutionOverrides,
 ) -> ScopedPreconditionSelection {
     let backend = backend_for_mode(mode);
-    let task_names = contract.selected_workflow_task_closure_names(workflow_name);
+    let task_names = selected_workflow_plan_steps(contract, workflow_name, overrides)
+        .into_iter()
+        .filter(|step| step.backend == backend)
+        .map(|step| step.task)
+        .collect::<Vec<_>>();
     if task_names.is_empty() {
         return ScopedPreconditionSelection {
             requirement_surface: contract.requirement_surface_for_backend(backend),
@@ -1146,7 +1139,8 @@ fn precondition_requirement_surface(
     mode: DoctorMode,
     workflow_name: Option<&str>,
 ) -> RequirementSurface {
-    scoped_precondition_selection(contract, mode, workflow_name).requirement_surface
+    scoped_precondition_selection(contract, mode, workflow_name, ExecutionOverrides::default())
+        .requirement_surface
 }
 
 #[derive(Debug, Clone, Default)]
@@ -1158,8 +1152,13 @@ struct RemoteTaskRequirementSelection {
 fn selected_remote_task_requirement_selection(
     contract: &Contract,
     workflow_name: Option<&str>,
+    overrides: ExecutionOverrides,
 ) -> Option<RemoteTaskRequirementSelection> {
-    let task_names = contract.selected_workflow_task_closure_names(workflow_name);
+    let task_names = selected_workflow_plan_steps(contract, workflow_name, overrides)
+        .into_iter()
+        .filter(|step| step.backend == Backend::Remote)
+        .map(|step| step.task)
+        .collect::<Vec<_>>();
     if task_names.is_empty() {
         return None;
     }
@@ -1652,6 +1651,7 @@ fn remote_doctor_probe_contexts(
     contract_path: &Path,
     loaded_policy: Option<&LoadedOrgPolicyPack>,
     workflow_name: Option<&str>,
+    overrides: ExecutionOverrides,
     findings: &mut Vec<Finding>,
 ) -> Vec<RemoteProbeContext> {
     let mut probes = Vec::new();
@@ -1660,7 +1660,7 @@ fn remote_doctor_probe_contexts(
     };
     let working_dir = contract_working_dir(contract_path);
     let selected_task_requirements =
-        selected_remote_task_requirement_selection(contract, workflow_name);
+        selected_remote_task_requirement_selection(contract, workflow_name, overrides);
 
     for (name, context) in execution
         .contexts
@@ -4693,7 +4693,7 @@ fn diagnose_contract_with_scope_and_provider_probe_posture(
         .find(|selection| selection.backend == backend_for_mode(mode))
         .cloned()
         .map(ScopedPreconditionSelection::from)
-        .unwrap_or_else(|| scoped_precondition_selection(contract, mode, workflow_name));
+        .unwrap_or_else(|| scoped_precondition_selection(contract, mode, workflow_name, overrides));
     let requirement_surface = precondition_selection.requirement_surface.clone();
     let loaded_policy_from_disk = if matches!(scope, DoctorScope::All | DoctorScope::Preconditions)
         && policy_snapshot.is_none()
@@ -4754,6 +4754,7 @@ fn diagnose_contract_with_scope_and_provider_probe_posture(
                 &loaded_policy.pack,
                 workflow_name,
                 task_name,
+                overrides,
             )
         });
         if let Some(evaluation) = evaluated.as_ref() {
@@ -4844,6 +4845,7 @@ fn diagnose_contract_with_scope_and_provider_probe_posture(
                     contract_path,
                     loaded_policy,
                     workflow_name,
+                    overrides,
                     &mut findings,
                 );
                 for remote_probe in &remote_probe_contexts {
@@ -5323,7 +5325,7 @@ fn diagnose_contract_with_scope_and_provider_probe_posture(
             overrides,
             &mut findings,
         );
-        diagnose_selected_task_effects(contract, workflow_name, &mut findings);
+        diagnose_selected_task_effects(contract, workflow_name, overrides, &mut findings);
     }
     if matches!(scope, DoctorScope::All | DoctorScope::Preconditions) {
         diagnose_replay_baseline_authority(
@@ -5331,6 +5333,7 @@ fn diagnose_contract_with_scope_and_provider_probe_posture(
             contract_path,
             workflow_name,
             task_name,
+            overrides,
             &mut findings,
         );
     }
@@ -5411,6 +5414,7 @@ fn diagnose_sandbox_enforcement_posture(
                 contract,
                 workflow_name,
                 task_name,
+                overrides,
                 loaded_policy,
             );
             if selected_has_boundary {
@@ -5526,16 +5530,28 @@ fn selected_sandbox_boundary_is_declared(
     contract: &Contract,
     workflow_name: Option<&str>,
     task_name: Option<&str>,
+    overrides: ExecutionOverrides,
     loaded_policy: Option<&LoadedOrgPolicyPack>,
 ) -> bool {
     let selected_tasks = if let Some(task_name) = task_name {
-        contract.task_execution_closure_names([task_name.to_string()])
+        crate::runner::selected_task_execution_closure_names(contract, task_name, overrides)
+            .unwrap_or_default()
     } else {
-        let mut tasks = contract.task_execution_closure_names(
-            contract.selected_workflow_task_closure_names(workflow_name),
-        );
+        let mut tasks = crate::runner::selected_workflow_execution_closure_names(
+            contract,
+            workflow_name,
+            overrides,
+        )
+        .unwrap_or_default();
         if let Some(attach_task) = contract.selected_attach_task_name_for(workflow_name) {
-            tasks.extend(contract.task_execution_closure_names([attach_task.to_string()]));
+            tasks.extend(
+                crate::runner::selected_task_execution_closure_names(
+                    contract,
+                    attach_task,
+                    overrides,
+                )
+                .unwrap_or_default(),
+            );
             tasks.sort();
             tasks.dedup();
         }
@@ -5568,32 +5584,27 @@ fn selected_replay_input_policy_evaluation(
     policy: &crate::policy_pack::OrgPolicyPack,
     workflow_name: Option<&str>,
     task_name: Option<&str>,
+    overrides: ExecutionOverrides,
 ) -> Option<ReplayInputPolicyEvaluation> {
     let root = contract_working_dir(contract_path);
-    if let Some(task_name) = task_name {
-        return Some(evaluate_replay_input_policy(
-            contract,
-            root,
-            policy,
-            ReplayInputPolicySubject::Task(task_name),
-        ));
-    }
-    if let Some((name, _)) = contract.selected_workflow(workflow_name) {
-        return Some(evaluate_replay_input_policy(
-            contract,
-            root,
-            policy,
-            ReplayInputPolicySubject::Workflow(name),
-        ));
-    }
-    contract.selected_run_task_name_for(None).map(|task_name| {
-        evaluate_replay_input_policy(
-            contract,
-            root,
-            policy,
-            ReplayInputPolicySubject::Task(task_name),
-        )
-    })
+    let subject = if let Some(task_name) = task_name {
+        ReplayInputPolicySubject::Task(task_name)
+    } else if let Some((name, _)) = contract.selected_workflow(workflow_name) {
+        ReplayInputPolicySubject::Workflow(name)
+    } else {
+        ReplayInputPolicySubject::Task(contract.selected_run_task_name_for(None)?)
+    };
+    let selected_closure =
+        selected_replay_input_policy_closure_with_overrides(contract, subject, overrides).ok()?;
+    let observations =
+        observe_replay_inputs_for_selected_closure(contract, root, selected_closure.clone());
+    Some(evaluate_replay_input_policy_for_closure_with_observations(
+        contract,
+        policy,
+        subject,
+        selected_closure,
+        &observations,
+    ))
 }
 
 fn append_replay_input_policy_findings(
@@ -5696,11 +5707,21 @@ fn diagnose_replay_baseline_authority(
     contract_path: &Path,
     workflow_name: Option<&str>,
     task_name: Option<&str>,
+    overrides: ExecutionOverrides,
     findings: &mut Vec<Finding>,
 ) {
     let task_names = task_name
-        .map(|name| contract.task_dependency_closure_names([name.to_string()]))
-        .unwrap_or_else(|| contract.selected_workflow_task_closure_names(workflow_name));
+        .and_then(|name| {
+            plan_task_execution_structure_with_overrides(contract, name, overrides)
+                .ok()
+                .map(|plan| plan.tasks)
+        })
+        .unwrap_or_else(|| {
+            selected_workflow_plan_steps(contract, workflow_name, overrides)
+                .into_iter()
+                .map(|step| step.task)
+                .collect()
+        });
     let root = contract_working_dir(contract_path);
     let mut checked_artifacts = BTreeSet::new();
 
@@ -5773,9 +5794,9 @@ fn diagnose_contract_advisories(
     overrides: ExecutionOverrides,
     workflow_name: Option<&str>,
 ) {
-    let selected_task_names = contract
-        .selected_workflow_task_closure_names(workflow_name)
+    let selected_task_names = selected_workflow_plan_steps(contract, workflow_name, overrides)
         .into_iter()
+        .map(|step| step.task)
         .collect::<BTreeSet<_>>();
     for advisory in collect_contract_advisories_with_contract_path(contract, Some(contract_path)) {
         let advisory = match advisory {
@@ -6059,9 +6080,13 @@ fn contract_advisory_finding(advisory: ContractAdvisory) -> Finding {
 fn diagnose_selected_task_effects(
     contract: &Contract,
     workflow_name: Option<&str>,
+    overrides: ExecutionOverrides,
     findings: &mut Vec<Finding>,
 ) {
-    let selected_task_names = contract.selected_workflow_task_closure_names(workflow_name);
+    let selected_task_names = selected_workflow_plan_steps(contract, workflow_name, overrides)
+        .into_iter()
+        .map(|step| step.task)
+        .collect::<Vec<_>>();
     if selected_task_names.is_empty() {
         return;
     }
@@ -6783,7 +6808,15 @@ fn diagnose_services(
     findings: &mut Vec<Finding>,
 ) {
     let working_dir = contract_working_dir(contract_path);
-    let selected_services = selected_workflow_service_names(contract, workflow_name);
+    let selected_services = selected_workflow_service_names(
+        contract,
+        workflow_name,
+        ExecutionOverrides {
+            backend: Some(backend_for_mode(mode)),
+            lifecycle,
+            ..ExecutionOverrides::default()
+        },
+    );
 
     for (name, service) in &contract.services {
         if let Some(selected) = selected_services.as_ref()
@@ -11418,7 +11451,7 @@ fn diagnose_checks(
         .and_then(|task_name| {
             selected_task_run_requirement_check_names(contract, task_name, overrides)
         })
-        .or_else(|| selected_task_requirement_check_names(contract, workflow_name));
+        .or_else(|| selected_task_requirement_check_names(contract, workflow_name, overrides));
     let selected_probes = selected_workflow_probe_names(contract, workflow_name, scope);
     let selected_signal_probes =
         selected_workflow_signal_probe_names(contract, workflow_name, scope);
@@ -11932,17 +11965,17 @@ fn selected_workflow_signal_check_names<'a>(
 fn selected_task_requirement_check_names(
     contract: &Contract,
     workflow_name: Option<&str>,
+    overrides: ExecutionOverrides,
 ) -> Option<BTreeSet<String>> {
     let mut scoped = false;
     let mut selected = BTreeSet::new();
-    for task_name in contract.selected_workflow_task_closure_names(workflow_name) {
+    for step in selected_workflow_plan_steps(contract, workflow_name, overrides) {
+        let task_name = step.task;
         let Some(task) = contract.tasks.get(task_name.as_str()) else {
             continue;
         };
-        let backend =
-            effective_task_execution(contract, task_name.as_str(), ExecutionOverrides::default())
-                .backend;
-        let context_name = task.context_for_backend(contract.execution.as_ref(), backend);
+        let backend = step.backend;
+        let context_name = step.context.as_deref();
         let scoped_checks = task.scoped_check_requirements_for_execution(backend, context_name);
         let scoped_native = task.scoped_native_requirements_for_execution(backend, context_name);
         if !scoped_checks.is_empty() || !scoped_native.is_empty() {
@@ -11969,25 +12002,26 @@ fn selected_task_run_requirement_check_names(
     task_name: &str,
     overrides: ExecutionOverrides,
 ) -> Option<BTreeSet<String>> {
-    let task_names = contract.task_dependency_closure_names([task_name.to_string()]);
-    if task_names.is_empty() {
+    let selected_steps =
+        plan_task_execution_structure_with_overrides(contract, task_name, overrides)
+            .map(|plan| plan.steps)
+            .unwrap_or_default();
+    if selected_steps.is_empty() {
         return None;
     }
 
     let mut selected = BTreeSet::new();
-    for task_name in task_names {
+    for step in selected_steps {
+        let task_name = step.task;
         let Some(task) = contract.tasks.get(task_name.as_str()) else {
             continue;
         };
-        let effective = effective_task_execution(contract, task_name.as_str(), overrides);
         selected.extend(
-            task.scoped_check_requirements_for_execution(effective.backend, effective.context_name),
+            task.scoped_check_requirements_for_execution(step.backend, step.context.as_deref()),
         );
-        if matches!(effective.backend, Backend::Native) {
-            let scoped_native = task.scoped_native_requirements_for_execution(
-                effective.backend,
-                effective.context_name,
-            );
+        if matches!(step.backend, Backend::Native) {
+            let scoped_native = task
+                .scoped_native_requirements_for_execution(step.backend, step.context.as_deref());
             selected.extend(
                 contract
                     .native_prerequisite_required_check_names_for_os(scoped_native, current_os()),
@@ -12099,11 +12133,12 @@ fn selected_workflow_signal_surface_names<'a>(
 fn selected_workflow_service_names(
     contract: &Contract,
     workflow_name: Option<&str>,
+    overrides: ExecutionOverrides,
 ) -> Option<BTreeSet<String>> {
     let _ = contract.selected_workflow(workflow_name)?;
     Some(
-        contract
-            .selected_workflow_required_service_names(workflow_name)
+        crate::runner::selected_workflow_required_service_names(contract, workflow_name, overrides)
+            .ok()?
             .into_iter()
             .collect(),
     )
@@ -14671,6 +14706,73 @@ tasks:
         );
     }
 
+    #[test]
+    fn task_preconditions_exclude_unselected_mode_dependencies() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: selected-preconditions
+execution:
+  contexts:
+    host:
+      backend: native
+    app:
+      backend: container
+      container:
+        image: alpine:3.22
+tools:
+  host-helper: "*"
+tasks:
+  setup:env:local:
+    context: host
+    requirements:
+      tools:
+        host-helper: "*"
+    run: echo local
+  setup:
+    execution:
+      default_mode: container
+      modes:
+        native:
+          context: host
+          depends_on: [setup:env:local]
+          run: echo native
+        container:
+          context: app
+          run: echo container
+  ci:
+    aggregate:
+      tasks: [setup]
+"#,
+        )
+        .expect("contract should parse");
+
+        let selections = super::selected_task_backend_precondition_selections(
+            &contract,
+            "ci",
+            ExecutionOverrides {
+                backend: Some(Backend::Container),
+                ..ExecutionOverrides::default()
+            },
+        );
+
+        assert_eq!(selections.len(), 2);
+        assert!(
+            selections
+                .iter()
+                .all(|entry| entry.backend == Backend::Container)
+        );
+        assert!(selections.iter().all(|entry| {
+            !entry.requirement_surface.tools.contains_key("host-helper")
+                && !entry
+                    .requirement_surface
+                    .presence_only_tools
+                    .contains("host-helper")
+        }));
+    }
+
     fn finding_contract_projection(lane: &str, finding: &Finding) -> serde_json::Value {
         let json = serde_json::to_value(finding).expect("finding should serialize");
         serde_json::json!({
@@ -14734,6 +14836,55 @@ tasks:
             &contract,
             None,
             Some("verify"),
+            ExecutionOverrides::default(),
+            None,
+        ));
+    }
+
+    #[test]
+    fn sandbox_boundary_detection_excludes_unselected_mode_dependency() {
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: sandbox-selected-mode
+tasks:
+  native-only:
+    run: printf native
+    runtime_boundary:
+      filesystem:
+        repo_root_mode: read_only
+  verify:
+    run: printf verified
+    execution:
+      default_mode: container
+      modes:
+        native:
+          depends_on: [native-only]
+        container: {}
+"#,
+        )
+        .unwrap();
+
+        assert!(!selected_sandbox_boundary_is_declared(
+            &contract,
+            None,
+            Some("verify"),
+            ExecutionOverrides {
+                backend: Some(Backend::Container),
+                ..ExecutionOverrides::default()
+            },
+            None,
+        ));
+        assert!(selected_sandbox_boundary_is_declared(
+            &contract,
+            None,
+            Some("verify"),
+            ExecutionOverrides {
+                backend: Some(Backend::Native),
+                ..ExecutionOverrides::default()
+            },
             None,
         ));
     }
@@ -17481,6 +17632,7 @@ workflows:
             &contract,
             DoctorMode::Native,
             Some("studio:docker"),
+            ExecutionOverrides::default(),
         );
 
         assert!(selection.toolchain_names.is_empty());
@@ -17701,9 +17853,12 @@ workflows:
         )
         .unwrap();
 
-        let selection =
-            super::selected_remote_task_requirement_selection(&contract, Some("instant"))
-                .expect("selected workflow should produce remote task requirements");
+        let selection = super::selected_remote_task_requirement_selection(
+            &contract,
+            Some("instant"),
+            ExecutionOverrides::default(),
+        )
+        .expect("selected workflow should produce remote task requirements");
 
         assert_eq!(
             selection.by_context.keys().cloned().collect::<Vec<_>>(),

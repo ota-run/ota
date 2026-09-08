@@ -1322,11 +1322,154 @@ impl DeclaredEnvSourceLoadError {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+pub(crate) const SELECTED_EXECUTION_GRAPH_SCHEMA_VERSION: u32 = 3;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RunPlan {
+    pub schema_version: u32,
+    pub identity: String,
+    pub roots: Vec<RunPlanRoot>,
+    pub requested_backend: Option<Backend>,
+    pub requested_lifecycle: Option<Lifecycle>,
+    pub host_port: Option<u16>,
+    pub memory_bytes: Option<u64>,
+    pub skip_dependencies: bool,
     pub tasks: Vec<String>,
+    pub services: Vec<RunPlanService>,
     pub steps: Vec<RunPlanStep>,
     pub edges: Vec<RunPlanEdge>,
+}
+
+impl RunPlan {
+    /// Returns each selected task once, preserving its first executable occurrence order.
+    pub fn selected_task_names(&self) -> Vec<String> {
+        let mut seen = BTreeSet::new();
+        self.steps
+            .iter()
+            .filter_map(|step| seen.insert(step.task.clone()).then_some(step.task.clone()))
+            .collect()
+    }
+
+    /// Returns the selected executable scope rooted at every occurrence of `task_name`.
+    /// Dependency and aggregate edges point toward their consumer; outcome hooks point away.
+    pub fn selected_task_scope_names(&self, task_name: &str) -> Vec<String> {
+        let mut reachable = self
+            .steps
+            .iter()
+            .filter(|step| step.task == task_name)
+            .map(|step| step.invocation_id.clone())
+            .collect::<BTreeSet<_>>();
+        let mut changed = true;
+        while changed {
+            changed = false;
+            for edge in &self.edges {
+                let next = match &edge.relation {
+                    TaskExecutionRelation::DependsOn { .. }
+                    | TaskExecutionRelation::AggregateMember { .. }
+                        if reachable.contains(&edge.destination_invocation_id) =>
+                    {
+                        Some(&edge.source_invocation_id)
+                    }
+                    TaskExecutionRelation::AfterSuccess { .. }
+                    | TaskExecutionRelation::AfterFailure { .. }
+                    | TaskExecutionRelation::AfterAlways { .. }
+                        if reachable.contains(&edge.source_invocation_id) =>
+                    {
+                        Some(&edge.destination_invocation_id)
+                    }
+                    _ => None,
+                };
+                if let Some(next) = next {
+                    changed |= reachable.insert(next.clone());
+                }
+            }
+        }
+
+        let mut seen = BTreeSet::new();
+        self.steps
+            .iter()
+            .filter(|step| reachable.contains(&step.invocation_id))
+            .filter_map(|step| seen.insert(step.task.clone()).then_some(step.task.clone()))
+            .collect()
+    }
+}
+
+pub(crate) fn selected_plan_contract_env_names(
+    contract: &Contract,
+    plan: &RunPlan,
+) -> BTreeSet<String> {
+    let mut names = contract
+        .env
+        .iter()
+        .filter_map(|(name, requirement)| requirement.required.then_some(name.clone()))
+        .collect::<BTreeSet<_>>();
+    for step in &plan.steps {
+        let Some(task) = contract.tasks.get(step.task.as_str()) else {
+            continue;
+        };
+        names.extend(task.scoped_env_requirements_for_execution_for_os(
+            step.backend,
+            step.context.as_deref(),
+            step.target_os.as_str(),
+        ));
+        names.extend(
+            task.env_for_backend_with_context_name_for_os(
+                contract.execution.as_ref(),
+                step.backend,
+                step.context.as_deref(),
+                step.target_os.as_str(),
+            )
+            .into_keys()
+            .filter(|name| contract.env.contains_key(name)),
+        );
+    }
+    names
+}
+
+pub(crate) fn resolve_run_plan_env_details_with_policy(
+    contract: &Contract,
+    contract_path: &Path,
+    plan: &RunPlan,
+    policy_env: Option<&BTreeMap<String, String>>,
+) -> Result<BTreeMap<String, ResolvedEnvValue>, RunError> {
+    let selected_env_names = selected_plan_contract_env_names(contract, plan);
+    let mut selected_task_env = BTreeMap::new();
+    for step in &plan.steps {
+        let Some(task) = contract.tasks.get(step.task.as_str()) else {
+            continue;
+        };
+        selected_task_env.extend(task.env_for_backend_with_context_name_for_os(
+            contract.execution.as_ref(),
+            step.backend,
+            step.context.as_deref(),
+            step.target_os.as_str(),
+        ));
+    }
+    resolve_task_env_details_with_policy_and_required_env_names(
+        contract,
+        contract_path,
+        Some(&selected_task_env),
+        policy_env,
+        Some(&selected_env_names),
+    )
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RunPlanRoot {
+    pub task: String,
+    pub origin: String,
+    pub invocation_id: String,
+}
+
+/// A service in the exact selected execution graph. The identity binds the complete selected
+/// service definition, including its own dependency edges, without serializing unrelated services.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RunPlanService {
+    pub name: String,
+    pub identity: String,
 }
 
 #[derive(Debug, Clone)]
@@ -2424,23 +2567,36 @@ fn record_oci_local_cleanup(
     });
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RunPlanStep {
+    pub invocation_id: String,
     pub task: String,
     pub parent: Option<String>,
+    pub parent_invocation_id: Option<String>,
+    pub origin: String,
+    pub role: String,
     pub backend: Backend,
     pub context: Option<String>,
+    pub target_os: String,
+    pub lifecycle: Option<Lifecycle>,
+    pub execution_kind: String,
+    pub selected_semantics_identity: String,
     pub backend_selection_source: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RunPlanEdge {
     pub source: String,
     pub destination: String,
+    pub source_invocation_id: String,
+    pub destination_invocation_id: String,
     pub relation: TaskExecutionRelation,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum TaskExecutionRelation {
     Requested,
     DependsOn { parent: String },
@@ -3571,17 +3727,8 @@ pub fn plan_task_execution_with_overrides(
 
     if let Some((blocked_task, blocked_os)) = plan.steps.iter().find_map(|step| {
         let task = contract.tasks.get(step.task.as_str())?;
-        let effective = effective_task_execution(
-            contract,
-            step.task.as_str(),
-            ExecutionOverrides {
-                backend: Some(step.backend),
-                ..overrides
-            },
-        );
-        let target_os =
-            target_os_for_declared_backend(step.backend, effective.container, current_os());
-        (!task.active_for_os(target_os)).then(|| (step.task.clone(), target_os.to_string()))
+        (!task.active_for_os(step.target_os.as_str()))
+            .then(|| (step.task.clone(), step.target_os.clone()))
     }) {
         let supported_os = contract
             .tasks
@@ -3610,6 +3757,24 @@ pub fn plan_task_execution_structure_with_overrides(
     task_name: &str,
     overrides: ExecutionOverrides,
 ) -> Result<RunPlan, RunError> {
+    plan_task_execution_structure_for_target_os(contract, task_name, overrides, current_os())
+}
+
+pub fn selected_task_execution_closure_names(
+    contract: &Contract,
+    task_name: &str,
+    overrides: ExecutionOverrides,
+) -> Result<Vec<String>, RunError> {
+    plan_task_execution_structure_with_overrides(contract, task_name, overrides)
+        .map(|plan| plan.selected_task_names())
+}
+
+pub(crate) fn plan_task_execution_structure_for_target_os(
+    contract: &Contract,
+    task_name: &str,
+    overrides: ExecutionOverrides,
+    native_target_os: &str,
+) -> Result<RunPlan, RunError> {
     if !contract.tasks.contains_key(task_name) {
         return Err(RunError::UnknownTask {
             task: task_name.to_string(),
@@ -3619,25 +3784,554 @@ pub fn plan_task_execution_structure_with_overrides(
     let mut ordered = Vec::new();
     let mut steps = Vec::new();
     let mut edges = Vec::new();
-    let mut visited = BTreeSet::new();
-    visit_task_with_overrides(
+    let mut visited = BTreeMap::new();
+    let mut next_invocation = 0;
+    let root_invocation_id = visit_task_with_overrides(
         contract,
         task_name,
         overrides,
         overrides.backend.is_some(),
         None,
         None,
+        None,
+        "requested",
+        "requested",
+        native_target_os,
         &mut visited,
+        &mut next_invocation,
         &mut ordered,
         &mut steps,
         &mut edges,
     );
 
+    let services = selected_plan_services(contract, &steps, &[]);
+    finalize_run_plan(
+        vec![RunPlanRoot {
+            task: task_name.to_string(),
+            origin: String::from("requested"),
+            invocation_id: root_invocation_id,
+        }],
+        overrides,
+        ordered,
+        services,
+        steps,
+        edges,
+    )
+}
+
+/// Builds the backend-selected execution graph for the selected workflow phases.
+///
+/// This intentionally excludes attach, which is an interactive post-readiness operation rather
+/// than part of the prepare/setup/run transaction.
+pub fn plan_workflow_execution_structure_with_overrides(
+    contract: &Contract,
+    workflow_name: Option<&str>,
+    overrides: ExecutionOverrides,
+) -> Result<RunPlan, RunError> {
+    plan_workflow_execution_structure_with_additional_roots_for_target_os(
+        contract,
+        workflow_name,
+        overrides,
+        &[],
+        current_os(),
+    )
+}
+
+/// Extends the selected workflow graph with explicit transaction roots such as proof observers.
+/// Each additional root remains a separate occurrence with its own invocation origin.
+pub(crate) fn plan_workflow_execution_structure_with_additional_roots(
+    contract: &Contract,
+    workflow_name: Option<&str>,
+    overrides: ExecutionOverrides,
+    additional_roots: &[(String, String)],
+) -> Result<RunPlan, RunError> {
+    plan_workflow_execution_structure_with_additional_roots_for_target_os(
+        contract,
+        workflow_name,
+        overrides,
+        additional_roots,
+        current_os(),
+    )
+}
+
+pub fn selected_workflow_execution_closure_names(
+    contract: &Contract,
+    workflow_name: Option<&str>,
+    overrides: ExecutionOverrides,
+) -> Result<Vec<String>, RunError> {
+    plan_workflow_execution_structure_with_overrides(contract, workflow_name, overrides)
+        .map(|plan| plan.selected_task_names())
+}
+
+pub fn selected_workflow_required_service_names(
+    contract: &Contract,
+    workflow_name: Option<&str>,
+    overrides: ExecutionOverrides,
+) -> Result<Vec<String>, RunError> {
+    let mut names = contract
+        .selected_workflow(workflow_name)
+        .map(|(_, workflow)| workflow.services.required.clone())
+        .unwrap_or_default();
+    for task_name in selected_workflow_execution_closure_names(contract, workflow_name, overrides)?
+    {
+        let Some(task) = contract.tasks.get(task_name.as_str()) else {
+            continue;
+        };
+        for service_name in &task.requires_services {
+            if !names.contains(service_name) {
+                names.push(service_name.clone());
+            }
+        }
+    }
+    Ok(names)
+}
+
+pub(crate) fn plan_workflow_execution_structure_for_target_os(
+    contract: &Contract,
+    workflow_name: Option<&str>,
+    overrides: ExecutionOverrides,
+    native_target_os: &str,
+) -> Result<RunPlan, RunError> {
+    plan_workflow_execution_structure_with_additional_roots_for_target_os(
+        contract,
+        workflow_name,
+        overrides,
+        &[],
+        native_target_os,
+    )
+}
+
+fn plan_workflow_execution_structure_with_additional_roots_for_target_os(
+    contract: &Contract,
+    workflow_name: Option<&str>,
+    overrides: ExecutionOverrides,
+    additional_roots: &[(String, String)],
+    native_target_os: &str,
+) -> Result<RunPlan, RunError> {
+    let mut roots = vec![
+        (
+            String::from("workflow_prepare"),
+            contract
+                .selected_prepare_task_name_for(workflow_name)
+                .map(str::to_string),
+        ),
+        (
+            String::from("workflow_setup"),
+            contract
+                .selected_setup_task_name_for(workflow_name)
+                .map(str::to_string),
+        ),
+        (
+            String::from("workflow_run"),
+            contract
+                .selected_run_task_name_for(workflow_name)
+                .map(str::to_string),
+        ),
+    ];
+    roots.extend(
+        additional_roots
+            .iter()
+            .map(|(origin, task)| (origin.clone(), Some(task.clone()))),
+    );
+    let mut ordered = Vec::new();
+    let mut steps = Vec::new();
+    let mut edges = Vec::new();
+    let mut selected_roots = Vec::new();
+    let mut next_invocation = 0;
+    for (origin, root) in roots {
+        let Some(root) = root else {
+            continue;
+        };
+        if !contract.tasks.contains_key(root.as_str()) {
+            return Err(RunError::UnknownTask { task: root.clone() });
+        }
+        // Each workflow phase is a separate runner transaction. Reuse within one phase remains
+        // deduplicated, while the same task selected by two phases retains two occurrences.
+        let mut visited = BTreeMap::new();
+        let root_invocation_id = visit_task_with_overrides(
+            contract,
+            root.as_str(),
+            overrides,
+            overrides.backend.is_some(),
+            None,
+            None,
+            None,
+            origin.as_str(),
+            origin.as_str(),
+            native_target_os,
+            &mut visited,
+            &mut next_invocation,
+            &mut ordered,
+            &mut steps,
+            &mut edges,
+        );
+        selected_roots.push(RunPlanRoot {
+            task: root,
+            origin,
+            invocation_id: root_invocation_id,
+        });
+    }
+    let workflow_services = contract
+        .selected_workflow(workflow_name)
+        .map(|(_, workflow)| workflow.services.required.as_slice())
+        .unwrap_or_default();
+    let services = selected_plan_services(contract, &steps, workflow_services);
+    finalize_run_plan(selected_roots, overrides, ordered, services, steps, edges)
+}
+
+#[derive(Serialize)]
+struct RunPlanIdentityPayload<'a> {
+    schema_version: u32,
+    roots: &'a [RunPlanRoot],
+    requested_backend: Option<Backend>,
+    requested_lifecycle: Option<Lifecycle>,
+    host_port: Option<u16>,
+    memory_bytes: Option<u64>,
+    skip_dependencies: bool,
+    services: &'a [RunPlanService],
+    steps: &'a [RunPlanStep],
+    edges: &'a [RunPlanEdge],
+}
+
+fn finalize_run_plan(
+    roots: Vec<RunPlanRoot>,
+    overrides: ExecutionOverrides,
+    tasks: Vec<String>,
+    services: Vec<RunPlanService>,
+    steps: Vec<RunPlanStep>,
+    edges: Vec<RunPlanEdge>,
+) -> Result<RunPlan, RunError> {
+    let identity = selected_execution_graph_identity(
+        &roots,
+        overrides.backend,
+        overrides.lifecycle,
+        overrides.host_port,
+        overrides.memory,
+        overrides.skip_deps,
+        &services,
+        &steps,
+        &edges,
+    )
+    .map_err(|message| RunError::FileActionFailed {
+        task: roots
+            .first()
+            .map(|root| root.task.clone())
+            .unwrap_or_else(|| String::from("workflow")),
+        message: format!("selected execution graph identity failed: {message}"),
+    })?;
     Ok(RunPlan {
-        tasks: ordered,
+        schema_version: SELECTED_EXECUTION_GRAPH_SCHEMA_VERSION,
+        identity,
+        roots,
+        requested_backend: overrides.backend,
+        requested_lifecycle: overrides.lifecycle,
+        host_port: overrides.host_port,
+        memory_bytes: overrides.memory,
+        skip_dependencies: overrides.skip_deps,
+        tasks,
+        services,
         steps,
         edges,
     })
+}
+
+fn selected_execution_graph_identity(
+    roots: &[RunPlanRoot],
+    requested_backend: Option<Backend>,
+    requested_lifecycle: Option<Lifecycle>,
+    host_port: Option<u16>,
+    memory_bytes: Option<u64>,
+    skip_dependencies: bool,
+    services: &[RunPlanService],
+    steps: &[RunPlanStep],
+    edges: &[RunPlanEdge],
+) -> Result<String, String> {
+    semantic_contract_identity(&RunPlanIdentityPayload {
+        schema_version: SELECTED_EXECUTION_GRAPH_SCHEMA_VERSION,
+        roots,
+        requested_backend,
+        requested_lifecycle,
+        host_port,
+        memory_bytes,
+        skip_dependencies,
+        services,
+        steps,
+        edges,
+    })
+}
+
+fn selected_plan_services(
+    contract: &Contract,
+    steps: &[RunPlanStep],
+    workflow_required: &[String],
+) -> Vec<RunPlanService> {
+    let mut names = workflow_required.iter().cloned().collect::<Vec<_>>();
+    for step in steps {
+        if let Some(task) = contract.tasks.get(step.task.as_str()) {
+            names.extend(task.requires_services.iter().cloned());
+        }
+    }
+    required_service_closure(contract, &names)
+        .into_iter()
+        .filter_map(|name| {
+            contract.services.get(name.as_str()).map(|service| {
+                let identity = semantic_contract_identity(service)
+                    .expect("selected service definition should serialize");
+                RunPlanService { name, identity }
+            })
+        })
+        .collect()
+}
+
+/// Hashes only contract truth that can affect this resolved task occurrence. This deliberately
+/// excludes descriptions and unselected mode/OS branches so inventory-only edits do not change
+/// selected-lane evidence.
+fn selected_task_semantics_identity(
+    contract: &Contract,
+    task_name: &str,
+    effective: &EffectiveTaskExecution<'_>,
+    target_os: &str,
+) -> String {
+    let task = contract
+        .tasks
+        .get(task_name)
+        .expect("validated task plan should only reference known tasks");
+    let execution = task.resolved_execution_for_backend(effective.backend, target_os);
+    let requirements = task.scoped_requirement_surface_for_execution_for_os(
+        effective.backend,
+        effective.context_name,
+        target_os,
+    );
+    let toolchain_names = task.scoped_toolchain_requirements_for_execution_for_os(
+        effective.backend,
+        effective.context_name,
+        target_os,
+    );
+    let native_requirement_names = task.scoped_native_requirements_for_execution_for_os(
+        effective.backend,
+        effective.context_name,
+        target_os,
+    );
+    let check_requirement_names = task.scoped_check_requirements_for_execution_for_os(
+        effective.backend,
+        effective.context_name,
+        target_os,
+    );
+    let selected_context = effective.context_name.and_then(|name| {
+        contract
+            .execution
+            .as_ref()
+            .and_then(|execution| execution.contexts.get(name))
+            .map(|context| (name, context))
+    });
+    let selected_shared_backend = task
+        .backend_binding_for_backend(effective.backend)
+        .and_then(|name| {
+            contract
+                .execution
+                .as_ref()
+                .and_then(|execution| execution.shared_backends.get(name))
+                .map(|shared| (name, shared))
+        });
+    let selected_services = task
+        .requires_services
+        .iter()
+        .filter_map(|name| contract.services.get(name).map(|service| (name, service)))
+        .collect::<BTreeMap<_, _>>();
+    let selected_artifacts = task
+        .requires_artifacts
+        .iter()
+        .filter_map(|name| {
+            contract
+                .artifacts
+                .get(name)
+                .map(|artifact| (name, artifact))
+        })
+        .collect::<BTreeMap<_, _>>();
+    let selected_effect_definitions = task
+        .effects
+        .declared
+        .iter()
+        .filter_map(|name| {
+            contract
+                .effect_definitions
+                .get(name)
+                .map(|definition| (name, definition))
+        })
+        .collect::<BTreeMap<_, _>>();
+    let selected_toolchains = toolchain_names
+        .iter()
+        .filter_map(|name| {
+            contract
+                .toolchains
+                .get(name)
+                .map(|toolchain| (name, toolchain))
+        })
+        .collect::<BTreeMap<_, _>>();
+    let selected_native_prerequisites = native_requirement_names
+        .iter()
+        .filter_map(|name| {
+            contract
+                .native_prerequisites
+                .get(name)
+                .map(|prerequisite| (name, prerequisite))
+        })
+        .collect::<BTreeMap<_, _>>();
+    let selected_checks = check_requirement_names
+        .iter()
+        .filter_map(|name| {
+            contract
+                .checks
+                .iter()
+                .find(|check| check.name == *name)
+                .map(|check| (name, check))
+        })
+        .collect::<BTreeMap<_, _>>();
+    let mode_branch = task.mode_execution_branch(effective.backend);
+    let selected_variant = task.selected_variant(target_os);
+    let projection = serde_json::json!({
+        "schema_version": 1,
+        "task": task_name,
+        "backend": effective.backend,
+        "target_os": target_os,
+        "context": selected_context,
+        "effective_backend": {
+            "container": effective.container,
+            "remote": effective.remote,
+            "lifecycle": effective.lifecycle,
+            "runtime_boundary": contract.execution.as_ref().and_then(|execution| execution.runtime_boundary.as_ref()),
+            "shared_backend": selected_shared_backend,
+        },
+        "execution": execution.map(|execution| serde_json::json!({
+            "kind": execution.kind,
+            "body": execution.body,
+            "command": execution.command,
+            "compose": execution.compose,
+            "launch": execution.launch,
+            "action": execution.action,
+            "prepare": execution.prepare,
+            "aggregate": execution.aggregate,
+            "os": execution.os,
+        })),
+        "orchestrator": task.orchestrator_for_backend(effective.backend),
+        "env": task.env_for_backend_with_context_name_for_os(
+            contract.execution.as_ref(),
+            effective.backend,
+            effective.context_name,
+            target_os,
+        ),
+        "env_files": task.env_files_for_backend_for_os(effective.backend, target_os),
+        "env_bindings": task.env_bindings_for_backend_with_context_name_for_os(
+            contract.execution.as_ref(),
+            effective.backend,
+            effective.context_name,
+            target_os,
+        ),
+        "inputs": task.inputs_for_os(target_os),
+        "requirements": {
+            "runtimes": requirements.runtimes,
+            "tools": requirements.tools,
+            "presence_only_tools": requirements.presence_only_tools,
+            "toolchains": selected_toolchains,
+            "native_prerequisites": selected_native_prerequisites,
+            "checks": selected_checks,
+        },
+        "effects": task.effects,
+        "effect_definitions": selected_effect_definitions,
+        "services": selected_services,
+        "artifacts": selected_artifacts,
+        "runtime": task.runtime_for_backend(effective.backend),
+        "runtime_boundary": task.runtime_boundary.as_ref(),
+        "replay_inputs": task.replay_inputs,
+        "witnessed_observations": task.witnessed_observations,
+        "targets": task.targets,
+        "when": task.when,
+        "only_on": task.only_on,
+        "safe_for_agent": task.safe_for_agent,
+        "adapter_inputs": {
+            "base": task.adapter_inputs,
+            "variant": selected_variant.map(|variant| &variant.adapter_inputs),
+            "mode": mode_branch.map(|branch| &branch.adapter_inputs),
+        },
+    });
+    semantic_contract_identity(&projection)
+        .expect("selected task semantics projection should serialize")
+}
+
+/// Re-derives an archived selected graph from its immutable contract and exact lane selection.
+pub(crate) fn verify_archived_run_plan(
+    contract: &Contract,
+    lane_kind: &str,
+    lane_name: &str,
+    plan: &RunPlan,
+) -> Result<(), String> {
+    if plan.schema_version != SELECTED_EXECUTION_GRAPH_SCHEMA_VERSION {
+        return Err(format!(
+            "unsupported selected execution graph schema version `{}`",
+            plan.schema_version
+        ));
+    }
+    let observed_identity = selected_execution_graph_identity(
+        &plan.roots,
+        plan.requested_backend,
+        plan.requested_lifecycle,
+        plan.host_port,
+        plan.memory_bytes,
+        plan.skip_dependencies,
+        &plan.services,
+        &plan.steps,
+        &plan.edges,
+    )?;
+    if observed_identity != plan.identity {
+        return Err(String::from(
+            "selected execution graph identity does not match its archived content",
+        ));
+    }
+    let native_target_os = plan
+        .steps
+        .iter()
+        .filter(|step| step.backend == Backend::Native)
+        .map(|step| step.target_os.as_str())
+        .collect::<BTreeSet<_>>();
+    if native_target_os.len() > 1 {
+        return Err(String::from(
+            "selected execution graph carries multiple native target operating systems",
+        ));
+    }
+    let native_target_os = native_target_os.into_iter().next().unwrap_or("linux");
+    let overrides = ExecutionOverrides {
+        backend: plan.requested_backend,
+        lifecycle: plan.requested_lifecycle,
+        host_port: plan.host_port,
+        memory: plan.memory_bytes,
+        skip_deps: plan.skip_dependencies,
+    };
+    let candidate = match lane_kind {
+        "task" => plan_task_execution_structure_for_target_os(
+            contract,
+            lane_name,
+            overrides,
+            native_target_os,
+        ),
+        "workflow" => plan_workflow_execution_structure_for_target_os(
+            contract,
+            (lane_name != "default").then_some(lane_name),
+            overrides,
+            native_target_os,
+        ),
+        _ => {
+            return Err(String::from(
+                "selected execution graph carries an unsupported archived lane kind",
+            ));
+        }
+    };
+    let matches = candidate.is_ok_and(|candidate| candidate == *plan);
+    if !matches {
+        return Err(String::from(
+            "selected execution graph does not re-derive from the archived contract and lane",
+        ));
+    }
+    Ok(())
 }
 
 pub fn resolve_task_env(
@@ -4387,6 +5081,7 @@ fn validate_oci_mount_destinations(
     Ok(())
 }
 
+#[cfg(test)]
 pub(crate) fn planned_env_file_outputs_for_task_closure(
     contract: &Contract,
     task_name: &str,
@@ -4457,6 +5152,68 @@ pub(crate) fn planned_env_file_outputs_for_task_closure(
     if let Some(task) = contract.tasks.get(task_name) {
         for dependency in task.depends_on_for_backend(backend) {
             visit(contract, dependency, backend, &mut visited, &mut outputs);
+        }
+    }
+    outputs
+}
+
+pub(crate) fn planned_env_file_outputs_for_selected_task_closure(
+    contract: &Contract,
+    task_name: &str,
+    overrides: ExecutionOverrides,
+) -> BTreeSet<String> {
+    fn collect_prepare_outputs(
+        prepare: &crate::schema::TaskPrepareSpec,
+        outputs: &mut BTreeSet<String>,
+    ) {
+        if let crate::schema::TaskPrepareSpec::Sequence(sequence) = prepare {
+            for step in &sequence.steps {
+                match step {
+                    crate::schema::TaskPrepareSequenceStepSpec::EnsureEnvFile(action) => {
+                        outputs.insert(action.path.trim().to_string());
+                    }
+                    crate::schema::TaskPrepareSequenceStepSpec::Sequence(sequence) => {
+                        collect_prepare_outputs(
+                            &crate::schema::TaskPrepareSpec::Sequence(sequence.clone()),
+                            outputs,
+                        );
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    fn collect_task_outputs(task: &TaskSpec, outputs: &mut BTreeSet<String>) {
+        if let Some(crate::schema::TaskActionSpec::EnsureEnvFile(action)) = task.action.as_ref() {
+            outputs.insert(action.path.trim().to_string());
+        }
+        if let Some(crate::schema::TaskActionSpec::EnsureBundle(bundle)) = task.action.as_ref() {
+            for step in &bundle.steps {
+                if let crate::schema::TaskEnsureBundleStepSpec::EnsureEnvFile(action) = step {
+                    outputs.insert(action.path.trim().to_string());
+                }
+            }
+        }
+        if let Some(prepare) = task.prepare.as_ref() {
+            collect_prepare_outputs(prepare, outputs);
+        }
+    }
+
+    let Ok(plan) = plan_task_execution_structure_with_overrides(contract, task_name, overrides)
+    else {
+        return BTreeSet::new();
+    };
+    let Some(root) = plan.roots.first() else {
+        return BTreeSet::new();
+    };
+    let mut outputs = BTreeSet::new();
+    for step in &plan.steps {
+        if step.invocation_id == root.invocation_id {
+            break;
+        }
+        if let Some(task) = contract.tasks.get(step.task.as_str()) {
+            collect_task_outputs(task, &mut outputs);
         }
     }
     outputs
@@ -5419,13 +6176,70 @@ pub fn resolve_task_env_details_for_task_with_policy(
     task_env: Option<&BTreeMap<String, String>>,
     policy_env: Option<&BTreeMap<String, String>>,
 ) -> Result<BTreeMap<String, ResolvedEnvValue>, RunError> {
-    let required_env_names = contract.task_required_env_names(task_name);
+    let mut required_env_names = contract.task_required_env_names(task_name);
+    required_env_names.extend(
+        contract
+            .env
+            .iter()
+            .filter_map(|(name, requirement)| requirement.required.then_some(name.clone())),
+    );
+    if let Some(task_env) = task_env {
+        required_env_names.extend(
+            task_env
+                .keys()
+                .filter(|name| contract.env.contains_key(*name))
+                .cloned(),
+        );
+    }
     resolve_task_env_details_with_policy_and_required_env_names(
         contract,
         contract_path,
         task_env,
         policy_env,
-        (!required_env_names.is_empty()).then_some(&required_env_names),
+        Some(&required_env_names),
+    )
+}
+
+fn resolve_task_env_details_for_selected_execution_with_policy(
+    contract: &Contract,
+    contract_path: &Path,
+    task_name: &str,
+    task_env: Option<&BTreeMap<String, String>>,
+    policy_env: Option<&BTreeMap<String, String>>,
+    backend: Backend,
+    context_name: Option<&str>,
+    target_os: &str,
+) -> Result<BTreeMap<String, ResolvedEnvValue>, RunError> {
+    let task = contract
+        .tasks
+        .get(task_name)
+        .ok_or_else(|| RunError::UnknownTask {
+            task: task_name.to_string(),
+        })?;
+    let mut selected_env_names = contract
+        .env
+        .iter()
+        .filter_map(|(name, requirement)| requirement.required.then_some(name.clone()))
+        .collect::<BTreeSet<_>>();
+    selected_env_names.extend(task.scoped_env_requirements_for_execution_for_os(
+        backend,
+        context_name,
+        target_os,
+    ));
+    if let Some(task_env) = task_env {
+        selected_env_names.extend(
+            task_env
+                .keys()
+                .filter(|name| contract.env.contains_key(*name))
+                .cloned(),
+        );
+    }
+    resolve_task_env_details_with_policy_and_required_env_names(
+        contract,
+        contract_path,
+        task_env,
+        policy_env,
+        Some(&selected_env_names),
     )
 }
 
@@ -5441,10 +6255,17 @@ fn resolve_task_env_details_with_policy_and_required_env_names(
         load_policy_env_overlay(contract_path).map_err(|error| RunError::InvalidPolicyPack {
             details: error.to_string(),
         })?;
-    let declared_sources = load_declared_env_sources(contract, contract_path);
+    let declared_sources = if selected_required_env_names.is_some_and(BTreeSet::is_empty) {
+        Vec::new()
+    } else {
+        load_declared_env_sources(contract, contract_path)
+    };
     ensure_declared_env_sources_ready(&declared_sources)?;
 
     for (name, requirement) in contract.env.iter() {
+        if selected_required_env_names.is_some_and(|names| !names.contains(name)) {
+            continue;
+        }
         if requirement.secret && requirement.default.is_some() {
             return Err(RunError::SecretEnvCannotHaveDefault { name: name.clone() });
         }
@@ -7976,9 +8797,12 @@ fn persistent_cleanup_scope_for_workflow_with_overrides(
     let mut scope = PersistentCleanupScope::default();
     scope.service_names = required_service_closure(
         contract,
-        &contract.selected_workflow_required_service_names(workflow_name),
+        &selected_workflow_required_service_names(contract, workflow_name, overrides)
+            .unwrap_or_default(),
     );
-    for task_name in contract.selected_workflow_task_closure_names(workflow_name) {
+    for task_name in selected_workflow_execution_closure_names(contract, workflow_name, overrides)
+        .unwrap_or_default()
+    {
         scope.task_names.insert(task_name.clone());
         let effective = effective_task_execution(contract, task_name.as_str(), overrides);
         // Cleanup admission must recognize the persistent family Ota started even if resolving
@@ -8054,7 +8878,13 @@ fn workflow_instance_dependent_compose_projects(
     dependent_selector: &str,
 ) -> Vec<String> {
     let mut projects = Vec::new();
-    for task_name in contract.selected_workflow_task_closure_names(Some(dependent_selector)) {
+    for task_name in selected_workflow_execution_closure_names(
+        contract,
+        Some(dependent_selector),
+        ExecutionOverrides::default(),
+    )
+    .unwrap_or_default()
+    {
         let Some(dependent_project) = workflow_instance_compose_project_for_task(
             contract,
             Some(dependent_selector),
@@ -10011,8 +10841,12 @@ fn run_task_internal_with_started_services(
     hydrate_virtualenv_boundaries_from_trace(&mut state, working_dir);
     hydrate_pnpm_boundaries_from_trace(&mut state, working_dir);
     state.execution_note = preflight_execution_note;
-    state.replay_baseline_read_only_boundary =
-        prepare_selected_read_only_replay_baseline_boundary(contract, task_name, working_dir)?;
+    state.replay_baseline_read_only_boundary = prepare_selected_read_only_replay_baseline_boundary(
+        contract,
+        task_name,
+        overrides,
+        working_dir,
+    )?;
     let execution_interrupt_epoch = current_run_interrupt_epoch();
     let execute_result = execute_task_with_hooks(
         contract,
@@ -12127,12 +12961,16 @@ fn execute_task_with_hooks(
     )?;
 
     let initial_task_env = effective_task_env_for_backend(contract, task, &backend, working_dir);
-    let initial_env_details = resolve_task_env_details_for_task_with_policy(
+    let selected_context_name = task.context_for_backend(contract.execution.as_ref(), backend_kind);
+    let initial_env_details = resolve_task_env_details_for_selected_execution_with_policy(
         contract,
         contract_path,
         task_name,
         Some(&initial_task_env),
         policy_env,
+        backend_kind,
+        selected_context_name,
+        target_os,
     )?;
     let task_env = effective_task_env_for_backend_with_resolved_env(
         contract,
@@ -12142,12 +12980,15 @@ fn execute_task_with_hooks(
         Some(&initial_env_details),
         Some(task_name),
     );
-    let env_details = resolve_task_env_details_for_task_with_policy(
+    let env_details = resolve_task_env_details_for_selected_execution_with_policy(
         contract,
         contract_path,
         task_name,
         Some(&task_env),
         policy_env,
+        backend_kind,
+        selected_context_name,
+        target_os,
     )?;
     let secret_env_names: BTreeSet<String> = env_details
         .iter()
@@ -12160,13 +13001,19 @@ fn execute_task_with_hooks(
             names: secret_env_names.into_iter().collect::<Vec<_>>().join(", "),
         });
     }
-    let env_overrides = resolve_task_env_for_task_with_policy(
+    let env_overrides = resolve_task_env_details_for_selected_execution_with_policy(
         contract,
         contract_path,
         task_name,
         Some(&task_env),
         policy_env,
-    )?;
+        backend_kind,
+        selected_context_name,
+        target_os,
+    )?
+    .into_iter()
+    .map(|(name, resolved)| (name, resolved.value))
+    .collect::<BTreeMap<_, _>>();
     let native_activation_env = task_native_activation_env(
         contract,
         task_name,
@@ -13184,50 +14031,20 @@ struct ReplayBaselineReadOnlyBoundary {
 fn prepare_selected_read_only_replay_baseline_boundary(
     contract: &Contract,
     root_task_name: &str,
+    overrides: ExecutionOverrides,
     working_dir: &Path,
 ) -> Result<Option<ReplayBaselineReadOnlyBoundary>, RunError> {
-    fn collect(
-        contract: &Contract,
-        task_name: &str,
-        visited: &mut BTreeSet<String>,
-        artifacts: &mut BTreeSet<String>,
-    ) {
-        if !visited.insert(task_name.to_string()) {
-            return;
-        }
-        let Some(task) = contract.tasks.get(task_name) else {
-            return;
+    let mut artifacts = BTreeSet::new();
+    for task_name in selected_task_execution_closure_names(contract, root_task_name, overrides)? {
+        let Some(task) = contract.tasks.get(task_name.as_str()) else {
+            continue;
         };
         for artifact_name in &task.requires_artifacts {
-            if contract.task_consumes_artifact_as_replay(task_name, artifact_name) {
+            if contract.task_consumes_artifact_as_replay(task_name.as_str(), artifact_name) {
                 artifacts.insert(artifact_name.clone());
             }
         }
-        if let Some(aggregate) = task.aggregate.as_ref() {
-            for dependency in &aggregate.tasks {
-                collect(contract, dependency, visited, artifacts);
-            }
-        }
-        for dependency in task.all_depends_on() {
-            collect(contract, dependency, visited, artifacts);
-        }
-        for hook in task
-            .after_success
-            .iter()
-            .chain(task.after_failure.iter())
-            .chain(task.after_always.iter())
-        {
-            collect(contract, hook, visited, artifacts);
-        }
     }
-
-    let mut artifacts = BTreeSet::new();
-    collect(
-        contract,
-        root_task_name,
-        &mut BTreeSet::new(),
-        &mut artifacts,
-    );
     let strict_artifacts = artifacts
         .into_iter()
         .filter_map(|name| {
@@ -15721,12 +16538,25 @@ fn execute_ensure_env_file_action(
                 ),
             });
         };
-        Some(resolve_task_env_details_for_task(
-            contract,
-            working_dir,
-            task_name,
-            Some(env_overrides),
-        )?)
+        Some(
+            env_overrides
+                .iter()
+                .map(|(name, value)| {
+                    (
+                        name.clone(),
+                        ResolvedEnvValue {
+                            value: value.clone(),
+                            source: EnvResolutionSource::Task,
+                            secret: contract
+                                .env
+                                .vars
+                                .get(name)
+                                .is_some_and(|requirement| requirement.secret),
+                        },
+                    )
+                })
+                .collect(),
+        )
     } else {
         None
     };
@@ -21523,7 +22353,9 @@ pub(crate) fn cleanup_selected_workflow_native_service_workloads(
     overrides: ExecutionOverrides,
 ) -> Result<(), String> {
     let mut failures = Vec::new();
-    for task_name in contract.selected_workflow_task_closure_names(workflow_name) {
+    for task_name in selected_workflow_execution_closure_names(contract, workflow_name, overrides)
+        .unwrap_or_default()
+    {
         let effective = effective_task_execution(contract, task_name.as_str(), overrides);
         if effective.backend != Backend::Native {
             continue;
@@ -21562,10 +22394,12 @@ pub(crate) fn selected_workflow_compose_services_started_by_proof(
     contract: &Contract,
     contract_path: &Path,
     workflow_name: Option<&str>,
+    overrides: ExecutionOverrides,
 ) -> Result<BTreeSet<String>, String> {
     let selected = required_service_closure(
         contract,
-        &contract.selected_workflow_required_service_names(workflow_name),
+        &selected_workflow_required_service_names(contract, workflow_name, overrides)
+            .unwrap_or_default(),
     );
 
     let mut services_to_cleanup = BTreeSet::new();
@@ -26133,9 +26967,9 @@ fn reject_unenforceable_lifecycle_override(
     })
 }
 
-/// Aggregate tasks are orchestration-only. Their admissible execution modes are the intersection
-/// of their concrete dependency closure, matching task discovery and CI projection semantics.
-fn task_supports_execution_backend(
+/// Aggregate tasks are orchestration-only. Their admissible execution modes come from the same
+/// backend-selected execution plan used by the runner, not the all-branch inventory closure.
+pub(crate) fn task_supports_execution_backend(
     contract: &Contract,
     task_name: &str,
     backend: Backend,
@@ -26145,20 +26979,54 @@ fn task_supports_execution_backend(
         return false;
     };
     if task.aggregate.is_none() {
-        return task.supports_execution_backend(contract.execution.as_ref(), backend, os)
-            && contract.task_active_for_backend_on_os(task, backend, os);
+        let effective = effective_task_execution(
+            contract,
+            task_name,
+            ExecutionOverrides {
+                backend: Some(backend),
+                ..ExecutionOverrides::default()
+            },
+        );
+        let target_os = target_os_for_declared_backend(backend, effective.container, os);
+        return task.supports_execution_backend(contract.execution.as_ref(), backend, target_os)
+            && contract.task_active_for_backend_on_os(task, backend, target_os);
     }
-    let concrete_members = contract
-        .task_dependency_closure_names([task_name.to_string()])
-        .into_iter()
-        .filter_map(|member_name| contract.tasks.get(member_name.as_str()))
-        .filter(|member| member.aggregate.is_none())
-        .collect::<Vec<_>>();
-    !concrete_members.is_empty()
-        && concrete_members.iter().all(|member| {
-            member.supports_execution_backend(contract.execution.as_ref(), backend, os)
-                && contract.task_active_for_backend_on_os(member, backend, os)
-        })
+    let Ok(plan) = plan_task_execution_structure_with_overrides(
+        contract,
+        task_name,
+        ExecutionOverrides {
+            backend: Some(backend),
+            ..ExecutionOverrides::default()
+        },
+    ) else {
+        return false;
+    };
+    let concrete_steps = plan.steps.iter().filter_map(|step| {
+        let task = contract.tasks.get(step.task.as_str())?;
+        task.aggregate.is_none().then_some((step, task))
+    });
+    let mut found_concrete_step = false;
+    for (step, task) in concrete_steps {
+        found_concrete_step = true;
+        if step.backend != backend {
+            return false;
+        }
+        let effective = effective_task_execution(
+            contract,
+            step.task.as_str(),
+            ExecutionOverrides {
+                backend: Some(step.backend),
+                ..ExecutionOverrides::default()
+            },
+        );
+        let target_os = target_os_for_declared_backend(step.backend, effective.container, os);
+        if !task.supports_execution_backend(contract.execution.as_ref(), step.backend, target_os)
+            || !contract.task_active_for_backend_on_os(task, step.backend, target_os)
+        {
+            return false;
+        }
+    }
+    found_concrete_step
 }
 
 pub(crate) fn resolve_context_execution_backend(
@@ -35778,21 +36646,24 @@ fn visit_task_with_overrides(
     overrides: ExecutionOverrides,
     explicit_backend_override: bool,
     parent_task: Option<&str>,
+    parent_invocation_id: Option<&str>,
     parent_backend: Option<Backend>,
-    visited: &mut BTreeSet<String>,
+    origin: &str,
+    role: &str,
+    native_target_os: &str,
+    visited: &mut BTreeMap<String, String>,
+    next_invocation: &mut usize,
     ordered: &mut Vec<String>,
     steps: &mut Vec<RunPlanStep>,
     edges: &mut Vec<RunPlanEdge>,
-) {
-    if !visited.insert(task_name.to_string()) {
-        return;
-    }
-
+) -> String {
     let task = contract
         .tasks
         .get(task_name)
         .expect("validated task plan should only reference known tasks");
-    let backend = effective_task_execution(contract, task_name, overrides).backend;
+    let effective = effective_task_execution(contract, task_name, overrides);
+    let backend = effective.backend;
+    let target_os = target_os_for_declared_backend(backend, effective.container, native_target_os);
     let context = task
         .context_for_backend(contract.execution.as_ref(), backend)
         .map(str::to_string);
@@ -35804,6 +36675,26 @@ fn visit_task_with_overrides(
             parent_backend,
         )
         .to_string();
+    let execution_kind = task
+        .resolved_execution_for_backend(backend, target_os)
+        .map(|execution| execution.kind.to_string())
+        .unwrap_or_else(|| String::from("unresolved"));
+    let selected_semantics_identity =
+        selected_task_semantics_identity(contract, task_name, &effective, target_os);
+    // Runner reuse is valid only when the selected execution semantics match. Edge relations retain
+    // every dependency/aggregate role even when the runner reuses one same-generation execution;
+    // a different backend or execution shape must remain a distinct occurrence.
+    let visit_key = format!(
+        "{task_name}\u{0}{backend:?}\u{0}{}\u{0}{target_os}\u{0}{:?}\u{0}{execution_kind}\u{0}{selected_semantics_identity}",
+        context.as_deref().unwrap_or_default(),
+        effective.lifecycle,
+    );
+    if let Some(invocation_id) = visited.get(&visit_key) {
+        return invocation_id.clone();
+    }
+    let invocation_id = format!("{origin}:{}:{task_name}", *next_invocation);
+    *next_invocation += 1;
+    visited.insert(visit_key, invocation_id.clone());
 
     let skip_requested_dependencies = parent_task.is_none() && overrides.skip_deps;
     if !skip_requested_dependencies {
@@ -35817,14 +36708,19 @@ fn visit_task_with_overrides(
                     .dependency_backend_override_for_parent(overrides.backend, backend),
                 ..overrides
             };
-            visit_task_with_overrides(
+            let dependency_invocation_id = visit_task_with_overrides(
                 contract,
                 dependency,
                 dependency_overrides,
                 explicit_backend_override,
                 Some(task_name),
+                Some(invocation_id.as_str()),
                 Some(backend),
+                origin,
+                "depends_on",
+                native_target_os,
                 visited,
+                next_invocation,
                 ordered,
                 steps,
                 edges,
@@ -35832,6 +36728,8 @@ fn visit_task_with_overrides(
             edges.push(RunPlanEdge {
                 source: dependency.clone(),
                 destination: task_name.to_string(),
+                source_invocation_id: dependency_invocation_id,
+                destination_invocation_id: invocation_id.clone(),
                 relation: TaskExecutionRelation::DependsOn {
                     parent: task_name.to_string(),
                 },
@@ -35840,14 +36738,28 @@ fn visit_task_with_overrides(
     }
     if let Some(aggregate) = task.aggregate.as_ref() {
         for child in &aggregate.tasks {
-            visit_task_with_overrides(
+            let child_spec = contract
+                .tasks
+                .get(child)
+                .expect("validated aggregate plan should only reference known tasks");
+            let child_overrides = ExecutionOverrides {
+                backend: child_spec
+                    .dependency_backend_override_for_parent(overrides.backend, backend),
+                ..overrides
+            };
+            let child_invocation_id = visit_task_with_overrides(
                 contract,
                 child,
-                overrides,
+                child_overrides,
                 explicit_backend_override,
                 Some(task_name),
+                Some(invocation_id.as_str()),
                 Some(backend),
+                origin,
+                "aggregate_member",
+                native_target_os,
                 visited,
+                next_invocation,
                 ordered,
                 steps,
                 edges,
@@ -35855,6 +36767,8 @@ fn visit_task_with_overrides(
             edges.push(RunPlanEdge {
                 source: child.clone(),
                 destination: task_name.to_string(),
+                source_invocation_id: child_invocation_id,
+                destination_invocation_id: invocation_id.clone(),
                 relation: TaskExecutionRelation::AggregateMember {
                     parent: task_name.to_string(),
                 },
@@ -35863,10 +36777,18 @@ fn visit_task_with_overrides(
     }
 
     steps.push(RunPlanStep {
+        invocation_id: invocation_id.clone(),
         task: task_name.to_string(),
         parent: parent_task.map(str::to_string),
+        parent_invocation_id: parent_invocation_id.map(str::to_string),
+        origin: origin.to_string(),
+        role: role.to_string(),
         backend,
         context,
+        target_os: target_os.to_string(),
+        lifecycle: effective.lifecycle,
+        execution_kind,
+        selected_semantics_identity,
         backend_selection_source,
     });
     ordered.push(task_name.to_string());
@@ -35886,14 +36808,23 @@ fn visit_task_with_overrides(
         ),
     ] {
         for hook in hooks {
-            visit_task_with_overrides(
+            let hook_invocation_id = visit_task_with_overrides(
                 contract,
                 hook,
-                overrides,
-                explicit_backend_override,
+                ExecutionOverrides::default(),
+                false,
                 Some(task_name),
-                Some(backend),
+                Some(invocation_id.as_str()),
+                None,
+                origin,
+                match relation {
+                    SandboxHookRelation::AfterSuccess => "after_success",
+                    SandboxHookRelation::AfterFailure => "after_failure",
+                    SandboxHookRelation::AfterAlways => "after_always",
+                },
+                native_target_os,
                 visited,
+                next_invocation,
                 ordered,
                 steps,
                 edges,
@@ -35901,6 +36832,8 @@ fn visit_task_with_overrides(
             edges.push(RunPlanEdge {
                 source: task_name.to_string(),
                 destination: hook.clone(),
+                source_invocation_id: invocation_id.clone(),
+                destination_invocation_id: hook_invocation_id,
                 relation: match relation {
                     SandboxHookRelation::AfterSuccess => TaskExecutionRelation::AfterSuccess {
                         parent: task_name.to_string(),
@@ -35915,6 +36848,7 @@ fn visit_task_with_overrides(
             });
         }
     }
+    invocation_id
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -38441,6 +39375,66 @@ tasks:
         )
         .unwrap();
         assert!(!repo_view.contains_key("DISCORD_TOKEN"));
+    }
+
+    #[test]
+    fn selected_execution_env_does_not_read_unselected_optional_dotenv_truth() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: selected-env
+env:
+  vars:
+    DISCORD_TOKEN:
+      secret: true
+      required: false
+  sources:
+    - kind: dotenv
+      path: .env.local
+      must_exist: true
+tasks:
+  verify:
+    command:
+      exe: echo
+      args: [verify]
+    execution:
+      default_mode: container
+  deploy:
+    command:
+      exe: echo
+      args: [deploy]
+    requirements:
+      env: [DISCORD_TOKEN]
+"#,
+        );
+
+        let selected = super::resolve_task_env_details_for_selected_execution_with_policy(
+            &fixture.contract,
+            fixture.file_path(),
+            "verify",
+            None,
+            None,
+            Backend::Container,
+            None,
+            "linux",
+        )
+        .expect("unselected dotenv source must not be read");
+        assert!(!selected.contains_key("DISCORD_TOKEN"));
+
+        let error = super::resolve_task_env_details_for_selected_execution_with_policy(
+            &fixture.contract,
+            fixture.file_path(),
+            "deploy",
+            None,
+            None,
+            Backend::Native,
+            None,
+            super::current_os(),
+        )
+        .expect_err("selected dotenv requirement must retain source readiness");
+        assert!(matches!(error, RunError::MissingRequiredEnvSource { .. }));
     }
 
     #[test]
@@ -55367,6 +56361,8 @@ tasks:
             execution_selection: crate::sandbox_policy::SandboxExecutionSelection {
                 backend: Some(Backend::Container),
                 lifecycle: Some(Lifecycle::Ephemeral),
+                host_port: None,
+                memory: None,
                 skip_dependencies: false,
             },
             canonical_policy_identity: String::from("sha256:canonical"),
@@ -55949,9 +56945,18 @@ tasks:
   setup:
     run: echo setup
     requires_services: [dependency]
+  native-only:
+    run: echo native
+    requires_services: [unrelated]
   app:
     run: echo app
-    depends_on: [setup]
+    execution:
+      default_mode: container
+      modes:
+        native:
+          depends_on: [native-only]
+        container:
+          depends_on: [setup]
 workflows:
   default: app-proof
   app-proof:
@@ -55988,6 +56993,10 @@ workflows:
             &fixture.contract,
             fixture.file_path(),
             Some("app-proof"),
+            super::ExecutionOverrides {
+                backend: Some(Backend::Container),
+                ..super::ExecutionOverrides::default()
+            },
         )
         .expect("selected Compose service state should resolve");
         assert_eq!(
@@ -56020,6 +57029,10 @@ workflows:
             &fixture.contract,
             fixture.file_path(),
             Some("app-proof"),
+            super::ExecutionOverrides {
+                backend: Some(Backend::Container),
+                ..super::ExecutionOverrides::default()
+            },
         )
         .expect("pre-existing Compose service state should resolve");
         assert!(services_started_by_proof.is_empty());
@@ -59135,6 +60148,532 @@ tasks:
             backend,
             ResolvedExecutionBackend::Container { .. }
         ));
+    }
+
+    #[test]
+    fn aggregate_mode_eligibility_uses_only_the_backend_selected_dependency_graph() {
+        let _guard = env_mutex_lock();
+        let fixture = tempdir().expect("tempdir");
+        let bin_dir = fixture.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create fake container engine directory");
+        write_fake_bin(
+            &bin_dir,
+            "docker",
+            if cfg!(windows) {
+                "@echo off\r\nexit /b 0\r\n"
+            } else {
+                "#!/bin/sh\nexit 0\n"
+            },
+        );
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        unsafe {
+            env::set_var(
+                "PATH",
+                env::join_paths(path_entries).expect("join test PATH"),
+            );
+        }
+        let _path_guard = PathEnvGuard(original_path);
+
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: aggregate-selected-graph-fixture
+execution:
+  preferred: container
+  lifecycle: ephemeral
+  contexts:
+    host:
+      backend: native
+    app:
+      backend: container
+      container:
+        image: oven/bun:1.2
+tasks:
+  setup:env:local:
+    context: host
+    command:
+      exe: cp
+      args: [.env.example, .env.local]
+  setup:
+    execution:
+      default_mode: container
+      modes:
+        native:
+          context: host
+          depends_on: [setup:env:local]
+          command:
+            exe: bun
+            args: [install]
+        container:
+          context: app
+          command:
+            exe: bun
+            args: [install]
+  build:
+    depends_on: [setup]
+    execution:
+      default_mode: container
+      modes:
+        native:
+          context: host
+          command:
+            exe: bun
+            args: [run, build]
+        container:
+          context: app
+          command:
+            exe: bun
+            args: [run, build]
+  test:
+    depends_on: [setup]
+    execution:
+      default_mode: container
+      modes:
+        native:
+          context: host
+          command:
+            exe: bun
+            args: [test]
+        container:
+          context: app
+          command:
+            exe: bun
+            args: [test]
+  ci:
+    aggregate:
+      tasks: [build, test]
+"#,
+        )
+        .expect("contract should parse");
+
+        let container_plan = super::plan_task_execution_with_overrides(
+            &contract,
+            "ci",
+            ExecutionOverrides {
+                backend: Some(Backend::Container),
+                ..ExecutionOverrides::default()
+            },
+        )
+        .expect("container aggregate plan");
+        assert_eq!(container_plan.tasks, vec!["setup", "build", "test", "ci"]);
+        assert_eq!(
+            container_plan
+                .steps
+                .iter()
+                .filter(|step| step.task == "setup")
+                .count(),
+            1,
+            "same-generation dependency reuse must remain one execution occurrence"
+        );
+        assert_eq!(
+            container_plan
+                .edges
+                .iter()
+                .filter(|edge| edge.source == "setup")
+                .count(),
+            2,
+            "each selected parent must retain its dependency edge"
+        );
+        assert!(
+            container_plan
+                .steps
+                .iter()
+                .all(|step| step.backend == Backend::Container)
+        );
+        assert!(super::task_supports_execution_backend(
+            &contract,
+            "ci",
+            Backend::Container,
+            current_os()
+        ));
+
+        let native_plan = super::plan_task_execution_with_overrides(
+            &contract,
+            "ci",
+            ExecutionOverrides {
+                backend: Some(Backend::Native),
+                ..ExecutionOverrides::default()
+            },
+        )
+        .expect("native aggregate plan");
+        assert_eq!(
+            native_plan.tasks,
+            vec!["setup:env:local", "setup", "build", "test", "ci"]
+        );
+        assert!(super::task_supports_execution_backend(
+            &contract,
+            "ci",
+            Backend::Native,
+            current_os()
+        ));
+    }
+
+    #[test]
+    fn selected_graph_records_hook_backend_from_the_hooks_own_default() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: hook-backend-fixture
+execution:
+  preferred: native
+  contexts:
+    host:
+      backend: native
+    app:
+      backend: container
+      container:
+        image: alpine:3.22
+tasks:
+  report:
+    context: host
+    run: echo report
+  verify:
+    context: app
+    after_success: [report]
+    run: echo verify
+"#,
+        )
+        .expect("contract should parse");
+
+        let plan = super::plan_task_execution_structure_with_overrides(
+            &contract,
+            "verify",
+            ExecutionOverrides {
+                backend: Some(Backend::Container),
+                ..ExecutionOverrides::default()
+            },
+        )
+        .expect("selected graph should plan possible hooks");
+        let report = plan
+            .steps
+            .iter()
+            .find(|step| step.task == "report")
+            .expect("hook should be present");
+
+        assert_eq!(report.backend, Backend::Native);
+        assert_eq!(report.backend_selection_source, "task context");
+        assert!(plan.edges.iter().any(|edge| {
+            edge.source == "verify"
+                && edge.destination == "report"
+                && edge.relation
+                    == TaskExecutionRelation::AfterSuccess {
+                        parent: String::from("verify"),
+                    }
+        }));
+    }
+
+    #[test]
+    fn workflow_selected_graph_preserves_repeated_phase_occurrences() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: repeated-workflow-phase-fixture
+tasks:
+  bootstrap:
+    run: echo bootstrap
+  verify:
+    depends_on: [bootstrap]
+    run: echo verify
+workflows:
+  default: repeated
+  repeated:
+    setup:
+      task: verify
+    run:
+      task: verify
+"#,
+        )
+        .expect("contract should parse");
+
+        let plan = super::plan_workflow_execution_structure_with_overrides(
+            &contract,
+            Some("repeated"),
+            ExecutionOverrides::default(),
+        )
+        .expect("workflow graph");
+        let verify_steps = plan
+            .steps
+            .iter()
+            .filter(|step| step.task == "verify")
+            .collect::<Vec<_>>();
+        let bootstrap_steps = plan
+            .steps
+            .iter()
+            .filter(|step| step.task == "bootstrap")
+            .collect::<Vec<_>>();
+
+        assert_eq!(verify_steps.len(), 2);
+        assert_eq!(bootstrap_steps.len(), 2);
+        assert_ne!(verify_steps[0].invocation_id, verify_steps[1].invocation_id);
+        assert_eq!(verify_steps[0].origin, "workflow_setup");
+        assert_eq!(verify_steps[1].origin, "workflow_run");
+        assert_eq!(plan.roots[0].invocation_id, verify_steps[0].invocation_id);
+        assert_eq!(plan.roots[1].invocation_id, verify_steps[1].invocation_id);
+        assert!(plan.edges.iter().all(|edge| {
+            !edge.source_invocation_id.is_empty() && !edge.destination_invocation_id.is_empty()
+        }));
+    }
+
+    #[test]
+    fn selected_graph_identity_binds_selected_semantics_and_overrides() {
+        fn contract(
+            aggregate: &str,
+            native_command: &str,
+            container_command: &str,
+        ) -> crate::schema::Contract {
+            parse_contract_str(
+                Path::new("ota.yaml"),
+                format!(
+                    r#"
+version: 1
+project:
+  name: selected-graph-identity-fixture
+execution:
+  preferred: container
+  backends:
+    container:
+      image: alpine:3.22
+tasks:
+  setup:
+    execution:
+      default_mode: container
+      modes:
+        native:
+          run: {native_command}
+        container:
+          run: {container_command}
+  build:
+    depends_on: [setup]
+    execution:
+      default_mode: container
+      modes:
+        container:
+          run: echo build
+  test:
+    depends_on: [setup]
+    execution:
+      default_mode: container
+      modes:
+        container:
+          run: echo test
+  ci:
+    aggregate:
+      tasks: [{aggregate}]
+"#
+                )
+                .as_str(),
+            )
+            .expect("contract should parse")
+        }
+
+        let overrides = ExecutionOverrides {
+            backend: Some(Backend::Container),
+            ..ExecutionOverrides::default()
+        };
+        let original = super::plan_task_execution_structure_with_overrides(
+            &contract("build, test", "echo native-a", "echo container-a"),
+            "ci",
+            overrides,
+        )
+        .expect("original graph");
+        let unselected_changed = super::plan_task_execution_structure_with_overrides(
+            &contract("build, test", "echo native-b", "echo container-a"),
+            "ci",
+            overrides,
+        )
+        .expect("graph with changed unselected branch");
+        let selected_changed = super::plan_task_execution_structure_with_overrides(
+            &contract("build, test", "echo native-a", "echo container-b"),
+            "ci",
+            overrides,
+        )
+        .expect("graph with changed selected branch");
+        let reordered = super::plan_task_execution_structure_with_overrides(
+            &contract("test, build", "echo native-a", "echo container-a"),
+            "ci",
+            overrides,
+        )
+        .expect("reordered graph");
+        let host_port_override = super::plan_task_execution_structure_with_overrides(
+            &contract("build, test", "echo native-a", "echo container-a"),
+            "ci",
+            ExecutionOverrides {
+                backend: Some(Backend::Container),
+                host_port: Some(43111),
+                ..ExecutionOverrides::default()
+            },
+        )
+        .expect("host-port override graph");
+        let memory_override = super::plan_task_execution_structure_with_overrides(
+            &contract("build, test", "echo native-a", "echo container-a"),
+            "ci",
+            ExecutionOverrides {
+                backend: Some(Backend::Container),
+                memory: Some(512 * 1024 * 1024),
+                ..ExecutionOverrides::default()
+            },
+        )
+        .expect("memory override graph");
+        let lifecycle_override = super::plan_task_execution_structure_with_overrides(
+            &contract("build, test", "echo native-a", "echo container-a"),
+            "ci",
+            ExecutionOverrides {
+                backend: Some(Backend::Container),
+                lifecycle: Some(Lifecycle::Ephemeral),
+                ..ExecutionOverrides::default()
+            },
+        )
+        .expect("lifecycle override graph");
+
+        assert_eq!(original.identity, unselected_changed.identity);
+        assert_ne!(original.identity, selected_changed.identity);
+        assert_ne!(original.identity, reordered.identity);
+        assert_ne!(original.identity, host_port_override.identity);
+        assert_ne!(original.identity, memory_override.identity);
+        assert_ne!(original.identity, lifecycle_override.identity);
+        assert!(
+            original
+                .steps
+                .iter()
+                .zip(selected_changed.steps.iter())
+                .any(|(left, right)| left.selected_semantics_identity
+                    != right.selected_semantics_identity)
+        );
+        assert_eq!(
+            original.schema_version,
+            super::SELECTED_EXECUTION_GRAPH_SCHEMA_VERSION
+        );
+        assert_eq!(original.roots[0].origin, "requested");
+        assert!(original.steps.iter().all(|step| step.target_os == "linux"));
+    }
+
+    #[test]
+    fn workflow_selected_graph_binds_only_its_required_service_closure() {
+        fn contract(app_start: &str, unrelated_start: &str) -> crate::schema::Contract {
+            parse_contract_str(
+                Path::new("ota.yaml"),
+                format!(
+                    r#"
+version: 1
+project:
+  name: workflow-service-identity
+services:
+  database:
+    start: echo database
+  app:
+    start: {app_start}
+    depends_on: [database]
+  unrelated:
+    start: {unrelated_start}
+tasks:
+  verify:
+    run: echo verify
+workflows:
+  default: verify
+  verify:
+    services:
+      required: [app]
+    run:
+      task: verify
+"#
+                )
+                .as_str(),
+            )
+            .expect("contract should parse")
+        }
+
+        let original = super::plan_workflow_execution_structure_with_overrides(
+            &contract("echo app-a", "echo unrelated-a"),
+            Some("verify"),
+            ExecutionOverrides::default(),
+        )
+        .expect("original graph");
+        let selected_changed = super::plan_workflow_execution_structure_with_overrides(
+            &contract("echo app-b", "echo unrelated-a"),
+            Some("verify"),
+            ExecutionOverrides::default(),
+        )
+        .expect("selected service graph");
+        let unrelated_changed = super::plan_workflow_execution_structure_with_overrides(
+            &contract("echo app-a", "echo unrelated-b"),
+            Some("verify"),
+            ExecutionOverrides::default(),
+        )
+        .expect("unrelated service graph");
+
+        assert_eq!(
+            original
+                .services
+                .iter()
+                .map(|service| service.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["app", "database"]
+        );
+        assert_ne!(original.identity, selected_changed.identity);
+        assert_eq!(original.identity, unrelated_changed.identity);
+    }
+
+    #[test]
+    fn archived_selected_graph_rederives_from_contract_and_rejects_substitution() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: archived-selected-graph
+tasks:
+  setup:
+    run: echo setup
+  verify:
+    depends_on: [setup]
+    run: echo verify
+"#,
+        )
+        .expect("contract");
+        let plan = super::plan_task_execution_structure_with_overrides(
+            &contract,
+            "verify",
+            ExecutionOverrides::default(),
+        )
+        .expect("selected graph");
+
+        super::verify_archived_run_plan(&contract, "task", "verify", &plan)
+            .expect("archived graph should re-derive");
+
+        let mut altered_graph = plan.clone();
+        altered_graph.steps[0].target_os = String::from("windows");
+        let error = super::verify_archived_run_plan(&contract, "task", "verify", &altered_graph)
+            .expect_err("altered graph content must refuse");
+        assert!(error.contains("identity does not match"), "{error}");
+
+        let changed_contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: archived-selected-graph
+tasks:
+  setup:
+    run: echo changed
+  verify:
+    depends_on: [setup]
+    run: echo verify
+"#,
+        )
+        .expect("changed selected command contract");
+        let error = super::verify_archived_run_plan(&changed_contract, "task", "verify", &plan)
+            .expect_err("selected command substitution must refuse");
+        assert!(error.contains("does not re-derive"), "{error}");
     }
 
     #[test]
@@ -65960,6 +67499,65 @@ tasks:
                 .exists(),
             "unsupported native replay must refuse before creating runner snapshot state"
         );
+    }
+
+    #[test]
+    fn strict_replay_boundary_ignores_unselected_mode_dependency() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: selected-replay-boundary
+artifacts:
+  recorded-baseline:
+    kind: replay_baseline
+    producer: record:live
+    paths: [data/baseline.json]
+    replay:
+      authority_manifest: replay/recorded-baseline.ota.json
+      consumption: read_only
+tasks:
+  record:live:
+    run: true
+  native-only:
+    run: true
+    requires_artifacts: [recorded-baseline]
+  verify:
+    run: true
+    execution:
+      default_mode: container
+      modes:
+        native:
+          depends_on: [native-only]
+        container: {}
+"#,
+        );
+
+        let container = super::prepare_selected_read_only_replay_baseline_boundary(
+            &fixture.contract,
+            "verify",
+            ExecutionOverrides {
+                backend: Some(Backend::Container),
+                ..ExecutionOverrides::default()
+            },
+            fixture.dir.path(),
+        )
+        .expect("unselected strict replay dependency must not be inspected");
+        assert!(container.is_none());
+
+        let native = super::prepare_selected_read_only_replay_baseline_boundary(
+            &fixture.contract,
+            "verify",
+            ExecutionOverrides {
+                backend: Some(Backend::Native),
+                ..ExecutionOverrides::default()
+            },
+            fixture.dir.path(),
+        );
+        assert!(matches!(
+            native,
+            Err(RunError::ReplayBaselineUnavailable { .. })
+        ));
     }
 
     #[test]

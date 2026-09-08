@@ -2421,15 +2421,35 @@ fn receipt_schema_includes_receipt_and_findings() {
     );
     assert_eq!(
         success["archive_context"]["oneOf"][1]["properties"]["kind"]["const"],
-        "execution"
+        "readiness"
     );
     assert_eq!(
-        success["archive_context"]["oneOf"][2]["properties"]["schema_version"]["const"],
+        success["archive_context"]["oneOf"][1]["properties"]["schema_version"]["const"],
+        4
+    );
+    assert_eq!(
+        success["archive_context"]["oneOf"][1]["properties"]["selected_execution_graph"]["$ref"],
+        "#/$defs/selectedExecutionGraph"
+    );
+    assert_eq!(
+        success["archive_context"]["oneOf"][3]["properties"]["schema_version"]["const"],
         2
     );
     assert_eq!(
-        success["archive_context"]["oneOf"][2]["properties"]["semantic_scope"]["$ref"],
+        success["archive_context"]["oneOf"][3]["properties"]["semantic_scope"]["$ref"],
         "#/$defs/crossingSemanticScope"
+    );
+    assert_eq!(
+        success["archive_context"]["oneOf"][4]["properties"]["selected_execution_graph"]["$ref"],
+        "#/$defs/selectedExecutionGraph"
+    );
+    assert_eq!(
+        success["archive_context"]["oneOf"][4]["properties"]["schema_version"]["const"],
+        5
+    );
+    assert_eq!(
+        success["archive_context"]["oneOf"][6]["properties"]["schema_version"]["const"],
+        4
     );
     assert_eq!(
         history["invalid_archives"]["items"]["properties"]["posture"]["enum"],

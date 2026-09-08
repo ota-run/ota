@@ -659,6 +659,10 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
+        "selected_execution_graph_identity": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
         "dependency_chain": {
           "type": "array",
           "items": { "type": "string" }

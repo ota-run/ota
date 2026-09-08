@@ -1536,6 +1536,168 @@
         },
         "order": { "type": "integer", "minimum": 0 }
       }
+    },
+    "effectPolicyRefusalArchiveContext": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version", "workflow", "roots", "invocations",
+        "skip_dependencies", "application_plans"
+      ],
+      "properties": {
+        "schema_version": { "const": 1 },
+        "workflow": { "type": "string", "minLength": 1 },
+        "roots": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/effectPolicyInvocation" }
+        },
+        "invocations": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/effectPolicyInvocation" }
+        },
+        "backend": { "enum": ["native", "container", "remote"] },
+        "lifecycle": { "enum": ["ephemeral", "persistent"] },
+        "host_port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "memory": { "type": "integer", "minimum": 1 },
+        "skip_dependencies": { "const": false },
+        "application_plans": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "./run-preview.json#/$defs/effectApplicationPlan" }
+        }
+      }
+    },
+    "selectedExecutionGraph": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version", "identity", "roots", "requested_backend", "requested_lifecycle",
+        "host_port", "memory_bytes", "skip_dependencies", "tasks", "services", "steps", "edges"
+      ],
+      "properties": {
+        "schema_version": { "const": 3 },
+        "identity": { "$ref": "#/$defs/sha256Identity" },
+        "roots": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["task", "origin", "invocation_id"],
+            "properties": {
+              "task": { "type": "string", "minLength": 1 },
+              "origin": {
+                "enum": ["requested", "workflow_prepare", "workflow_setup", "workflow_run"]
+              },
+              "invocation_id": { "type": "string", "minLength": 1 }
+            }
+          }
+        },
+        "requested_backend": {
+          "type": ["string", "null"],
+          "enum": ["native", "container", "remote", null]
+        },
+        "requested_lifecycle": {
+          "type": ["string", "null"],
+          "enum": ["persistent", "ephemeral", null]
+        },
+        "host_port": { "type": ["integer", "null"], "minimum": 1, "maximum": 65535 },
+        "memory_bytes": { "type": ["integer", "null"], "minimum": 1 },
+        "skip_dependencies": { "type": "boolean" },
+        "tasks": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "services": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "identity"],
+            "properties": {
+              "name": { "type": "string", "minLength": 1 },
+              "identity": { "$ref": "#/$defs/sha256Identity" }
+            }
+          }
+        },
+        "steps": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "invocation_id", "task", "parent", "parent_invocation_id", "origin", "role",
+              "backend", "context", "target_os", "lifecycle", "execution_kind",
+              "selected_semantics_identity", "backend_selection_source"
+            ],
+            "properties": {
+              "invocation_id": { "type": "string", "minLength": 1 },
+              "task": { "type": "string", "minLength": 1 },
+              "parent": { "type": ["string", "null"] },
+              "parent_invocation_id": { "type": ["string", "null"] },
+              "origin": {
+                "enum": ["requested", "workflow_prepare", "workflow_setup", "workflow_run"]
+              },
+              "role": {
+                "enum": [
+                  "requested", "workflow_prepare", "workflow_setup", "workflow_run",
+                  "depends_on", "aggregate_member", "after_success", "after_failure",
+                  "after_always"
+                ]
+              },
+              "backend": { "enum": ["native", "container", "remote"] },
+              "context": { "type": ["string", "null"] },
+              "target_os": { "type": "string", "minLength": 1 },
+              "lifecycle": {
+                "type": ["string", "null"],
+                "enum": ["persistent", "ephemeral", null]
+              },
+              "execution_kind": { "type": "string", "minLength": 1 },
+              "selected_semantics_identity": { "$ref": "#/$defs/sha256Identity" },
+              "backend_selection_source": { "type": "string", "minLength": 1 }
+            }
+          }
+        },
+        "edges": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "source", "destination", "source_invocation_id",
+              "destination_invocation_id", "relation"
+            ],
+            "properties": {
+              "source": { "type": "string", "minLength": 1 },
+              "destination": { "type": "string", "minLength": 1 },
+              "source_invocation_id": { "type": "string", "minLength": 1 },
+              "destination_invocation_id": { "type": "string", "minLength": 1 },
+              "relation": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["kind"],
+                "properties": {
+                  "kind": {
+                    "enum": [
+                      "requested", "depends_on", "aggregate_member", "after_success",
+                      "after_failure", "after_always"
+                    ]
+                  },
+                  "parent": { "type": "string", "minLength": 1 }
+                },
+                "allOf": [
+                  {
+                    "if": { "properties": { "kind": { "const": "requested" } } },
+                    "then": { "not": { "required": ["parent"] } },
+                    "else": { "required": ["parent"] }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
     }
   },
   "oneOf": [
@@ -1630,6 +1792,21 @@
             {
               "type": "object",
               "additionalProperties": false,
+              "required": [
+                "schema_version", "kind", "lane_kind", "lane_name",
+                "selected_execution_graph"
+              ],
+              "properties": {
+                "schema_version": { "const": 4 },
+                "kind": { "const": "readiness" },
+                "lane_kind": { "const": "workflow" },
+                "lane_name": { "type": "string", "minLength": 1 },
+                "selected_execution_graph": { "$ref": "#/$defs/selectedExecutionGraph" }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
               "required": ["schema_version", "kind", "lane_kind", "lane_name"],
               "properties": {
                 "schema_version": { "const": 1 },
@@ -1654,6 +1831,22 @@
               "type": "object",
               "additionalProperties": false,
               "required": [
+                "schema_version", "kind", "lane_kind", "lane_name",
+                "selected_execution_graph"
+              ],
+              "properties": {
+                "schema_version": { "const": 5 },
+                "kind": { "const": "execution" },
+                "lane_kind": { "enum": ["task", "workflow"] },
+                "lane_name": { "type": "string", "minLength": 1 },
+                "semantic_scope": { "$ref": "#/$defs/crossingSemanticScope" },
+                "selected_execution_graph": { "$ref": "#/$defs/selectedExecutionGraph" }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
                 "schema_version", "kind", "lane_kind", "lane_name", "effect_policy_refusal"
               ],
               "properties": {
@@ -1662,37 +1855,26 @@
                 "lane_kind": { "const": "workflow" },
                 "lane_name": { "type": "string", "minLength": 1 },
                 "effect_policy_refusal": {
-                  "type": "object",
-                  "additionalProperties": false,
-                  "required": [
-                    "schema_version", "workflow", "roots", "invocations",
-                    "skip_dependencies", "application_plans"
-                  ],
-                  "properties": {
-                    "schema_version": { "const": 1 },
-                    "workflow": { "type": "string", "minLength": 1 },
-                    "roots": {
-                      "type": "array",
-                      "minItems": 1,
-                      "items": { "$ref": "#/$defs/effectPolicyInvocation" }
-                    },
-                    "invocations": {
-                      "type": "array",
-                      "minItems": 1,
-                      "items": { "$ref": "#/$defs/effectPolicyInvocation" }
-                    },
-                    "backend": { "enum": ["native", "container", "remote"] },
-                    "lifecycle": { "enum": ["ephemeral", "persistent"] },
-                    "host_port": { "type": "integer", "minimum": 1, "maximum": 65535 },
-                    "memory": { "type": "integer", "minimum": 1 },
-                    "skip_dependencies": { "const": false },
-                    "application_plans": {
-                      "type": "array",
-                      "minItems": 1,
-                      "items": { "$ref": "./run-preview.json#/$defs/effectApplicationPlan" }
-                    }
-                  }
+                  "$ref": "#/$defs/effectPolicyRefusalArchiveContext"
                 }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "schema_version", "kind", "lane_kind", "lane_name",
+                "effect_policy_refusal", "selected_execution_graph"
+              ],
+              "properties": {
+                "schema_version": { "const": 4 },
+                "kind": { "const": "effect_policy_refusal" },
+                "lane_kind": { "const": "workflow" },
+                "lane_name": { "type": "string", "minLength": 1 },
+                "effect_policy_refusal": {
+                  "$ref": "#/$defs/effectPolicyRefusalArchiveContext"
+                },
+                "selected_execution_graph": { "$ref": "#/$defs/selectedExecutionGraph" }
               }
             }
           ]

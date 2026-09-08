@@ -414,3 +414,12 @@
   useful for real examples but cannot substitute for deterministic test-fixture lifecycle control.
 - Rule: When a hosted proof regression depends on auxiliary processes, keep their lifecycle inside
   the test harness and prove readiness before exercising the production reconciliation boundary.
+- Pattern: Aggregate discovery used an all-branch dependency closure while runtime execution
+  selected mode-specific dependencies, causing a valid container aggregate to inherit an
+  unselected native prerequisite and refuse before execution.
+- Correction: Derive execution-facing discovery, admission, Doctor, preview, policy, projection,
+  receipt, and archive truth from one backend-selected execution graph. Keep the all-branch closure
+  only for structural validation and authoring diagnostics.
+- Rule: Never repair a selected-mode inconsistency in one consumer. Fix the canonical planner,
+  identity-bind ordered roots, invocation occurrences, and edge endpoints, then propagate that
+  graph to every execution-facing surface and pressure both native and container paths.

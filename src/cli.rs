@@ -50273,44 +50273,66 @@ tasks:
     }
 
     fn write_remote_history_receipt(fixture: &ContractFixture) {
-        let (snapshot_ref, snapshot_hash) = write_receipt_snapshot(
-            fixture,
-            "remote-history",
-            serde_json::json!({
-                "version": 1,
-                "project": {"name": "receipt-demo"}
-            }),
-        );
+        let snapshot = serde_json::json!({
+            "version": 1,
+            "project": {"name": "receipt-demo"}
+        });
+        let contract: crate::schema::Contract =
+            serde_json::from_value(snapshot.clone()).expect("contract snapshot");
+        let selected_execution_graph =
+            crate::runner::plan_workflow_execution_structure_with_overrides(
+                &contract,
+                None,
+                crate::runner::ExecutionOverrides {
+                    backend: Some(crate::schema::Backend::Remote),
+                    lifecycle: Some(crate::schema::Lifecycle::Persistent),
+                    ..crate::runner::ExecutionOverrides::default()
+                },
+            )
+            .expect("remote selected execution graph");
+        let (snapshot_ref, snapshot_hash) =
+            write_receipt_snapshot(fixture, "remote-history", snapshot);
+        let selected_execution_graph_identity = selected_execution_graph.identity.clone();
+        let archive = serde_json::json!({
+            "ok": false,
+            "mode": "receipt",
+            "summary": {
+                "error_count": 1,
+                "warn_count": 0,
+                "info_count": 0,
+                "step_count": 2
+            },
+            "archive_context": {
+                "schema_version": 5,
+                "kind": "execution",
+                "lane_kind": "workflow",
+                "lane_name": "default",
+                "selected_execution_graph": selected_execution_graph
+            },
+            "receipt": {
+                "scope": "repo",
+                "contract": "./ota.yaml",
+                "contract_snapshot_ref": snapshot_ref,
+                "contract_snapshot_hash": snapshot_hash,
+                "status": "interrupted",
+                "backend": "remote",
+                "target": "sandbox-dev",
+                "provider": "daytona",
+                "context": "remote_app",
+                "lifecycle": "persistent",
+                "cwd": "/workspace/app",
+                "evaluated_inputs": [{
+                    "id": "execution_graph:selected",
+                    "kind": "selected_execution_graph",
+                    "input_class": "contract_truth",
+                    "identity": selected_execution_graph_identity
+                }]
+            },
+            "findings": []
+        });
         fixture.write(
             ".ota/receipts/repo-receipt-20260414-183513-599Z.json",
-            &format!(
-                r#"
-{{
-  "ok": false,
-  "mode": "receipt",
-  "summary": {{
-    "error_count": 1,
-    "warn_count": 0,
-    "info_count": 0,
-    "step_count": 2
-  }},
-  "receipt": {{
-    "scope": "repo",
-    "contract": "./ota.yaml",
-    "contract_snapshot_ref": "{snapshot_ref}",
-    "contract_snapshot_hash": "{snapshot_hash}",
-    "status": "interrupted",
-    "backend": "remote",
-    "target": "sandbox-dev",
-    "provider": "daytona",
-    "context": "remote_app",
-    "lifecycle": "persistent",
-    "cwd": "/workspace/app"
-  }},
-  "findings": []
-}}
-"#
-            ),
+            &serde_json::to_string_pretty(&archive).expect("remote history archive"),
         );
     }
 

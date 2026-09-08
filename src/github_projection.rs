@@ -83,7 +83,8 @@ pub(crate) fn render_github_projection(
     mode: &str,
     target_os: &str,
 ) -> Result<GitHubProjection, String> {
-    let projection = build_ci_projection(contract, workflow_name, mode, target_os)?;
+    let projection = build_ci_projection(contract, workflow_name, mode, target_os)
+        .map_err(|error| error.to_string())?;
     render_github_projection_from_projection(projection, runner)
 }
 

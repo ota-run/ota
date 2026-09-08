@@ -28,6 +28,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::policy_pack::{OrgPolicyPack, PolicyReplayInputIdentityRule};
 use crate::replay_inputs::sha256_identity;
+use crate::runner::{
+    ExecutionOverrides, selected_task_execution_closure_names,
+    selected_workflow_execution_closure_names,
+};
 use crate::schema::Contract;
 use crate::semantic_identity::semantic_contract_identity;
 
@@ -94,13 +98,26 @@ pub(crate) struct ReplayInputPolicyEvaluation {
 
 pub(crate) type ReplayInputPolicyObservations = BTreeMap<String, ReplayInputPolicyInputRecord>;
 
+#[cfg(test)]
 pub(crate) fn observe_replay_inputs(
     contract: &Contract,
     contract_root: &Path,
     roots: impl IntoIterator<Item = String>,
 ) -> ReplayInputPolicyObservations {
+    observe_replay_inputs_for_selected_closure(
+        contract,
+        contract_root,
+        contract.task_execution_closure_names(roots),
+    )
+}
+
+pub(crate) fn observe_replay_inputs_for_selected_closure(
+    contract: &Contract,
+    contract_root: &Path,
+    selected_closure: impl IntoIterator<Item = String>,
+) -> ReplayInputPolicyObservations {
     let mut observations = BTreeMap::new();
-    for task_name in contract.task_execution_closure_names(roots) {
+    for task_name in selected_closure {
         let Some(task) = contract.tasks.get(&task_name) else {
             continue;
         };
@@ -137,6 +154,7 @@ pub(crate) fn observe_replay_inputs(
     observations
 }
 
+#[cfg(test)]
 pub(crate) fn evaluate_replay_input_policy(
     contract: &Contract,
     contract_root: &Path,
@@ -151,6 +169,7 @@ pub(crate) fn evaluate_replay_input_policy(
     evaluate_replay_input_policy_with_observations(contract, policy, subject, &observations)
 }
 
+#[cfg(test)]
 pub(crate) fn evaluate_replay_input_policy_with_observations(
     contract: &Contract,
     policy: &OrgPolicyPack,
@@ -173,7 +192,41 @@ pub(crate) fn evaluate_replay_input_policy_for_closure_with_observations(
     selected_closure: Vec<String>,
     observations: &ReplayInputPolicyObservations,
 ) -> ReplayInputPolicyEvaluation {
-    let selected_closure = contract.task_execution_closure_names(selected_closure);
+    evaluate_replay_input_policy_for_selected_graph_with_observations(
+        contract,
+        policy,
+        subject,
+        selected_closure,
+        None,
+        observations,
+    )
+}
+
+pub(crate) fn evaluate_replay_input_policy_for_plan_with_observations(
+    contract: &Contract,
+    policy: &OrgPolicyPack,
+    subject: ReplayInputPolicySubject<'_>,
+    selected_plan: &crate::runner::RunPlan,
+    observations: &ReplayInputPolicyObservations,
+) -> ReplayInputPolicyEvaluation {
+    evaluate_replay_input_policy_for_selected_graph_with_observations(
+        contract,
+        policy,
+        subject,
+        selected_plan.selected_task_names(),
+        Some(selected_plan),
+        observations,
+    )
+}
+
+fn evaluate_replay_input_policy_for_selected_graph_with_observations(
+    contract: &Contract,
+    policy: &OrgPolicyPack,
+    subject: ReplayInputPolicySubject<'_>,
+    selected_closure: Vec<String>,
+    selected_plan: Option<&crate::runner::RunPlan>,
+    observations: &ReplayInputPolicyObservations,
+) -> ReplayInputPolicyEvaluation {
     let subject_record = subject_record(subject);
     let policy_identity =
         semantic_contract_identity(policy).expect("org policy pack serialization must succeed");
@@ -198,7 +251,16 @@ pub(crate) fn evaluate_replay_input_policy_for_closure_with_observations(
                 rule_identity("task", name),
                 ReplayInputPolicySubject::Task(name),
                 rule,
-                contract.task_execution_closure_names([name.clone()]),
+                selected_plan.map_or_else(
+                    || {
+                        contract
+                            .task_execution_closure_names([name.clone()])
+                            .into_iter()
+                            .filter(|task| selected_names.contains(task))
+                            .collect()
+                    },
+                    |plan| plan.selected_task_scope_names(name),
+                ),
             ));
         }
     }
@@ -386,6 +448,7 @@ fn aggregate_decision(rules: &[ReplayInputPolicyRuleRecord]) -> &'static str {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn selected_replay_input_policy_closure(
     contract: &Contract,
     subject: ReplayInputPolicySubject<'_>,
@@ -397,6 +460,23 @@ pub(crate) fn selected_replay_input_policy_closure(
         ReplayInputPolicySubject::Workflow(name) => contract.task_execution_closure_names(
             contract.selected_workflow_task_closure_names(Some(name)),
         ),
+    }
+}
+
+pub(crate) fn selected_replay_input_policy_closure_with_overrides(
+    contract: &Contract,
+    subject: ReplayInputPolicySubject<'_>,
+    overrides: ExecutionOverrides,
+) -> Result<Vec<String>, String> {
+    match subject {
+        ReplayInputPolicySubject::Task(name) => {
+            selected_task_execution_closure_names(contract, name, overrides)
+                .map_err(|error| error.to_string())
+        }
+        ReplayInputPolicySubject::Workflow(name) => {
+            selected_workflow_execution_closure_names(contract, Some(name), overrides)
+                .map_err(|error| error.to_string())
+        }
     }
 }
 
@@ -470,10 +550,19 @@ mod tests {
 
     use super::{
         ReplayInputPolicySubject, evaluate_replay_input_policy,
+        evaluate_replay_input_policy_for_closure_with_observations,
+        evaluate_replay_input_policy_for_plan_with_observations,
         evaluate_replay_input_policy_with_observations, observe_replay_inputs,
+        observe_replay_inputs_for_selected_closure,
+        selected_replay_input_policy_closure_with_overrides,
     };
     use crate::policy_pack::OrgPolicyPack;
     use crate::replay_inputs::sha256_identity;
+    use crate::runner::{
+        ExecutionOverrides, plan_workflow_execution_structure_with_additional_roots,
+        plan_workflow_execution_structure_with_overrides,
+    };
+    use crate::schema::Backend;
     use crate::schema::Contract;
 
     fn contract(yaml: &str) -> Contract {
@@ -699,6 +788,155 @@ mod tests {
         assert!(!result.required);
         assert_eq!(result.decision, "allow");
         assert_eq!(result.coverage, "not_required");
+    }
+
+    #[test]
+    fn mode_unselected_dependency_policy_does_not_govern_selected_execution() {
+        let repo = tempdir().unwrap();
+        let contract = contract(
+            "version: 1\nproject:\n  name: test\ntasks:\n  native-input:\n    command:\n      exe: true\n  verify:\n    command:\n      exe: true\n    execution:\n      default_mode: container\n      modes:\n        native:\n          depends_on: [native-input]\n        container: {}\n",
+        );
+        let policy = policy(
+            "policies:\n  replay_inputs:\n    identity:\n      tasks:\n        native-input:\n          on_insufficient: deny\n",
+        );
+        let subject = ReplayInputPolicySubject::Task("verify");
+        let container_overrides = ExecutionOverrides {
+            backend: Some(Backend::Container),
+            ..ExecutionOverrides::default()
+        };
+        let container_closure = selected_replay_input_policy_closure_with_overrides(
+            &contract,
+            subject,
+            container_overrides,
+        )
+        .expect("container closure");
+        let container_observations = observe_replay_inputs_for_selected_closure(
+            &contract,
+            repo.path(),
+            container_closure.clone(),
+        );
+        let container = evaluate_replay_input_policy_for_closure_with_observations(
+            &contract,
+            &policy,
+            subject,
+            container_closure,
+            &container_observations,
+        );
+        assert_eq!(container.decision, "allow");
+        assert!(!container.required);
+
+        let native_closure = selected_replay_input_policy_closure_with_overrides(
+            &contract,
+            subject,
+            ExecutionOverrides {
+                backend: Some(Backend::Native),
+                ..ExecutionOverrides::default()
+            },
+        )
+        .expect("native closure");
+        let native_observations = observe_replay_inputs_for_selected_closure(
+            &contract,
+            repo.path(),
+            native_closure.clone(),
+        );
+        let native = evaluate_replay_input_policy_for_closure_with_observations(
+            &contract,
+            &policy,
+            subject,
+            native_closure,
+            &native_observations,
+        );
+        assert_eq!(native.decision, "deny");
+        assert!(native.required);
+    }
+
+    #[test]
+    fn task_rule_scope_follows_selected_edges_when_dependency_is_another_root() {
+        let repo = tempdir().unwrap();
+        fs::write(repo.path().join("pinned.txt"), "frozen").unwrap();
+        fs::write(repo.path().join("unpinned.txt"), "ambient").unwrap();
+        let identity = sha256_identity(b"frozen");
+        let contract = contract(&format!(
+            "version: 1\nproject:\n  name: test\ntasks:\n  verify:\n    replay_inputs:\n      - id: pinned\n        kind: static_file\n        path: pinned.txt\n        expected_identity: {identity}\n    execution:\n      default_mode: container\n      modes:\n        native:\n          depends_on: [publish]\n        container: {{}}\n    command:\n      exe: true\n  publish:\n    replay_inputs:\n      - id: unpinned\n        kind: static_file\n        path: unpinned.txt\n    command:\n      exe: true\nworkflows:\n  default: ci\n  ci:\n    setup:\n      task: verify\n    run:\n      task: publish\n"
+        ));
+        let policy = policy(
+            "policies:\n  replay_inputs:\n    identity:\n      tasks:\n        verify:\n          on_insufficient: deny\n",
+        );
+        let plan = plan_workflow_execution_structure_with_overrides(
+            &contract,
+            Some("ci"),
+            ExecutionOverrides {
+                backend: Some(Backend::Container),
+                ..ExecutionOverrides::default()
+            },
+        )
+        .expect("selected workflow graph");
+        let observations = observe_replay_inputs_for_selected_closure(
+            &contract,
+            repo.path(),
+            plan.selected_task_names(),
+        );
+
+        let result = evaluate_replay_input_policy_for_plan_with_observations(
+            &contract,
+            &policy,
+            ReplayInputPolicySubject::Workflow("ci"),
+            &plan,
+            &observations,
+        );
+
+        assert_eq!(result.decision, "allow");
+        assert_eq!(result.applicable_rules[0].closure_tasks, vec!["verify"]);
+        assert_eq!(result.applicable_rules[0].input_keys.len(), 1);
+        assert_eq!(result.inputs.len(), 1);
+        assert_eq!(result.inputs[0].task, "verify");
+    }
+
+    #[test]
+    fn task_rule_scope_follows_selected_edges_when_proof_root_reuses_dependency_name() {
+        let repo = tempdir().unwrap();
+        fs::write(repo.path().join("pinned.txt"), "frozen").unwrap();
+        fs::write(repo.path().join("observer.txt"), "ambient").unwrap();
+        let identity = sha256_identity(b"frozen");
+        let contract = contract(&format!(
+            "version: 1\nproject:\n  name: test\ntasks:\n  verify:\n    replay_inputs:\n      - id: pinned\n        kind: static_file\n        path: pinned.txt\n        expected_identity: {identity}\n    execution:\n      default_mode: container\n      modes:\n        native:\n          depends_on: [observer]\n        container: {{}}\n    command:\n      exe: true\n  observer:\n    replay_inputs:\n      - id: observer\n        kind: static_file\n        path: observer.txt\n    command:\n      exe: true\nworkflows:\n  default: ci\n  ci:\n    run:\n      task: verify\n"
+        ));
+        let policy = policy(
+            "policies:\n  replay_inputs:\n    identity:\n      tasks:\n        verify:\n          on_insufficient: deny\n",
+        );
+        let plan = plan_workflow_execution_structure_with_additional_roots(
+            &contract,
+            Some("ci"),
+            ExecutionOverrides {
+                backend: Some(Backend::Container),
+                ..ExecutionOverrides::default()
+            },
+            &[(String::from("proof_observer"), String::from("observer"))],
+        )
+        .expect("selected proof graph");
+        let observations = observe_replay_inputs_for_selected_closure(
+            &contract,
+            repo.path(),
+            plan.selected_task_names(),
+        );
+
+        let result = evaluate_replay_input_policy_for_plan_with_observations(
+            &contract,
+            &policy,
+            ReplayInputPolicySubject::Workflow("ci"),
+            &plan,
+            &observations,
+        );
+
+        assert_eq!(result.decision, "allow");
+        assert_eq!(result.applicable_rules[0].closure_tasks, vec!["verify"]);
+        assert_eq!(result.inputs.len(), 1);
+        assert_eq!(result.inputs[0].task, "verify");
+        assert!(
+            plan.roots
+                .iter()
+                .any(|root| { root.task == "observer" && root.origin == "proof_observer" })
+        );
     }
 
     #[test]

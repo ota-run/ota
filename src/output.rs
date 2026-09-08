@@ -35,7 +35,8 @@ use crate::runner::{
     SharedLocalBackendEvidence, TaskTargetResolutionEvidence, blocking_declared_env_source_label,
     effective_task_execution, env_resolution_source_label, load_declared_env_sources,
     load_policy_env_overlay, orchestrator_execution_preview, resolve_declared_env_source_value,
-    resolve_execution_backend_with_contract_path, target_os_for_declared_backend,
+    resolve_execution_backend_with_contract_path, selected_workflow_required_service_names,
+    target_os_for_declared_backend, task_supports_execution_backend,
 };
 use crate::schema::{
     AgentConfig, Backend, Contract, ExecutionContext, ExtensionSpec, GeneratedArtifactSpec,
@@ -1211,6 +1212,8 @@ pub struct ExecutionPlanFailure<'a> {
 
 #[derive(Debug, Serialize, Default, Clone, PartialEq, Eq)]
 pub struct RunPreviewPlan {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub selected_execution_graph_identity: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub dependency_chain: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -2148,13 +2151,35 @@ pub struct ExecutionSummary<'a> {
 
 impl<'a> ExecutionSummary<'a> {
     pub fn from_contract(contract: &'a Contract, contract_path: &std::path::Path) -> Option<Self> {
-        Self::from_contract_with_required_env_names(contract, contract_path, None)
+        Self::from_contract_with_env_scope(contract, contract_path, None, false)
     }
 
     pub fn from_contract_with_required_env_names(
         contract: &'a Contract,
         contract_path: &std::path::Path,
         selected_required_env_names: Option<&BTreeSet<String>>,
+    ) -> Option<Self> {
+        Self::from_contract_with_env_scope(
+            contract,
+            contract_path,
+            selected_required_env_names,
+            false,
+        )
+    }
+
+    pub fn from_contract_with_selected_env_names(
+        contract: &'a Contract,
+        contract_path: &std::path::Path,
+        selected_env_names: &BTreeSet<String>,
+    ) -> Option<Self> {
+        Self::from_contract_with_env_scope(contract, contract_path, Some(selected_env_names), true)
+    }
+
+    fn from_contract_with_env_scope(
+        contract: &'a Contract,
+        contract_path: &std::path::Path,
+        selected_required_env_names: Option<&BTreeSet<String>>,
+        selected_only: bool,
     ) -> Option<Self> {
         let execution = contract.execution.as_ref()?;
         let (policy_env, policy_label, policy_issue) = match load_policy_env_overlay(contract_path)
@@ -2166,7 +2191,12 @@ impl<'a> ExecutionSummary<'a> {
                 Some(String::from("invalid policy pack")),
             ),
         };
-        let declared_sources = load_declared_env_sources(contract, contract_path);
+        let declared_sources =
+            if selected_only && selected_required_env_names.is_some_and(BTreeSet::is_empty) {
+                Vec::new()
+            } else {
+                load_declared_env_sources(contract, contract_path)
+            };
 
         Some(Self {
             default_context: execution.default_context.as_deref(),
@@ -2203,6 +2233,11 @@ impl<'a> ExecutionSummary<'a> {
             env: contract
                 .env
                 .iter()
+                .filter(|(name, _)| {
+                    !selected_only
+                        || selected_required_env_names
+                            .is_some_and(|selected| selected.contains(*name))
+                })
                 .map(|(name, requirement)| ExecutionEnvSummary {
                     name,
                     required: requirement.required
@@ -2712,13 +2747,16 @@ pub struct ReceiptArchiveContext {
     pub lane_kind: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub lane_name: Option<String>,
-    /// V2 execution archives carry the canonical crossing scope used to select the exact lane.
+    /// Authority-bearing execution archives carry the canonical crossing scope for the exact lane.
     /// History re-derives this from the archived contract before accepting crossing evidence.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) semantic_scope: Option<crate::crossing::CrossingSemanticScope>,
     /// V12 negative archives retain the exact selected closure needed to re-derive the refusal.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) effect_policy_refusal: Option<EffectPolicyRefusalArchiveContext>,
+    /// Canonical backend-selected graph retained for archive-only re-derivation.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) selected_execution_graph: Option<crate::runner::RunPlan>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
@@ -3804,6 +3842,8 @@ pub struct UpPreviewExecution {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct UpPreviewPlan {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub selected_execution_graph_identity: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub actions: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -4538,8 +4578,12 @@ impl<'a> WorkflowSummary<'a> {
             declared_safe_for_agent: workflow_safety.declared_safe,
             effective_safe_for_agent: workflow_safety.effective_safe,
             unsafe_closure_tasks: workflow_safety.unsafe_closure_tasks,
-            required_services: contract
-                .selected_workflow_required_service_names(Some(workflow_name)),
+            required_services: selected_workflow_required_service_names(
+                contract,
+                Some(workflow_name),
+                ExecutionOverrides::default(),
+            )
+            .unwrap_or_default(),
             readiness_checks: workflow.readiness.checks.clone(),
             readiness_probes: workflow.readiness.probes.clone(),
             readiness_surfaces: workflow.readiness.surfaces.clone(),
@@ -5192,23 +5236,8 @@ impl<'a> TaskSummary<'a> {
                 ]
                 .into_iter()
                 .filter_map(|(mode, backend)| {
-                    let concrete_members = contract
-                        .task_dependency_closure_names([name.to_string()])
-                        .into_iter()
-                        .filter_map(|member_name| contract.tasks.get(member_name.as_str()))
-                        // Aggregate tasks carry no executable body. Their runnable mode is the
-                        // intersection of the concrete member-task closure.
-                        .filter(|member| member.aggregate.is_none())
-                        .collect::<Vec<_>>();
-                    let supported = !concrete_members.is_empty()
-                        && concrete_members.iter().all(|member| {
-                            member.supports_execution_backend(
-                                contract.execution.as_ref(),
-                                backend,
-                                current_os,
-                            ) && contract.task_active_for_backend_on_os(member, backend, current_os)
-                        });
-                    supported.then_some(mode)
+                    task_supports_execution_backend(contract, name, backend, current_os)
+                        .then_some(mode)
                 })
                 .collect::<Vec<_>>()
             })
@@ -7955,6 +7984,84 @@ tasks:
         );
         assert!(native.human.command.is_none());
         assert!(native.agent.command.is_none());
+    }
+
+    #[test]
+    fn aggregate_task_usage_ignores_dependencies_from_unselected_mode_branches() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: container
+  contexts:
+    host:
+      backend: native
+    app:
+      backend: container
+      container:
+        image: oven/bun:1.2
+tasks:
+  setup:env:local:
+    context: host
+    command:
+      exe: cp
+      args: [.env.example, .env.local]
+  setup:
+    execution:
+      default_mode: container
+      modes:
+        native:
+          context: host
+          depends_on: [setup:env:local]
+          command:
+            exe: bun
+            args: [install]
+        container:
+          context: app
+          command:
+            exe: bun
+            args: [install]
+  test:
+    depends_on: [setup]
+    execution:
+      default_mode: container
+      modes:
+        native:
+          context: host
+          command:
+            exe: bun
+            args: [test]
+        container:
+          context: app
+          command:
+            exe: bun
+            args: [test]
+  ci:
+    aggregate:
+      tasks: [test]
+"#,
+        )
+        .expect("contract should parse");
+
+        let summary = super::TaskSummary::from_spec(
+            "ci",
+            contract.tasks.get("ci").expect("ci task should exist"),
+            "linux",
+            &contract,
+        );
+
+        for mode_name in ["container", "native"] {
+            let mode = summary
+                .usage
+                .modes
+                .iter()
+                .find(|mode| mode.mode == mode_name)
+                .expect("selected mode should be rendered");
+            assert_eq!(mode.availability, super::LaneUseModeAvailability::Supported);
+        }
     }
 
     #[test]

@@ -394,6 +394,23 @@ at Core `9d6696f02b939e9366cffe4bd6b7121ede89d822`, and the completion handoff i
 `0d5bc93b`. Independent review found no remaining material issue, and Core `ad14ae8b` committed and
 activated this amendment. Only the exact boundaries below are authorized.
 
+#### Canonical Backend-Selected Execution Graph Correctness Amendment (Active 2026-09-08)
+
+Discord contract pressure proved that aggregate mode eligibility can currently consume
+`all_depends_on` inventory truth while the runner executes a backend-selected dependency graph. A
+native-only dependency from an unselected mode branch can therefore make a valid container
+aggregate appear unavailable. V12.1 admission already depends on selected execution-graph truth,
+so this is an active correctness dependency, not a new secret-delivery capability.
+
+This amendment authorizes only the aggregate mode-eligibility repair defined in the
+[execution-contract follow-on plan](../execution-contract-follow-ons/plan.md): reuse the existing
+runner planner as the canonical derivation; preserve all-branch inventory for structural
+validation; make execution-facing consumers use the selected graph; bind ordered selected graph
+semantics into current evidence; retain unreconstructable historical evidence as
+`legacy_unverified`; and prove the exact Discord native/container divergence without changing its
+contract first. It does not authorize another resolver, mixed-backend aggregate execution, new
+contract syntax, secret delivery, provider contact, or broader Step 7 claims.
+
 The first executable target is narrower than generic GitHub Actions: `linux/x86_64`, native
 execution, a transient selected recipient process tree, and an administrator-controlled self-hosted
 runner with a protected launch boundary. GitHub-hosted runners, repository-provisioned runners,

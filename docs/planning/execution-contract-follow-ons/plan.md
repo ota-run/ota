@@ -24,8 +24,9 @@
 
 # Cross-Cutting Plan: Execution Contract Follow-Ons
 
-Status: planned and inactive. This register does not activate an implementation slice, change
-released behavior, delay the Eris adoption PR, or interrupt active V12.1 secret-delivery work.
+Status: mixed. Aggregate mode eligibility is active as a bounded V12.1 correctness dependency;
+the other registered follow-ons remain planned and inactive. This register does not otherwise
+change released behavior, delay the Eris adoption PR, or widen V12.1 secret-delivery scope.
 
 ## Purpose
 
@@ -49,9 +50,12 @@ active version.
 Each sub-slice is independently activatable and closable. An active version plan must name the
 sub-slice before implementation begins. Activating one does not activate the others.
 
-V12.1 remains the only active product version. None of these follow-ons may enter V12.1 merely
-because Eris exposed them. A follow-on may be selected only at a between-batch boundary or by a
-later version after the current V12.1 step is committed, reconciled, and pressure-ready.
+V12.1 remains the only active product version. A follow-on does not enter V12.1 merely because
+pressure exposed it. Aggregate mode eligibility is the sole exception recorded here because the
+Discord failure proved that V12.1 admission already consumes contradictory selected-graph truth;
+the repair is activated at a between-batch boundary without widening secret-delivery scope. Every
+other follow-on may be selected only at a later between-batch boundary or by a later version after
+the current V12.1 step is committed, reconciled, and pressure-ready.
 
 Activation requires:
 
@@ -102,6 +106,11 @@ retains current `cargo fetch` behavior. When true, Core must:
 
 ## B. Aggregate Mode Eligibility
 
+Status: active. Discord contract pressure proved that the current all-branch closure can reject a
+valid container aggregate because a native-only mode branch declares an unselected dependency.
+This is a correctness defect in the selected execution graph already consumed by V12.1 admission,
+not authorization for an independent feature surface.
+
 ### Problem
 
 An aggregate has no executable body of its own. Its usable modes depend on every selected member,
@@ -110,8 +119,24 @@ or selecting different modes for hidden members would make the invocation identi
 
 ### Canonical owner
 
-Execution planning owns aggregate mode eligibility. It is derived from the exact selected closure,
-not declared as a second list on the aggregate and not inferred from unrelated repository contexts.
+The existing execution planner owns aggregate mode eligibility. Core must not add a parallel
+closure resolver. It is derived from one canonical backend-selected execution graph, not declared
+as a second list on the aggregate and not inferred from unrelated repository contexts.
+
+Keep two concepts separate:
+
+- the selected graph carries the requested root, requested and effective backend, target OS,
+  requested lifecycle, host-port and memory overrides, ordered executable edges, possible outcome
+  hooks, occurrences, roles, invocation origins, selected contexts, a per-occurrence digest of
+  the resolved executable body, requirements, environment, runtime, effects, and task resources,
+  plus the selected workflow-required service closure and each service definition identity;
+- the inventory closure carries every authored branch and remains available only to structural
+  validation, authoring diagnostics, and contract inspection.
+
+Execution-facing discovery, Doctor, dry-run, agent admission, CI projection, effects, replay-input
+policy, sandbox policy, proof, execution, receipts, and archive verification must consume or
+re-derive the selected graph. Structural validation continues to use `all_depends_on` so invalid
+unselected branches do not escape contract validation.
 
 Core should publish, for each requested mode:
 
@@ -120,9 +145,20 @@ Core should publish, for each requested mode:
 - the intersection that makes the complete aggregate callable; and
 - a stable blocker identifying every member that prevents the requested mode.
 
-One aggregate invocation uses one mode. Per-member mixed execution remains unsupported unless a
-future workflow model explicitly binds every transition, runtime, artifact handoff, and cleanup
+One aggregate invocation uses one mode. Existing child inheritance and override rules determine
+the selected child backend, but aggregate admission refuses when any concrete selected node
+resolves to a different backend. Per-member mixed execution remains unsupported unless a future
+workflow model explicitly binds every transition, runtime, artifact handoff, and cleanup
 obligation. Ota must not silently split one aggregate across host and container execution.
+
+Ordered dependency and aggregate-member edges are semantic. Reordering them changes graph
+identity. Only genuinely unordered sets may normalize without changing identity. Possible hooks
+must be admitted before execution because their outcome is not yet known; receipts record only the
+hooks that actually execute.
+
+Historical artifacts that do not retain enough selected-graph truth remain structurally
+inspectable as `legacy_unverified`. Core must not reinterpret an old all-branch identity as the new
+selected graph or silently declare it a match.
 
 ### Acceptance bar
 
@@ -130,8 +166,21 @@ obligation. Ota must not silently split one aggregate across host and container 
 - one unavailable member blocks the complete aggregate before setup or child execution;
 - dependencies, hooks, repeated roles, variants, overlays, and generated instances participate;
 - reordering or omitting a member changes or invalidates the execution graph identity;
+- changing a selected mode-specific edge changes the graph identity while an unselected branch
+  does not contaminate that invocation;
+- changing selected executable semantics or a requested lifecycle, host-port, or memory override
+  changes the graph identity, while an unselected mode branch remains identity-neutral;
 - task, workflow, dry-run, proof, CI projection, and agent-safe listings agree; and
-- pressure includes one repository with a portable subset and a larger native-only aggregate.
+- selected execution and dry-run environment resolution do not read or report optional env sources
+  owned only by an unselected mode branch;
+- successful receipts and Doctor reports do not reopen unselected env sources;
+- per-task replay policy follows selected occurrence edges when another workflow or proof root
+  independently selects the same task name;
+- workflow summaries include only services required by the selected mode closure;
+- prior artifacts without reconstructable selected-graph truth remain `legacy_unverified`; and
+- pressure includes the Discord bot fixture proving container CI without `.env.local` or Discord
+  credentials, native CI with its selected env preparation, and unchanged contributor workflow
+  preparation.
 
 ## C. Mixed-Mode Preview Selection
 

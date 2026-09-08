@@ -262,6 +262,10 @@ pub(crate) struct SandboxExecutionSelection {
     pub backend: Option<Backend>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub lifecycle: Option<Lifecycle>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub host_port: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memory: Option<u64>,
     pub skip_dependencies: bool,
 }
 
@@ -1248,6 +1252,8 @@ fn rederived_oci_local_application_plan(
         execution_selection: SandboxExecutionSelection {
             backend: overrides.backend,
             lifecycle: overrides.lifecycle,
+            host_port: overrides.host_port,
+            memory: overrides.memory,
             skip_dependencies: overrides.skip_deps,
         },
         canonical_policy_identity: canonical.identity.clone(),
@@ -2841,6 +2847,8 @@ tasks:
             execution_selection: SandboxExecutionSelection {
                 backend: Some(Backend::Container),
                 lifecycle: Some(Lifecycle::Ephemeral),
+                host_port: None,
+                memory: None,
                 skip_dependencies: false,
             },
             canonical_policy_identity: semantic_contract_identity(&"canonical").unwrap(),
@@ -2918,6 +2926,8 @@ tasks:
             execution_selection: SandboxExecutionSelection {
                 backend: Some(Backend::Container),
                 lifecycle: Some(Lifecycle::Ephemeral),
+                host_port: None,
+                memory: None,
                 skip_dependencies: false,
             },
             canonical_policy_identity: semantic_contract_identity(&"canonical").unwrap(),
