@@ -51,6 +51,8 @@ pub mod output;
 pub mod parser;
 pub mod policy_pack;
 pub(crate) mod proof_assurance;
+#[allow(dead_code)] // Step 7 foundation; the protected Launcher transport is not active yet.
+pub(crate) mod protected_capability_observation;
 pub(crate) mod protected_history;
 pub mod provisioning;
 pub mod published_contract_schemas;

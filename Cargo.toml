@@ -31,7 +31,7 @@ sha2 = "0.10.9"
 base64 = "0.22.1"
 ed25519-dalek = "3.0.0"
 serde_jcs = "0.2.0"
-ota-authority-protocol = { git = "https://github.com/ota-run/authority-protocol.git", rev = "04a199a1eddd72b5b61958e0fe7f2d4e662e05cf" }
+ota-authority-protocol = { git = "https://github.com/ota-run/authority-protocol.git", rev = "e0af492ba8a6fbe01e805c79762909c9cda28198" }
 quick-xml = "0.41.0"
 tempfile = "3.23.0"
 
