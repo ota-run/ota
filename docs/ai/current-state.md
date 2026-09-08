@@ -248,7 +248,12 @@ durable agent workflow belongs in the canonical Ota skill.
   binds the expected protected Launcher invocation identity; the Launcher must recompute it from its
   accepted invocation and refuse mismatch before replay reservation, capability derivation, or
   Attestor signing. That identity remains protected and is excluded from the public projection and
-  workflow-visible output.
+  workflow-visible output. The production observation-service route remains blocked on one
+  independently installed `ProtectedLauncherAuthorityContextV1`: it must own the runner
+  administrator and a distinct protected-launcher implementation subject, while the root Launcher
+  derives and retains its fresh invocation nonce and live boot-ID observations. Neither the
+  existing Google provider-adapter subject nor caller/config/fixture strings may fill those
+  capability fields. The bounded pressure derivation does not establish this context ownership.
 - Vinicius' independent v1.6.27 source review confirmed that negative-control projection
   reconciliation is live on runtime proof, emitted-archive verification, and Doctor archive
   loading. It also exposed a narrower adversarial-test gap: the existing digest mutation was

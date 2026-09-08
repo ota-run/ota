@@ -448,6 +448,27 @@ the secret-delivery transaction both bind that identity. A normal root shell, `s
 owned wrapper, direct invocation of the Ota binary, or caller-constructed local descriptor cannot
 satisfy it.
 
+Before the production observation-service route may construct that capability, the root installer
+must create one closed, versioned `ProtectedLauncherAuthorityContextV1` at a fixed protected path
+and bind its exact file identity as a singular role in `ProtectedInstallationManifestV1`. Its
+outer identity binds one separately domain-derived `RunnerAdministratorAuthorityIdentity` and one
+distinct `ProtectedLauncherImplementationSubjectV1`; the capability receives the administrator
+identity, never the mutable outer-context identity. It is not the Step-3 Google provider-adapter
+subject. The Launcher implementation subject must separately bind the exact Launcher and Ota
+source, build, installed-artifact, Protocol/Core compatibility, protected-launcher profile, and
+`linux/x86_64` target truth, then rederive against the retained installation manifest and executable
+identities before capability reconciliation. The root Launcher, after accepting the canonical
+invocation but before child/scope creation, generates a fresh 256-bit invocation nonce and derives
+`invocation_nonce_identity` under its own Protocol domain. It obtains `boot_identity` only from a
+retained and immediately reobserved descriptor opened beneath a verified `PROC_SUPER_MAGIC` procfs
+root at the exact regular-file path `sys/kernel/random/boot_id`, with no symlink, alias, or mount
+substitution; it parses the canonical UUID and derives the identity under its dedicated domain. The
+raw nonce and boot value remain protected. A request, workflow, environment variable, config label,
+or fixture-only identity cannot supply any of these values. The context constructor remains
+crate-private and takes retained authority, nonce, and boot observations rather than four free
+identity strings; authority-record, implementation-subject, executable, nonce, and boot
+substitution must refuse even when their outer identities are recomputed.
+
 `ProtectedLauncherCapabilityIdentity` is protected transaction truth, not a public CI identity: it
 transitively binds protected authority-store and descriptor observations. The launcher may retain it
 only in the protected invocation and Core transaction carriers. A hosted compatibility workflow may
