@@ -225,21 +225,30 @@ durable agent workflow belongs in the canonical Ota skill.
   production context ownership, accepted-session provenance, Core capability-projection
   reconciliation, provider contact, real OIDC exchange, secret materialization or delivery,
   Step 8, V12.2, or general agent/repository governance.
-  Neither Launcher witness derives `ProtectedLauncherCapabilityIdentity`, executes the Core endpoint
-  workflow, contacts OIDC or a provider, materializes or delivers a secret, establishes provider
-  compatibility, or proves general agent/repository governance. The endpoint profile and semantic
-  observation verifier remain crate-private. Provider contact stays blocked on the exact protected
-  Linux/X64 capability fixture: the raw capability identity must remain in the protected launcher
-  transaction, while the workflow must verify one exact signed, closed public observation projection
-  against a fresh canonical one-use public challenge and refuse replay, substitution, duplication,
-  staleness, or signature/schema mismatch. Core must load the matching projection verification key
-  only from the fixed administrator-owned verifier record reconciled with protected installation
-  evidence; it cannot trust a workflow- or projection-supplied key. Root launcher state owns atomic
-  challenge reservation and consumption; Core owns its expected challenge for the exact workflow
-  invocation. The fixed local request also binds the expected protected Launcher invocation identity;
-  the Launcher must recompute it from its accepted invocation and refuse mismatch before replay
-  reservation, capability derivation, or Attestor signing. That identity remains protected and is
-  excluded from the public projection and workflow-visible output.
+  The earlier Launcher witnesses do not derive `ProtectedLauncherCapabilityIdentity`, execute the
+  Core endpoint workflow, contact OIDC or a provider, materialize or deliver a secret, establish
+  provider compatibility, or prove general agent/repository governance. A later Root boundary proof
+  [34283728831](https://github.com/ota-run/authority-launcher/actions/runs/34283728831), at exact
+  Launcher `fa842cdeb2ede58ff726c3a60dd33eaa47e1a7bd`, ran exactly one Linux privileged
+  `retained_observation_derives_and_rejects_live_substitution` regression under the requested root
+  systemd scope. It proves bounded retained protected-capability derivation plus refusal of a valid
+  substituted expected Launcher-invocation identity before replay reservation, capability derivation,
+  or Attestor signing. It does not prove production Core-to-Launcher observation transport, public
+  projection reconciliation, production observation-service or accepted-session provenance, OIDC,
+  provider contact, secret materialization or delivery, positive provider evidence, or general
+  governance. The endpoint profile and semantic observation verifier remain crate-private. Provider
+  contact stays blocked on the exact protected Linux/X64 compatibility gate: the raw capability
+  identity must remain in the protected launcher transaction, while the workflow must verify one
+  exact signed, closed public observation projection against a fresh canonical one-use public
+  challenge and refuse replay, substitution, duplication, staleness, or signature/schema mismatch.
+  Core must load the matching projection verification key only from the fixed administrator-owned
+  verifier record reconciled with protected installation evidence; it cannot trust a workflow- or
+  projection-supplied key. Root launcher state owns atomic challenge reservation and consumption;
+  Core owns its expected challenge for the exact workflow invocation. The fixed local request also
+  binds the expected protected Launcher invocation identity; the Launcher must recompute it from its
+  accepted invocation and refuse mismatch before replay reservation, capability derivation, or
+  Attestor signing. That identity remains protected and is excluded from the public projection and
+  workflow-visible output.
 - Vinicius' independent v1.6.27 source review confirmed that negative-control projection
   reconciliation is live on runtime proof, emitted-archive verification, and Doctor archive
   loading. It also exposed a narrower adversarial-test gap: the existing digest mutation was
