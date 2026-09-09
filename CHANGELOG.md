@@ -35,12 +35,17 @@
   observation verifier for the activated V12.1 Linux/X64 protected-runner target. The initial
   profile is fail-closed to the exact host, path shape, and query shape retained by the earlier
   ARM64 discovery; target, endpoint, profile, capability-identity, and recomputed-observation
-  substitutions refuse. A separate no-checkout X64 discovery workflow verifies the protected
+  substitutions refuse. The Linux-only compatibility client now issues one fresh challenge,
+  sends the exact invocation-bound probe to the fixed root Launcher socket, reloads the
+  administrator-installed projection verifier and its public installation binding, and accepts
+  only the matching signed public projection. The endpoint model binds that projection identity,
+  never the raw protected capability identity. A separate X64 workflow verifies the protected
   runner posture and administrator installation identity. A separate no-`id-token` job proves a
   pinned Actions Toolkit uses a supplied loopback URL rather than the JWT issuer; the protected
-  job reads that retained probe and records the live endpoint shape. The workflow intentionally records that real
-  `ProtectedLauncherCapabilityIdentity` derivation remains unattempted. It does not instrument or
-  claim OIDC or provider contact and activates no loader, transaction, delivery, or execution.
+  job reads that retained probe and records the live endpoint shape. The protected job now also
+  exercises the source-built Core client and retains only its signed public capability-observation
+  projection. It does not instrument or claim OIDC or provider contact and activates no secret
+  transaction, materialization, delivery, or selected execution.
 
 ## 1.6.28
 

@@ -70,7 +70,7 @@ pub(crate) struct GithubActionsOidcEndpointObservationInputV1 {
     pub runner_os: String,
     pub runner_architecture: String,
     pub runner_version: String,
-    pub protected_launcher_capability_identity: String,
+    pub protected_launcher_capability_projection_identity: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -82,7 +82,7 @@ pub(crate) struct ResolvedGithubActionsOidcEndpointObservationV1 {
     pub runner_os: String,
     pub runner_architecture: String,
     pub runner_version: String,
-    pub protected_launcher_capability_identity: String,
+    pub protected_launcher_capability_projection_identity: String,
     pub request_scheme: String,
     pub request_host: String,
     pub request_path_shape: String,
@@ -111,7 +111,7 @@ struct ObservationIdentityPayload<'a> {
     runner_os: &'a str,
     runner_architecture: &'a str,
     runner_version: &'a str,
-    protected_launcher_capability_identity: &'a str,
+    protected_launcher_capability_projection_identity: &'a str,
     request_scheme: &'a str,
     request_host: &'a str,
     request_path_shape: &'a str,
@@ -169,7 +169,7 @@ pub(crate) fn resolve_github_actions_oidc_endpoint_observation_v1(
             "GitHub Actions Runner version is not canonical semantic version",
         ));
     }
-    validate_sha256_identity(&input.protected_launcher_capability_identity)?;
+    validate_sha256_identity(&input.protected_launcher_capability_projection_identity)?;
     validate_request_url(profile, &input.request_url)?;
 
     let mut resolved = ResolvedGithubActionsOidcEndpointObservationV1 {
@@ -180,8 +180,8 @@ pub(crate) fn resolve_github_actions_oidc_endpoint_observation_v1(
         runner_os: input.runner_os.clone(),
         runner_architecture: input.runner_architecture.clone(),
         runner_version: input.runner_version.clone(),
-        protected_launcher_capability_identity: input
-            .protected_launcher_capability_identity
+        protected_launcher_capability_projection_identity: input
+            .protected_launcher_capability_projection_identity
             .clone(),
         request_scheme: profile.scheme.clone(),
         request_host: profile.host.clone(),
@@ -328,8 +328,8 @@ fn observation_identity(
             runner_os: &observation.runner_os,
             runner_architecture: &observation.runner_architecture,
             runner_version: &observation.runner_version,
-            protected_launcher_capability_identity: &observation
-                .protected_launcher_capability_identity,
+            protected_launcher_capability_projection_identity: &observation
+                .protected_launcher_capability_projection_identity,
             request_scheme: &observation.request_scheme,
             request_host: &observation.request_host,
             request_path_shape: &observation.request_path_shape,
@@ -363,8 +363,8 @@ fn invalid_endpoint() -> GithubOidcEndpointError {
 
 fn invalid_capability_identity() -> GithubOidcEndpointError {
     error(
-        "secret_delivery_oidc_endpoint_capability_identity_invalid",
-        "protected launcher capability identity is not canonical SHA-256",
+        "secret_delivery_oidc_endpoint_capability_projection_identity_invalid",
+        "protected launcher capability projection identity is not canonical SHA-256",
     )
 }
 
@@ -393,7 +393,7 @@ mod tests {
             runner_os: "linux".into(),
             runner_architecture: "x64".into(),
             runner_version: "2.337.0".into(),
-            protected_launcher_capability_identity: identity('a'),
+            protected_launcher_capability_projection_identity: identity('a'),
         }
     }
 
@@ -492,12 +492,12 @@ mod tests {
         }
 
         let mut changed = input();
-        changed.protected_launcher_capability_identity = identity('A');
+        changed.protected_launcher_capability_projection_identity = identity('A');
         assert_eq!(
             resolve_github_actions_oidc_endpoint_observation_v1(&profile, &changed)
                 .expect_err("invalid capability identity")
                 .code,
-            "secret_delivery_oidc_endpoint_capability_identity_invalid"
+            "secret_delivery_oidc_endpoint_capability_projection_identity_invalid"
         );
 
         let mut forged_profile = profile.clone();

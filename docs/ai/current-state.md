@@ -266,12 +266,21 @@ durable agent workflow belongs in the canonical Ota skill.
   binds the expected protected Launcher invocation identity; the Launcher must recompute it from its
   accepted invocation and refuse mismatch before replay reservation, capability derivation, or
   Attestor signing. That identity remains protected and is excluded from the public projection and
-  workflow-visible output. The production observation-service route remains blocked on one
-  independently installed `ProtectedLauncherAuthorityContextV1`: it must own the runner
-  administrator and a distinct protected-launcher implementation subject, while the root Launcher
-  derives and retains its fresh invocation nonce and live boot-ID observations. Neither the
-  existing Google provider-adapter subject nor caller/config/fixture strings may fill those
-  capability fields. The bounded pressure derivation does not establish this context ownership.
+  workflow-visible output. The local Step 7 batch now implements that feature-gated service route:
+  it loads the independently installed `ProtectedLauncherAuthorityContextV1`, prepares the exact
+  stopped Ota child and transient cgroup, retains the accepted Unix session and authority stores,
+  delegates only public-projection signing to the protected Attestor, confirms cleanup, and returns
+  only the signed public projection. Core issues the fresh challenge, sends the closed
+  invocation-bound probe over the fixed root socket, reloads the verifier and its public
+  installation binding, and reconciles the exact response. The endpoint observation now binds the
+  verified public projection identity rather than the raw capability identity. Launcher committed
+  and pushed its route at `2d7d8a1e82753943059e4999bb6ec3a7a569b896`; the Core batch remains
+  uncommitted and binds the hosted gate to that Launcher revision, Protocol
+  `58526f3f29299873e345352963e30b8a1677044f`, and the run's exact Core `github.sha`. Linux runtime
+  proof remains open; provider contact stays blocked until the exact committed Linux/X64 workflow
+  succeeds and its substitution, replay, staleness, verifier, signature, target, revision, and
+  cleanup controls are retained. No OIDC request, provider contact, materialization, delivery, Step
+  8, or V12.2 capability is activated.
 - Vinicius' independent v1.6.27 source review confirmed that negative-control projection
   reconciliation is live on runtime proof, emitted-archive verification, and Doctor archive
   loading. It also exposed a narrower adversarial-test gap: the existing digest mutation was
