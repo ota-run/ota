@@ -225,6 +225,24 @@ durable agent workflow belongs in the canonical Ota skill.
   production context ownership, accepted-session provenance, Core capability-projection
   reconciliation, provider contact, real OIDC exchange, secret materialization or delivery,
   Step 8, V12.2, or general agent/repository governance.
+  Ubuntu 26 subsequently exposed that its canonical `sudo-rs` executable refuses policy listing
+  from the already-root protected Launcher when systemd sets `NoNewPrivileges=yes`. Launcher
+  revision `22f17eff3e005bb4544d583d0743721835539d0a` keeps `NoNewPrivileges=no` only for that
+  root-owned observer while independently requiring and revalidating `NoNewPrivileges=1`, empty
+  capabilities, and exact principal boundaries for the runner and selected execution process.
+  After a fresh immutable reprovision, repository-owned run
+  [34356604479](https://github.com/ota-run/authority-launcher/actions/runs/34356604479), job
+  `102482773723`, completed one governed invocation at exact Launcher `22f17eff3e005bb4544d583d0743721835539d0a`,
+  Core `104c1345117a39f899fdc6a48bf8cf689ffbe9b6`, and Protocol
+  `58526f3f29299873e345352963e30b8a1677044f`. Its terminal records exit `0`, child reap, scope
+  removal, empty-or-absent cgroup, and active-slot removal; protected history records one valid
+  receipt archive with zero invalid archives and the exact matching archive identity. The exact
+  eight-file public artifact is retained by `authority-launcher` commit
+  `ab2f7ca781f3e9cf617c513cf89ceb8ece98da56` at
+  `docs/pressure/retained-artifacts/systemd-v3-independently-administered-34356604479.zip`
+  (`sha256:33e749d46e1ff7d0904196373c8538deda66cc34eacefb3f86ffe3b0dbcfb725`). This witness proves
+  neither protected capability-observation production routing nor OIDC exchange, provider contact,
+  secret materialization or delivery, Step 8, V12.2, or general agent/repository governance.
   The earlier Launcher witnesses do not derive `ProtectedLauncherCapabilityIdentity`, execute the
   Core endpoint workflow, contact OIDC or a provider, materialize or deliver a secret, establish
   provider compatibility, or prove general agent/repository governance. A later Root boundary proof
