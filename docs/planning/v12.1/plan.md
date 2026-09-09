@@ -514,11 +514,66 @@ derivation; the root launcher owns durable reservation/consumption; Core owns it
 challenge reconciliation. No workflow file, environment value, artifact, or client response may
 replace those owners.
 
+#### Protected Boot Observation Profile Correction (Proposed 2026-09-09)
+
+The immutable `ota.authority-launcher.systemd/v3` profile and public class
+`systemd_protected_launcher_v3` remain the historical owners of the retained governed-invocation
+evidence. They must not be reinterpreted. Live Linux/X64 pressure localized authority-context
+refusal, and a separate bounded systemd reproduction proved that V3's `ProtectProc=invisible` plus
+`ProcSubset=pid` removes `/proc/sys/kernel/random/boot_id` from the Launcher service namespace. A
+narrower bind-only attempt also refused because systemd applied the proc subset before resolving
+the bind source. The activated protected-capability design requires the Launcher to retain that
+exact kernel-owned value without widening the procfs namespace inherited by the selected child.
+The resulting V3 refusal is correct.
+
+The correction may introduce only `ota.authority-launcher.systemd/v4` and public class
+`systemd_protected_launcher_v4`. V4 inherits the complete V3 profile, retains
+`ProtectProc=invisible` and `ProcSubset=pid`, and adds exactly one systemd-manager-owned
+`OpenFile=/proc/sys/kernel/random/boot_id:ota-boot-id:read-only` service setting. The target must run
+systemd 253 or newer, where `OpenFile=` is supported. No other service-unit change is authorized:
+the protected history and execution-disabled broker units retain their explicit `ProcSubset=pid`
+settings, while the Attestor retains its existing profile without either proc setting. The one
+connected socket-unit change is the exact listener descriptor name required below.
+
+The Launcher socket unit must set `FileDescriptorName=ota-launcher-listener`. V4 accepts exactly one
+complete inherited descriptor set: `LISTEN_PID` equals the current Launcher process, `LISTEN_FDS=2`,
+and `LISTEN_FDNAMES` contains exactly one `ota-launcher-listener` and one `ota-boot-id`, with no
+empty or additional role. Both descriptors are selected by their names; descriptor position is not
+authority and reordering does not change meaning. Missing, duplicate, unnamed, additional, or
+role-substituted descriptors refuse. The named listener must independently satisfy the existing
+AF_UNIX listener, path, ownership, group, and mode checks. The named boot descriptor must be
+read-only, regular, root-owned, non-writable, procfs-backed, and bound to the exact manager-opened
+service setting; alias or substitution refuses.
+
+The Launcher sets close-on-exec on both descriptors immediately, verifies the retained boot
+descriptor's filesystem, type, owner, mode, and canonical UUID bytes, derives the boot identity
+under the existing Protocol domain, and reobserves the same descriptor immediately before
+capability reconciliation. It must not reopen the path from its restricted namespace. The
+selected-child boundary must close the boot descriptor before the child stops or executes, and
+Linux pressure must inspect the child descriptor table and prove the named boot descriptor is
+absent. The existing close-all-except-explicit-retained-descriptors rule remains authoritative; the
+boot descriptor may never enter that retained child allowlist.
+
+The Launcher must verify the effective V4 systemd settings before protected-capability derivation,
+and the protected capability, implementation subject, installation evidence, observation
+projection, and Core compatibility verifier must bind V4 rather than accepting V3 as an alias. V3
+and V4 identities and classes must be substitution-tested and must not compare equal.
+
+This correction exposes only one PID-1-opened read-only boot-ID descriptor to the already root-owned
+protected Launcher observer. It does not widen the Launcher or selected child's procfs namespace
+and grants no new filesystem write, network, provider, credential, execution, or repository
+authority. A successful fixture proves only the bounded boot-observation and capability-derivation
+path under the V4 profile; it does not prove accepted-session provenance, OIDC exchange, provider
+contact, materialization, delivery, positive provider evidence, Step 8, or V12.2.
+
+This correction is not active until independently reviewed and committed. No Protocol, Launcher,
+Core runtime, provider, or public claim implementation is authorized by this proposed text alone.
+
 The first public `ProtectedLauncherCapabilityObservationProjectionV1` is closed and rejects unknown
 fields. Its unsigned canonical payload contains exactly: `schema_version: 1`; evidence kind
 `protected_launcher_capability_observation`; the canonical public challenge identity;
 `derivation: verified`; target posture `environment: self_hosted`, `os: linux`,
-`architecture: x64`; the approved class `systemd_protected_launcher_v3`; the observed canonical
+`architecture: x64`; the approved class `systemd_protected_launcher_v4`; the observed canonical
 runner version; and the launcher public signing-key identity. `projection_identity` is the SHA-256
 identity of precisely that JCS payload under
 `ota.protected-launcher-capability-observation-projection.v1\0`; it is not an input to its own

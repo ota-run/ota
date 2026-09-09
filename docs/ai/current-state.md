@@ -288,6 +288,21 @@ durable agent workflow belongs in the canonical Ota skill.
   committed Linux/X64 workflow succeeds and its substitution, replay, staleness, verifier,
   signature, target, revision, and cleanup controls are retained. No OIDC request, provider
   contact, materialization, delivery, Step 8, or V12.2 capability is activated.
+  Runs `34386901632` and `34390181756` subsequently executed the exact transaction after canonical
+  authority-store provisioning and localized the remaining refusal to retained authority-context
+  acquisition. Separate systemd reproduction on the protected host established that the immutable
+  V3 combination `ProtectProc=invisible` plus `ProcSubset=pid` removes the required
+  `/proc/sys/kernel/random/boot_id`. A bind-only exception also refused because systemd applied the
+  proc subset before resolving the bind source. Widening to `ProcSubset=all` is rejected because the
+  forked selected child would inherit the Launcher's mount namespace.
+  A proposed Step 7 correction therefore preserves V3 historically and permits only a new V4
+  profile that retains both proc restrictions while systemd PID 1 passes the exact boot-ID file as
+  one named read-only `OpenFile=` descriptor. The protected history and broker units retain their
+  explicit `ProcSubset=pid`; the Attestor remains unchanged. Launcher must validate and reobserve
+  an exact two-role inherited set containing the named launcher listener and boot descriptor, and
+  pressure must prove the boot descriptor is closed before selected-child execution. The correction
+  remains inactive pending independent review and commit; no Protocol, Launcher, Core runtime,
+  provider, delivery, Step 8, or V12.2 work is authorized by the uncommitted amendment.
 - Vinicius' independent v1.6.27 source review confirmed that negative-control projection
   reconciliation is live on runtime proof, emitted-archive verification, and Doctor archive
   loading. It also exposed a narrower adversarial-test gap: the existing digest mutation was
