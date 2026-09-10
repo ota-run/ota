@@ -26,6 +26,12 @@
 
 ## Unreleased
 
+- Keep `ota detect` task inference bounded to public task-runner entries and canonical reusable
+  GitHub Actions verification steps. Taskfile helpers whose names begin with `_` or declare
+  `internal: true` remain implementation detail, while repeated calls to the same reusable
+  verification step collapse to one readable task instead of producing caller-specific
+  hash-qualified duplicates.
+
 - Fix native Corepack run fulfillment so declared package managers are dispatched through
   `corepack <manager>` for structured task commands and typed Node dependency hydration instead
   of resolving an ambient global shim. Diagnose-only Corepack declarations remain non-provisioning;

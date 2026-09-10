@@ -446,6 +446,15 @@ durable agent workflow belongs in the canonical Ota skill.
   cause reconciliation, opaque-shell evidence boundaries, and identity-bound container cleanup.
   The remaining inactive items do not delay the Eris draft or interrupt V12.1; each requires a
   future version owner and independent activation.
+- Anodizer onboarding pressure exposed two detector-fidelity defects. The repaired detector omits
+  Taskfile helpers whose names begin with `_` or declare `internal: true` from executable contract
+  truth and collapses repeated callers of the same reusable GitHub Actions verification step before
+  collision disambiguation.
+  A source-built reproduction at Anodizer `112a61a22557fa7f407bded897a8ec6671e35ae3`
+  reduced the inferred task catalog from 50 to 46 entries, retained distinct verification lanes,
+  and emitted neither private helpers nor caller-specific hash-qualified duplicates. Site and the
+  canonical Skill carry this authoring boundary. Examples, Learn, FAQ, and Glossary remain
+  unchanged because the repair adds no contract shape, command, public term, or operator workflow.
 - V12 closure: implementation-order steps 1-10, the bounded real-repository pressure bar, and
   independent closure reconciliation are complete. Plausible and Outline retain exact
   selected-closure denial with

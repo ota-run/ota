@@ -3450,6 +3450,9 @@ Current precedence is conservative:
   affirmative safety rule
 - GitHub Actions `run:` lines containing `${{ ... }}` interpolation or shell-variable expansion
   are excluded from command-truth inference instead of being promoted into repo task bodies
+- Taskfile helpers whose names begin with `_` or declare `internal: true` are excluded from
+  executable task inference; repeated callers of one canonical reusable GitHub Actions verification
+  step collapse to one inferred task before collision disambiguation
 - `Pipfile` can contribute `python` runtime inference and `pipenv` tool inference conservatively
 - `uv.lock` can contribute `uv` tool inference conservatively
 - `requirements.txt` can contribute `pip` tool inference conservatively

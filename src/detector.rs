@@ -2994,7 +2994,7 @@ fn detect_taskfile(root: &Path, builder: &mut DetectBuilder) -> Result<(), Detec
             .iter()
             .filter_map(|(name, task)| Some((name.as_str()?, task)))
         {
-            if is_promotable_task_runner_task_name(name) {
+            if is_promotable_task_runner_task_name(name) && !taskfile_task_is_internal(task) {
                 let command =
                     infer_taskfile_task_command(task).unwrap_or_else(|| format!("task {name}"));
                 builder.set_task(
@@ -3008,6 +3008,13 @@ fn detect_taskfile(root: &Path, builder: &mut DetectBuilder) -> Result<(), Detec
     }
 
     Ok(())
+}
+
+fn taskfile_task_is_internal(task: &YamlValue) -> bool {
+    task.as_mapping()
+        .and_then(|task| task.get(YamlValue::String("internal".to_string())))
+        .and_then(YamlValue::as_bool)
+        .unwrap_or(false)
 }
 
 fn detect_justfile(root: &Path, builder: &mut DetectBuilder) -> Result<(), DetectError> {
@@ -3125,8 +3132,23 @@ pub(crate) fn collect_github_actions_verification_tasks(
         )?;
     }
 
+    deduplicate_reused_ci_verification_lanes(&mut tasks);
     disambiguate_colliding_ci_verification_lanes(&mut tasks);
     Ok(tasks)
+}
+
+fn deduplicate_reused_ci_verification_lanes(tasks: &mut Vec<CiVerificationTaskSignal>) {
+    let mut observed = BTreeSet::new();
+    tasks.retain(|task| {
+        let canonical_source = task.source.rsplit("::").next().unwrap_or(&task.source);
+        observed.insert((
+            task.field.clone(),
+            task.command.clone(),
+            canonical_source.to_string(),
+            task.exact_command,
+            task.qualifier.clone(),
+        ))
+    });
 }
 
 fn disambiguate_colliding_ci_verification_lanes(tasks: &mut [CiVerificationTaskSignal]) {
@@ -3631,6 +3653,7 @@ fn extract_ci_verification_project_qualifier_from_matrix_run(run: &str) -> Optio
 
 fn is_promotable_task_runner_task_name(name: &str) -> bool {
     !name.is_empty()
+        && !name.starts_with('_')
         && !name.starts_with('.')
         && name
             .chars()
@@ -12451,6 +12474,42 @@ tasks:
     }
 
     #[test]
+    fn excludes_private_taskfile_helpers() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "Taskfile.yml",
+            r#"
+version: "3"
+tasks:
+  _check:tmp-headroom:
+    cmds:
+      - test -n "$TMPDIR"
+  helper:
+    internal: true
+    cmds:
+      - cargo metadata --no-deps
+  test:
+    deps: [_check:tmp-headroom, helper]
+    cmds:
+      - cargo test
+"#,
+        );
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert!(!report.contract.tasks.contains_key("_check:tmp-headroom"));
+        assert!(!report.contract.tasks.contains_key("helper"));
+        assert_eq!(
+            report
+                .contract
+                .tasks
+                .get("test")
+                .map(|task| task.run.as_str()),
+            Some("task test")
+        );
+    }
+
+    #[test]
     fn does_not_mark_taskfile_orchestration_verifier_safe_for_agent() {
         let fixture = Fixture::new();
         fixture.write(
@@ -12868,6 +12927,64 @@ jobs:
                 "expected distinct CI lane {name}"
             );
         }
+    }
+
+    #[test]
+    fn collapses_repeated_calls_to_the_same_reusable_verification_step() {
+        let fixture = Fixture::new();
+        fixture.write(
+            ".github/workflows/reusable.yml",
+            r#"
+name: Reusable
+on:
+  workflow_call:
+jobs:
+  docs-check:
+    runs-on: ubuntu-latest
+    steps:
+      - run: cargo test --doc
+"#,
+        );
+        for path in [".github/workflows/ci.yml", ".github/workflows/docs.yml"] {
+            fixture.write(
+                path,
+                r#"
+name: Caller
+on: [push]
+jobs:
+  docs-check:
+    uses: ./.github/workflows/reusable.yml
+"#,
+            );
+        }
+
+        let report = detect_repo(fixture.path()).expect("detect report");
+        assert_eq!(
+            report
+                .contract
+                .tasks
+                .get("test")
+                .map(|task| task.run.as_str()),
+            Some("cargo test --doc")
+        );
+        assert_eq!(
+            report
+                .contract
+                .tasks
+                .values()
+                .filter(|task| task.run == "cargo test --doc")
+                .count(),
+            1,
+            "one reusable verification step must remain one executable task"
+        );
+        assert!(
+            report
+                .contract
+                .tasks
+                .keys()
+                .all(|name| !name.contains(":ci-")),
+            "caller duplication must not force hash-qualified task names"
+        );
     }
 
     #[test]
