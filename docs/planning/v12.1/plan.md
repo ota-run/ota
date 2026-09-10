@@ -639,6 +639,35 @@ subject, target, GitHub run claims, Google resources, and numeric Secret Manager
 receipt, projection, provider response, token, handle, or availability result can satisfy a new
 transaction.
 
+The existing signed capability-observation probe remains compatibility evidence only. It creates a
+separate refused child and cgroup, so its public projection cannot admit or authorize a later
+provider-requesting child. Before provider contact, the normal selected-child boundary must derive
+one closed, protected same-execution transaction binding. Authority Protocol owns that versioned
+record's canonicalization and identity domain. Core independently derives and retains the private
+Step 1-6 transaction-candidate identity; Launcher receives that value only over the exact selected
+child's inherited startup-bound session, binds it as opaque transport truth without treating it as
+authority, and returns the private record only over that same session. The record binds the exact
+accepted Launcher request and startup continuation, retained protected capability identity, Core-
+derived secret transaction-candidate identity, fresh challenge/request identity, signed public
+projection identity, verifier-record and installation-evidence identities, and expiry. It is
+strictly local transport and transaction truth: it never enters logs, workflow output, artifacts,
+receipts, archives, public JSON, or the public projection. Launcher derives it only from the
+execution-bearing child, cgroup, session, authority stores, and implementation subject; a sibling
+probe, child, cgroup, session, request, capability, projection, verifier, or transaction candidate
+must refuse even when every substituted outer identity is recomputed.
+
+Core retains that verified same-execution binding, its expected fresh challenge and request, the
+signed projection, and the reconciled verifier-record and installation-evidence identities in a
+crate-private one-use guard. Immediately before constructing the first network request, the guard
+must reconcile the returned candidate to its independently retained candidate, startup
+continuation, and inherited session, then recheck transaction equality and freshness, revalidate
+retained authority descriptors and bytes, and consume itself exactly once. Duplicate use, delay
+past expiry, missing or substituted installation authority, or any mismatch refuses before OIDC
+environment access, network-client construction, or provider contact. Capability observation
+obtained before canonical Step 1-6 evaluation and policy admission is invalid for this purpose.
+Empty selections and every policy or structural refusal open neither the Launcher observation route
+nor replay state.
+
 The provider client uses a closed transport profile bound into the new profile and implementation-
 subject identities. It performs direct TLS with build-pinned public Web PKI roots and exact DNS/TLS
 hostname verification; ignores `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, `NO_PROXY`, custom CA,

@@ -363,6 +363,17 @@ durable agent workflow belongs in the canonical Ota skill.
   exact eight-file ZIP. These runs close the bounded protected-capability and endpoint-compatibility
   gate only. No real GitHub OIDC request, provider contact, materialization, delivery, positive
   provider evidence, Step 8, or V12.2 capability is activated.
+  Independent architecture review further established that the signed observation service creates a
+  separate refused probe child and cgroup. Its public projection is valid compatibility evidence
+  but cannot authorize a later provider-requesting child. Before provider contact, the normal
+  selected-child boundary must produce one Authority-Protocol-owned private same-execution binding.
+  Core independently derives and retains the Step 1-6 transaction candidate; Launcher accepts it
+  only over the selected child's inherited startup-bound session, binds it as opaque transport
+  truth, and returns it only over that session. Core must reconcile the returned candidate, startup
+  continuation, and session to its retained values in a one-use, expiry-rechecked guard before the
+  first network request. Until that route is implemented and pressured, the provider transaction
+  remains blocked; the existing probe, projection, and endpoint evidence retain their narrower
+  compatibility-only meaning.
 - Vinicius' independent v1.6.27 source review confirmed that negative-control projection
   reconciliation is live on runtime proof, emitted-archive verification, and Doctor archive
   loading. It also exposed a narrower adversarial-test gap: the existing digest mutation was
