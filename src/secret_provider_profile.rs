@@ -1161,6 +1161,11 @@ mod tests {
         plan_secret_delivery_dry_run, verify_secret_delivery_dry_run_plan,
         verify_secret_delivery_evaluation,
     };
+    use crate::secret_delivery_transaction::{
+        SecretDeliveryTransactionCandidateInput, derive_secret_delivery_transaction_candidate,
+        secret_delivery_transaction_candidate_identity,
+        verify_secret_delivery_transaction_candidate,
+    };
     use crate::secret_provider_bindings::{
         SecretProviderBindingInput, SecretProviderBindingSnapshotInput,
         SecretProviderBindingSourceInput, SecretProviderBindingSourceKind,
@@ -2430,6 +2435,69 @@ secret_requirements:
         assert_eq!(plan.delivery, SecretDeliveryAttempt::NotAttempted);
         assert!(!plan.execution_started);
         verify_secret_delivery_dry_run_plan(&plan, &evaluation, input).unwrap();
+        let candidate_input = SecretDeliveryTransactionCandidateInput {
+            evaluation: &evaluation,
+            dry_run_plan: &plan,
+            evaluation_input: input,
+        };
+        let candidate = derive_secret_delivery_transaction_candidate(candidate_input).unwrap();
+        assert_eq!(
+            candidate.identity,
+            derive_secret_delivery_transaction_candidate(candidate_input)
+                .unwrap()
+                .identity
+        );
+        assert_eq!(candidate.realizations.len(), 1);
+        assert_eq!(candidate.realizations[0].secret_version, 7);
+        assert_eq!(
+            candidate.realizations[0].target.architecture,
+            SecretDeliveryArchitecture::X86_64
+        );
+        assert_eq!(
+            candidate.realizations[0].secret_resource,
+            "projects/ota-pressure/secrets/CAEP_API-Key_1"
+        );
+        verify_secret_delivery_transaction_candidate(&candidate, candidate_input).unwrap();
+
+        let mut forged_candidate = candidate.clone();
+        forged_candidate.realizations[0].secret_resource =
+            "projects/ota-pressure/secrets/other/versions/7".to_string();
+        forged_candidate.identity =
+            secret_delivery_transaction_candidate_identity(&forged_candidate).unwrap();
+        assert_eq!(
+            verify_secret_delivery_transaction_candidate(&forged_candidate, candidate_input)
+                .unwrap_err()
+                .code,
+            "secret_delivery_transaction_candidate_reconciliation_failed"
+        );
+        let mut substituted_candidates = Vec::new();
+        let mut substituted_graph = candidate.clone();
+        substituted_graph.execution_graph_identity = digest('0');
+        substituted_candidates.push(substituted_graph);
+        let mut substituted_binding = candidate.clone();
+        substituted_binding.realizations[0].provider_binding_source_identity = digest('1');
+        substituted_candidates.push(substituted_binding);
+        let mut substituted_profile = candidate.clone();
+        substituted_profile.realizations[0].profile_semantic_identity = digest('2');
+        substituted_candidates.push(substituted_profile);
+        let mut substituted_target = candidate.clone();
+        substituted_target.realizations[0].target.architecture =
+            SecretDeliveryArchitecture::Aarch64;
+        substituted_candidates.push(substituted_target);
+        let mut substituted_oidc = candidate.clone();
+        substituted_oidc.realizations[0].oidc_audience =
+            "https://iam.googleapis.com/projects/999/locations/global/workloadIdentityPools/ota-pool/providers/github".to_string();
+        substituted_candidates.push(substituted_oidc);
+        for mut substituted in substituted_candidates {
+            substituted.identity =
+                secret_delivery_transaction_candidate_identity(&substituted).unwrap();
+            assert_eq!(
+                verify_secret_delivery_transaction_candidate(&substituted, candidate_input)
+                    .unwrap_err()
+                    .code,
+                "secret_delivery_transaction_candidate_reconciliation_failed"
+            );
+        }
         let serialized_plan = serde_json::to_string(&plan).unwrap();
         for private_value in [
             "control-plane://tenant/repository",
@@ -2447,12 +2515,32 @@ secret_requirements:
                 .code,
             "secret_delivery_dry_run_plan_reconciliation_failed"
         );
+        assert_eq!(
+            derive_secret_delivery_transaction_candidate(SecretDeliveryTransactionCandidateInput {
+                evaluation: &evaluation,
+                dry_run_plan: &forged_plan,
+                evaluation_input: input,
+            })
+            .unwrap_err()
+            .code,
+            "secret_delivery_dry_run_plan_reconciliation_failed"
+        );
         let mut forged_evaluation = evaluation.clone();
         forged_evaluation.status = SecretDeliveryEvaluationStatus::Refused;
         assert_eq!(
             plan_secret_delivery_dry_run(&forged_evaluation, input)
                 .unwrap_err()
                 .code,
+            "secret_delivery_evaluation_reconciliation_failed"
+        );
+        assert_eq!(
+            derive_secret_delivery_transaction_candidate(SecretDeliveryTransactionCandidateInput {
+                evaluation: &forged_evaluation,
+                dry_run_plan: &plan,
+                evaluation_input: input,
+            })
+            .unwrap_err()
+            .code,
             "secret_delivery_evaluation_reconciliation_failed"
         );
 
@@ -2487,6 +2575,16 @@ secret_requirements:
         assert_eq!(
             not_applicable_plan.status,
             SecretDeliveryEvaluationStatus::NotApplicable
+        );
+        assert_eq!(
+            derive_secret_delivery_transaction_candidate(SecretDeliveryTransactionCandidateInput {
+                evaluation: &not_applicable,
+                dry_run_plan: &not_applicable_plan,
+                evaluation_input: not_applicable_input,
+            })
+            .unwrap_err()
+            .code,
+            "secret_delivery_transaction_candidate_not_eligible"
         );
         assert_eq!(
             evaluate_secret_delivery(SecretDeliveryEvaluationInput {
@@ -2689,6 +2787,16 @@ secret_requirements:
             SecretDeliveryProviderContact::NotAttempted
         );
         assert!(!refused_plan.execution_started);
+        assert_eq!(
+            derive_secret_delivery_transaction_candidate(SecretDeliveryTransactionCandidateInput {
+                evaluation: &refused,
+                dry_run_plan: &refused_plan,
+                evaluation_input: strict_input,
+            })
+            .unwrap_err()
+            .code,
+            "secret_delivery_transaction_candidate_not_eligible"
+        );
 
         let repeated_origin = SecretDeliveryEffectOrigin {
             invocation: SecretDeliveryInvocationOrigin {
@@ -2738,16 +2846,35 @@ secret_requirements:
         })
         .unwrap();
         assert_eq!(repeated_evaluation.identity, reordered_evaluation.identity);
+        let repeated_plan =
+            plan_secret_delivery_dry_run(&repeated_evaluation, repeated_input).unwrap();
+        let reordered_plan = plan_secret_delivery_dry_run(
+            &reordered_evaluation,
+            SecretDeliveryEvaluationInput {
+                effects: &reordered_effects,
+                ..repeated_input
+            },
+        )
+        .unwrap();
+        assert_eq!(repeated_plan, reordered_plan);
         assert_eq!(
-            plan_secret_delivery_dry_run(&repeated_evaluation, repeated_input).unwrap(),
-            plan_secret_delivery_dry_run(
-                &reordered_evaluation,
-                SecretDeliveryEvaluationInput {
+            derive_secret_delivery_transaction_candidate(SecretDeliveryTransactionCandidateInput {
+                evaluation: &repeated_evaluation,
+                dry_run_plan: &repeated_plan,
+                evaluation_input: repeated_input,
+            })
+            .unwrap()
+            .identity,
+            derive_secret_delivery_transaction_candidate(SecretDeliveryTransactionCandidateInput {
+                evaluation: &reordered_evaluation,
+                dry_run_plan: &reordered_plan,
+                evaluation_input: SecretDeliveryEvaluationInput {
                     effects: &reordered_effects,
                     ..repeated_input
-                }
-            )
+                },
+            })
             .unwrap()
+            .identity
         );
 
         let reordered_invocations = vec![
