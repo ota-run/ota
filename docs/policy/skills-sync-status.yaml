@@ -24,6 +24,6 @@
 
 version: 1
 repository: ota-run/skills
-mode: waived
-waiver_reason: "Canonical Skill detector guidance for the uncommitted Anodizer-discovered fidelity repair is pending its immutable Skills commit and final Core reconciliation."
-reviewed_ota_commit: 66d5022b5036dc44734ec914082446ee818339e3
+mode: synced
+consumer_commit: 90734990cb3c85586b4add748239c35b49d18264
+reviewed_ota_commit: 0496756cebb6a1a7109ff568090d0bf313628c0c

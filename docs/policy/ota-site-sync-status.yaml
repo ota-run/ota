@@ -24,6 +24,6 @@
 
 version: 1
 repository: ota-run/ota-site
-mode: waived
-waiver_reason: "Site detector guidance for the uncommitted Anodizer-discovered fidelity repair is pending its immutable Site commit and final Core reconciliation."
-reviewed_ota_commit: 66d5022b5036dc44734ec914082446ee818339e3
+mode: synced
+consumer_commit: 808dbd6cea6c40133940f7cdb0cc0378ad0acc89
+reviewed_ota_commit: 0496756cebb6a1a7109ff568090d0bf313628c0c
