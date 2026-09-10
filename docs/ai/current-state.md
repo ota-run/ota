@@ -295,14 +295,26 @@ durable agent workflow belongs in the canonical Ota skill.
   `/proc/sys/kernel/random/boot_id`. A bind-only exception also refused because systemd applied the
   proc subset before resolving the bind source. Widening to `ProcSubset=all` is rejected because the
   forked selected child would inherit the Launcher's mount namespace.
-  A proposed Step 7 correction therefore preserves V3 historically and permits only a new V4
-  profile that retains both proc restrictions while systemd PID 1 passes the exact boot-ID file as
-  one named read-only `OpenFile=` descriptor. The protected history and broker units retain their
-  explicit `ProcSubset=pid`; the Attestor remains unchanged. Launcher must validate and reobserve
-  an exact two-role inherited set containing the named launcher listener and boot descriptor, and
-  pressure must prove the boot descriptor is closed before selected-child execution. The correction
-  remains inactive pending independent review and commit; no Protocol, Launcher, Core runtime,
-  provider, delivery, Step 8, or V12.2 work is authorized by the uncommitted amendment.
+  Step 7's V4 correction was independently reviewed and activated at Core
+  `7a86c9313921ba012fb966c527e9c901a2b18e66`. Protocol
+  `d16947b87d84e66a4164a275c703b47fce6ded20` preserves V3 historically and adds the immutable V4
+  profile, exact inherited-listener and boot-descriptor roles, profile substitution refusal, and
+  the V4 public projection class. Launcher `d690b8beb0c775a9d4ad7c944a150de895b1af67` retains both
+  proc restrictions while systemd PID 1 passes the exact boot-ID file as one named read-only
+  `OpenFile=` descriptor; the protected history and broker units retain their explicit
+  `ProcSubset=pid`, and the Attestor remains unchanged. Root Boundary run
+  [34417605017](https://github.com/ota-run/authority-launcher/actions/runs/34417605017) passed at that
+  exact Launcher revision, including the privileged retained capability derivation. The first
+  independently administered VPS run
+  [34418027937](https://github.com/ota-run/authority-launcher/actions/runs/34418027937) then refused
+  before authorization because Core still required V3; it is failure localization, not V4
+  compatibility evidence. The current Core migration pins the exact Protocol revision, requires V4
+  for live broker and capability-observation admission, preserves exact historical V3 archive
+  re-verification without making V3 loadable for live admission, and binds the endpoint gate to the
+  exact Launcher revision and V4 public class. An immutable Core commit, fresh VPS reprovision, and
+  successful exact-head independently administered and endpoint workflow runs remain required. No
+  OIDC request, provider contact, materialization, delivery, positive provider evidence, Step 8, or
+  V12.2 capability is activated.
 - Vinicius' independent v1.6.27 source review confirmed that negative-control projection
   reconciliation is live on runtime proof, emitted-archive verification, and Doctor archive
   loading. It also exposed a narrower adversarial-test gap: the existing digest mutation was

@@ -35,7 +35,9 @@
   observation verifier for the activated V12.1 Linux/X64 protected-runner target. The initial
   profile is fail-closed to the exact host, path shape, and query shape retained by the earlier
   ARM64 discovery; target, endpoint, profile, capability-identity, and recomputed-observation
-  substitutions refuse. The Linux-only compatibility client now issues one fresh challenge,
+  substitutions refuse. Core's active broker and capability-observation consumers require the
+  immutable V4 protected-launcher profile while the V3 attestation wire envelope remains stable.
+  The Linux-only compatibility client now issues one fresh challenge,
   sends the exact invocation-bound probe to the fixed root Launcher socket, reloads the
   administrator-installed projection verifier and its public installation binding, and accepts
   only the matching signed public projection. The endpoint model binds that projection identity,

@@ -67,8 +67,9 @@ use ota_authority_protocol::{
     RUNTIME_BOUNDARY_ATTESTATION_PROTOCOL_V2, RUNTIME_BOUNDARY_SCHEMA_VERSION_V1,
     RuntimeBoundaryObservationState, RuntimeBoundarySemanticIdentityPosture,
     SYSTEMD_JOB_PRINCIPAL_PROFILE_ID_V2, SYSTEMD_LAUNCHER_PROFILE_ID_V3,
-    SYSTEMD_PROTECTED_LAUNCHER_ADAPTER_V1, SYSTEMD_PROTECTED_LAUNCHER_ATTESTATION_PROTOCOL_V3,
-    SignedLauncherAttestation, SignedLauncherAttestationV2, SignedLauncherAttestationV3,
+    SYSTEMD_LAUNCHER_PROFILE_ID_V4, SYSTEMD_PROTECTED_LAUNCHER_ADAPTER_V1,
+    SYSTEMD_PROTECTED_LAUNCHER_ATTESTATION_PROTOCOL_V3, SignedLauncherAttestation,
+    SignedLauncherAttestationV2, SignedLauncherAttestationV3,
     authorization_decision_admission_v1_identity,
     authorization_decision_relay_evidence_v1_identity,
     derive_work_unit_identity as protocol_work_unit_identity, domain_separated,
@@ -970,8 +971,13 @@ pub(crate) fn verify_broker_archive_evidence(
             "broker archive binding does not match the protected current authority root",
         ));
     }
-    let admission = verify_broker_admission_evidence(&evidence.admission)?;
-    verify_broker_consumption_evidence(&evidence.admission, &evidence.transaction)?;
+    let admission = verify_broker_admission_evidence_for_archive(&evidence.admission)?;
+    crate::crossing_transaction::verify_crossing_transaction_evidence_with_authentication_posture(
+        &evidence.transaction,
+        &admission,
+        broker_transaction_authentication_posture(&evidence.admission),
+    )?;
+    verify_broker_consumption_fields(&evidence.admission, &evidence.transaction)?;
     Ok(admission)
 }
 
@@ -1167,6 +1173,19 @@ pub(crate) fn freeze_broker_challenge(
 pub(crate) fn verify_broker_admission_evidence(
     evidence: &BrokerAdmissionEvidence,
 ) -> Result<CrossingAuthorityAdmission, String> {
+    verify_broker_admission_evidence_with_profile_posture(evidence, false)
+}
+
+fn verify_broker_admission_evidence_for_archive(
+    evidence: &BrokerAdmissionEvidence,
+) -> Result<CrossingAuthorityAdmission, String> {
+    verify_broker_admission_evidence_with_profile_posture(evidence, true)
+}
+
+fn verify_broker_admission_evidence_with_profile_posture(
+    evidence: &BrokerAdmissionEvidence,
+    allow_historical_v3_profile: bool,
+) -> Result<CrossingAuthorityAdmission, String> {
     if evidence.schema_version != 1 || !evidence.semantic_scope.complete() {
         return Err(String::from(
             "broker admission evidence has an unsupported schema or incomplete scope",
@@ -1195,13 +1214,14 @@ pub(crate) fn verify_broker_admission_evidence(
         challenge: evidence.challenge.clone(),
         nonce: [0_u8; 32],
     };
-    let attestation_identity = verify_launcher_attestation(
+    let attestation_identity = verify_launcher_attestation_with_profile_posture(
         &verification_binding,
         &archived_challenge,
         &evidence.attestation,
         admitted_at,
+        allow_historical_v3_profile,
     )?;
-    let (request, request_identity) = build_authorization_request(
+    let (request, request_identity) = build_authorization_request_with_profile_posture(
         &verification_binding,
         &archived_challenge,
         &evidence.attestation,
@@ -1210,6 +1230,7 @@ pub(crate) fn verify_broker_admission_evidence(
         evidence.actor_mode.as_str(),
         evidence.authorization_request.requested_lifetime_seconds,
         admitted_at,
+        allow_historical_v3_profile,
     )?;
     let decision_identity = verify_authorization_decision(
         &verification_binding,
@@ -1218,7 +1239,7 @@ pub(crate) fn verify_broker_admission_evidence(
         &evidence.authorization_decision,
         admitted_at,
     )?;
-    let lease_identity = verify_prepared_lease(
+    let lease_identity = verify_prepared_lease_with_profile_posture(
         &verification_binding,
         &archived_challenge,
         &evidence.attestation,
@@ -1227,6 +1248,7 @@ pub(crate) fn verify_broker_admission_evidence(
         evidence.authorization_decision.payload.broker_revision,
         &evidence.prepared_lease,
         admitted_at,
+        allow_historical_v3_profile,
     )?;
     if evidence.attestation_identity != attestation_identity
         || evidence.authorization_request != request
@@ -1360,8 +1382,37 @@ pub(crate) fn build_authorization_request(
     requested_lifetime_seconds: u64,
     now: OffsetDateTime,
 ) -> Result<(AuthorizationRequest, String), String> {
-    let observed_attestation_identity =
-        verify_launcher_attestation(binding, challenge, attestation, now)?;
+    build_authorization_request_with_profile_posture(
+        binding,
+        challenge,
+        attestation,
+        attestation_identity,
+        scope,
+        actor_mode,
+        requested_lifetime_seconds,
+        now,
+        false,
+    )
+}
+
+fn build_authorization_request_with_profile_posture(
+    binding: &BrokerAuthorityBinding,
+    challenge: &FrozenBrokerChallenge,
+    attestation: &LauncherAttestationEvidence,
+    attestation_identity: &str,
+    scope: &CrossingSemanticScope,
+    actor_mode: &str,
+    requested_lifetime_seconds: u64,
+    now: OffsetDateTime,
+    allow_historical_v3_profile: bool,
+) -> Result<(AuthorizationRequest, String), String> {
+    let observed_attestation_identity = verify_launcher_attestation_with_profile_posture(
+        binding,
+        challenge,
+        attestation,
+        now,
+        allow_historical_v3_profile,
+    )?;
     if observed_attestation_identity != attestation_identity {
         return Err(String::from(
             "broker authorization request uses a different launcher attestation",
@@ -1483,7 +1534,37 @@ fn verify_prepared_lease(
     lease: &SignedBrokerMessage<PreparedLeasePayload>,
     now: OffsetDateTime,
 ) -> Result<String, String> {
-    let attestation_identity = verify_launcher_attestation(binding, challenge, attestation, now)?;
+    verify_prepared_lease_with_profile_posture(
+        binding,
+        challenge,
+        attestation,
+        request,
+        authorization_decision_identity,
+        authorization_decision_revision,
+        lease,
+        now,
+        false,
+    )
+}
+
+fn verify_prepared_lease_with_profile_posture(
+    binding: &BrokerAuthorityBinding,
+    challenge: &FrozenBrokerChallenge,
+    attestation: &LauncherAttestationEvidence,
+    request: &AuthorizationRequest,
+    authorization_decision_identity: &str,
+    authorization_decision_revision: u64,
+    lease: &SignedBrokerMessage<PreparedLeasePayload>,
+    now: OffsetDateTime,
+    allow_historical_v3_profile: bool,
+) -> Result<String, String> {
+    let attestation_identity = verify_launcher_attestation_with_profile_posture(
+        binding,
+        challenge,
+        attestation,
+        now,
+        allow_historical_v3_profile,
+    )?;
     if attestation_identity != request.attestation_identity {
         return Err(String::from(
             "broker lease uses a different launcher attestation",
@@ -1541,8 +1622,48 @@ pub(crate) fn build_broker_admission(
     actor_mode: &str,
     admitted_at: OffsetDateTime,
 ) -> Result<BrokerAdmissionEvidence, String> {
-    let observed_attestation_identity =
-        verify_launcher_attestation(binding, challenge, attestation, admitted_at)?;
+    build_broker_admission_with_profile_posture(
+        binding,
+        scope,
+        challenge,
+        attestation,
+        attestation_identity,
+        authorization_request,
+        authorization_request_identity,
+        authorization_decision,
+        authorization_decision_identity,
+        prepared_lease,
+        prepared_lease_identity,
+        actor_mode,
+        admitted_at,
+        false,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_broker_admission_with_profile_posture(
+    binding: &BrokerAuthorityBinding,
+    scope: &CrossingSemanticScope,
+    challenge: &FrozenBrokerChallenge,
+    attestation: &LauncherAttestationEvidence,
+    attestation_identity: &str,
+    authorization_request: &AuthorizationRequest,
+    authorization_request_identity: &str,
+    authorization_decision: &SignedBrokerMessage<AuthorizationDecisionPayload>,
+    authorization_decision_identity: &str,
+    prepared_lease: &SignedBrokerMessage<PreparedLeasePayload>,
+    prepared_lease_identity: &str,
+    actor_mode: &str,
+    admitted_at: OffsetDateTime,
+    allow_historical_v3_profile: bool,
+) -> Result<BrokerAdmissionEvidence, String> {
+    let observed_attestation_identity = verify_launcher_attestation_with_profile_posture(
+        binding,
+        challenge,
+        attestation,
+        admitted_at,
+        allow_historical_v3_profile,
+    )?;
     let observed_request_identity = message_identity(
         binding.message_domains.authorization_request.as_bytes(),
         authorization_request,
@@ -1554,7 +1675,7 @@ pub(crate) fn build_broker_admission(
         authorization_decision,
         admitted_at,
     )?;
-    let observed_lease_identity = verify_prepared_lease(
+    let observed_lease_identity = verify_prepared_lease_with_profile_posture(
         binding,
         challenge,
         attestation,
@@ -1563,6 +1684,7 @@ pub(crate) fn build_broker_admission(
         authorization_decision.payload.broker_revision,
         prepared_lease,
         admitted_at,
+        allow_historical_v3_profile,
     )?;
     if observed_attestation_identity != attestation_identity
         || observed_request_identity != authorization_request_identity
@@ -1604,7 +1726,18 @@ pub(crate) fn build_lease_consume_request(
     admission_evidence: &BrokerAdmissionEvidence,
     transaction: &crate::crossing_transaction::CrossingTransactionGuard,
 ) -> Result<(LeaseConsumeRequest, String), String> {
-    let admission = verify_broker_admission_evidence(admission_evidence)?;
+    build_lease_consume_request_with_profile_posture(admission_evidence, transaction, false)
+}
+
+fn build_lease_consume_request_with_profile_posture(
+    admission_evidence: &BrokerAdmissionEvidence,
+    transaction: &crate::crossing_transaction::CrossingTransactionGuard,
+    allow_historical_v3_profile: bool,
+) -> Result<(LeaseConsumeRequest, String), String> {
+    let admission = verify_broker_admission_evidence_with_profile_posture(
+        admission_evidence,
+        allow_historical_v3_profile,
+    )?;
     let binding = admission_evidence.binding_snapshot.verification_binding();
     let challenge = &admission_evidence.challenge;
     let lease_identity = admission_evidence.prepared_lease_identity.as_str();
@@ -1721,7 +1854,38 @@ pub(crate) fn verify_and_record_lease_consumption(
     now: OffsetDateTime,
     transaction: &mut crate::crossing_transaction::CrossingTransactionGuard,
 ) -> Result<String, String> {
-    let lease_identity = verify_prepared_lease(
+    verify_and_record_lease_consumption_with_profile_posture(
+        binding,
+        challenge,
+        attestation,
+        authorization_request,
+        authorization_decision,
+        prepared_lease,
+        request,
+        request_identity,
+        response,
+        now,
+        transaction,
+        false,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn verify_and_record_lease_consumption_with_profile_posture(
+    binding: &BrokerAuthorityBinding,
+    challenge: &FrozenBrokerChallenge,
+    attestation: &LauncherAttestationEvidence,
+    authorization_request: &AuthorizationRequest,
+    authorization_decision: &SignedBrokerMessage<AuthorizationDecisionPayload>,
+    prepared_lease: &SignedBrokerMessage<PreparedLeasePayload>,
+    request: &LeaseConsumeRequest,
+    request_identity: &str,
+    response: &SignedBrokerMessage<LeaseConsumeResponsePayload>,
+    now: OffsetDateTime,
+    transaction: &mut crate::crossing_transaction::CrossingTransactionGuard,
+    allow_historical_v3_profile: bool,
+) -> Result<String, String> {
+    let lease_identity = verify_prepared_lease_with_profile_posture(
         binding,
         challenge,
         attestation,
@@ -1733,6 +1897,7 @@ pub(crate) fn verify_and_record_lease_consumption(
         authorization_decision.payload.broker_revision,
         prepared_lease,
         now,
+        allow_historical_v3_profile,
     )?;
     if lease_identity != request.lease_identity {
         return Err(String::from(
@@ -2086,6 +2251,16 @@ pub(crate) fn verify_launcher_attestation(
     attestation: &LauncherAttestationEvidence,
     now: OffsetDateTime,
 ) -> Result<String, String> {
+    verify_launcher_attestation_with_profile_posture(binding, challenge, attestation, now, false)
+}
+
+fn verify_launcher_attestation_with_profile_posture(
+    binding: &BrokerAuthorityBinding,
+    challenge: &FrozenBrokerChallenge,
+    attestation: &LauncherAttestationEvidence,
+    now: OffsetDateTime,
+    allow_historical_v3_profile: bool,
+) -> Result<String, String> {
     match (attestation, &binding.attestation) {
         (
             LauncherAttestationEvidence::V1(attestation),
@@ -2110,6 +2285,7 @@ pub(crate) fn verify_launcher_attestation(
             challenge,
             attestation,
             now,
+            allow_historical_v3_profile,
         ),
         _ => Err(String::from(
             "launcher attestation version does not match the protected broker binding",
@@ -2243,6 +2419,7 @@ fn verify_launcher_attestation_v3(
     challenge: &FrozenBrokerChallenge,
     attestation: &SignedLauncherAttestationV3,
     now: OffsetDateTime,
+    allow_historical_v3_profile: bool,
 ) -> Result<String, String> {
     let payload = &attestation.payload;
     verify_common_attestation_claims(
@@ -2268,7 +2445,11 @@ fn verify_launcher_attestation_v3(
                 format!("failed to derive systemd protected-launcher instance identity: {error}")
             },
         )?;
-    verify_systemd_protected_launcher_profile(binding_attestation, instance)?;
+    verify_systemd_protected_launcher_profile(
+        binding_attestation,
+        instance,
+        allow_historical_v3_profile,
+    )?;
     if payload.attestation_protocol_version != SYSTEMD_PROTECTED_LAUNCHER_ATTESTATION_PROTOCOL_V3
         || instance.identity != instance_identity
         || instance.instance_v1.adapter != binding_attestation.adapter
@@ -2306,13 +2487,18 @@ fn verify_launcher_attestation_v3(
 fn verify_systemd_protected_launcher_profile(
     binding: &crate::crossing_authority::BrokerAttestationBindingV3,
     instance: &ota_authority_protocol::SystemdProtectedLauncherInstanceEvidenceV2,
+    allow_historical_v3_profile: bool,
 ) -> Result<(), String> {
+    let launcher_profile_allowed = binding.systemd_launcher_profile_id
+        == SYSTEMD_LAUNCHER_PROFILE_ID_V4
+        || (allow_historical_v3_profile
+            && binding.systemd_launcher_profile_id == SYSTEMD_LAUNCHER_PROFILE_ID_V3);
     if instance.schema_version != 3
-        || binding.systemd_launcher_profile_id != SYSTEMD_LAUNCHER_PROFILE_ID_V3
+        || !launcher_profile_allowed
         || binding.systemd_job_principal_profile_id != SYSTEMD_JOB_PRINCIPAL_PROFILE_ID_V2
     {
         return Err(String::from(
-            "V3 authority requires the canonical V3 systemd protected-launcher profile",
+            "systemd authority requires the canonical live or exact historical launcher profile",
         ));
     }
     let launcher_profile =
@@ -4038,9 +4224,11 @@ pub(crate) mod tests {
             working_directory_identity: format!("sha256:{}", "0".repeat(64)),
             child_process_identity: format!("sha256:{}", "1".repeat(64)),
         };
-        instance_v1.identity = if binding_attestation.systemd_launcher_profile_id
-            == ota_authority_protocol::SYSTEMD_LAUNCHER_PROFILE_ID_V3
-        {
+        instance_v1.identity = if matches!(
+            binding_attestation.systemd_launcher_profile_id.as_str(),
+            ota_authority_protocol::SYSTEMD_LAUNCHER_PROFILE_ID_V3
+                | ota_authority_protocol::SYSTEMD_LAUNCHER_PROFILE_ID_V4
+        ) {
             ota_authority_protocol::systemd_protected_launcher_instance_v3_foundation_identity(
                 &instance_v1,
             )
@@ -4059,8 +4247,11 @@ pub(crate) mod tests {
                 .as_str(),
         )
         .expect("registered job-principal profile");
-        let complete_profile = binding_attestation.systemd_launcher_profile_id
-            == ota_authority_protocol::SYSTEMD_LAUNCHER_PROFILE_ID_V3;
+        let complete_profile = matches!(
+            binding_attestation.systemd_launcher_profile_id.as_str(),
+            ota_authority_protocol::SYSTEMD_LAUNCHER_PROFILE_ID_V3
+                | ota_authority_protocol::SYSTEMD_LAUNCHER_PROFILE_ID_V4
+        );
         let mut instance = SystemdProtectedLauncherInstanceEvidenceV2 {
             schema_version: if complete_profile { 3 } else { 2 },
             identity: String::new(),
@@ -6927,19 +7118,30 @@ pub(crate) mod tests {
         broker.join().expect("broker thread");
     }
 
-    #[test]
-    fn v3_archive_requires_exact_attestation_carrier() {
-        let now = OffsetDateTime::now_utc();
-        let (binding, broker_signing_key, attestor_signing_key) =
-            crate::crossing_authority::tests::broker_binding_v3_with_signing_keys();
+    fn completed_systemd_archive(
+        binding: &BrokerAuthorityBinding,
+        broker_signing_key: SigningKey,
+        attestor_signing_key: &SigningKey,
+        now: OffsetDateTime,
+    ) -> (BrokerArchiveEvidence, BrokerAdmissionEvidence) {
+        let historical_profile = matches!(
+            &binding.attestation,
+            crate::crossing_authority::BrokerAttestationBinding::V3(attestation)
+                if attestation.systemd_launcher_profile_id == SYSTEMD_LAUNCHER_PROFILE_ID_V3
+        );
         let (_, _, scope) = crate::crossing_authority::tests::fixture(now);
-        let challenge = freeze_broker_challenge(&binding, &scope).expect("v3 challenge");
-        let attestation = signed_attestation_v3(&binding, &attestor_signing_key, &challenge, now);
-        let attestation_identity =
-            verify_launcher_attestation(&binding, &challenge, &attestation, now)
-                .expect("v3 attestation");
-        let (request, request_identity) = build_authorization_request(
-            &binding,
+        let challenge = freeze_broker_challenge(binding, &scope).expect("v3 challenge");
+        let attestation = signed_attestation_v3(binding, attestor_signing_key, &challenge, now);
+        let attestation_identity = verify_launcher_attestation_with_profile_posture(
+            binding,
+            &challenge,
+            &attestation,
+            now,
+            historical_profile,
+        )
+        .expect("v3 attestation");
+        let (request, request_identity) = build_authorization_request_with_profile_posture(
+            binding,
             &challenge,
             &attestation,
             &attestation_identity,
@@ -6947,10 +7149,11 @@ pub(crate) mod tests {
             "non_agent",
             60,
             now,
+            historical_profile,
         )
         .expect("authorization request");
         let mut broker = TestBroker::new(broker_signing_key);
-        let decision = broker.authorization_decision(&binding, &request, &request_identity, now);
+        let decision = broker.authorization_decision(binding, &request, &request_identity, now);
         let decision_identity = signed_message_identity(
             binding.message_domains.authorization_decision.as_bytes(),
             &decision,
@@ -6960,8 +7163,8 @@ pub(crate) mod tests {
         let lease_identity =
             signed_message_identity(binding.message_domains.lease_issuance.as_bytes(), &lease)
                 .expect("lease identity");
-        let admission = build_broker_admission(
-            &binding,
+        let admission = build_broker_admission_with_profile_posture(
+            binding,
             &scope,
             &challenge,
             &attestation,
@@ -6974,17 +7177,21 @@ pub(crate) mod tests {
             &lease_identity,
             "non_agent",
             now,
+            historical_profile,
         )
         .expect("broker admission");
-        let root = tempdir().expect("transaction root");
         let mut transaction =
             crate::crossing_transaction::CrossingTransactionGuard::begin_launcher_owned(
                 &admission.crossing_admission(),
             )
             .expect("launcher-owned V3 transaction");
-        assert!(!root.path().join(".ota").exists());
         let (consume_request, consume_request_identity) =
-            build_lease_consume_request(&admission, &transaction).expect("consume request");
+            build_lease_consume_request_with_profile_posture(
+                &admission,
+                &transaction,
+                historical_profile,
+            )
+            .expect("consume request");
         transaction
             .record_broker_consumption_intent(
                 &admission,
@@ -6993,15 +7200,15 @@ pub(crate) mod tests {
             )
             .expect("consume intent");
         let response = broker.consume(
-            &binding,
+            binding,
             &lease,
             &lease_identity,
             &consume_request,
             &consume_request_identity,
             now,
         );
-        verify_and_record_lease_consumption(
-            &binding,
+        verify_and_record_lease_consumption_with_profile_posture(
+            binding,
             &challenge,
             &attestation,
             &request,
@@ -7012,13 +7219,109 @@ pub(crate) mod tests {
             &response,
             now,
             &mut transaction,
+            historical_profile,
         )
         .expect("consumption");
         transaction
             .finalize("completed", Some("passed"))
             .expect("finalization");
-        let archive =
-            build_broker_archive_evidence(&admission, &transaction.evidence()).expect("v3 archive");
+        let transaction = transaction.evidence();
+        let archive = if historical_profile {
+            let mut archive = BrokerArchiveEvidence {
+                schema_version: 2,
+                identity: String::new(),
+                admission: admission.clone(),
+                transaction,
+            };
+            archive.identity =
+                broker_archive_identity(&archive).expect("historical archive identity");
+            archive
+        } else {
+            build_broker_archive_evidence(&admission, &transaction).expect("v3 archive")
+        };
+        (archive, admission)
+    }
+
+    #[test]
+    fn historical_v3_archive_reverifies_without_reactivating_v3_admission() {
+        let now = OffsetDateTime::now_utc();
+        let (current_binding, broker_signing_key, attestor_signing_key) =
+            crate::crossing_authority::tests::broker_binding_v3_with_signing_keys();
+        let historical_binding =
+            crate::crossing_authority::tests::historical_v3_archive_binding_from_current_for_tests(
+                &current_binding,
+            );
+        crate::crossing_authority::validate_broker_store(
+            &crate::crossing_authority::BrokerAuthorityStore {
+                schema_version: crate::crossing_authority::CROSSING_BROKER_SCHEMA_VERSION,
+                bindings: vec![historical_binding.clone()],
+            },
+        )
+        .expect_err("historical V3 authority must remain invalid for live admission");
+
+        let (archive, _) = completed_systemd_archive(
+            &historical_binding,
+            broker_signing_key,
+            &attestor_signing_key,
+            now,
+        );
+        verify_broker_admission_evidence(&archive.admission)
+            .expect_err("historical V3 admission must remain invalid on the live verifier");
+
+        let trust_root = tempdir().expect("broker trust root");
+        let trust_store = trust_root.path().join("crossing-brokers.json");
+        std::fs::write(
+            &trust_store,
+            serde_json::to_vec(&crate::crossing_authority::BrokerAuthorityStore {
+                schema_version: crate::crossing_authority::CROSSING_BROKER_SCHEMA_VERSION,
+                bindings: vec![current_binding],
+            })
+            .expect("current V4 broker store"),
+        )
+        .expect("write current V4 broker store");
+        let _trust_guard =
+            crate::crossing_authority::TestBrokerTrustStoreGuard::install(trust_store);
+        let repo_root = tempdir().expect("repository root");
+        verify_broker_archive_evidence(repo_root.path(), &archive)
+            .expect("historical V3 archive must reverify against current V4 authority");
+
+        let receipt_schema: serde_json::Value =
+            serde_json::from_str(include_str!("../docs/spec/json-schemas/receipt.json"))
+                .expect("receipt schema");
+        let broker_archive_schema = serde_json::json!({
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$ref": "#/$defs/brokerArchiveEvidence",
+            "$defs": receipt_schema["$defs"].clone()
+        });
+        let compiled_archive_schema = jsonschema::JSONSchema::options()
+            .with_draft(jsonschema::Draft::Draft202012)
+            .compile(&broker_archive_schema)
+            .expect("broker archive schema");
+        let historical_json = serde_json::to_value(&archive).expect("historical V3 archive JSON");
+        assert!(compiled_archive_schema.validate(&historical_json).is_ok());
+        let mut v4_binding_v3_instance = historical_json;
+        v4_binding_v3_instance["admission"]["binding_snapshot"]["attestation"]["systemd_launcher_profile_id"] =
+            serde_json::json!(SYSTEMD_LAUNCHER_PROFILE_ID_V4);
+        v4_binding_v3_instance["admission"]["binding_snapshot"]["attestation"]["systemd_launcher_profile_identity"] = serde_json::json!(
+            "sha256:bdac5f965aa56d44de8581e194ac0364b2d4c98183fff0cbb223574fd78197a8"
+        );
+        assert!(
+            compiled_archive_schema
+                .validate(&v4_binding_v3_instance)
+                .is_err(),
+            "V4 binding with a V3 signed instance must refuse"
+        );
+    }
+
+    #[test]
+    fn v3_archive_requires_exact_attestation_carrier() {
+        let now = OffsetDateTime::now_utc();
+        let (binding, broker_signing_key, attestor_signing_key) =
+            crate::crossing_authority::tests::broker_binding_v3_with_signing_keys();
+        let root = tempdir().expect("transaction root");
+        let (archive, admission) =
+            completed_systemd_archive(&binding, broker_signing_key, &attestor_signing_key, now);
+        assert!(!root.path().join(".ota").exists());
         assert_eq!(archive.schema_version, 2);
         assert!(archive.requires_portable_launcher_finalization());
         assert_eq!(
@@ -7039,9 +7342,26 @@ pub(crate) mod tests {
             .compile(&broker_archive_schema)
             .expect("broker archive schema");
         let archive_json = serde_json::to_value(&archive).expect("archive JSON");
+        let schema_errors = compiled_archive_schema
+            .validate(&archive_json)
+            .err()
+            .map(|errors| errors.map(|error| error.to_string()).collect::<Vec<_>>())
+            .unwrap_or_default();
         assert!(
-            compiled_archive_schema.validate(&archive_json).is_ok(),
-            "new portable V3 archive must satisfy the published schema"
+            schema_errors.is_empty(),
+            "new portable V3 archive must satisfy the published schema: {schema_errors:?}"
+        );
+        let mut v3_binding_v4_instance = archive_json.clone();
+        v3_binding_v4_instance["admission"]["binding_snapshot"]["attestation"]["systemd_launcher_profile_id"] =
+            serde_json::json!(SYSTEMD_LAUNCHER_PROFILE_ID_V3);
+        v3_binding_v4_instance["admission"]["binding_snapshot"]["attestation"]["systemd_launcher_profile_identity"] = serde_json::json!(
+            "sha256:1d0ef44c24b6ec21dc0c462edd52c5197ae35a4a1728a98cd93b92d6f106dfaf"
+        );
+        assert!(
+            compiled_archive_schema
+                .validate(&v3_binding_v4_instance)
+                .is_err(),
+            "V3 binding with a V4 signed instance must refuse"
         );
         let mut schema_downgrade = archive_json;
         schema_downgrade["schema_version"] = serde_json::json!(1);

@@ -47,7 +47,7 @@ const MAX_CHALLENGE_LIFETIME_SECONDS: u64 = 300;
 const EXPECTED_ENVIRONMENT: &str = "self_hosted";
 const EXPECTED_OS: &str = "linux";
 const EXPECTED_ARCHITECTURE: &str = "x64";
-const EXPECTED_CAPABILITY_CLASS: &str = "systemd_protected_launcher_v3";
+const EXPECTED_CAPABILITY_CLASS: &str = "systemd_protected_launcher_v4";
 #[cfg(target_os = "linux")]
 const LAUNCHER_SOCKET: &str = "/run/ota/authority-launcher.sock";
 const VERIFIER_PATH: &str =
@@ -632,7 +632,7 @@ mod tests {
                 os: "linux".into(),
                 architecture: "x64".into(),
             },
-            capability_class: "systemd_protected_launcher_v3".into(),
+            capability_class: "systemd_protected_launcher_v4".into(),
             runner_version: pending.request().runner_version.clone(),
             signing_key_identity: verifier.key_identity.clone(),
         };

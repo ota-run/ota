@@ -41,8 +41,9 @@ use ota_authority_protocol::{
     PROTECTED_LAUNCHER_PROFILE_ID_V1, PROTOCOL_VERSION_V1,
     RUNTIME_BOUNDARY_ATTESTATION_PROTOCOL_V2, RuntimeBoundaryAttestorKind,
     SYSTEMD_JOB_PRINCIPAL_PROFILE_ID_V2, SYSTEMD_LAUNCHER_PROFILE_ID_V3,
-    SYSTEMD_PROTECTED_LAUNCHER_ADAPTER_V1, SYSTEMD_PROTECTED_LAUNCHER_ATTESTATION_PROTOCOL_V3,
-    runtime_boundary_profile_by_id, runtime_boundary_profile_identity,
+    SYSTEMD_LAUNCHER_PROFILE_ID_V4, SYSTEMD_PROTECTED_LAUNCHER_ADAPTER_V1,
+    SYSTEMD_PROTECTED_LAUNCHER_ATTESTATION_PROTOCOL_V3, runtime_boundary_profile_by_id,
+    runtime_boundary_profile_identity,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -308,19 +309,39 @@ impl BrokerPublicAuthorityBinding {
         &self,
         current: &BrokerAuthorityBinding,
     ) -> Result<bool, String> {
-        if !self
+        let mut projected = current.clone();
+        let mut changed = false;
+        if self
             .message_domains
             .uses_legacy_consumption_domain_profile()
         {
-            return Ok(Self::from_protected(current) == *self);
+            projected.message_domains.lease_consumption_query = None;
+            projected.message_domains.lease_consumption_status = None;
+            changed = true;
         }
-        let mut legacy = current.clone();
-        legacy.message_domains.lease_consumption_query = None;
-        legacy.message_domains.lease_consumption_status = None;
-        legacy.identity.clear();
-        legacy.identity = domain_identity(broker_binding_domain(&legacy), &legacy)
-            .map_err(|error| error.public_details())?;
-        Ok(Self::from_protected(&legacy) == *self)
+
+        if let (
+            BrokerAttestationBinding::V3(archived),
+            BrokerAttestationBinding::V3(projected_attestation),
+        ) = (&self.attestation, &mut projected.attestation)
+            && archived.systemd_launcher_profile_id == SYSTEMD_LAUNCHER_PROFILE_ID_V3
+            && projected_attestation.systemd_launcher_profile_id == SYSTEMD_LAUNCHER_PROFILE_ID_V4
+        {
+            let historical_profile = ota_authority_protocol::systemd_launcher_profile_v3();
+            projected_attestation.systemd_launcher_profile_id =
+                String::from(SYSTEMD_LAUNCHER_PROFILE_ID_V3);
+            projected_attestation.systemd_launcher_profile_identity =
+                ota_authority_protocol::systemd_launcher_profile_identity(&historical_profile)
+                    .map_err(|error| error.to_string())?;
+            changed = true;
+        }
+
+        if changed {
+            projected.identity.clear();
+            projected.identity = domain_identity(broker_binding_domain(&projected), &projected)
+                .map_err(|error| error.public_details())?;
+        }
+        Ok(Self::from_protected(&projected) == *self)
     }
 }
 
@@ -2081,7 +2102,7 @@ fn validate_broker_attestation_binding(
                     })?;
             if value.protocol_version != SYSTEMD_PROTECTED_LAUNCHER_ATTESTATION_PROTOCOL_V3
                 || value.adapter != SYSTEMD_PROTECTED_LAUNCHER_ADAPTER_V1
-                || value.systemd_launcher_profile_id != SYSTEMD_LAUNCHER_PROFILE_ID_V3
+                || value.systemd_launcher_profile_id != SYSTEMD_LAUNCHER_PROFILE_ID_V4
                 || value.systemd_launcher_profile_identity != launcher_identity
                 || value.systemd_job_principal_profile_id != SYSTEMD_JOB_PRINCIPAL_PROFILE_ID_V2
                 || value.systemd_job_principal_profile_identity != job_identity
@@ -2885,12 +2906,12 @@ tasks:
     -> (BrokerAuthorityBinding, SigningKey, SigningKey) {
         let (mut binding, broker_signing_key) = broker_binding_with_signing_key();
         let attestor_signing_key = SigningKey::from_bytes(&[11_u8; 32]);
-        let launcher_profile = ota_authority_protocol::systemd_launcher_profile_v3();
+        let launcher_profile = ota_authority_protocol::systemd_launcher_profile_v4();
         let job_profile = ota_authority_protocol::systemd_job_principal_profile_v2();
         binding.attestation = BrokerAttestationBinding::V3(BrokerAttestationBindingV3 {
             protocol_version: String::from(SYSTEMD_PROTECTED_LAUNCHER_ATTESTATION_PROTOCOL_V3),
             adapter: String::from(SYSTEMD_PROTECTED_LAUNCHER_ADAPTER_V1),
-            systemd_launcher_profile_id: String::from(SYSTEMD_LAUNCHER_PROFILE_ID_V3),
+            systemd_launcher_profile_id: String::from(SYSTEMD_LAUNCHER_PROFILE_ID_V4),
             systemd_launcher_profile_identity:
                 ota_authority_protocol::systemd_launcher_profile_identity(&launcher_profile)
                     .expect("systemd launcher profile identity"),
@@ -2917,6 +2938,25 @@ tasks:
         binding.identity = domain_identity(broker_binding_domain(&binding), &binding)
             .expect("test v3 broker binding identity");
         (binding, broker_signing_key, attestor_signing_key)
+    }
+
+    pub(crate) fn historical_v3_archive_binding_from_current_for_tests(
+        binding: &BrokerAuthorityBinding,
+    ) -> BrokerAuthorityBinding {
+        let mut historical = binding.clone();
+        let BrokerAttestationBinding::V3(attestation) = &mut historical.attestation else {
+            panic!("current binding must use the systemd attestation carrier");
+        };
+        let profile = ota_authority_protocol::systemd_launcher_profile_v3();
+        attestation.systemd_launcher_profile_id =
+            String::from(ota_authority_protocol::SYSTEMD_LAUNCHER_PROFILE_ID_V3);
+        attestation.systemd_launcher_profile_identity =
+            ota_authority_protocol::systemd_launcher_profile_identity(&profile)
+                .expect("historical V3 launcher profile identity");
+        historical.identity.clear();
+        historical.identity = domain_identity(broker_binding_domain(&historical), &historical)
+            .expect("historical V3 broker binding identity");
+        historical
     }
 
     pub(crate) fn set_broker_binding_descriptor_for_tests(

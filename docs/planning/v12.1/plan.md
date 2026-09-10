@@ -566,8 +566,10 @@ authority. A successful fixture proves only the bounded boot-observation and cap
 path under the V4 profile; it does not prove accepted-session provenance, OIDC exchange, provider
 contact, materialization, delivery, positive provider evidence, Step 8, or V12.2.
 
-This correction is not active until independently reviewed and committed. No Protocol, Launcher,
-Core runtime, provider, or public claim implementation is authorized by this proposed text alone.
+This correction was independently reviewed and activated at Core
+`7a86c9313921ba012fb966c527e9c901a2b18e66`. That activation authorizes only the bounded V4
+Protocol, Launcher, Core compatibility, and hosted-proof work described above. It does not
+authorize provider contact, delivery, Step 8, V12.2, or a broader public capability claim.
 
 The first public `ProtectedLauncherCapabilityObservationProjectionV1` is closed and rejects unknown
 fields. Its unsigned canonical payload contains exactly: `schema_version: 1`; evidence kind

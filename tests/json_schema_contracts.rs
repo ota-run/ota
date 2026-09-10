@@ -3798,8 +3798,8 @@ fn receipt_systemd_protected_launcher_attestation_schema_enforces_v3_profile_and
         "broker_verifiers": [{ "key_id": "broker", "algorithm": "ed25519", "public_key": "key" }],
         "attestation": {
             "protocol_version": "ota-systemd-protected-launcher-attestation/v3", "adapter": "systemd_protected_launcher/v1",
-            "systemd_launcher_profile_id": "ota.authority-launcher.systemd/v3",
-            "systemd_launcher_profile_identity": "sha256:1d0ef44c24b6ec21dc0c462edd52c5197ae35a4a1728a98cd93b92d6f106dfaf",
+            "systemd_launcher_profile_id": "ota.authority-launcher.systemd/v4",
+            "systemd_launcher_profile_identity": "sha256:bdac5f965aa56d44de8581e194ac0364b2d4c98183fff0cbb223574fd78197a8",
             "systemd_job_principal_profile_id": "ota.authority-job-principal.systemd/v2",
             "systemd_job_principal_profile_identity": "sha256:ee6ea951aff4a80f8a4f93c576a93e3b29245b87d162726c2401c124a7a78659",
             "launcher_session_binding_identity": identity, "issuer": "systemd-launcher", "audience": "ota-crossing-broker",
@@ -3817,6 +3817,16 @@ fn receipt_systemd_protected_launcher_attestation_schema_enforces_v3_profile_and
     });
     let binding_schema = receipt_definition_schema("brokerPublicAuthorityBinding");
     assert!(binding_schema.validate(&binding).is_ok());
+    let mut historical_v3 = binding.clone();
+    historical_v3["attestation"]["systemd_launcher_profile_id"] =
+        json!("ota.authority-launcher.systemd/v3");
+    historical_v3["attestation"]["systemd_launcher_profile_identity"] =
+        json!("sha256:1d0ef44c24b6ec21dc0c462edd52c5197ae35a4a1728a98cd93b92d6f106dfaf");
+    assert!(binding_schema.validate(&historical_v3).is_ok());
+    let mut cross_profile = binding.clone();
+    cross_profile["attestation"]["systemd_launcher_profile_identity"] =
+        json!("sha256:1d0ef44c24b6ec21dc0c462edd52c5197ae35a4a1728a98cd93b92d6f106dfaf");
+    assert!(binding_schema.validate(&cross_profile).is_err());
     let mut legacy_launcher_profile = binding.clone();
     legacy_launcher_profile["attestation"]["systemd_launcher_profile_id"] =
         json!("ota.authority-launcher.systemd/v1");

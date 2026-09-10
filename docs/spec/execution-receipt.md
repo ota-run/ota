@@ -162,9 +162,10 @@ verified, content-addressed launcher and configuration identities, and a separat
 authority. It proves only those signed observations and remains distinct from reserved
 provider-attested posture. The additive v3 `systemd_protected_launcher_attested_one_use` branch
 binds Core's private process-posture preface to the complete, ordered systemd launcher and job-
-principal profiles. V3 authority requires instance schema 3 with exactly
-`ota.authority-launcher.systemd/v3` and `ota.authority-job-principal.systemd/v2`; legacy profiles
-remain readable only through their original evidence branch. It proves only that signed systemd
+principal profiles. Current V3 wire authority requires instance schema 3 with exactly
+`ota.authority-launcher.systemd/v4` and `ota.authority-job-principal.systemd/v2`. The archive schema
+continues to accept the exact historical V3 profile ID/identity pair; live admission does not
+upgrade it to V4. It proves only that signed systemd
 profile instance; it is not provider-attested separation. Core archive history re-verifies the
 original v1, v2, or v3 branch in local regressions; it never upgrades legacy evidence by defaulting
 newer fields. The systemd carrier archives the
