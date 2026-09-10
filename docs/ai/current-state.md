@@ -347,8 +347,22 @@ durable agent workflow belongs in the canonical Ota skill.
   service shard is not a stable compatibility boundary. Core now admits only the East US service
   family with a canonical positive shard, still binds the exact observed host into each observation,
   and refuses zero, padded, overflowing, alternate-region, suffix, scheme, port, and authority
-  substitutions. A fresh exact endpoint run remains required. No OIDC request, provider contact,
-  materialization, delivery, positive provider evidence, Step 8, or V12.2 capability is activated.
+  substitutions. Exact Core run
+  [34443349694](https://github.com/ota-run/ota/actions/runs/34443349694), protected job
+  `102762828509`, then passed at `a93d65650e6d74167515fedc43a62ea9cc657489` against service shard
+  `3`, with signed V4 capability derivation verified and the bounded endpoint artifact published.
+  Its exact endpoint and no-token Toolkit ZIPs are retained under
+  `docs/pressure/retained-artifacts/` with SHA-256 values
+  `0abd5bfe6565bba8ac768205f05c9675db8c62167fa588cd44fad48300e69571` and
+  `d525e5284463e96567219a4c5a6e05fd7ca056adf4cc9ff2506b1ae5c21acd26`.
+  Launcher run
+  [34443805276](https://github.com/ota-run/authority-launcher/actions/runs/34443805276), job
+  `102764136034`, separately completed one governed invocation against the same installation with
+  exit `0`, all four terminal cleanup conditions, and one valid protected receipt archive with zero
+  invalid archives. Launcher `bf4e6d994d964aef0f5bcadec71d1b5cd53f63e6` durably retains that
+  exact eight-file ZIP. These runs close the bounded protected-capability and endpoint-compatibility
+  gate only. No real GitHub OIDC request, provider contact, materialization, delivery, positive
+  provider evidence, Step 8, or V12.2 capability is activated.
 - Vinicius' independent v1.6.27 source review confirmed that negative-control projection
   reconciliation is live on runtime proof, emitted-archive verification, and Doctor archive
   loading. It also exposed a narrower adversarial-test gap: the existing digest mutation was
