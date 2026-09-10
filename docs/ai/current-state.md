@@ -328,9 +328,17 @@ durable agent workflow belongs in the canonical Ota skill.
   non-writability checks on every component, and exact `root:root 0700` final-directory validation;
   all replay record operations restore no-mount-crossing descriptor-relative resolution beneath
   the retained final descriptor. Both focused tests passed directly on the protected Linux/X64
-  host. A fresh immutable Root Boundary run and an exact Core endpoint rerun remain required. No
-  OIDC request, provider contact, materialization, delivery, positive provider evidence, Step 8, or
-  V12.2 capability is activated.
+  host. Root Boundary run
+  [34431466395](https://github.com/ota-run/authority-launcher/actions/runs/34431466395), job
+  `102727695360`, then passed at that exact Launcher revision, including the privileged retained
+  capability derivation and production replay-store checks. After fresh provisioning at exact Core
+  `1dee11e4bfaae4a335228d1fb76573dde9f65353`, Launcher `017d866b`, and Protocol `d16947b8`, Core
+  endpoint run [34433055859](https://github.com/ota-run/ota/actions/runs/34433055859) completed the
+  protected observation transaction and emitted one valid signed projection, but the workflow
+  rejected it because Rust's test harness prefixed the marker line with the test name. The Core
+  workflow now extracts exactly one marker from either harness placement and self-tests zero and
+  duplicate refusal; a fresh exact endpoint run remains required. No OIDC request, provider contact,
+  materialization, delivery, positive provider evidence, Step 8, or V12.2 capability is activated.
 - Vinicius' independent v1.6.27 source review confirmed that negative-control projection
   reconciliation is live on runtime proof, emitted-archive verification, and Doctor archive
   loading. It also exposed a narrower adversarial-test gap: the existing digest mutation was
