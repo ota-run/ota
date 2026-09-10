@@ -336,8 +336,18 @@ durable agent workflow belongs in the canonical Ota skill.
   endpoint run [34433055859](https://github.com/ota-run/ota/actions/runs/34433055859) completed the
   protected observation transaction and emitted one valid signed projection, but the workflow
   rejected it because Rust's test harness prefixed the marker line with the test name. The Core
-  workflow now extracts exactly one marker from either harness placement and self-tests zero and
-  duplicate refusal; a fresh exact endpoint run remains required. No OIDC request, provider contact,
+  workflow repair at `f2db350fee630ce2ad1701bd9b5272933d6c7c1e` extracts exactly one marker
+  from either harness placement and self-tests zero and duplicate refusal. Exact run
+  [34439988695](https://github.com/ota-run/ota/actions/runs/34439988695) passed when GitHub supplied
+  the retained shard-`1` profile, while prior exact run
+  [34434534789](https://github.com/ota-run/ota/actions/runs/34434534789) completed capability
+  observation and then rejected the live endpoint as outside that profile. Root-only mutable Runner
+  diagnostics attributed the mismatch to service shard `3`; that operator observation is not
+  immutable hosted artifact evidence. The two outcomes nevertheless expose that freezing one
+  service shard is not a stable compatibility boundary. Core now admits only the East US service
+  family with a canonical positive shard, still binds the exact observed host into each observation,
+  and refuses zero, padded, overflowing, alternate-region, suffix, scheme, port, and authority
+  substitutions. A fresh exact endpoint run remains required. No OIDC request, provider contact,
   materialization, delivery, positive provider evidence, Step 8, or V12.2 capability is activated.
 - Vinicius' independent v1.6.27 source review confirmed that negative-control projection
   reconciliation is live on runtime proof, emitted-archive verification, and Doctor archive

@@ -36,7 +36,10 @@ const PROFILE_DOMAIN: &[u8] = b"ota.github-actions-oidc-request-endpoint-profile
 const OBSERVATION_DOMAIN: &[u8] = b"ota.github-actions-oidc-request-endpoint-observation.v1\0";
 const PROFILE_ID: &str = "github_actions_oidc_request_endpoint_v1";
 const REQUEST_SCHEME: &str = "https";
-const REQUEST_HOST: &str = "run-actions-1-azure-eastus.actions.githubusercontent.com";
+const REQUEST_HOST_PREFIX: &str = "run-actions-";
+const REQUEST_HOST_SUFFIX: &str = "-azure-eastus.actions.githubusercontent.com";
+const REQUEST_HOST_SHAPE: &str =
+    "run-actions-{positive_decimal}-azure-eastus.actions.githubusercontent.com";
 const PATH_SHAPE: &str = "/{decimal}//idtoken/{uuid}/{uuid}";
 const QUERY_SHAPE: &str = "api-version=2.0";
 const AUDIENCE_KEY: &str = "audience";
@@ -53,7 +56,7 @@ pub(crate) struct GithubActionsOidcRequestEndpointProfileV1 {
     pub identity: String,
     pub profile_id: String,
     pub scheme: String,
-    pub host: String,
+    pub host_shape: String,
     pub explicit_port: bool,
     pub path_shape: String,
     pub existing_query_shape: String,
@@ -94,7 +97,7 @@ struct ProfileIdentityPayload<'a> {
     schema_version: u32,
     profile_id: &'a str,
     scheme: &'a str,
-    host: &'a str,
+    host_shape: &'a str,
     explicit_port: bool,
     path_shape: &'a str,
     existing_query_shape: &'a str,
@@ -125,7 +128,7 @@ pub(crate) fn github_actions_oidc_request_endpoint_profile_v1()
         identity: String::new(),
         profile_id: PROFILE_ID.into(),
         scheme: REQUEST_SCHEME.into(),
-        host: REQUEST_HOST.into(),
+        host_shape: REQUEST_HOST_SHAPE.into(),
         explicit_port: false,
         path_shape: PATH_SHAPE.into(),
         existing_query_shape: QUERY_SHAPE.into(),
@@ -170,7 +173,7 @@ pub(crate) fn resolve_github_actions_oidc_endpoint_observation_v1(
         ));
     }
     validate_sha256_identity(&input.protected_launcher_capability_projection_identity)?;
-    validate_request_url(profile, &input.request_url)?;
+    let request_host = validate_request_url(profile, &input.request_url)?;
 
     let mut resolved = ResolvedGithubActionsOidcEndpointObservationV1 {
         schema_version: 1,
@@ -184,7 +187,7 @@ pub(crate) fn resolve_github_actions_oidc_endpoint_observation_v1(
             .protected_launcher_capability_projection_identity
             .clone(),
         request_scheme: profile.scheme.clone(),
-        request_host: profile.host.clone(),
+        request_host,
         request_path_shape: profile.path_shape.clone(),
         request_query_shape: profile.existing_query_shape.clone(),
     };
@@ -223,7 +226,7 @@ pub(crate) fn verify_github_actions_oidc_endpoint_observation_v1(
 fn validate_request_url(
     profile: &GithubActionsOidcRequestEndpointProfileV1,
     request_url: &str,
-) -> Result<(), GithubOidcEndpointError> {
+) -> Result<String, GithubOidcEndpointError> {
     if request_url.is_empty()
         || !request_url.is_ascii()
         || request_url.bytes().any(|byte| byte.is_ascii_control())
@@ -237,7 +240,7 @@ fn validate_request_url(
         .strip_prefix(&prefix)
         .ok_or_else(invalid_endpoint)?;
     let (authority, path_and_query) = remainder.split_once('/').ok_or_else(invalid_endpoint)?;
-    if authority != profile.host || authority.contains('@') || authority.contains(':') {
+    if authority.contains('@') || authority.contains(':') || !is_canonical_request_host(authority) {
         return Err(invalid_endpoint());
     }
     let (path, query) = path_and_query
@@ -256,7 +259,14 @@ fn validate_request_url(
     {
         return Err(invalid_endpoint());
     }
-    Ok(())
+    Ok(authority.into())
+}
+
+fn is_canonical_request_host(value: &str) -> bool {
+    value
+        .strip_prefix(REQUEST_HOST_PREFIX)
+        .and_then(|value| value.strip_suffix(REQUEST_HOST_SUFFIX))
+        .is_some_and(is_canonical_positive_decimal)
 }
 
 fn is_canonical_positive_decimal(value: &str) -> bool {
@@ -305,7 +315,7 @@ fn profile_identity(
             schema_version: profile.schema_version,
             profile_id: &profile.profile_id,
             scheme: &profile.scheme,
-            host: &profile.host,
+            host_shape: &profile.host_shape,
             explicit_port: profile.explicit_port,
             path_shape: &profile.path_shape,
             existing_query_shape: &profile.existing_query_shape,
@@ -379,6 +389,7 @@ fn error(code: &'static str, message: impl Into<String>) -> GithubOidcEndpointEr
 mod tests {
     use super::*;
 
+    const REQUEST_HOST: &str = "run-actions-1-azure-eastus.actions.githubusercontent.com";
     const URL: &str = "https://run-actions-1-azure-eastus.actions.githubusercontent.com/158853568//idtoken/123e4567-e89b-12d3-a456-426614174000/987e6543-e21b-32d3-b456-426614174111?api-version=2.0";
 
     fn identity(character: char) -> String {
@@ -403,11 +414,30 @@ mod tests {
         let retained = input();
         let resolved = resolve_github_actions_oidc_endpoint_observation_v1(&profile, &retained)
             .expect("observation");
+        assert_eq!(profile.host_shape, REQUEST_HOST_SHAPE);
+        assert_eq!(resolved.request_host, REQUEST_HOST);
         assert_eq!(resolved.request_path_shape, PATH_SHAPE);
         assert_eq!(resolved.request_query_shape, QUERY_SHAPE);
         assert!(!format!("{resolved:?}").contains("123e4567"));
         verify_github_actions_oidc_endpoint_observation_v1(&profile, &retained, &resolved)
             .expect("semantic re-verification");
+    }
+
+    #[test]
+    fn canonical_service_shard_rotation_resolves_and_binds_the_observed_host() {
+        let profile = github_actions_oidc_request_endpoint_profile_v1().expect("profile");
+        let mut retained = input();
+        retained.request_url = URL.replacen("run-actions-1-", "run-actions-3-", 1);
+        let resolved = resolve_github_actions_oidc_endpoint_observation_v1(&profile, &retained)
+            .expect("canonical service shard");
+        assert_eq!(
+            resolved.request_host,
+            "run-actions-3-azure-eastus.actions.githubusercontent.com"
+        );
+
+        let original = resolve_github_actions_oidc_endpoint_observation_v1(&profile, &input())
+            .expect("original shard");
+        assert_ne!(resolved.identity, original.identity);
     }
 
     #[test]
@@ -417,6 +447,15 @@ mod tests {
             URL.replacen("https://", "http://", 1),
             URL.replacen(REQUEST_HOST, "token.actions.githubusercontent.com", 1),
             URL.replacen(REQUEST_HOST, &format!("{REQUEST_HOST}:443"), 1),
+            URL.replacen("run-actions-1-", "run-actions-0-", 1),
+            URL.replacen("run-actions-1-", "run-actions-01-", 1),
+            URL.replacen("run-actions-1-", "run-actions-18446744073709551616-", 1),
+            URL.replacen("azure-eastus", "azure-westus", 1),
+            URL.replacen(
+                ".actions.githubusercontent.com",
+                ".actions.githubusercontent.com.invalid",
+                1,
+            ),
             URL.replacen("/158853568//idtoken/", "/158853568/idtoken/", 1),
             URL.replacen("/158853568//idtoken/", "/0//idtoken/", 1),
             URL.replacen("/158853568//idtoken/", "/0158853568//idtoken/", 1),
@@ -501,7 +540,7 @@ mod tests {
         );
 
         let mut forged_profile = profile.clone();
-        forged_profile.host = "alternate.actions.githubusercontent.com".into();
+        forged_profile.host_shape = "alternate.actions.githubusercontent.com".into();
         forged_profile.identity = profile_identity(&forged_profile).expect("forged identity");
         assert_eq!(
             resolve_github_actions_oidc_endpoint_observation_v1(&forged_profile, &input())

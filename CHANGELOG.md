@@ -33,8 +33,9 @@
 
 - Add a crate-private, provider-free GitHub Actions OIDC request-endpoint profile and semantic
   observation verifier for the activated V12.1 Linux/X64 protected-runner target. The initial
-  profile is fail-closed to the exact host, path shape, and query shape retained by the earlier
-  ARM64 discovery; target, endpoint, profile, capability-identity, and recomputed-observation
+  profile is fail-closed to the retained East US service family with a canonical positive shard,
+  exact path shape, and exact query shape. Each observation binds the exact supplied host;
+  target, endpoint, profile, capability-identity, and recomputed-observation
   substitutions refuse. Core's active broker and capability-observation consumers require the
   immutable V4 protected-launcher profile while the V3 attestation wire envelope remains stable.
   The Linux-only compatibility client now issues one fresh challenge,
