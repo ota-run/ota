@@ -308,11 +308,27 @@ durable agent workflow belongs in the canonical Ota skill.
   independently administered VPS run
   [34418027937](https://github.com/ota-run/authority-launcher/actions/runs/34418027937) then refused
   before authorization because Core still required V3; it is failure localization, not V4
-  compatibility evidence. The current Core migration pins the exact Protocol revision, requires V4
-  for live broker and capability-observation admission, preserves exact historical V3 archive
-  re-verification without making V3 loadable for live admission, and binds the endpoint gate to the
-  exact Launcher revision and V4 public class. An immutable Core commit, fresh VPS reprovision, and
-  successful exact-head independently administered and endpoint workflow runs remain required. No
+  compatibility evidence. Core migration `5e4b2438422ae7e0f54c063ee6fbcfb585c2965e` pins the exact
+  Protocol revision, requires V4 for live broker and capability-observation admission, preserves
+  exact historical V3 archive re-verification without making V3 loadable for live admission, and
+  binds the endpoint gate to the V4 public class. After an exact VPS reprovision, Launcher run
+  [34422820241](https://github.com/ota-run/authority-launcher/actions/runs/34422820241)
+  completed the governed invocation at exact Launcher
+  `d690b8beb0c775a9d4ad7c944a150de895b1af67` and Core `5e4b2438`; Core endpoint run
+  [34422827427](https://github.com/ota-run/ota/actions/runs/34422827427) then refused before
+  capability derivation because the replay opener prohibited systemd's administrator-owned mount
+  transition at `/var/lib/ota/authority-launcher`. Launcher
+  `dac375dc323d8aa30be2e23db033b89647d5e331` admitted that one observed transition, but immutable
+  Root Boundary run
+  [34425445450](https://github.com/ota-run/authority-launcher/actions/runs/34425445450) executed the
+  exact new test once and localized another distribution-specific mount transition earlier in the
+  same fixed path. It is failed portability evidence, not compatibility proof. Launcher
+  `017d866bf9aab8b193ef0ce0515acc95545f3399` now walks only the fixed absolute replay path with
+  raw lexical alias refusal, no-symlink and no-magic-link resolution, root ownership and
+  non-writability checks on every component, and exact `root:root 0700` final-directory validation;
+  all replay record operations restore no-mount-crossing descriptor-relative resolution beneath
+  the retained final descriptor. Both focused tests passed directly on the protected Linux/X64
+  host. A fresh immutable Root Boundary run and an exact Core endpoint rerun remain required. No
   OIDC request, provider contact, materialization, delivery, positive provider evidence, Step 8, or
   V12.2 capability is activated.
 - Vinicius' independent v1.6.27 source review confirmed that negative-control projection
