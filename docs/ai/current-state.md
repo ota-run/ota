@@ -367,9 +367,12 @@ durable agent workflow belongs in the canonical Ota skill.
   separate refused probe child and cgroup. Its public projection is valid compatibility evidence
   but cannot authorize a later provider-requesting child. Before provider contact, the normal
   selected-child boundary must produce one Authority-Protocol-owned private same-execution binding.
-  Core independently derives and retains the Step 1-6 transaction candidate; Launcher accepts it
-  only over the selected child's inherited startup-bound session, binds it as opaque transport
-  truth, and returns it only over that session. Core must reconcile the returned candidate, startup
+  Core `1b7d8d78` commits the crate-private, provider-free Step 1-6 transaction-candidate
+  derivation: it independently rederives the existing evaluation and dry-run plan, and binds the
+  exact realization, selected graph, protected binding/source, profile/subject/target, and
+  OIDC/Google tuple. It has no loader, command, session, or provider consumer. Launcher accepts
+  that candidate only over the selected child's inherited startup-bound session, binds it as opaque
+  transport truth, and returns it only over that session. Core must reconcile the returned candidate, startup
   continuation, and session to its retained values in a one-use, expiry-rechecked guard before the
   first network request. Until that route is implemented and pressured, the provider transaction
   remains blocked; the existing probe, projection, and endpoint evidence retain their narrower

@@ -1117,7 +1117,7 @@ dependencies = [
 [[package]]
 name = "ota-authority-protocol"
 version = "0.1.0"
-source = "git+https://github.com/ota-run/authority-protocol.git?rev=d16947b87d84e66a4164a275c703b47fce6ded20#d16947b87d84e66a4164a275c703b47fce6ded20"
+source = "git+https://github.com/ota-run/authority-protocol.git?rev=63a8c5ce4b1123bfc1d17bc37f1339077793b306#63a8c5ce4b1123bfc1d17bc37f1339077793b306"
 dependencies = [
  "base64",
  "semver",
