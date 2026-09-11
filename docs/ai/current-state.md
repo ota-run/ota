@@ -395,7 +395,9 @@ durable agent workflow belongs in the canonical Ota skill.
   Independent architecture review then identified the missing pre-candidate authority-snapshot
   bridge: Core cannot derive the Step 1-6 candidate until it receives the exact protected binding,
   source, profile, target, and policy snapshot, while the existing V1 transaction-binding exchange
-  begins only after candidate derivation and does not bind that snapshot. A proposed Step 7 amendment
+  begins only after candidate derivation and does not bind that snapshot. Protocol committed the
+  record-only prerequisite at `d1d1fd4` before the amendment was activated; that does not create a
+  Core or Launcher consumer, reservation, V2 runtime exchange, or provider capability. A proposed Step 7 amendment
   now assigns a private ordered exchange: Protocol owns closed snapshot request/response identities
   and additive snapshot-bound V2 transaction-binding records; Launcher owns fixed protected-store
   loading, retained-descriptor and byte revalidation, signed-bundle verification, per-child/session

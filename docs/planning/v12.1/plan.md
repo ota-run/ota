@@ -686,6 +686,12 @@ candidate until it has independently reconstructed the protected binding, source
 and policy truth retained by Launcher. The public capability-observation projection is compatibility
 evidence only and must never satisfy this exchange or become authority for candidate derivation.
 
+Protocol's structural record layer was committed at `d1d1fd4` before this amendment was activated.
+That record-only prerequisite does not activate the bridge: Core and Launcher do not yet consume
+snapshot records, no snapshot reservation or V2 exchange exists at runtime, and no provider behavior
+is enabled. The bridge remains implementation-blocked until this amendment is independently reviewed
+and committed; V1 cannot become a fallback for a snapshot-backed transaction.
+
 Authority Protocol must add closed, versioned snapshot challenge, request, payload, and response
 records without changing the committed V1 transaction-binding records. The private
 `ProtectedAuthoritySnapshotChallengeV1` contains exactly `schema_version: 1`, message kind
