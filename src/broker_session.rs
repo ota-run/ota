@@ -513,6 +513,7 @@ pub(crate) struct ConsumedBrokerCrossing {
 #[cfg(unix)]
 pub(crate) struct SystemdExecutionCompletion {
     session: LauncherSession,
+    startup_continuation: LauncherStartupContinuationV1,
     invocation_id: String,
     lease_consumption_admission_identity: String,
     work_unit_identity: String,
@@ -736,7 +737,8 @@ impl PreparedBrokerCrossing {
                     .expect("verified systemd consumption evidence")
                     .pending_transaction_identity
                     .clone(),
-                invocation_id: startup.invocation_id,
+                invocation_id: startup.invocation_id.clone(),
+                startup_continuation: startup,
                 session,
                 persisted: None,
             }),
@@ -788,6 +790,69 @@ impl ConsumedBrokerCrossing {
 
 #[cfg(unix)]
 impl SystemdExecutionCompletion {
+    #[cfg(target_os = "linux")]
+    pub(crate) fn request_secret_delivery_transaction_binding(
+        &mut self,
+        candidate: crate::secret_delivery_transaction::SemanticallyVerifiedSecretDeliveryTransactionCandidate,
+        workflow_run_id: &str,
+        workflow_run_attempt: &str,
+        workflow_reference: &str,
+        runner_version: &str,
+    ) -> Result<
+        crate::secret_delivery_transaction_binding::VerifiedSecretDeliveryTransactionBindingV1,
+        String,
+    > {
+        self.request_secret_delivery_transaction_binding_with_verifier_loader(
+            candidate,
+            workflow_run_id,
+            workflow_run_attempt,
+            workflow_reference,
+            runner_version,
+            || {
+                crate::protected_capability_observation::load_retained_verifier()
+                    .map_err(|error| error.to_string())
+            },
+        )
+    }
+
+    #[cfg(any(target_os = "linux", test))]
+    fn request_secret_delivery_transaction_binding_with_verifier_loader(
+        &mut self,
+        candidate: crate::secret_delivery_transaction::SemanticallyVerifiedSecretDeliveryTransactionCandidate,
+        workflow_run_id: &str,
+        workflow_run_attempt: &str,
+        workflow_reference: &str,
+        runner_version: &str,
+        load_verifier: impl FnOnce() -> Result<
+            crate::protected_capability_observation::RetainedCapabilityProjectionVerifierV1,
+            String,
+        >,
+    ) -> Result<
+        crate::secret_delivery_transaction_binding::VerifiedSecretDeliveryTransactionBindingV1,
+        String,
+    > {
+        let pending = crate::secret_delivery_transaction_binding::issue_secret_delivery_transaction_binding_v1(
+            candidate,
+            &self.startup_continuation,
+            workflow_run_id,
+            workflow_run_attempt,
+            workflow_reference,
+            runner_version,
+        )
+        .map_err(|error| error.to_string())?;
+        self.session.send_json(pending.request())?;
+        let response: ota_authority_protocol::ProtectedLauncherSecretDeliveryTransactionBindingResponseV1 =
+            self.session.receive_json()?;
+        let verifier = load_verifier()?;
+        pending
+            .reconcile(response, &verifier)
+            .map_err(|error| error.to_string())
+    }
+
+    pub(crate) fn startup_continuation(&self) -> &LauncherStartupContinuationV1 {
+        &self.startup_continuation
+    }
+
     pub(crate) fn persist_terminal_completion(
         &mut self,
         transaction: &crate::crossing_transaction::CrossingTransactionEvidence,
@@ -3840,6 +3905,7 @@ pub(crate) mod tests {
     use std::io::{Read, Write};
     use std::os::fd::{AsRawFd, IntoRawFd};
     use std::os::unix::net::UnixStream;
+    use std::sync::mpsc;
 
     use ed25519_dalek::{Signer, SigningKey};
     use tempfile::tempdir;
@@ -4363,6 +4429,7 @@ pub(crate) mod tests {
             identity: String::new(),
             message_kind: String::from(ota_authority_protocol::LAUNCHER_STARTUP_CONTINUATION),
             invocation_id: attestation.payload.invocation_id.clone(),
+            launcher_request_identity: format!("sha256:{}", "6".repeat(64)),
             child_process_identity: instance.child_process_identity.clone(),
             working_directory_identity: instance.working_directory_identity.clone(),
             process_posture_identity: instance.process_posture.identity.clone(),
@@ -5634,6 +5701,7 @@ pub(crate) mod tests {
             identity: String::new(),
             message_kind: String::from(ota_authority_protocol::LAUNCHER_STARTUP_CONTINUATION),
             invocation_id: String::from("invocation-decision"),
+            launcher_request_identity: format!("sha256:{}", "5".repeat(64)),
             child_process_identity: format!("sha256:{}", "1".repeat(64)),
             working_directory_identity: format!("sha256:{}", "2".repeat(64)),
             process_posture_identity: format!("sha256:{}", "3".repeat(64)),
@@ -5951,8 +6019,23 @@ pub(crate) mod tests {
         let (mut launcher, ota) = UnixStream::pair().expect("socket pair");
         let session = LauncherSession::from_inherited_descriptor(ota.into_raw_fd())
             .expect("connected Unix launcher descriptor");
+        let mut startup_continuation = LauncherStartupContinuationV1 {
+            schema_version: 1,
+            identity: String::new(),
+            message_kind: String::from(ota_authority_protocol::LAUNCHER_STARTUP_CONTINUATION),
+            invocation_id: String::from("invocation-123"),
+            launcher_request_identity: identity('9'),
+            child_process_identity: identity('a'),
+            working_directory_identity: identity('b'),
+            process_posture_identity: identity('c'),
+            principal_mapping_identity: identity('d'),
+        };
+        startup_continuation.identity =
+            launcher_startup_continuation_identity(&startup_continuation)
+                .expect("startup continuation identity");
         let mut completion = SystemdExecutionCompletion {
             session,
+            startup_continuation,
             invocation_id: String::from("invocation-123"),
             lease_consumption_admission_identity: identity('1'),
             work_unit_identity: identity('2'),
@@ -6037,6 +6120,101 @@ pub(crate) mod tests {
                     "failed",
                 )
                 .is_err()
+        );
+        launcher_thread.join().expect("launcher thread");
+    }
+
+    #[test]
+    fn systemd_completion_requests_secret_binding_on_retained_session_before_loading_authority() {
+        let identity = |value: char| format!("sha256:{}", value.to_string().repeat(64));
+        let (mut launcher, ota) = UnixStream::pair().expect("socket pair");
+        let session = LauncherSession::from_inherited_descriptor(ota.into_raw_fd())
+            .expect("connected Unix launcher descriptor");
+        let mut startup_continuation = LauncherStartupContinuationV1 {
+            schema_version: 1,
+            identity: String::new(),
+            message_kind: String::from(ota_authority_protocol::LAUNCHER_STARTUP_CONTINUATION),
+            invocation_id: String::from("invocation-123"),
+            launcher_request_identity: identity('9'),
+            child_process_identity: identity('a'),
+            working_directory_identity: identity('b'),
+            process_posture_identity: identity('c'),
+            principal_mapping_identity: identity('d'),
+        };
+        startup_continuation.identity =
+            launcher_startup_continuation_identity(&startup_continuation)
+                .expect("startup continuation identity");
+        let expected_startup = startup_continuation.clone();
+        let mut completion = SystemdExecutionCompletion {
+            session,
+            startup_continuation,
+            invocation_id: String::from("invocation-123"),
+            lease_consumption_admission_identity: identity('1'),
+            work_unit_identity: identity('2'),
+            pending_crossing_transaction_identity: identity('8'),
+            persisted: None,
+        };
+        let candidate = crate::secret_delivery_transaction_binding::tests::candidate();
+        let verified_candidate =
+            crate::secret_delivery_transaction_binding::tests::verified_candidate(&candidate);
+        let signing_key = SigningKey::from_bytes(&[9; 32]);
+        let response_verifier =
+            crate::secret_delivery_transaction_binding::tests::verifier(&signing_key);
+        let loader_verifier =
+            crate::secret_delivery_transaction_binding::tests::verifier(&signing_key);
+        let (response_written, response_observed) = mpsc::sync_channel(0);
+
+        let launcher_thread = std::thread::spawn(move || {
+            let request: ota_authority_protocol::ProtectedLauncherSecretDeliveryTransactionBindingRequestV1 =
+                read_json_frame(&mut launcher);
+            assert_eq!(
+                request.secret_transaction_candidate_identity,
+                candidate.identity
+            );
+            assert_eq!(
+                request.startup_continuation_identity,
+                expected_startup.identity
+            );
+            assert_eq!(
+                request.launcher_request_identity,
+                expected_startup.launcher_request_identity
+            );
+            assert_eq!(
+                request.session_identity,
+                ota_authority_protocol::protected_launcher_secret_delivery_transaction_session_v1_identity(
+                    expected_startup.identity.as_str(),
+                )
+                .expect("session identity")
+            );
+            let response = crate::secret_delivery_transaction_binding::tests::response_for_request(
+                &request,
+                &response_verifier,
+                &signing_key,
+            );
+            write_json_frame(&mut launcher, &response);
+            response_written
+                .send(())
+                .expect("record completed response write");
+        });
+
+        let verified = completion
+            .request_secret_delivery_transaction_binding_with_verifier_loader(
+                verified_candidate,
+                "123",
+                "1",
+                "ota-run/ota/.github/workflows/test.yml@refs/heads/main",
+                "2.337.0",
+                || {
+                    response_observed
+                        .recv()
+                        .map_err(|error| format!("response was not written: {error}"))?;
+                    Ok(loader_verifier)
+                },
+            )
+            .expect("same-session transaction binding");
+        assert_eq!(
+            verified.binding().secret_transaction_candidate_identity,
+            crate::secret_delivery_transaction_binding::tests::candidate().identity
         );
         launcher_thread.join().expect("launcher thread");
     }

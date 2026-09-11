@@ -1163,6 +1163,7 @@ mod tests {
     };
     use crate::secret_delivery_transaction::{
         SecretDeliveryTransactionCandidateInput, derive_secret_delivery_transaction_candidate,
+        retain_semantically_verified_secret_delivery_transaction_candidate,
         secret_delivery_transaction_candidate_identity,
         verify_secret_delivery_transaction_candidate,
     };
@@ -2458,6 +2459,13 @@ secret_requirements:
             "projects/ota-pressure/secrets/CAEP_API-Key_1"
         );
         verify_secret_delivery_transaction_candidate(&candidate, candidate_input).unwrap();
+        let retained_candidate =
+            retain_semantically_verified_secret_delivery_transaction_candidate(
+                &candidate,
+                candidate_input,
+            )
+            .expect("semantically verified candidate");
+        assert_eq!(retained_candidate.candidate(), &candidate);
 
         let mut forged_candidate = candidate.clone();
         forged_candidate.realizations[0].secret_resource =

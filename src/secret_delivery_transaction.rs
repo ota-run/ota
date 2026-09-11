@@ -89,6 +89,23 @@ pub(crate) struct SecretDeliveryTransactionCandidate {
     pub realizations: Vec<SecretDeliveryTransactionCandidateRealization>,
 }
 
+/// Opaque candidate that can only be created by re-verifying retained Step 1-6 truth.
+#[derive(Debug, Clone)]
+pub(crate) struct SemanticallyVerifiedSecretDeliveryTransactionCandidate {
+    candidate: SecretDeliveryTransactionCandidate,
+}
+
+impl SemanticallyVerifiedSecretDeliveryTransactionCandidate {
+    pub(crate) fn candidate(&self) -> &SecretDeliveryTransactionCandidate {
+        &self.candidate
+    }
+
+    #[cfg(test)]
+    pub(crate) fn for_binding_test(candidate: SecretDeliveryTransactionCandidate) -> Self {
+        Self { candidate }
+    }
+}
+
 #[derive(Serialize)]
 struct CandidateIdentityPayload<'a> {
     schema_version: u32,
@@ -219,6 +236,19 @@ pub(crate) fn verify_secret_delivery_transaction_candidate(
         ));
     }
     Ok(())
+}
+
+pub(crate) fn retain_semantically_verified_secret_delivery_transaction_candidate(
+    candidate: &SecretDeliveryTransactionCandidate,
+    input: SecretDeliveryTransactionCandidateInput<'_>,
+) -> Result<
+    SemanticallyVerifiedSecretDeliveryTransactionCandidate,
+    SecretDeliveryTransactionCandidateError,
+> {
+    verify_secret_delivery_transaction_candidate(candidate, input)?;
+    Ok(SemanticallyVerifiedSecretDeliveryTransactionCandidate {
+        candidate: candidate.clone(),
+    })
 }
 
 pub(crate) fn secret_delivery_transaction_candidate_identity(

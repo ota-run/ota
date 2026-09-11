@@ -26,6 +26,15 @@
 
 ## Unreleased
 
+- Add the crate-private Core half of the selected-child secret-delivery transaction binding.
+  After protected Launcher lease consumption, Core can now originate the closed Protocol request
+  on the retained startup-bound session, reconcile the returned private binding and signed public
+  capability projection against independently reloaded installation authority, and retain a
+  one-use guard that rechecks candidate, startup continuation, signature, installation identity,
+  and expiry immediately before any future provider request. Applicable public commands remain
+  fail-closed: this introduces no protected binding loader, OIDC request, provider contact,
+  materialization, injection, receipt, archive, assurance, or support claim.
+
 - Keep `ota detect` task inference bounded to public task-runner entries and canonical reusable
   GitHub Actions verification steps. Taskfile helpers whose names begin with `_` or declare
   `internal: true` remain implementation detail, while repeated calls to the same reusable

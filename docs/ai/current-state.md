@@ -377,6 +377,21 @@ durable agent workflow belongs in the canonical Ota skill.
   first network request. Until that route is implemented and pressured, the provider transaction
   remains blocked; the existing probe, projection, and endpoint evidence retain their narrower
   compatibility-only meaning.
+  The current local Step 7 batch implements the Core half of that boundary against exact Protocol
+  `5b416637c763f835050f65660766efa2b432f4af`. The post-consumption systemd carrier now retains the
+  complete verified startup continuation and can issue the typed binding request only over that
+  exact inherited Launcher session. Core independently reloads and reconciles the protected public
+  verifier and installation evidence after receiving the response, verifies the signed public
+  projection, and retains a crate-private guard that rechecks the exact candidate, startup
+  continuation, Protocol response, signature, installation identity, and expiry exactly once
+  immediately before a future provider request. Candidate, private binding, protected capability,
+  verifier, installation, session, and projection identities remain absent from public command
+  output and evidence. The live command path still refuses every applicable secret-delivery
+  selection because no production protected binding/policy loader or provider transaction is
+  activated. Site, Skills, Examples, Learn, FAQ, and Glossary are unaffected by this internal
+  boundary. Independent review and an exact production service-path Linux/X64 run remain required
+  before provider contact may begin; OIDC, Google contact, materialization, injection, Step 8, and
+  V12.2 remain blocked.
 - Vinicius' independent v1.6.27 source review confirmed that negative-control projection
   reconciliation is live on runtime proof, emitted-archive verification, and Doctor archive
   loading. It also exposed a narrower adversarial-test gap: the existing digest mutation was

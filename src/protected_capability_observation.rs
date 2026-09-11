@@ -86,6 +86,28 @@ pub(crate) struct PendingProtectedCapabilityObservationV1 {
 #[derive(Debug)]
 pub(crate) struct RetainedCapabilityProjectionVerifierV1 {
     verifier: ProtectedLauncherCapabilityProjectionVerifierV1,
+    installation_evidence_identity: String,
+}
+
+impl RetainedCapabilityProjectionVerifierV1 {
+    pub(crate) fn verifier(&self) -> &ProtectedLauncherCapabilityProjectionVerifierV1 {
+        &self.verifier
+    }
+
+    pub(crate) fn installation_evidence_identity(&self) -> &str {
+        self.installation_evidence_identity.as_str()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn for_test(
+        verifier: ProtectedLauncherCapabilityProjectionVerifierV1,
+        installation_evidence_identity: String,
+    ) -> Self {
+        Self {
+            verifier,
+            installation_evidence_identity,
+        }
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -250,7 +272,7 @@ fn reconcile_at_v1(
     Ok(response.projection.clone())
 }
 
-fn verify_projection_signature(
+pub(crate) fn verify_projection_signature(
     projection: &ProtectedLauncherCapabilityObservationProjectionV1,
     verifier: &ProtectedLauncherCapabilityProjectionVerifierV1,
 ) -> Result<(), ProtectedCapabilityObservationError> {
@@ -275,7 +297,7 @@ fn verify_projection_signature(
 }
 
 #[cfg(target_os = "linux")]
-fn load_retained_verifier()
+pub(crate) fn load_retained_verifier()
 -> Result<RetainedCapabilityProjectionVerifierV1, ProtectedCapabilityObservationError> {
     let verifier_bytes = read_protected_public_file(Path::new(VERIFIER_PATH))?;
     let verifier: ProtectedLauncherCapabilityProjectionVerifierV1 =
@@ -288,7 +310,15 @@ fn load_retained_verifier()
     let evidence: serde_json::Value = serde_json::from_slice(&evidence_bytes)
         .map_err(|_| ProtectedCapabilityObservationError::LocalBoundaryUnavailable)?;
     reconcile_verifier_installation(&evidence, &verifier_bytes)?;
-    Ok(RetainedCapabilityProjectionVerifierV1 { verifier })
+    let installation_evidence_identity = evidence
+        .get("identity")
+        .and_then(serde_json::Value::as_str)
+        .ok_or(ProtectedCapabilityObservationError::LocalBoundaryUnavailable)?
+        .to_string();
+    Ok(RetainedCapabilityProjectionVerifierV1 {
+        verifier,
+        installation_evidence_identity,
+    })
 }
 
 fn reconcile_verifier_installation(
@@ -658,7 +688,10 @@ mod tests {
     fn retained_verifier(
         verifier: ProtectedLauncherCapabilityProjectionVerifierV1,
     ) -> RetainedCapabilityProjectionVerifierV1 {
-        RetainedCapabilityProjectionVerifierV1 { verifier }
+        RetainedCapabilityProjectionVerifierV1::for_test(
+            verifier,
+            format!("sha256:{}", "f".repeat(64)),
+        )
     }
 
     fn installation_evidence(verifier_bytes: &[u8]) -> serde_json::Value {
