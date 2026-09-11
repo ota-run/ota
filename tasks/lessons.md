@@ -423,3 +423,16 @@
 - Rule: Never repair a selected-mode inconsistency in one consumer. Fix the canonical planner,
   identity-bind ordered roots, invocation occurrences, and edge endpoints, then propagate that
   graph to every execution-facing surface and pressure both native and container paths.
+
+## 2026-09-10
+
+- Pattern: Treating a credible external agent/readiness signal as a request for commentary leaves
+  reusable product pressure unrecorded even when an established Ota-owned intake surface and
+  inactive roadmap owners already exist.
+- Correction: After verifying the source, proactively classify the signal, state the current Ota
+  boundary, identify the remaining named gap and existing roadmap owner, and propose or create a
+  bounded intake record. Do not wait for the user to ask for a draft when the durable next action is
+  already clear.
+- Rule: External pressure signals require product judgment, not summary alone. Record them as
+  hypotheses with exact sources and `not_proved` limits; never turn them into implementation,
+  activation, public capability claims, or outreach without separate evidence and authorization.

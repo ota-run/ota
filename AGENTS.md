@@ -28,7 +28,8 @@
 
 This document defines how any AI agent, contributor, or engineer should work inside the Ota repositories to avoid drift, regressions, and helpful-but-wrong changes.
 
-Ota is open infrastructure for repo readiness. It is both:
+Ota is execution-governance infrastructure for software repositories. Its primary product
+interface is the execution contract for AI agents, shared with humans and CI. It is both:
 - a product
 - a specification surface
 - a CLI/runtime
@@ -98,7 +99,8 @@ workflow shell, or helper scripts.
 
 ## Core Product Context
 
-Ota is the open repo readiness system for humans and agents.
+Ota is the execution contract for AI agents and an execution-governance system for software
+repositories, shared with humans and CI.
 
 At the repo level, Ota defines:
 - what a repo needs
@@ -110,7 +112,7 @@ At the repo level, Ota defines:
 At the workspace level, Ota can provision multiple repositories into a ready development workspace.
 
 The core architecture is:
-- `ota.yaml` = canonical repo readiness contract
+- `ota.yaml` = canonical repository execution contract
 - `ota.workspace.yaml` = multi-repo workspace/bootstrap contract
 - CLI = deterministic engine and UX layer
 - JSON output = machine-readable integration surface

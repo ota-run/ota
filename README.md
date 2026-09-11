@@ -1,7 +1,8 @@
 <div align="center">
   <img src="https://res.cloudinary.com/ota-run/image/upload/q_auto/dpr_auto/63eb48c4-6148-40a0-8164-34505504414e.png" alt="ota logo" width="110" height="110" />
   <h1>ota</h1>
-  <p><strong>Built for humans, CI, and AI agents, containers, and multi-repo workspaces.</strong></p>
+  <p><strong>The execution contract for AI agents.</strong></p>
+  <p>Execution governance for software repositories, shared by humans, CI, and AI agents.</p>
   <p><strong>DOCTOR FIRST. CONTRACT SECOND.</strong></p>
 <!--   <p> -->
 <!--     Give every repo one explicit contract for diagnosis, setup, execution, and safe automation -->
@@ -42,7 +43,7 @@
 
 ---
 
-## One explicit contract for execution governance
+## Execution governance for software repositories
 
 Most repos fail the same way:
 
@@ -52,9 +53,9 @@ Most repos fail the same way:
 - AI agents see partial guidance and make unsafe assumptions
 - diagnosis starts after the repo already feels broken
 
-ota is not another task runner or package manager. It gives every repo one explicit contract for
-execution governance: what it needs, how it is diagnosed, how it is prepared, and how tasks run, so
-humans and AI agents can answer why a repo is or is not runnable without guesswork.
+ota is not another task runner or package manager. It gives every repository one explicit contract
+for readiness, verification, execution, and proof, so humans, CI, and AI agents know what can run
+and what each result proves.
 
 ota fixes that by making readiness explicit and machine-readable:
 
