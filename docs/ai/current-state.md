@@ -404,9 +404,15 @@ durable agent workflow belongs in the canonical Ota skill.
   The private challenge has its own 256-bit nonce commitment and identity domain, and one closed
   snapshot payload transitively binds its exact request, startup/session, store metadata and bytes,
   active bundle, generation, payload, and validity truth into the snapshot identity selected by V2.
-  The public capability-observation projection remains non-authoritative. The currently authorized
-  state machine stops after the V2 response and terminal cleanup; insertion of provider contact
-  requires a separate reviewed Step 7 slice. This amendment activates nothing until independently
+  The public capability-observation projection remains non-authoritative. The proposed state
+  machine stops after the V2 response and terminal cleanup; insertion of provider contact
+  requires a separate reviewed Step 7 slice. Independent design review identified three required
+  pre-implementation ownership rules: Core must retain dynamic invocation truth rather than accept
+  bundle claims; the existing canonical policy finalizer must receive an explicit verified-protected-
+  snapshot posture rather than misclassifying it as repository/workspace/caller policy; and Core must
+  verify canonical payload bytes and the outer admitted verifier signature before parsing the closed
+  authority payload. The amendment remains implementation-blocked until those rules are independently
+  reviewed and committed. This amendment activates nothing until independently
   reviewed and committed; provider contact, OIDC exchange,
   materialization, injection, positive evidence, Step 8, and V12.2 remain blocked.
 - Vinicius' independent v1.6.27 source review confirmed that negative-control projection

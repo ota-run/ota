@@ -750,6 +750,29 @@ transaction candidate. The transferred payload is untrusted semantic input until
 reconstruction succeeds. A structurally valid bundle, response, or recomputed identity cannot bypass
 Core's contract, selected-graph, policy, target, or canonical provider-tuple reconciliation.
 
+Core must first retain one `ProtectedSecretDeliveryInvocationContextV1` for the command invocation.
+Its exact workflow run identifier, run attempt, and workflow reference derive from the retained
+capability-observation challenge; the remaining dynamic GitHub claim values derive only from
+independently retained current-invocation evidence. The bundle, snapshot, projection, environment,
+workflow, and caller cannot supply, select, or override any context value. Core rederives the
+invocation-binding tuple from that one context and rejects any candidate, profile, subject, or
+binding whose dynamic claims disagree. A syntactically valid claim set is never sufficient.
+
+The canonical effect-policy finalizer gains one explicit `verified_protected_snapshot` source
+posture. It is produced only after the complete snapshot checks below and carries the snapshot and
+verifier evidence identities; it is neither repository-controlled, workspace-controlled, nor
+caller-selected. This extends the existing finalizer and its precedence/identity model. A
+secret-specific parallel policy evaluator is prohibited.
+
+The Core-owned payload schema is closed, versioned, and duplicate-refusing. Before parsing it, Core
+requires the payload bytes to be exact canonical bytes bound by the snapshot; selects the one active
+verifier from the outer verifier store; verifies the binding-bundle Ed25519 signature under that
+verifier's exact key usage and signature domain; and requires the payload's authority, trust-root,
+and verifier identities to derive from those outer records rather than payload fields. Core passes
+the complete unfiltered binding collection to `resolve_secret_provider_bindings`, preserving its
+existing duplicate and conflict refusal. Any byte, signature, outer-authority, verifier, trust,
+source, policy, or payload-shape ambiguity refuses before candidate derivation.
+
 Authority Protocol must also add an additive V2 transaction-binding request and response. Both bind
 the exact protected snapshot identity in addition to the existing candidate, accepted Launcher
 request, startup continuation, inherited session, capability, challenge, projection, verifier,
