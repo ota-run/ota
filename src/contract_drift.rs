@@ -201,6 +201,17 @@ pub(crate) fn append_contract_drift_findings(
                         change.field, change.existing, change.source, change.detected
                     ),
                 ),
+                CiVerificationAggregateChangeKind::DirectInvocationNotCovering => (
+                    "OTA_CI_VERIFICATION_DRIFT",
+                    format!(
+                        "CI verification drift: `{}` is not executed through its declared aggregate",
+                        change.field
+                    ),
+                    format!(
+                        "`ota.yaml` declares `{}` = `{}`, but workflow command `{}` under `{}` does not execute the declared aggregate with a bounded foreground Ota invocation",
+                        change.field, change.existing, change.detected, change.source
+                    ),
+                ),
             };
             findings.push(Finding::identified(
                 code,
@@ -741,6 +752,7 @@ struct CiVerificationGovernanceChange {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CiVerificationAggregateChangeKind {
     Update,
+    DirectInvocationNotCovering,
 }
 
 struct CiVerificationAggregateChange {
@@ -1385,9 +1397,6 @@ fn collect_ci_verification_aggregate_changes(
     // commands that are not independently comparable to a task until they are recovered as one
     // sequence; filtering individual signals first destroys that evidence.
     let workflow_candidates = collect_ci_verification_workflow_task_sequences(existing, signals);
-    if workflow_candidates.is_empty() {
-        return Vec::new();
-    }
     let mut changes = Vec::new();
     for task_name in &lane_names {
         let Some(task) = existing.tasks.get(task_name) else {
@@ -1403,6 +1412,15 @@ fn collect_ci_verification_aggregate_changes(
         let field = format!("tasks.{task_name}.aggregate.tasks");
         let owner_kind = detect_existing_field_owner_kind(existing, &field);
         if owner_kind != DETECT_OWNER_KIND_MANUAL {
+            continue;
+        }
+
+        // A bounded direct invocation delegates the aggregate's immediate ordered membership to
+        // the contract. Do not reinterpret unrelated workflow commands as its implementation.
+        if matches!(
+            ci_direct_aggregate_invocation_status(signals, task_name),
+            Some(CiDirectAggregateInvocation::Covers)
+        ) {
             continue;
         }
 
@@ -1432,6 +1450,19 @@ fn collect_ci_verification_aggregate_changes(
             continue;
         }
 
+        if let Some(CiDirectAggregateInvocation::NotCovering { source, command }) =
+            ci_direct_aggregate_invocation_status(signals, task_name)
+        {
+            changes.push(CiVerificationAggregateChange {
+                field,
+                existing: aggregate.tasks.join(", "),
+                detected: command,
+                source,
+                kind: CiVerificationAggregateChangeKind::DirectInvocationNotCovering,
+            });
+            continue;
+        }
+
         let Some((source, detected_tasks)) =
             best_matching_ci_verification_workflow_candidate(&existing_tasks, &workflow_candidates)
         else {
@@ -1448,6 +1479,159 @@ fn collect_ci_verification_aggregate_changes(
     }
 
     changes
+}
+
+enum CiDirectAggregateInvocation {
+    Covers,
+    NotCovering { source: String, command: String },
+}
+
+fn ci_direct_aggregate_invocation_status(
+    signals: &[CiVerificationTaskSignal],
+    task_name: &str,
+) -> Option<CiDirectAggregateInvocation> {
+    let mut non_covering = None;
+    for signal in signals.iter().filter(|signal| signal.exact_command) {
+        let Some(covers) = ci_direct_aggregate_invocation_matches(&signal.command, task_name)
+        else {
+            continue;
+        };
+        if covers {
+            return Some(CiDirectAggregateInvocation::Covers);
+        }
+        non_covering.get_or_insert_with(|| CiDirectAggregateInvocation::NotCovering {
+            source: signal.source.clone(),
+            command: signal.command.clone(),
+        });
+    }
+    non_covering
+}
+
+fn ci_direct_aggregate_invocation_matches(command: &str, task_name: &str) -> Option<bool> {
+    let command = command.trim();
+    let initial_tokens = command.split_ascii_whitespace().collect::<Vec<_>>();
+    if initial_tokens.is_empty() || initial_tokens[0] != "ota" {
+        return None;
+    }
+    if command.contains('\n')
+        || command.contains('$')
+        || command.contains('`')
+        || command.contains(';')
+        || command.contains("&&")
+        || command.contains("||")
+        || command.matches('|').count() > 1
+    {
+        return Some(false);
+    }
+
+    let invocation = if let Some((invocation, observer)) = command.split_once('|') {
+        let observer = observer.split_ascii_whitespace().collect::<Vec<_>>();
+        if observer.len() != 2 || observer[0] != "tee" || !is_ci_tee_capture_path(observer[1]) {
+            return Some(false);
+        }
+        let Some(invocation) = invocation.trim_end().strip_suffix("2>&1") else {
+            return Some(false);
+        };
+        invocation.trim_end()
+    } else {
+        command
+    };
+    if invocation.contains('&') {
+        return Some(false);
+    }
+    let tokens = invocation.split_ascii_whitespace().collect::<Vec<_>>();
+    if tokens.is_empty() || tokens[0] != "ota" {
+        return Some(false);
+    }
+
+    let mut flags = CiDirectAggregateInvocationFlags::default();
+    let mut index = 1usize;
+    while index < tokens.len() && tokens[index] != "run" {
+        if !flags.accept(tokens[index], true) {
+            return Some(false);
+        }
+        index += 1;
+    }
+    if index + 1 >= tokens.len() || tokens[index] != "run" {
+        return Some(false);
+    }
+    let invoked_task = tokens[index + 1];
+    if invoked_task != task_name {
+        return ci_direct_aggregate_tasks_share_scope(invoked_task, task_name).then_some(false);
+    }
+
+    let mut saw_contract_root = false;
+    for token in &tokens[index + 2..] {
+        match *token {
+            "." if !saw_contract_root => {
+                saw_contract_root = true;
+            }
+            _ if flags.accept(token, false) => {}
+            // Flags with values, alternate contracts, dry runs, refusal paths, dependency
+            // skipping, shell indirection, and every unrecognized token remain non-covering.
+            _ => return Some(false),
+        }
+    }
+    Some(true)
+}
+
+#[derive(Default)]
+struct CiDirectAggregateInvocationFlags {
+    seen: BTreeSet<String>,
+    saw_mode: bool,
+    saw_lifecycle: bool,
+    saw_verbosity: bool,
+}
+
+impl CiDirectAggregateInvocationFlags {
+    fn accept(&mut self, token: &str, global_only: bool) -> bool {
+        let is_global = matches!(token, "--debug" | "--plain" | "--concise" | "--verbose");
+        if global_only && !is_global {
+            return false;
+        }
+        match token {
+            "--debug" | "--plain" | "--stream" => self.seen.insert(token.to_string()),
+            "--concise" | "--verbose" => {
+                !self.saw_verbosity && self.seen.insert(token.to_string()) && {
+                    self.saw_verbosity = true;
+                    true
+                }
+            }
+            "--native" | "--container" | "--remote" => {
+                !self.saw_mode && self.seen.insert(token.to_string()) && {
+                    self.saw_mode = true;
+                    true
+                }
+            }
+            "--persistent" | "--ephemeral" => {
+                !self.saw_lifecycle && self.seen.insert(token.to_string()) && {
+                    self.saw_lifecycle = true;
+                    true
+                }
+            }
+            _ => false,
+        }
+    }
+}
+
+fn ci_direct_aggregate_tasks_share_scope(actual_task: &str, expected_task: &str) -> bool {
+    let Some((actual_scope, _)) = actual_task.split_once(':') else {
+        return false;
+    };
+    expected_task
+        .split_once(':')
+        .is_some_and(|(expected_scope, _)| actual_scope == expected_scope)
+}
+
+fn is_ci_tee_capture_path(value: &str) -> bool {
+    !value.starts_with('-')
+        && value.split('/').all(|segment| {
+            !segment.is_empty()
+                && !matches!(segment, "." | "..")
+                && segment.chars().all(|character| {
+                    character.is_ascii_alphanumeric() || matches!(character, '.' | '_' | '-')
+                })
+        })
 }
 
 fn projected_required_verification_lanes(
@@ -4491,5 +4675,202 @@ tasks:
 
         let aggregate_changes = collect_ci_verification_aggregate_changes(&contract, &ci_signals);
         assert!(aggregate_changes.is_empty());
+    }
+
+    #[test]
+    fn direct_ota_aggregate_delegation_covers_only_the_declared_aggregate() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: demo
+agent:
+  verify_after_changes:
+    - postgres:verify
+tasks:
+  postgres:setup:
+    run: python -m dbmask.cli setup
+  postgres:validate:
+    run: python -m dbmask.cli validate
+    depends_on:
+      - postgres:setup
+  postgres:verify:
+    aggregate:
+      tasks:
+        - postgres:validate
+  test:
+    run: pytest
+"#,
+        )
+        .unwrap();
+
+        let ci_signals = vec![
+            CiVerificationTaskSignal {
+                field: String::new(),
+                command: String::from(
+                    "ota --plain run postgres:verify . --native --stream 2>&1 | tee ota-pressure/postgresql/postgres-verify.txt",
+                ),
+                source: String::from(
+                    ".github/workflows/ota-postgres-pressure.yml#jobs.postgres.steps[4].run",
+                ),
+                exact_command: true,
+                qualifier: None,
+            },
+            CiVerificationTaskSignal {
+                field: String::from("tasks.test.run"),
+                command: String::from("pytest"),
+                source: String::from(".github/workflows/ci.yml#jobs.test.steps[2].run"),
+                exact_command: true,
+                qualifier: None,
+            },
+        ];
+
+        assert!(collect_ci_verification_aggregate_changes(&contract, &ci_signals).is_empty());
+        assert_eq!(
+            contract.tasks["postgres:verify"]
+                .aggregate
+                .as_ref()
+                .unwrap()
+                .tasks,
+            vec![String::from("postgres:validate")]
+        );
+        assert_eq!(
+            ci_direct_aggregate_invocation_matches(
+                "ota run postgres:verify --native --stream . 2>&1 | tee ota-pressure/postgresql/postgres-verify.txt",
+                "postgres:verify",
+            ),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn only_exact_ota_aggregate_execution_covers_contract_delegation() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: demo
+agent:
+  verify_after_changes:
+    - postgres:verify
+tasks:
+  postgres:setup:
+    run: python -m dbmask.cli setup
+  postgres:validate:
+    run: python -m dbmask.cli validate
+    depends_on:
+      - postgres:setup
+  postgres:verify:
+    aggregate:
+      tasks:
+        - postgres:validate
+  test:
+    run: pytest
+"#,
+        )
+        .unwrap();
+
+        for command in [
+            "ota run postgres:verify --dry-run .",
+            "ota run postgres:verify --skip-deps .",
+            "ota run postgres:verify --json .",
+            "ota run postgres:verify --agent .",
+            "ota run postgres:verify --native --container .",
+            "ota run postgres:verify --persistent --ephemeral .",
+            "ota run postgres:verify --concise --verbose .",
+            "ota run postgres:verify --file alternate.yaml .",
+            "ota run postgres:validate --native .",
+            "ota run other:verify --native .",
+            "ota run postgres:verify --native . && pytest",
+            "ota run postgres:verify --native . &",
+            "ota run postgres:verify --native . 2>&1 | tee out;true",
+            "ota run postgres:verify --native . 2>&1 | tee out|true",
+            "ota run postgres:verify --native . 2>&1 | tee -a",
+        ] {
+            let ci_signals = vec![
+                CiVerificationTaskSignal {
+                    field: String::new(),
+                    command: String::from(command),
+                    source: String::from(
+                        ".github/workflows/ota-postgres-pressure.yml#jobs.postgres.steps[4].run",
+                    ),
+                    exact_command: true,
+                    qualifier: None,
+                },
+                CiVerificationTaskSignal {
+                    field: String::from("tasks.test.run"),
+                    command: String::from("pytest"),
+                    source: String::from(".github/workflows/ci.yml#jobs.test.steps[2].run"),
+                    exact_command: true,
+                    qualifier: None,
+                },
+            ];
+
+            let changes = collect_ci_verification_aggregate_changes(&contract, &ci_signals);
+            assert_eq!(changes.len(), 1, "{command}");
+            assert_eq!(changes[0].field, "tasks.postgres:verify.aggregate.tasks");
+            if command == "ota run other:verify --native ." {
+                assert_eq!(changes[0].kind, CiVerificationAggregateChangeKind::Update);
+                assert_eq!(
+                    changes[0].source,
+                    ".github/workflows/ci.yml#jobs.test.steps[2].run"
+                );
+                assert_eq!(changes[0].detected, "test");
+            } else {
+                assert_eq!(
+                    changes[0].kind,
+                    CiVerificationAggregateChangeKind::DirectInvocationNotCovering
+                );
+                assert_eq!(
+                    changes[0].source,
+                    ".github/workflows/ota-postgres-pressure.yml#jobs.postgres.steps[4].run"
+                );
+                assert_eq!(changes[0].detected, command);
+            }
+        }
+    }
+
+    #[test]
+    fn malformed_direct_ota_aggregate_is_drift_without_other_verifier_signals() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: demo
+agent:
+  verify_after_changes:
+    - postgres:verify
+tasks:
+  postgres:validate:
+    run: python -m dbmask.cli validate
+  postgres:verify:
+    aggregate:
+      tasks:
+        - postgres:validate
+"#,
+        )
+        .unwrap();
+
+        let changes = collect_ci_verification_aggregate_changes(
+            &contract,
+            &[CiVerificationTaskSignal {
+                field: String::new(),
+                command: String::from("ota run postgres:verify --dry-run ."),
+                source: String::from(
+                    ".github/workflows/ota-postgres-pressure.yml#jobs.postgres.steps[4].run",
+                ),
+                exact_command: true,
+                qualifier: None,
+            }],
+        );
+
+        assert_eq!(changes.len(), 1);
+        assert_eq!(
+            changes[0].kind,
+            CiVerificationAggregateChangeKind::DirectInvocationNotCovering
+        );
     }
 }
