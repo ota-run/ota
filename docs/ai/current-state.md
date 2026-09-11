@@ -396,9 +396,9 @@ durable agent workflow belongs in the canonical Ota skill.
   bridge: Core cannot derive the Step 1-6 candidate until it receives the exact protected binding,
   source, profile, target, and policy snapshot, while the existing V1 transaction-binding exchange
   begins only after candidate derivation and does not bind that snapshot. Protocol committed the
-  record-only prerequisite at `d1d1fd4` before the amendment was activated; that does not create a
-  Core or Launcher consumer, reservation, V2 runtime exchange, or provider capability. A proposed Step 7 amendment
-  now assigns a private ordered exchange: Protocol owns closed snapshot request/response identities
+  record-only prerequisite at `d1d1fd4` before the activation amendment; that does not itself create
+  a Core or Launcher consumer, reservation, V2 runtime exchange, or provider capability. The
+  independently reviewed Step 7 activation amendment authorizes a private ordered exchange: Protocol owns closed snapshot request/response identities
   and additive snapshot-bound V2 transaction-binding records; Launcher owns fixed protected-store
   loading, retained-descriptor and byte revalidation, signed-bundle verification, per-child/session
   reservation, and ordered relay; Core owns the fresh request, closed opaque-payload parsing,
@@ -409,13 +409,13 @@ durable agent workflow belongs in the canonical Ota skill.
   The public capability-observation projection remains non-authoritative. The proposed state
   machine stops after the V2 response and terminal cleanup; insertion of provider contact
   requires a separate reviewed Step 7 slice. Independent design review identified three required
-  pre-implementation ownership rules: Core must retain dynamic invocation truth rather than accept
-  bundle claims; the existing canonical policy finalizer must receive an explicit verified-protected-
-  snapshot posture rather than misclassifying it as repository/workspace/caller policy; and Core must
-  verify canonical payload bytes and the outer admitted verifier signature before parsing the closed
-  authority payload. The amendment remains implementation-blocked until those rules are independently
-  reviewed and committed. This amendment activates nothing until independently
-  reviewed and committed; provider contact, OIDC exchange,
+  pre-implementation ownership rules: the provider-free bridge distinguishes challenge-backed
+  correlation values from protected, unverified GitHub-claim expectations that cannot become
+  provider truth until a later signed-token reconciliation; the existing canonical policy finalizer
+  must receive an explicit verified-protected-snapshot posture rather than misclassifying it as
+  repository/workspace/caller policy; and Core must reconcile raw payload bytes, verify the outer
+  admitted verifier signature, then parse and JCS-reconcile the closed authority payload. This
+  activation commit permits only the provider-free bridge; provider contact, OIDC exchange,
   materialization, injection, positive evidence, Step 8, and V12.2 remain blocked.
 - Vinicius' independent v1.6.27 source review confirmed that negative-control projection
   reconciliation is live on runtime proof, emitted-archive verification, and Doctor archive

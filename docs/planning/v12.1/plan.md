@@ -678,7 +678,7 @@ must mark that reserved snapshot terminally refused, return no transaction bindi
 transaction, and complete the existing child and cgroup cleanup; it cannot restore the snapshot to an
 unused state or make it eligible for retry.
 
-#### Protected Authority Snapshot Bridge Amendment (Proposed 2026-09-11)
+#### Protected Authority Snapshot Bridge Activation Amendment (Independently Reviewed 2026-09-11)
 
 The same-execution transaction binding described above requires one preceding private authority-
 snapshot exchange. This is necessary because Core cannot derive the canonical Step 1-6 transaction
@@ -686,11 +686,11 @@ candidate until it has independently reconstructed the protected binding, source
 and policy truth retained by Launcher. The public capability-observation projection is compatibility
 evidence only and must never satisfy this exchange or become authority for candidate derivation.
 
-Protocol's structural record layer was committed at `d1d1fd4` before this amendment was activated.
-That record-only prerequisite does not activate the bridge: Core and Launcher do not yet consume
-snapshot records, no snapshot reservation or V2 exchange exists at runtime, and no provider behavior
-is enabled. The bridge remains implementation-blocked until this amendment is independently reviewed
-and committed; V1 cannot become a fallback for a snapshot-backed transaction.
+Protocol's structural record layer was committed at `d1d1fd4` before this activation amendment.
+That record-only prerequisite did not activate the bridge: Core and Launcher did not consume snapshot
+records, no snapshot reservation or V2 exchange existed at runtime, and no provider behavior was
+enabled. This independently reviewed activation amendment authorizes the provider-free bridge only
+upon its commit; V1 cannot become a fallback for a snapshot-backed transaction.
 
 Authority Protocol must add closed, versioned snapshot challenge, request, payload, and response
 records without changing the committed V1 transaction-binding records. The private
@@ -756,13 +756,22 @@ transaction candidate. The transferred payload is untrusted semantic input until
 reconstruction succeeds. A structurally valid bundle, response, or recomputed identity cannot bypass
 Core's contract, selected-graph, policy, target, or canonical provider-tuple reconciliation.
 
-Core must first retain one `ProtectedSecretDeliveryInvocationContextV1` for the command invocation.
-Its exact workflow run identifier, run attempt, and workflow reference derive from the retained
-capability-observation challenge; the remaining dynamic GitHub claim values derive only from
-independently retained current-invocation evidence. The bundle, snapshot, projection, environment,
-workflow, and caller cannot supply, select, or override any context value. Core rederives the
-invocation-binding tuple from that one context and rejects any candidate, profile, subject, or
-binding whose dynamic claims disagree. A syntactically valid claim set is never sufficient.
+Core must first retain one closed, versioned `ProtectedSecretDeliveryInvocationContextV1` for the
+command invocation. It contains the exact workflow run identifier, run attempt, and workflow
+reference, each rederived from the reconciled capability-observation challenge, plus the accepted
+Launcher invocation-request, startup-continuation, inherited-session, contract, and selected-graph
+identities that bind it to this child. Its identity is domain-separated from the snapshot and
+candidate. This is a bounded same-invocation correlation record, not evidence of any GitHub
+provider claim. The remaining GitHub claim values needed by the configured profile are retained
+only as closed, unverified expectations derived during Core's successful reconstruction of the
+protected binding/profile snapshot; they are bound to the snapshot and context but cannot assert
+that a GitHub token carries them. The bundle, snapshot, projection, environment, workflow, and
+caller cannot supply, select, or override the challenge-backed correlation values or any
+expectation outside that reconstructed protected authority. Core may derive the provider-free
+candidate and V2 binding from these expectations, but a separately reviewed provider-contact slice
+must independently verify every expected value against the signed GitHub OIDC token before Google
+exchange or delivery. A missing, additional, or disagreeing token claim must refuse. A
+syntactically valid claim set is never sufficient.
 
 The canonical effect-policy finalizer gains one explicit `verified_protected_snapshot` source
 posture. It is produced only after the complete snapshot checks below and carries the snapshot and
@@ -770,14 +779,17 @@ verifier evidence identities; it is neither repository-controlled, workspace-con
 caller-selected. This extends the existing finalizer and its precedence/identity model. A
 secret-specific parallel policy evaluator is prohibited.
 
-The Core-owned payload schema is closed, versioned, and duplicate-refusing. Before parsing it, Core
-requires the payload bytes to be exact canonical bytes bound by the snapshot; selects the one active
-verifier from the outer verifier store; verifies the binding-bundle Ed25519 signature under that
-verifier's exact key usage and signature domain; and requires the payload's authority, trust-root,
-and verifier identities to derive from those outer records rather than payload fields. Core passes
-the complete unfiltered binding collection to `resolve_secret_provider_bindings`, preserving its
-existing duplicate and conflict refusal. Any byte, signature, outer-authority, verifier, trust,
-source, policy, or payload-shape ambiguity refuses before candidate derivation.
+Core first retains the opaque exact binding-bundle bytes and reconciles their raw-byte identity with
+the snapshot response without semantically parsing them. It then selects the one active verifier
+from the separately retained outer verifier-store record and verifies the binding-bundle Ed25519
+signature over those exact bytes under that verifier's exact key usage and signature domain. Only
+after that signature succeeds may Core parse the bytes through its closed, versioned,
+duplicate-refusing payload schema, require an exact JCS round trip, and require the payload's
+authority, trust-root, and verifier identities to derive from the admitted outer records rather
+than payload fields. Core passes the complete unfiltered binding collection to
+`resolve_secret_provider_bindings`, preserving its existing duplicate and conflict refusal. Any
+byte, signature, outer-authority, verifier, trust, source, policy, or payload-shape ambiguity
+refuses before candidate derivation.
 
 Authority Protocol must also add an additive V2 transaction-binding request and response. Both bind
 the exact protected snapshot identity in addition to the existing candidate, accepted Launcher
@@ -802,11 +814,11 @@ existing provider-free behavior and open neither snapshot nor binding state. A s
 refusal after transfer follows the terminally refused reservation behavior above and cannot advance
 to V2 binding.
 
-This amendment authorizes only the private snapshot bridge, additive V2 binding reconciliation, and
-their provider-free regressions and protected Linux/X64 pressure. It does not authorize OIDC access,
-network-client construction, provider contact, materialization, injection, positive evidence,
-Step 8, or V12.2. Implementation may begin only after this amendment is independently reviewed and
-committed.
+This activation amendment authorizes only the private snapshot bridge, additive V2 binding
+reconciliation, and their provider-free regressions and protected Linux/X64 pressure. It does not
+authorize OIDC access, network-client construction, provider contact, materialization, injection,
+positive evidence, Step 8, or V12.2. Implementation may begin only after this activation amendment
+is committed.
 
 The provider client uses a closed transport profile bound into the new profile and implementation-
 subject identities. It performs direct TLS with build-pinned public Web PKI roots and exact DNS/TLS
