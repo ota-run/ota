@@ -1117,12 +1117,13 @@ dependencies = [
 [[package]]
 name = "ota-authority-protocol"
 version = "0.1.0"
-source = "git+https://github.com/ota-run/authority-protocol.git?rev=5b416637c763f835050f65660766efa2b432f4af#5b416637c763f835050f65660766efa2b432f4af"
+source = "git+https://github.com/ota-run/authority-protocol.git?rev=d1d1fd46d8be29518778c0f4f67c8fa0115a7aad#d1d1fd46d8be29518778c0f4f67c8fa0115a7aad"
 dependencies = [
  "base64",
  "semver",
  "serde",
  "serde_jcs",
+ "serde_json",
  "sha2 0.10.9",
  "thiserror",
 ]
