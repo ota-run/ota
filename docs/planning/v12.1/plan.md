@@ -616,8 +616,11 @@ component must be a real root-owned directory that is not group- or world-writab
 must use an `openat2`-equivalent beneath the retained authority-directory descriptor with
 no-symlink, no-magic-link, no-mount-crossing resolution; final-component `O_NOFOLLOW` alone is
 insufficient. Both files must be regular, root-owned, mode `0400`, versioned, and opened before the
-unprivileged Ota process starts. Ota reconciles retained descriptor device, inode, owner, mode,
-size, and exact bytes before admission and again before the first provider request. The binding
+unprivileged Ota process starts. Launcher retains and reconciles descriptor device, inode, owner,
+mode, size, and exact bytes before starting that process, before producing any protected snapshot,
+and again before binding a transaction candidate. Core receives no filesystem path or descriptor
+authority from this observation; it independently validates the closed transferred records and
+parses the opaque signed payload under a Core-owned schema. The binding
 bundle must be domain-separated and Ed25519-signed by exactly one admitted verifier from the
 protected verifier store. The verifier store names the authority, admitted key, signature domain,
 validity bounds, signed generation, and exactly one active binding-bundle identity; a merely valid
@@ -629,15 +632,16 @@ fallback search may change the store paths or trust roots. The initial slice pro
 consistency and intra-invocation drift refusal only; rollback by the independent runner
 administrator to an older still-valid verifier-store and bundle pair remains explicitly unproved.
 
-After every ordinary execution, crossing, sandbox, typed-effect, secret-policy, protected-binding,
-profile, target, and command admission passes, real execution may open one in-memory, invocation-
-scoped secret-delivery transaction and register interruption and cleanup authority before the first
-network request. Dry-run, Doctor, CI rendering, harness output, and every refused invocation remain
-provider-free. The transaction binds the exact contract, selected invocation graph, requirement,
-effect decision, secret-delivery decision, protected binding/source bytes, profile, implementation
-subject, target, GitHub run claims, Google resources, and numeric Secret Manager version. No prior
-receipt, projection, provider response, token, handle, or availability result can satisfy a new
-transaction.
+After ordinary execution, crossing, sandbox, contract, selected-graph, command, and secret-
+requirement-applicability admission passes, the private authority-snapshot exchange may begin. Only
+after Core uses that snapshot to independently re-resolve typed-effect, secret-policy, protected-
+binding, profile, subject, and target truth may real execution open one in-memory, invocation-scoped
+secret-delivery transaction and register interruption and cleanup authority before the first network
+request. Dry-run, Doctor, CI rendering, harness output, and every refused invocation remain provider-
+free. The transaction binds the exact contract, selected invocation graph, requirement, effect
+decision, secret-delivery decision, protected binding/source bytes, profile, implementation subject,
+target, GitHub run claims, Google resources, and numeric Secret Manager version. No prior receipt,
+projection, provider response, token, handle, or availability result can satisfy a new transaction.
 
 The existing signed capability-observation probe remains compatibility evidence only. It creates a
 separate refused child and cgroup, so its public projection cannot admit or authorize a later
@@ -660,13 +664,120 @@ Core retains that verified same-execution binding, its expected fresh challenge 
 signed projection, and the reconciled verifier-record and installation-evidence identities in a
 crate-private one-use guard. Immediately before constructing the first network request, the guard
 must reconcile the returned candidate to its independently retained candidate, startup
-continuation, and inherited session, then recheck transaction equality and freshness, revalidate
-retained authority descriptors and bytes, and consume itself exactly once. Duplicate use, delay
-past expiry, missing or substituted installation authority, or any mismatch refuses before OIDC
-environment access, network-client construction, or provider contact. Capability observation
+continuation, and inherited session, then recheck transaction, snapshot, and V2-binding equality and
+freshness and consume itself exactly once. Launcher owns the final retained-descriptor and exact-byte
+revalidation immediately before returning the V2 binding; Core owns reconciliation of the resulting
+snapshot and V2 identities and never treats copied bytes or descriptor claims as filesystem
+authority. Duplicate use, delay past expiry, missing or substituted installation authority, or any
+mismatch refuses before OIDC environment access, network-client construction, or provider contact.
+Capability observation
 obtained before canonical Step 1-6 evaluation and policy admission is invalid for this purpose.
-Empty selections and every policy or structural refusal open neither the Launcher observation route
-nor replay state.
+Empty selections and pre-snapshot structural or applicability refusals open neither the Launcher
+snapshot route nor its reservation state. A semantic or policy refusal found after snapshot transfer
+must mark that reserved snapshot terminally refused, return no transaction binding, open no provider
+transaction, and complete the existing child and cgroup cleanup; it cannot restore the snapshot to an
+unused state or make it eligible for retry.
+
+#### Protected Authority Snapshot Bridge Amendment (Proposed 2026-09-11)
+
+The same-execution transaction binding described above requires one preceding private authority-
+snapshot exchange. This is necessary because Core cannot derive the canonical Step 1-6 transaction
+candidate until it has independently reconstructed the protected binding, source, profile, target,
+and policy truth retained by Launcher. The public capability-observation projection is compatibility
+evidence only and must never satisfy this exchange or become authority for candidate derivation.
+
+Authority Protocol must add closed, versioned snapshot challenge, request, payload, and response
+records without changing the committed V1 transaction-binding records. The private
+`ProtectedAuthoritySnapshotChallengeV1` contains exactly `schema_version: 1`, message kind
+`protected_authority_snapshot_challenge`, its identity, a commitment to one Core-generated 256-bit
+CSPRNG nonce, and canonical issued and expiry Unix seconds no more than five minutes apart. Its
+nonce commitment is SHA-256 over the exact 32 raw bytes under
+`ota.protected-authority-snapshot-nonce.v1\0`; Core obtains issuance time from its own clock and
+Launcher independently checks issuance, expiry, and current freshness against its own clock. Its
+identity is SHA-256 over the exact JCS record excluding only `identity`, under
+`ota.protected-authority-snapshot-challenge.v1\0`. It is distinct from the public capability-
+observation challenge. Core retains the raw 32-byte nonce; the private request carries it only so
+Launcher can independently decode it, rederive the commitment and challenge identity, and prove
+freshness. The raw nonce must never enter the response, snapshot payload, V2 binding, logs, workflow
+output, artifacts, receipts, archives, public JSON, or a public projection.
+
+The snapshot request contains exactly `schema_version: 1`, message kind
+`protected_authority_snapshot_request`, its identity, the complete challenge, canonical unpadded
+base64url raw nonce, accepted Launcher invocation-request identity, startup-continuation identity,
+inherited launcher-session binding identity, contract identity, and selected execution-graph
+identity. Its identity is SHA-256 over the exact JCS record excluding only `identity`, under
+`ota.protected-authority-snapshot-request.v1\0`.
+
+`ProtectedAuthoritySnapshotPayloadV1` is the one closed unsigned snapshot payload. It contains
+exactly `schema_version: 1`, record kind `protected_authority_snapshot`, the request identity; the
+accepted Launcher request, startup continuation, inherited session, contract, and selected-graph
+identities; the two fixed store roles; each retained descriptor's exact device, inode, owner, group,
+mode, size, and content identity; verifier-store identity, authority identity, active binding-bundle
+identity and generation, binding-bundle identity and generation, signed-payload identity, authority
+and bundle validity bounds; and the exact bounded verifier-store and binding-bundle bytes required
+for Core reconstruction. `ProtectedAuthoritySnapshotIdentityV1` is SHA-256 over precisely that JCS
+payload under `ota.protected-authority-snapshot.v1\0`. The response contains exactly
+`schema_version: 1`, message kind `protected_authority_snapshot_response`, request identity, that
+payload, its independently rederived protected snapshot identity, and its own identity derived over
+the complete response excluding only `identity` under
+`ota.protected-authority-snapshot-response.v1\0`. Protocol reconciliation must reconstruct the
+challenge, request, payload, snapshot, and response identities rather than accepting any supplied
+identity as authority.
+
+The response is protected local transport truth and may contain private provider-reference material.
+It must never enter logs, workflow output, artifacts, receipts, archives, public JSON, or the public
+capability projection.
+
+Launcher opens the fixed stores before the selected child starts and retains the live descriptors,
+exact bytes, and verified bundle state for that child. It accepts one snapshot request only over that
+child's inherited startup-bound session, after ordinary applicability is established and before
+candidate derivation. It recomputes all request identities, revalidates the same retained descriptors
+and bytes, verifies bundle signature, active selection, generation, and freshness, reserves the
+snapshot for that child and session, and returns exactly one response. Missing, duplicate, stale,
+replayed, out-of-order, cross-child, cross-session, cross-startup, path-substituted, descriptor-
+replaced, metadata-drifted, byte-drifted, signature-invalid, or inactive snapshots refuse. No caller,
+repository, workflow, environment, CLI, or public projection may supply or replace the snapshot.
+Launcher atomically reserves the challenge and request before returning the snapshot response and
+marks that reservation consumed only after constructing one valid V2 binding response. Any failure
+after reservation remains terminally reserved or refused; ambiguity cannot restore eligibility or
+permit a second response.
+
+Core generates and retains the request, accepts one response only over the same inherited session,
+reconciles every closed Protocol field, parses the opaque payload through a closed Core-owned schema,
+and independently re-resolves the selected requirement, binding/source, provider profile and subject,
+effect, policy decision, evaluation, and dry-run plan before deriving the canonical Step 1-6
+transaction candidate. The transferred payload is untrusted semantic input until that complete
+reconstruction succeeds. A structurally valid bundle, response, or recomputed identity cannot bypass
+Core's contract, selected-graph, policy, target, or canonical provider-tuple reconciliation.
+
+Authority Protocol must also add an additive V2 transaction-binding request and response. Both bind
+the exact protected snapshot identity in addition to the existing candidate, accepted Launcher
+request, startup continuation, inherited session, capability, challenge, projection, verifier,
+installation, and expiry truth. Launcher must revalidate the same retained descriptors and exact
+bytes immediately before deriving the V2 binding. Core's one-use guard must require equality with its
+retained snapshot response and candidate. Protocol cross-record reconciliation accepts those
+retained records as inputs, independently reconstructs the snapshot identity, and requires the V2
+request, binding, and response to select that exact value. A later separately reviewed provider-
+contact slice may consume both exactly once immediately before construction of the first provider
+request. V1 remains immutable and cannot satisfy a snapshot-backed provider transaction.
+
+The selected-child private state machine therefore permits only ordinary completion or this exact
+sequence: snapshot request, snapshot response, candidate derivation, V2 binding request, V2 binding
+response, and terminal completion with provider contact still refused. Inserting a provider
+transaction between the V2 response and completion requires a separately reviewed and committed
+Step 7 provider-contact slice. A binding request before a snapshot, multiple snapshots, a second
+candidate, use after refusal or expiry, or completion interleaved with an unfinished exchange refuses
+and triggers the existing terminal child and cgroup cleanup. Dry-run, Doctor, CI projection, harness,
+sandbox, empty selection, and every pre-snapshot structural or applicability refusal retain the
+existing provider-free behavior and open neither snapshot nor binding state. A semantic or policy
+refusal after transfer follows the terminally refused reservation behavior above and cannot advance
+to V2 binding.
+
+This amendment authorizes only the private snapshot bridge, additive V2 binding reconciliation, and
+their provider-free regressions and protected Linux/X64 pressure. It does not authorize OIDC access,
+network-client construction, provider contact, materialization, injection, positive evidence,
+Step 8, or V12.2. Implementation may begin only after this amendment is independently reviewed and
+committed.
 
 The provider client uses a closed transport profile bound into the new profile and implementation-
 subject identities. It performs direct TLS with build-pinned public Web PKI roots and exact DNS/TLS

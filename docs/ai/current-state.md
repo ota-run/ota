@@ -377,8 +377,8 @@ durable agent workflow belongs in the canonical Ota skill.
   first network request. Until that route is implemented and pressured, the provider transaction
   remains blocked; the existing probe, projection, and endpoint evidence retain their narrower
   compatibility-only meaning.
-  The current local Step 7 batch implements the Core half of that boundary against exact Protocol
-  `5b416637c763f835050f65660766efa2b432f4af`. The post-consumption systemd carrier now retains the
+  Core `21077abf9d861e664f98bd8c460772be3930eec1` implements the Core half of that boundary against
+  exact Protocol `5b416637c763f835050f65660766efa2b432f4af`. The post-consumption systemd carrier now retains the
   complete verified startup continuation and can issue the typed binding request only over that
   exact inherited Launcher session. Core independently reloads and reconciles the protected public
   verifier and installation evidence after receiving the response, verifies the signed public
@@ -392,6 +392,23 @@ durable agent workflow belongs in the canonical Ota skill.
   boundary. Independent review and an exact production service-path Linux/X64 run remain required
   before provider contact may begin; OIDC, Google contact, materialization, injection, Step 8, and
   V12.2 remain blocked.
+  Independent architecture review then identified the missing pre-candidate authority-snapshot
+  bridge: Core cannot derive the Step 1-6 candidate until it receives the exact protected binding,
+  source, profile, target, and policy snapshot, while the existing V1 transaction-binding exchange
+  begins only after candidate derivation and does not bind that snapshot. A proposed Step 7 amendment
+  now assigns a private ordered exchange: Protocol owns closed snapshot request/response identities
+  and additive snapshot-bound V2 transaction-binding records; Launcher owns fixed protected-store
+  loading, retained-descriptor and byte revalidation, signed-bundle verification, per-child/session
+  reservation, and ordered relay; Core owns the fresh request, closed opaque-payload parsing,
+  independent Step 1-6 semantic reconstruction, candidate derivation, and one-use V2 consumption.
+  The private challenge has its own 256-bit nonce commitment and identity domain, and one closed
+  snapshot payload transitively binds its exact request, startup/session, store metadata and bytes,
+  active bundle, generation, payload, and validity truth into the snapshot identity selected by V2.
+  The public capability-observation projection remains non-authoritative. The currently authorized
+  state machine stops after the V2 response and terminal cleanup; insertion of provider contact
+  requires a separate reviewed Step 7 slice. This amendment activates nothing until independently
+  reviewed and committed; provider contact, OIDC exchange,
+  materialization, injection, positive evidence, Step 8, and V12.2 remain blocked.
 - Vinicius' independent v1.6.27 source review confirmed that negative-control projection
   reconciliation is live on runtime proof, emitted-archive verification, and Doctor archive
   loading. It also exposed a narrower adversarial-test gap: the existing digest mutation was
