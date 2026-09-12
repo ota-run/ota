@@ -1,16 +1,10 @@
 <div align="center">
   <img src="https://res.cloudinary.com/ota-run/image/upload/q_auto/dpr_auto/63eb48c4-6148-40a0-8164-34505504414e.png" alt="ota logo" width="110" height="110" />
   <h1>ota</h1>
-  <p><strong>The execution contract for AI agents.</strong></p>
-  <p>Execution governance for software repositories, shared by humans, CI, and AI agents.</p>
   <p><strong>DOCTOR FIRST. CONTRACT SECOND.</strong></p>
-<!--   <p> -->
-<!--     Give every repo one explicit contract for diagnosis, setup, execution, and safe automation -->
-<!--     instead of guessing from README drift. -->
-<!--   </p> -->
-      <p>
-        <img src="https://ota.run/brand/ota-github-social-card.png" alt="ota social card" width="100%" />
-      </p>
+  <p>
+    <img src="https://ota.run/brand/ota-github-social-card.png" alt="ota social card" width="100%" />
+  </p>
   <p>
     <a href="https://github.com/ota-run/ota/actions/workflows/release-gate.yml"><img src="https://img.shields.io/github/actions/workflow/status/ota-run/ota/release-gate.yml?branch=main&style=for-the-badge&label=release%20gate&labelColor=111827&logo=githubactions" alt="Release gate status" /></a>
     <a href="https://github.com/ota-run/ota/actions/workflows/docs-quality.yml"><img src="https://img.shields.io/github/actions/workflow/status/ota-run/ota/docs-quality.yml?branch=main&style=for-the-badge&label=docs&labelColor=111827&logo=readthedocs" alt="Docs quality status" /></a>
