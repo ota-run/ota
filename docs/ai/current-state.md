@@ -363,60 +363,25 @@ durable agent workflow belongs in the canonical Ota skill.
   exact eight-file ZIP. These runs close the bounded protected-capability and endpoint-compatibility
   gate only. No real GitHub OIDC request, provider contact, materialization, delivery, positive
   provider evidence, Step 8, or V12.2 capability is activated.
-  Independent architecture review further established that the signed observation service creates a
-  separate refused probe child and cgroup. Its public projection is valid compatibility evidence
-  but cannot authorize a later provider-requesting child. Before provider contact, the normal
-  selected-child boundary must produce one Authority-Protocol-owned private same-execution binding.
-  Core `1b7d8d78` commits the crate-private, provider-free Step 1-6 transaction-candidate
-  derivation: it independently rederives the existing evaluation and dry-run plan, and binds the
-  exact realization, selected graph, protected binding/source, profile/subject/target, and
-  OIDC/Google tuple. It has no loader, command, session, or provider consumer. Launcher accepts
-  that candidate only over the selected child's inherited startup-bound session, binds it as opaque
-  transport truth, and returns it only over that session. Core must reconcile the returned candidate, startup
-  continuation, and session to its retained values in a one-use, expiry-rechecked guard before the
-  first network request. Until that route is implemented and pressured, the provider transaction
-  remains blocked; the existing probe, projection, and endpoint evidence retain their narrower
-  compatibility-only meaning.
-  Core `21077abf9d861e664f98bd8c460772be3930eec1` implements the Core half of that boundary against
-  exact Protocol `5b416637c763f835050f65660766efa2b432f4af`. The post-consumption systemd carrier now retains the
-  complete verified startup continuation and can issue the typed binding request only over that
-  exact inherited Launcher session. Core independently reloads and reconciles the protected public
-  verifier and installation evidence after receiving the response, verifies the signed public
-  projection, and retains a crate-private guard that rechecks the exact candidate, startup
-  continuation, Protocol response, signature, installation identity, and expiry exactly once
-  immediately before a future provider request. Candidate, private binding, protected capability,
-  verifier, installation, session, and projection identities remain absent from public command
-  output and evidence. The live command path still refuses every applicable secret-delivery
-  selection because no production protected binding/policy loader or provider transaction is
-  activated. Site, Skills, Examples, Learn, FAQ, and Glossary are unaffected by this internal
-  boundary. Independent review and an exact production service-path Linux/X64 run remain required
-  before provider contact may begin; OIDC, Google contact, materialization, injection, Step 8, and
-  V12.2 remain blocked.
-  Independent architecture review then identified the missing pre-candidate authority-snapshot
-  bridge: Core cannot derive the Step 1-6 candidate until it receives the exact protected binding,
-  source, profile, target, and policy snapshot, while the existing V1 transaction-binding exchange
-  begins only after candidate derivation and does not bind that snapshot. Protocol committed the
-  record-only prerequisite at `d1d1fd4` before the activation amendment; that does not itself create
-  a Core or Launcher consumer, reservation, V2 runtime exchange, or provider capability. The
-  independently reviewed Step 7 activation amendment authorizes a private ordered exchange: Protocol owns closed snapshot request/response identities
-  and additive snapshot-bound V2 transaction-binding records; Launcher owns fixed protected-store
-  loading, retained-descriptor and byte revalidation, signed-bundle verification, per-child/session
-  reservation, and ordered relay; Core owns the fresh request, closed opaque-payload parsing,
-  independent Step 1-6 semantic reconstruction, candidate derivation, and one-use V2 consumption.
-  The private challenge has its own 256-bit nonce commitment and identity domain, and one closed
-  snapshot payload transitively binds its exact request, startup/session, store metadata and bytes,
-  active bundle, generation, payload, and validity truth into the snapshot identity selected by V2.
-  The public capability-observation projection remains non-authoritative. The proposed state
-  machine stops after the V2 response and terminal cleanup; insertion of provider contact
-  requires a separate reviewed Step 7 slice. Independent design review identified three required
-  pre-implementation ownership rules: the provider-free bridge distinguishes challenge-backed
-  correlation values from protected, unverified GitHub-claim expectations that cannot become
-  provider truth until a later signed-token reconciliation; the existing canonical policy finalizer
-  must receive an explicit verified-protected-snapshot posture rather than misclassifying it as
-  repository/workspace/caller policy; and Core must reconcile raw payload bytes, verify the outer
-  admitted verifier signature, then parse and JCS-reconcile the closed authority payload. This
-  activation commit permits only the provider-free bridge; provider contact, OIDC exchange,
-  materialization, injection, positive evidence, Step 8, and V12.2 remain blocked.
+  The signed observation service remains compatibility evidence because it creates a separate
+  refused probe child and cgroup; it cannot authorize a later provider-requesting child. The
+  independently reviewed private authority-snapshot bridge now closes the Core-owned provider-free
+  reconstruction boundary. Protocol `d1d1fd4` supplies the record-only prerequisite. Core
+  `15f59d87` adds request/response reconciliation, `8c22a18a` verifies the signed protected
+  snapshot and retained bytes, and `f6d4633e` reconstructs one exact Step 1-6 transaction candidate
+  from the challenge-backed invocation context and canonical selected `RunPlan`. Core independently
+  re-derives the selected roots, binding/source, profile, implementation subject, provider tuple,
+  effects, protected policy authority, evaluation, and dry-run plan. It rejects substituted
+  authority, context, workflow identity, graph semantics, or provider truth and selected roots
+  outside the exact native Linux transient structured-command boundary. The batch passed focused
+  release compilation and regression suites, first-party synchronization, and independent review.
+  No Site, Skills, Examples, Learn, FAQ, Glossary, contract-schema, or public-JSON propagation is
+  required because the bridge remains crate-private and provider-free.
+  The next Step 7 proof gate is Protocol's additive snapshot-bound V2 transaction binding, followed
+  by Launcher's same-child/session relay, Core's one-use V2 reconciliation, and an exact protected
+  Linux/X64 service-path run. Until that complete sequence passes, no real GitHub OIDC request,
+  Google provider contact, materialization, injection, positive evidence, Step 8, or V12.2
+  capability is activated.
 - Vinicius' independent v1.6.27 source review confirmed that negative-control projection
   reconciliation is live on runtime proof, emitted-archive verification, and Doctor archive
   loading. It also exposed a narrower adversarial-test gap: the existing digest mutation was
@@ -1772,427 +1737,49 @@ durable agent workflow belongs in the canonical Ota skill.
 ## Handoff To The Next Chat
 
 Start by reading `AGENTS.md`, this file, the canonical Ota skill, and
-`docs/planning/v11.7/plan.md`. Then inspect the actual worktree state in Core, `ota-site`,
-`ota-run/examples`, and `/Users/bobai/Workspace/Ota.run/skills` before editing.
+`docs/planning/v12.1/plan.md`. Then inspect the actual Core, Protocol, Launcher, Site, Skills,
+and Examples worktrees before editing.
 
-V11.21 and the bounded V11.7 OSS audited-crossing slice are complete. V11.7 pressure includes the
-green GitHub-hosted missing-authority refusal and pre-provisioned Linux/x64 VPS live, expired,
-revoked, and out-of-scope carrier matrix. The Unix
-launcher-session broker carrier is implemented for governed `run`/`up`. Its initial hosted
-live/refusal/proof-wide pressure set is green in authority-launcher run
-[31033509379](https://github.com/ota-run/authority-launcher/actions/runs/31033509379) against exact
-Core `bd80b29d971ccd5ac8609d9fc767a491ff382ef8`. Run
-[31250919192](https://github.com/ota-run/authority-launcher/actions/runs/31250919192) against exact
-Core `257be61dd91799237357390b145be950f2fc6b3f` additionally proves broker-unavailable,
-approval-timeout, cancellation, and ambiguous-response refusal without selected work, receipt
-state, or checkout mutation. Run
-[31257509444](https://github.com/ota-run/authority-launcher/actions/runs/31257509444) against exact
-Core `9244eb2bc6a44151c4172c0634ac44bdb216a65a` and immutable protocol
-`242685d5b7c3904681f1c71d734fbe2d41679dda` proves bounded lost-acknowledgement recovery without
-resuming abandoned work, followed by one fresh authorized execution and a valid recovery archive.
-Authority launcher dispatch
-[31260927337](https://github.com/ota-run/authority-launcher/actions/runs/31260927337), with final
-merge-gate confirmation in
-[31261639968](https://github.com/ota-run/authority-launcher/actions/runs/31261639968), closes late
-approval after terminal cancellation, insufficient pre-wait freshness, and repeated broad-closure
-work-unit pressure against the same exact Core revision. Stronger provider-attested separation
-remains open. The current branch now implements the additive runtime-boundary attestation v2
-verifier and archive path against immutable authority-protocol
-`bff47c2c79b145831a3b411614301d7e09d6f377`: strict binding/payload/domain branches, exact
-content-addressed protected-launcher profiles, signed launcher-session configuration identity,
-disjoint attestor and broker authorities, and no reinterpretation of v1 evidence. Complete v2
-evidence derives only `protected_launcher_attested_one_use`; v1 retains
-`launcher_attested_one_use`. Core adversarial regressions cover downgrade, profile mutation,
-missing/reordered/failed observations, required-identity removal, full one-use consumption, and
-archive re-verification. Authority-launcher run
-[31269597378](https://github.com/ota-run/authority-launcher/actions/runs/31269597378) is green
-against exact Core `787ac35f7d0195d2adae85e1113e26ce4a30acc2`, protocol
-`bff47c2c79b145831a3b411614301d7e09d6f377`, and launcher
-`01efd331ca0d4dcf2f8899512b1e3705fc649c6d`. It proves signed challenge-bound observation of the
-constrained Ota child, disjoint broker/attestor keys, one-use live/refusal/recovery behavior,
-distinct catch-all work units, and archive-valid runtime/lifecycle proof transactions. This is
-bounded pressure-peer conformance: the GitHub workflow controller provisions the root-only fixed
-test authority, so it does not prove independently administered provider/launcher separation.
-The current committed V11.7 gate at Protocol
-`574563d1f69a674960d0b3228c5a13b13bc42c19`, Launcher
-`13bf6db71610b86c81a251f440b80b9b8947a67d`, and Core
-`31fa95b4d28a8a4971ee3fd65c841d40e54ac4d9` completes the Linux-only
-`systemd_protected_launcher/v1` execution-disabled adapter through the full closed collector and
-separately credentialed producer. Local ARM64 OrbStack PID 1 pressure first proved exact signed V3
-admission, authorization-request observation without forwarding, terminal boundary cleanup,
-pre-authorization drift/refusal controls, and crash-after-scope recovery. Immutable Linux/x64 run
-[31530832876](https://github.com/ota-run/authority-launcher/actions/runs/31530832876) repeats that
-bounded gate against exact Launcher `c69ad3afc6afef0e260a7eeaa4f7340971db50af`, retains
-cursor-isolated refusal and cleanup evidence, and binds the same exact Protocol and Core revisions.
-Core re-derives the exact
-V3 launcher/job profiles, rejects schema-2 or legacy-profile evidence inside a V3 binding or signed
-payload, and published schemas enforce the same branch. Historical V1/V2 evidence remains readable
-only through its original carrier/schema branch. That hosted run closes execution-disabled V3
-attestation admission. Follow-on immutable Linux/x64 run
-[31561247605](https://github.com/ota-run/authority-launcher/actions/runs/31561247605) binds Protocol
-`6a92d8db9d089e44d1980f1871bf6e90eccb9960`, Launcher
-`77ab20aa6ed5e3dd42cc6815ba2de7cd36d543bf`, and Core
-`b71b78ca33ea2edd7bb03ceb66c5e1e104217cd9` while proving execution-disabled signed-decision
-admission, typed negative outcomes, exact relay evidence, terminal cleanup, and crash recovery. No
-one-use lease consumption, selected execution, crossing receipt/archive, independently administered
-provider/launcher separation, or provider-attested carrier existed at those immutable revisions,
-and that run does not make `provider_attested_one_use` true. The later immutable one-use
-  consumption and selected-execution gates are green. The pressure-proven portable-finalization
-  batch binds immutable Protocol `3e912f721ba9673090d14bcf5f88a2ee27a6b58a`, Core
-  `cf3114f3d96d5c030c748a12b2e359586f0ded8c`, and Launcher
-  `6954a39aefd35b8df648534a6028c0206c0372f9`; it binds launcher-owned transaction schema v3 into
-the signed consume exchange. That transaction requires broker-archive schema v2 and portable
-finalization verification without
-  invalidating historical transaction v2 archives. It now
-  fsyncs protected recovery state before active-slot deletion, survives every modeled intermediate
-  stage until exact sidecar acknowledgement, retains the exact terminal until a separate
-  identity-bound acknowledgement, and carries separate producer signatures for cleanup
-  and the exact receipt-archive/crossing-transaction association. Core durably writes the exact
-  receipt archive before publishing launcher completion. The root launcher reopens it through the
-  execution-principal repository descriptor, verifies owner, content, and transaction identity,
-  and atomically publishes the root-owned sidecar; the job principal only acknowledges the exact
-  result. Core publishes the archive with atomic create-new semantics and file/directory sync, while
-  the launcher requires execution-principal-owned `.ota` and `.ota/receipts` directories at mode
-  `0700`. The signed launcher profile now binds `CAP_DAC_OVERRIDE` in its exact bounding set, but
-  not ambiently, so the root launcher can traverse that hierarchy; protected signing-key paths,
-  explicit writable roots, owner/mode checks, and signed archive identity remain mandatory. Core
-  then re-verifies both signatures and all identities in local archive regressions.
-  The pressure-only client remains a proof harness,
-  not a production attachment surface. Crash recovery now distinguishes live schema-v1
-  finalization, where the launcher directly observed and reaped the child, from schema-v2
-  `recovered_absent_completion_bound`, where a restarted launcher proves absence against Core's
-  durable completion without claiming an observed exit or child reaping. Immutable Linux/x64 PID 1
-  [run 31758094819](https://github.com/ota-run/authority-launcher/actions/runs/31758094819)
-  passed for the corrected batch against Protocol
-  `3e912f721ba9673090d14bcf5f88a2ee27a6b58a`, Core
-  `cf3114f3d96d5c030c748a12b2e359586f0ded8c`, and Launcher
-  `6954a39aefd35b8df648534a6028c0206c0372f9`. The artifact reports zero terminal
-  active slots, finalization journals, and scopes across 21 boundaries; one valid and zero invalid
-  archives for positive execution and all three terminal crash-recovery points; consumed one-use
-  authority; unchanged refusal/crash worktrees; and separate root-owned cleanup-finalization and
-  archive-attachment issuance records.
-  The production operator attachment and protected-history surfaces are implemented and immutable
-  across Protocol, Launcher, and Core. The installed
-  `ota-authority-systemd-client` reuses the existing untrusted invocation request without exposing
-  pressure controls. Before terminal acknowledgement, Launcher freezes and durably publishes the
-  exact receipt archive, referenced immutable contract snapshot, and signed finalization sidecar as
-  three root-owned content-addressed blobs plus one catalog entry. Its separate history service
-  admits only the exact installed non-root client under the bounded operator profile, retains and
-  rechecks the pidfd-bound executable, process posture, working-directory instance, and peer
-  identity, and derives repository/catalog selection only from the protected mapping.
-  `ota receipt --history --source systemd_protected_launcher` is the explicit Linux Core consumer.
-  It accepts no path, `--file`, or `OTA_FILE` redirect, optionally selects one exact archive content
-  identity, requires a complete bounded manifest, and never falls back to local history. Protocol
-  entries bind the ordered archive, contract-snapshot, and sidecar object identities without a
-  circular hash dependency. Launcher owns protected storage and producer-signature verification;
-  Core reconstructs the exact three objects and remains the sole semantic archive verifier. JSON
-  output distinguishes `local_archive_directory_observed` from
-  `complete_selected_catalog_snapshot` and carries the bounded operator, repository, catalog, and
-  per-entry identities only for the protected source.
-  Protocol `04a199a1eddd72b5b61958e0fe7f2d4e662e05cf`, clean source-built Core
-  `d9d424168b1c1dad48351651c610789e54f74dcf`, and Launcher
-  `c80828aa7b64a4bb8c1d9957d937d4fae4d70828` passed immutable Linux/x64 PID 1
-  [run 31823037642](https://github.com/ota-run/authority-launcher/actions/runs/31823037642).
-  Its production-client path completes selected execution and re-verifies one valid protected
-  archive with zero invalid archives, one catalog entry, and three content-addressed objects. The
-  paired matrix proves one-use authority, refusal, drift, failure, interruption, replay, and crash
-  recovery with exact cleanup and unchanged refusal worktrees. Retained artifacts contain public
-  verifier and semantic identities but no private signing material. This closes the production
-  invocation and protected-history pressure gates. The workflow controller provisioned the root
-  authority stack, so that run did not prove independently administered launcher separation or
-  provider-attested authority. Examples remain unaffected because no contract-authoring shape
-  changed.
-  Launcher `ea7480e8d8b8aa214c5602628fb6dfa6382e2088` carries the reviewed consumer-only
-  self-hosted workflow and administrator runbook used for the separate gate. Provisioning
-  binds admission to the exact administrator-installed
-  GitHub runner unit, derives Core plus the provisioning Launcher's own and linked Protocol
-  revisions from installed build artifacts,
-  recursively rejects repository truth writable by the job principal, and emits a non-secret
-  installation-evidence copy beneath a root-protected parent chain. A static substring regression
-  is only drift detection for the committed workflow; it is not enforcement against equivalent
-  job code. Protected systemd identities and filesystem authority provide that boundary. No
-  prepared-runner authority write occurs until Launcher has identity-bound an inactive/dead
-  canonical runner, an empty job/execution process inventory, and fresh managed authority state;
-  every existing managed-path ancestor must also be root-owned, non-writable, and alias-free;
-  the exact runner unit is gated on the final protected installation-evidence publication, and
-  public installation evidence carries that observation. Immutable Linux/x64 PID 1
-  [run 31939777636](https://github.com/ota-run/authority-launcher/actions/runs/31939777636)
-  is now green against Protocol `04a199a1eddd72b5b61958e0fe7f2d4e662e05cf`, clean source-built
-  Core `634a2c169e083da4e02abd72a7bf29ae388ddf3d`, and Launcher
-  `ea7480e8d8b8aa214c5602628fb6dfa6382e2088`. The retained public evidence binds the inactive,
-  process-free prepared runner; distinct job/execution principals; fresh 32-path authority
-  namespace; exact installed binaries and units; one consumed work unit; completed selected
-  execution; child reap; scope, cgroup, and active-slot removal; and one valid protected archive
-  with zero invalid archives. No private key or reusable credential material is retained. This
-  closes the independently administered positive hardened-launcher branch.
-  The separate administrator-owned reboot/fault-recovery matrix is green in immutable Linux/x64
-  PID 1 [run 31953535665](https://github.com/ota-run/authority-launcher/actions/runs/31953535665)
-  against Protocol `04a199a1eddd72b5b61958e0fe7f2d4e662e05cf`, clean source-built Core
-  `e49f21ee77e522a614a776bcf17c9f9be16c8a90`, and Launcher
-  `a348a13fd60b067266013cf8a0f047bbe274fd81`. Its consumer-only artifact independently reconciles
-  the execution-completion, finalization-intent, and terminal-recorded reboot cases with exact boot
-  transitions, three expected and valid protected archive identities, zero invalid or legacy
-  archives, unchanged repository manifests, complete terminal cleanup, and no private authority
-  material. These runs satisfy V11.7 through the independently administered hardened-launcher
-  alternative. Provider attestation remains optional stronger evidence rather than a completion
-  gate.
-Provider-specific attestation remains a separate stronger profile rather than an implied property
-of the systemd carrier.
-Each terminal transaction is bound to a fresh runner-generated proof execution identity, and
-ordinary post-admission failures finalize explicitly; local content addressing remains integrity
-reconciliation rather than tamper-proof storage against the same host user.
-V11.22 is complete for its source-bound candidate and fail-closed closure-classification foundation.
-Its first implementation checkpoint demotes task-name, wrapper, opaque-shell, CI-fragment, and
-agent-guidance signals from agent authorization: they may remain review evidence, but cannot emit
-`safe_for_agent` or a starter executable agent boundary. `ota detect --candidate-out` now writes
-the self-verifying source-bound review artifact without writing `ota.yaml`; `ota contract
-apply-candidate` independently rebuilds its exact application projection and validated resulting
-contract identity. Without `--write`, admission is dry-run only. With `--write`, Ota locks the
-retained no-follow repository directory, re-derives current source/evidence, and atomically creates
-only a missing `ota.yaml`; existing contracts require the explicit Linux/macOS Git carrier, which
-scrubs caller Git routing state and disables configured helpers, commits only the reviewed contract
-with branch-ref compare-and-swap, and verifies the materialized worktree. A matching resulting
-contract is an explicit no-op. The non-default publication fault adapter remains unavailable to ordinary builds,
-while `candidate-publication:faults` and the non-Windows Release Gate permanently exercise
-concurrent target creation, pre-publication cleanup failure, and post-publication durability
-uncertainty. A missing projection refuses admission;
-unrelated `unknown` or `unsupported` findings remain visible review state unless
-`--require-complete` is requested. Repo-level legacy mutation flags now refuse before repository
-access with `detect_legacy_mutation_removed`; `detect --write` uses the versioned
-`detect_conservative_first_contract_v1` profile and the shared locked create-new carrier, and its
-successful JSON records the exact `write_candidate` identity, schema version, and profile. Rewrite
-and removal remain unavailable until the candidate model can carry them honestly. Required
-external pressure is complete. A clean local macOS pressure pass against
-`block/buzz@2d280376ad36134cec1f23bead6d866d30bed147` with Core
-`76dd13417131978b894e34194842f2ab55e5cb20` exposed and fixed one candidate-domain defect:
-an unresolved new `setup` wrapper left `tasks.setup.internal` independently applicable, which
-prevented projection of unrelated contract truth. New-task metadata now inherits the execution
-change's fail-closed disposition unless the task already exists. The corrected candidate is
-byte-stable across repeated capture, proposes no agent-safe task, retains unresolved Just and shell
-closures as `unknown`, dry-runs and creates one valid missing contract, reapplies as a semantic
-no-op, refuses selected-source drift as `candidate_stale`, and refuses residual findings under
-`--require-complete`. Its candidate, projection, and resulting-contract identities are respectively
-`sha256:9459433bcb349d227dcb78763a3d2bd035a4c47f120e4b1edb73241d60b29333`,
-`sha256:f3adc3ffa7e07440835dd47962ce73d0ad060945b539e75b133fc711512b44d2`, and
-`sha256:d0e5a4860150ea9321a2813c3e9fd7d6c570c03b69801bb0b94e13de25af04c4`.
-The generated contract validates and exposes zero safe tasks; Doctor remains locally `not_ready`
-because the host's resolved `pnpm` cannot report its version, plus bounded hygiene and CI-drift
-warnings. This is retained local product evidence only: it does not prove native/container task
-execution, hosted pressure, or complete Buzz governance. The artifact
-binds a required content identity for every inventory entry, every normalized evidence tuple,
-structured contract-path segments, canonical semantic proposal values, existing-contract
-conflicts, and explicit closure facts. Equivalent existing truth is omitted before publication;
-dotted task names remain exact map keys and typed commands reconcile against equivalent detected
-invocations. Indexed environment-source fields traverse arrays, and explicit schema-default command
-posture reconciles with omission. The artifact cannot authorize a contract write or agent-safe
-task. Candidate JSON distinguishes artifact publication from contract mutation through
-`candidate_published` and `candidate_publication`; durability uncertainty never reports the
-artifact as absent. `ota contract upgrade --candidate-out` now publishes the registered
-legacy-flat-toolchain migration as a schema-v2 review artifact and `apply-candidate` dry-runs it
-against current source truth. Its approved existing-contract application requires `--write --carrier
-git`; ordinary `--write` remains create-new-only. Core docs, Site, the canonical Skill and installed
-mirrors, and Examples now carry the same operator workflow. The connected propagation is committed
-and pinned: Site `fca59417df3c56c31719d8ebb14d133456fe1503`, Skills
-`ac8e89694f92d4f1418c7d13d1f105707f689503`, and Examples
-`89467f3ad0751b5613a57382553c1a1b38dab4c7`; Core records the Site and Skills revisions as
-synced rather than waived. Init and detect candidate output changed, while the `ota.yaml`
-contract-authoring shape did not.
-Immutable Caddy candidate/application pressure is green across Linux, macOS, and Windows in
-[run 32742495306](https://github.com/bobaikato/caddy/actions/runs/32742495306) against Core
-`850ac767c8be582fc5a804b89f5ed2a781bbbbee` and Caddy pressure revision
-`e9f45dbb0b9bdd2c3ff598b3667f49c3ba44c9dd`. Linux and macOS independently produced the same
-candidate, application-projection, and resulting-contract identities; retained an inferred Caddy
-test command as `unknown`; refused disputed project truth as `candidate_conflict`; refused the
-residual finding under `--require-complete`; preserved the existing contract under ordinary
-create-new `--write`; and used the explicit Git carrier to commit exactly `ota.yaml`. Windows
-completed read-only detection, refused durable candidate publication without leaving an artifact,
-and returned `candidate_write_unsupported_platform` before loading a deliberately missing
-candidate or mutating the contract. This exposed and fixed one real Core portability defect: the
-Unix-only Git materializer had remained reachable from a Windows compilation path. The result is
-candidate/application evidence only. It does not prove Caddy build, test, server, runtime,
-lifecycle, container, release, network, or repo-global governance, and it must not be combined with
-earlier Caddy runtime/OCI pressure to imply one continuous proof.
-Immutable GitButler candidate pressure is green across Linux, macOS, and Windows in
-[run 32749052846](https://github.com/bobaikato/gitbutler/actions/runs/32749052846) against Core
-`996090390d8544908bbb222614ece28f4dca8b4c`, pressure-controller revision
-`f208f8d1d0e9da7fc7e1b32c6e58288e97afb80d`, and clean upstream fixture
-`gitbutlerapp/gitbutler@2068a7811629950c05bd6f17429c5f2454f8ef4f`. Linux and macOS produced
-byte-identical candidates with candidate, projection, and resulting-contract identities
-`sha256:5d3211d1a3e8a57702d71dfec0abc6a549b755379024ccfabe6f56d033ef6fa7`,
-`sha256:064b9aed754ed8c7d57529327cb0ce2f4fbf03fc05a965971fd5316aadb425be`, and
-`sha256:7d409f2dcebd3900a3c625af6086077cabe743df095c95ee6f3d77e640474c39`.
-The candidate retained 43 unresolved findings, kept 12 selected package/Turbo/Tauri/Playwright
-tasks `unknown`, proposed zero agent-safe authority, admitted only the unrelated applicable
-projection in ordinary dry-run, and refused under `--require-complete`. Windows completed
-read-only detection and refused durable candidate publication without leaving an artifact. The
-first hosted run exposed a real cross-platform identity defect: case-insensitive macOS lookup
-reinterpreted GitButler's lowercase `claude.md` symlink and uppercase `Makefile` as separate
-registered paths. Core now requires exact spelling for every registered source-path component;
-the retained Linux/macOS candidates have identical bytes after that fix.
-Immutable BAML candidate pressure is green across the same matrix in
-[run 32749052420](https://github.com/bobaikato/baml/actions/runs/32749052420) against the same Core,
-pressure-controller revision `72e1bcf5e12e6c755de747db2330ef4e1f9f2e41`, and clean revision-pinned
-upstream fixture `BoundaryML/baml@a50430fba33012bea9a740ab0466c10697050678`. The checkout is
-explicitly recorded as Git LFS pointer-only. Linux and macOS produced byte-identical candidates
-with candidate, projection, and resulting-contract identities
-`sha256:042392f506455ffc4e14d9c4c015c954cd148fe0e29268c76bc366d5c0cb2ab8`,
-`sha256:fa9134aa371de6e15772da2aa0071035b02656a9a612ba1b25590e28608c7584`, and
-`sha256:f72f4afe88046ec96207250ebe8200606fb9402228c146a99896618c50c12f03`.
-The candidate retained 32 unresolved findings, projected zero tasks, proposed zero agent-safe
-authority, and refused strict application; the two reusable-workflow commands did not become
-runnable truth. Windows again remained read-only. These GitButler and BAML runs prove candidate
-capture, cross-platform identity, conservative non-promotion, dry-run admission, and strict
-refusal only. They do not prove either repository's build, tests, desktop/runtime behavior,
-complete LFS checkout, contract approval or write, task execution, lifecycle, release,
-deployment, or repo-global governance.
-Immutable Atuin distinct-lane pressure is green across Linux, macOS, and Windows in
-[run 32753440076](https://github.com/bobaikato/atuin/actions/runs/32753440076) against Core
-`a4c38c7224fcc49efc5eb2c0b4e89881c9236d23`, pressure-controller revision
-`0d641aea0598a397bd058cc2d33400fad1a65e14`, and clean upstream fixture
-`atuinsh/atuin@824c8716d82bed774ee6a83c683087ae77715814`. Linux and macOS produced
-byte-identical candidate artifacts with candidate identity
-`sha256:68a5208d2cf8614842cca6fcbc353230ac474384f589cc4ed71d41ce5401ef12`
-and byte digest `bfaf21e1179180729362641a4c2042e47fe10f90af6a0e9211831cafac69f556`.
-The detector retained `check`, nightly `fmt`, `test:unit`, and PostgreSQL-backed
-`test:integration` as four separate unresolved changes. Their closure evidence preserves the
-repository-selected Rust `1.98.0` posture, command-selected nightly toolchain, matrix-unknown
-platforms, Linux integration platform, PostgreSQL service image, and `ATUIN_DB_URI` requirement
-name without treating CI as authority or exposing the environment value. The candidate contains
-9 unknown and 5 applicable findings, proposes zero agent-safe authority, emits no application
-projection, and refuses application as `candidate_incomplete`. Windows observes all four lanes
-through read-only detection and refuses durable candidate publication without leaving an
-artifact. The run does not prove Atuin compilation, formatting, tests, PostgreSQL state, sync
-behavior, shell integration, runtime, release, deployment, or repo-global governance. The named
-Atuin, GitButler, and BAML detector-pressure matrix is satisfied. Immutable hosted
-[Buzz pressure](https://github.com/bobaikato/buzz/actions/runs/32795701879) now proves source-bound
-candidate creation, explicit create-new application, and matching no-op reapplication against clean
-upstream `block/buzz@2d280376ad36134cec1f23bead6d866d30bed147` on Linux and macOS. Its artifacts
-are byte-identical across platforms, create only `ota.yaml`, retain residual `unknown` review
-state, and propose no agent-safe authority. Immutable hosted
-[Flowise pressure](https://github.com/bobaikato/Flowise/actions/runs/32794430600) now proves the
-registered legacy-flat-toolchain upgrade and Git-carrier application against historical revision
-`90121fac54e234ca83e2a85c435354af1df8ac8f`, with byte-identical artifacts, unchanged before/after
-semantic contract identity, a commit limited to `ota.yaml`, and matching no-op reapplication on
-Linux and macOS. Neither run executes repository tasks or approves candidate changes. Local Buzz
-pressure exposed and Core now fixes one evidence-manifest defect: after the first write, a retained execution closure
-could reference package-manager evidence whose unchanged top-level proposal had been omitted from
-the rebuilt manifest, causing exact reapplication to refuse rather than report a semantic no-op.
-Local Flowise pressure exposed and Core now fixes a second projection defect: the candidate
-evaluator bypassed canonical parser normalization, so historical service-runtime `surfaces` that
-normal Ota parsing accepts prevented the registered representation-only upgrade from projecting.
-The independent closure audit accepted V11.22 with no remaining P1/P2 findings after the buildable
-Site propagation was pinned. The bounded engineering notes remain drafts pending publication
-review; their draft status is not an implementation or evidence gap, and the pressure evidence is
-not a release claim.
-The reviewed post-V11 sequence is now explicit. [V12 effect-bound refusal
-assurance](../planning/v12/plan.md) is complete: its bounded implementation, real-repository
-pressure, and independent closure reconciliation are complete. [V12.1 secret-delivery
-governance](../planning/v12.1/plan.md) is now the sole active version under its separate activation
-record. The following version plans remain inactive:
-[V12.2 contract-authored crossing requirements](../planning/v12.2/plan.md),
-[V12.3 provider-attested authority carrier](../planning/v12.3/plan.md),
-[V12.4 macOS protected authority carrier](../planning/v12.4/plan.md), and
-[V12.5 Windows protected authority carrier](../planning/v12.5/plan.md), followed by the public
-[V12.6 OSS Enterprise interoperability foundation](../planning/v12.6/plan.md) umbrella. V12.6
-separates portable export, repository reporting, authority history, and authority references into
-independently activated and closed sub-slices rather than one trust-sensitive batch. Completion of
-V11.22 did not implicitly activate V12; the explicit V11 parent reconciliation and reviewed V12
-activation record did. V12 activation does not activate any later slice. One successor in a roadmap
-chain may activate only after its predecessor completes or is formally deferred and its own
-feasibility, pressure, and independent-review gates are met. An independent branch must name its
-own predecessor and dependencies, and no branch may activate while another implementation version
-is active. V13 is such a branch: it follows V12.1's completion or formal deferral, while V12.2-V12.6
-remain in their own planned successor chain unless its selected profile explicitly depends on one.
-Two later adoption plans are also explicit and inactive:
-[V13 Protected Repository Adoption](../planning/v13/plan.md) owns independently controlled
-repository enrollment, approved verification obligations, exact candidate inputs, trusted evidence
-and one provider-owned acceptance gate;
-[V13.1 Governed Agent Runtime Integration](../planning/v13.1/plan.md) owns one demand-backed exact
-agent/runtime capability boundary during authorship. V13 establishes agent-agnostic acceptance
-governance and does not claim whole-session containment. V13.1 cannot infer enforcement from agent
-identity, instructions or V13's gate. Neither plan activates through roadmap order or this handoff.
-The completed V12 `effect_assurance` candidate remains archive-bound, `unknown`, and review-only
-even when its private archive and current typed graph reconcile exactly. Its writable ratchet is
-owned separately by the planned inactive
-[Incident Ratchet Application](../planning/incident-ratchet-application/plan.md) plan; V12's
-review artifact cannot acquire write authority by reinterpretation.
-The platform plans do not claim parity in advance: Linux/systemd remains the completed V11.7
-hardened carrier, provider attestation remains unimplemented, and macOS/Windows containment and
-recovery remain unproved. Enterprise approvals, organization policy distribution, provider
-rotation operations, controlled retention, and fleet reporting remain a separate Enterprise
-roadmap. V12.6 allocates public references, policy-authority evidence, verifier history, portable
-export, repository reporting, and compatibility to separately reviewed OSS sub-slices that prevent
-that Enterprise roadmap from inventing parallel truth. Core-owned export profiles permit original
-bytes only when verified public-safe; other artifacts require a distinctly identified redacted
-projection or refuse. Redacted projections expose source identities or digests only when each
-linkage field is independently public-safe; otherwise linkage remains protected or omitted with
-the resulting verification loss explicit. Repository fleet reports use a separate Core-owned
-`RepositoryReportProfile` that classifies every identity and drill-down reference as public,
-protected, or omitted; protected values cannot leak through stable hashes, pseudonyms, references,
-or report identity.
-One cross-cutting strategy and two cross-cutting plans remain planning-only and inactive rather
-than extending the version sequence:
-[Agent Execution Governance Core](../planning/agent-execution-governance-core/plan.md) maps the
-contract, authority, transaction, observation, evidence, and enforcement planes onto the existing
-V12.1 through V12.6 and cross-cutting plans. It makes V12.1 the first complete provider-backed
-vertical slice and forbids a mandatory-chokepoint claim until an adopted external boundary withholds
-the required capability outside admitted Ota execution. It is strategy and sequencing guidance only;
-it does not activate a version, implementation slice, provider, adapter, command, schema, evidence
-claim, or support posture;
-[the inactive adoption-gap assessment](../planning/agent-execution-governance-core/adoption-gap-assessment.md)
-turns that strategy into 17 builder work packages, an explicit dependency map, acceptance controls,
-and proof limits. It allocates inactive ownership without activating or amending any implementation
-version, and separates agent-agnostic required-verification adoption from later whole-session agent
-governance;
-[OSS adapter and profile conformance](../planning/adapter-profile-conformance/plan.md)
-defines registration, capability, pressure, support, deprecation, and revocation rules for V12+
-implementations. Shared behavior derives `profile_semantic_identity`, while owner, source, build,
-compatibility ranges, and exact target posture derive `implementation_subject_identity`.
-Conformance, pressure, and release evidence bind that subject, and the final evidence-backed
-registration derives `implementation_registration_identity` without a cycle. Lifecycle remains
-separate registry-snapshot state; admissions and retained evidence bind all three identities plus
-the observed lifecycle and snapshot;
-[authority distribution lifecycle](../planning/authority-distribution-lifecycle/plan.md)
-defines the normative acceptance standard for reproducible artifacts, compatibility, protected
-installation, upgrade, rollback, state recovery, uninstall, and support policy. It cannot activate
-or assign implementation by itself; a future version plan must explicitly own a bounded delivery
-slice. None of these cross-cutting records registers an adapter, publishes an artifact, activates
-V12, or begins the deferred Enterprise V1 control-plane roadmap.
-Implementation-registration revocation is bounded to the accepted installed registry snapshot
-rather than claimed as globally immediate under an offline release model. Positive admission and
-retained evidence must name all three exact identities plus the observed registry identity,
-lifecycle, and freshness posture; an installation without a fresh update source reports
-`installed_snapshot_only` and cannot claim awareness of later revocations.
-Roadmap activation now distinguishes technical pressure from adoption demand. V12 through V12.2
-may use signal-selected public repositories, controlled forks, and synthetic/disposable external
-resources without waiting for a design partner; those runs prove bounded technical behavior, not
-maintainer adoption or commercial demand. V12.3 provider-attested authority, V12.4 macOS protected
-authority, and V12.5 Windows protected authority are optional demand-gated carriers. None may
-activate from roadmap order, feasibility, public-repository signals, or technical curiosity alone:
-each requires a documented current operator/design-partner need for the exact provider/platform
-boundary and access to immutable native pressure. In the absence of that demand, formally defer
-the carrier rather than implementing nominal parity, and allow V12.6 to proceed after the recorded
-deferrals only when V12.6's independent evidence-consumer and real organizational interoperability
-demand gates are independently satisfied.
-The local real-OCI
-fixture plus create-chrome-extension run
-[30544809360](https://github.com/bobaikato/create-chrome-extension/actions/runs/30544809360)
-and Caddy run [30544809898](https://github.com/bobaikato/caddy/actions/runs/30544809898)
-prove the bounded stock-OCI subset against exact Core
-`d796f28e5556c0f1315052e8782ed774e9156922`. They do not prove application output, broader repo
-completion, targeted egress, managed isolated paths, typed preparation, services, lifecycle proof,
-or raw-shell governance.
+The sole active implementation version is V12.1, Step 7. The protected Linux/X64 capability and
+endpoint compatibility gate is closed by the exact retained runs and artifacts recorded above.
+Those runs prove bounded protected capability derivation, signed public projection reconciliation,
+selected execution, and terminal cleanup. They do not prove a real GitHub OIDC request, Google
+provider contact, secret materialization, process-environment injection, positive provider
+evidence, Step 8, V12.2, or general agent/repository governance.
 
-The V11.7 public example, canonical skill, global skill mirrors, and site references are carried.
-Core broker-session, crossing, archive, schema, and JSON conformance tests plus first-party
-example/skill/site checks are green. Do not reopen V11.21 or widen its bounded claims. Provider
-attestation remains optional stronger follow-on hardening, and contract-authored
-`governance.crossing_requirements` remains explicit follow-on authoring work; neither is part of the
-completed V11.7 claim. V11.22 is complete only for its reviewed candidate and source-closure work;
-do not imply that a generated contract is approved, written, or pressure-proven.
+The private authority-snapshot bridge is now committed in Core. Protocol `d1d1fd4` supplies the
+record-only prerequisite. Core `15f59d87` adds private request/response reconciliation,
+`8c22a18a` verifies the signed protected snapshot and retained bytes, and `f6d4633e`
+independently reconstructs one provider-free Step 1-6 transaction candidate from the exact
+challenge-backed invocation context and canonical selected `RunPlan`. Candidate reconstruction
+re-derives binding/source, profile, implementation subject, provider tuple, effects, protected
+policy authority, evaluation, and dry-run truth. It refuses substituted authority or context and
+selected roots outside the exact native Linux transient structured-command boundary. The final
+batch passed focused release compilation and regression suites, first-party synchronization, and
+independent review. Site, Skills, Examples, Learn, FAQ, Glossary, contract schema, and public JSON
+remain unaffected because no operator-facing route or vocabulary was introduced.
+
+The bridge is not yet a production transaction. Launcher does not yet relay the protected snapshot
+over the selected child's retained session, Protocol does not yet bind that snapshot into an
+additive V2 transaction-binding exchange, and Core does not yet retain and consume the resulting V2
+binding exactly once. Provider contact remains blocked.
+
+Next action: implement and independently review Protocol's closed snapshot-bound V2
+transaction-binding request, binding, response, identities, and cross-record reconciliation. After
+that immutable Protocol commit, pin it in Launcher and Core, implement the same-child/session relay
+and one-use Core guard, and run the exact protected Linux/X64 service path before considering the
+separate provider-contact slice.
+
+Do not touch the unrelated untracked `docs/pressure/agent-authority-signals.md` unless the user
+explicitly asks.
 
 ## Working Rules
 
+- Update this handoff immediately when the active step, blocker, next action, or proof status
+  changes.
+- Compact completed narration only after the coherent batch is committed, independently reviewed,
+  and all affected repositories are reconciled. Remove detail only when a commit, plan, changelog,
+  specification, pressure record, or retained evidence artifact durably owns it.
 - Read the canonical Ota skill before Ota-specific work.
 - Use `references/pressure-testing-protocol.md` for every pressure pass.
 - Make and record the connected-surface decision for core docs, examples, skills, and site.
