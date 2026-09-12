@@ -1,25 +1,39 @@
 //! Core-owned private authority-snapshot request and response reconciliation.
 //!
-//! This foundation binds one fresh snapshot exchange to the retained Launcher startup boundary.
-//! It does not parse authority payload bytes, derive a candidate, contact a provider, or execute a
-//! child process.
+//! This foundation binds one fresh snapshot exchange to the retained Launcher startup boundary and
+//! verifies the signed closed authority payload. It does not derive a candidate, contact a
+//! provider, or execute a child process.
 
 #![allow(dead_code)]
 
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use ota_authority_protocol::{
     LauncherStartupContinuationV1, PROTECTED_AUTHORITY_SNAPSHOT_CHALLENGE,
     PROTECTED_AUTHORITY_SNAPSHOT_REQUEST, ProtectedAuthoritySnapshotChallengeV1,
     ProtectedAuthoritySnapshotRequestV1, ProtectedAuthoritySnapshotResponseV1,
-    launcher_startup_continuation_identity, protected_authority_snapshot_challenge_v1_identity,
+    ProtectedSecretDeliveryBindingBundleV1, launcher_startup_continuation_identity,
+    protected_authority_snapshot_challenge_v1_identity,
     protected_authority_snapshot_nonce_commitment_v1,
     protected_authority_snapshot_request_v1_identity,
     protected_launcher_secret_delivery_transaction_session_v1_identity,
+    protected_secret_delivery_binding_bundle_payload_v1_identity,
+    protected_secret_delivery_binding_bundle_signature_message_v1,
     reconcile_protected_authority_snapshot_response_v1,
 };
 use thiserror::Error;
 use time::OffsetDateTime;
+
+use crate::policy_pack::OrgPolicyPack;
+use crate::secret_provider_bindings::{
+    SecretProviderBindingSnapshotInput, validate_secret_provider_binding_snapshot_structure,
+};
+use crate::secret_provider_profile::{
+    AdapterImplementationSubjectInput, ResolvedAdapterImplementationSubject,
+    ResolvedSecretDeliveryProfile, SecretDeliveryProfileInput,
+    resolve_adapter_implementation_subject, resolve_secret_delivery_profile,
+};
 
 const MAX_CHALLENGE_LIFETIME_SECONDS: u64 = 300;
 
@@ -33,6 +47,35 @@ pub(crate) enum SecretDeliveryAuthoritySnapshotError {
     RequestInvalid,
     #[error("protected authority snapshot response is invalid")]
     ResponseInvalid,
+    #[error("protected authority snapshot binding bundle signature is invalid")]
+    BindingBundleSignatureInvalid,
+    #[error("protected authority snapshot binding bundle payload is invalid")]
+    BindingBundlePayloadInvalid,
+}
+
+/// Closed Core-owned semantic payload carried by the signed protected bundle.
+///
+/// The enclosing snapshot remains private transport. Core accepts these fields only after it has
+/// reconciled the retained raw bytes and verified the bundle signature against the active outer
+/// verifier record.
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ProtectedSecretDeliveryAuthorityPayloadV1 {
+    pub schema_version: u32,
+    pub record_kind: String,
+    pub binding_snapshots: Vec<SecretProviderBindingSnapshotInput>,
+    pub profile: SecretDeliveryProfileInput,
+    pub implementation_subject: AdapterImplementationSubjectInput,
+    pub policy: OrgPolicyPack,
+}
+
+/// Private, semantically reconstructed authority input. It does not yet select a requirement or
+/// authorize a provider operation.
+#[derive(Debug)]
+pub(crate) struct VerifiedSecretDeliveryAuthorityPayloadV1 {
+    pub payload: ProtectedSecretDeliveryAuthorityPayloadV1,
+    pub profile: ResolvedSecretDeliveryProfile,
+    pub implementation_subject: ResolvedAdapterImplementationSubject,
 }
 
 /// Private Core-retained state for one snapshot exchange. The raw nonce never leaves the request.
@@ -164,10 +207,122 @@ impl VerifiedSecretDeliveryAuthoritySnapshotV1 {
     pub(crate) fn startup_continuation(&self) -> &LauncherStartupContinuationV1 {
         &self.startup_continuation
     }
+
+    /// Reconciles the exact retained bundle bytes, verifies the active outer verifier signature,
+    /// then parses the closed Core payload. The payload is never trusted before this boundary.
+    pub(crate) fn parse_verified_authority_payload(
+        &self,
+    ) -> Result<VerifiedSecretDeliveryAuthorityPayloadV1, SecretDeliveryAuthoritySnapshotError>
+    {
+        let snapshot_payload = &self.response.payload;
+        let verifier_bytes = URL_SAFE_NO_PAD
+            .decode(snapshot_payload.verifier_store_bytes.as_bytes())
+            .map_err(|_| SecretDeliveryAuthoritySnapshotError::BindingBundlePayloadInvalid)?;
+        if URL_SAFE_NO_PAD.encode(&verifier_bytes) != snapshot_payload.verifier_store_bytes
+            || serde_json::from_slice::<
+                ota_authority_protocol::ProtectedSecretDeliveryVerifierStoreV1,
+            >(&verifier_bytes)
+            .map_err(|_| SecretDeliveryAuthoritySnapshotError::BindingBundlePayloadInvalid)?
+                != snapshot_payload.verifier_store
+        {
+            return Err(SecretDeliveryAuthoritySnapshotError::BindingBundlePayloadInvalid);
+        }
+        let bundle_bytes = URL_SAFE_NO_PAD
+            .decode(snapshot_payload.binding_store_bytes.as_bytes())
+            .map_err(|_| SecretDeliveryAuthoritySnapshotError::BindingBundlePayloadInvalid)?;
+        if URL_SAFE_NO_PAD.encode(&bundle_bytes) != snapshot_payload.binding_store_bytes {
+            return Err(SecretDeliveryAuthoritySnapshotError::BindingBundlePayloadInvalid);
+        }
+        if serde_json::from_slice::<ProtectedSecretDeliveryBindingBundleV1>(&bundle_bytes)
+            .map_err(|_| SecretDeliveryAuthoritySnapshotError::BindingBundlePayloadInvalid)?
+            != snapshot_payload.binding_bundle
+        {
+            return Err(SecretDeliveryAuthoritySnapshotError::BindingBundlePayloadInvalid);
+        }
+
+        let verifier = snapshot_payload
+            .verifier_store
+            .verifiers
+            .first()
+            .filter(|verifier| {
+                verifier.identity == snapshot_payload.binding_bundle.verifier_identity
+            })
+            .ok_or(SecretDeliveryAuthoritySnapshotError::BindingBundleSignatureInvalid)?;
+        let public_key = URL_SAFE_NO_PAD
+            .decode(verifier.public_key.as_bytes())
+            .map_err(|_| SecretDeliveryAuthoritySnapshotError::BindingBundleSignatureInvalid)?;
+        let public_key: [u8; 32] = public_key
+            .try_into()
+            .map_err(|_| SecretDeliveryAuthoritySnapshotError::BindingBundleSignatureInvalid)?;
+        let signature = URL_SAFE_NO_PAD
+            .decode(snapshot_payload.binding_bundle.signature.as_bytes())
+            .map_err(|_| SecretDeliveryAuthoritySnapshotError::BindingBundleSignatureInvalid)?;
+        let key = VerifyingKey::from_bytes(&public_key)
+            .map_err(|_| SecretDeliveryAuthoritySnapshotError::BindingBundleSignatureInvalid)?;
+        let signature = Signature::from_slice(&signature)
+            .map_err(|_| SecretDeliveryAuthoritySnapshotError::BindingBundleSignatureInvalid)?;
+        let message = protected_secret_delivery_binding_bundle_signature_message_v1(
+            snapshot_payload.binding_bundle.identity.as_str(),
+        )
+        .map_err(|_| SecretDeliveryAuthoritySnapshotError::BindingBundleSignatureInvalid)?;
+        key.verify(&message, &signature)
+            .map_err(|_| SecretDeliveryAuthoritySnapshotError::BindingBundleSignatureInvalid)?;
+
+        let payload_bytes = URL_SAFE_NO_PAD
+            .decode(snapshot_payload.binding_bundle.payload.as_bytes())
+            .map_err(|_| SecretDeliveryAuthoritySnapshotError::BindingBundlePayloadInvalid)?;
+        if URL_SAFE_NO_PAD.encode(&payload_bytes) != snapshot_payload.binding_bundle.payload
+            || protected_secret_delivery_binding_bundle_payload_v1_identity(&payload_bytes)
+                .map_err(|_| SecretDeliveryAuthoritySnapshotError::BindingBundlePayloadInvalid)?
+                != snapshot_payload.binding_bundle.payload_identity
+        {
+            return Err(SecretDeliveryAuthoritySnapshotError::BindingBundlePayloadInvalid);
+        }
+        let payload: ProtectedSecretDeliveryAuthorityPayloadV1 =
+            serde_json::from_slice(&payload_bytes)
+                .map_err(|_| SecretDeliveryAuthoritySnapshotError::BindingBundlePayloadInvalid)?;
+        if payload.schema_version != 1
+            || payload.record_kind != "protected_secret_delivery_authority_payload"
+            || serde_jcs::to_vec(&payload)
+                .map_err(|_| SecretDeliveryAuthoritySnapshotError::BindingBundlePayloadInvalid)?
+                != payload_bytes
+        {
+            return Err(SecretDeliveryAuthoritySnapshotError::BindingBundlePayloadInvalid);
+        }
+        let profile = resolve_secret_delivery_profile(&payload.profile)
+            .map_err(|_| SecretDeliveryAuthoritySnapshotError::BindingBundlePayloadInvalid)?;
+        let implementation_subject =
+            resolve_adapter_implementation_subject(&profile, &payload.implementation_subject)
+                .map_err(|_| SecretDeliveryAuthoritySnapshotError::BindingBundlePayloadInvalid)?;
+        validate_secret_provider_binding_snapshot_structure(&payload.binding_snapshots)
+            .map_err(|_| SecretDeliveryAuthoritySnapshotError::BindingBundlePayloadInvalid)?;
+        if payload
+            .binding_snapshots
+            .iter()
+            .flat_map(|snapshot| snapshot.bindings.iter())
+            .any(|binding| {
+                binding.adapter_identity != implementation_subject.implementation_subject_identity
+            })
+        {
+            return Err(SecretDeliveryAuthoritySnapshotError::BindingBundlePayloadInvalid);
+        }
+        payload
+            .policy
+            .validate()
+            .map_err(|_| SecretDeliveryAuthoritySnapshotError::BindingBundlePayloadInvalid)?;
+        Ok(VerifiedSecretDeliveryAuthorityPayloadV1 {
+            payload,
+            profile,
+            implementation_subject,
+        })
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
+    use ed25519_dalek::{Signer, SigningKey};
     use ota_authority_protocol::{
         LAUNCHER_STARTUP_CONTINUATION, PROTECTED_AUTHORITY_SNAPSHOT,
         PROTECTED_AUTHORITY_SNAPSHOT_RESPONSE, PROTECTED_SECRET_DELIVERY_BINDING_BUNDLE,
@@ -212,7 +367,7 @@ mod tests {
     }
 
     fn binding_bundle_verifier() -> ProtectedSecretDeliveryBindingBundleVerifierV1 {
-        let public_key = "A".repeat(43);
+        let public_key = URL_SAFE_NO_PAD.encode(signing_key().verifying_key().as_bytes());
         let mut verifier = ProtectedSecretDeliveryBindingBundleVerifierV1 {
             schema_version: 1,
             record_kind: PROTECTED_SECRET_DELIVERY_BINDING_BUNDLE_VERIFIER.into(),
@@ -233,9 +388,47 @@ mod tests {
         verifier
     }
 
+    fn signing_key() -> SigningKey {
+        SigningKey::from_bytes(&[7; 32])
+    }
+
+    fn authority_payload() -> ProtectedSecretDeliveryAuthorityPayloadV1 {
+        let profile = crate::secret_provider_profile::google_secret_delivery_profile_input();
+        let resolved = crate::secret_provider_profile::resolve_secret_delivery_profile(&profile)
+            .expect("profile");
+        ProtectedSecretDeliveryAuthorityPayloadV1 {
+            schema_version: 1,
+            record_kind: "protected_secret_delivery_authority_payload".into(),
+            binding_snapshots: Vec::new(),
+            implementation_subject: AdapterImplementationSubjectInput {
+                schema_version: 1,
+                profile_semantic_identity: resolved.profile_semantic_identity,
+                implementation_owner: "ota_core".into(),
+                source_repository: "https://github.com/ota-run/ota".into(),
+                source_tree_identity: identity('1'),
+                build_identity: identity('2'),
+                artifact_identity: identity('3'),
+                minimum_core_version: "1.6.28".into(),
+                maximum_exclusive_core_version: "1.7.0".into(),
+                minimum_protocol_version: "1.0.0".into(),
+                maximum_exclusive_protocol_version: "2.0.0".into(),
+                target: crate::secret_provider_profile::SecretDeliveryTargetPosture {
+                    operating_system: crate::secret_provider_profile::SecretDeliveryOperatingSystem::Linux,
+                    architecture: crate::secret_provider_profile::SecretDeliveryArchitecture::X86_64,
+                    runtime: crate::secret_provider_profile::SecretDeliveryRuntime::GithubActions,
+                    execution_mode: crate::secret_provider_profile::SecretDeliveryExecutionMode::Native,
+                    recipient_boundary: crate::secret_provider_profile::SecretDeliveryRecipientBoundary::TransientSelectedProcessTree,
+                },
+            },
+            profile,
+            policy: serde_yaml::from_str("policies:\n  effects:\n    mode: compatibility\n")
+                .expect("policy"),
+        }
+    }
+
     fn binding_bundle() -> ProtectedSecretDeliveryBindingBundleV1 {
-        let payload = URL_SAFE_NO_PAD.encode(br#"{"schema_version":1,"bindings":[]}"#);
-        let payload_bytes = URL_SAFE_NO_PAD.decode(&payload).expect("payload bytes");
+        let payload_bytes = serde_jcs::to_vec(&authority_payload()).expect("payload bytes");
+        let payload = URL_SAFE_NO_PAD.encode(&payload_bytes);
         let verifier = binding_bundle_verifier();
         let mut bundle = ProtectedSecretDeliveryBindingBundleV1 {
             schema_version: 1,
@@ -251,10 +444,22 @@ mod tests {
                 &payload_bytes,
             )
             .expect("payload identity"),
-            signature: "A".repeat(86),
+            // The bundle identity excludes its signature, but Protocol still requires a canonical
+            // signature encoding while deriving that identity.
+            signature: URL_SAFE_NO_PAD.encode([0_u8; 64]),
         };
         bundle.identity =
             protected_secret_delivery_binding_bundle_v1_identity(&bundle).expect("bundle identity");
+        bundle.signature = URL_SAFE_NO_PAD.encode(
+            signing_key()
+                .sign(
+                    &protected_secret_delivery_binding_bundle_signature_message_v1(
+                        bundle.identity.as_str(),
+                    )
+                    .expect("signature message"),
+                )
+                .to_bytes(),
+        );
         bundle
     }
 
@@ -357,6 +562,67 @@ mod tests {
             protected_authority_snapshot_response_v1_identity(response).expect("response identity");
     }
 
+    fn reencode_binding_bundle(response: &mut ProtectedAuthoritySnapshotResponseV1) {
+        let bytes = serde_json::to_vec(&response.payload.binding_bundle).expect("bundle bytes");
+        response.payload.binding_store_bytes = URL_SAFE_NO_PAD.encode(&bytes);
+        response.payload.binding_store_descriptor.size = bytes.len() as u64;
+        response.payload.binding_store_descriptor.content_identity = Some(
+            protected_launcher_store_content_identity_v1(
+                ProtectedLauncherDescriptorRoleV1::BindingStore,
+                &bytes,
+            )
+            .expect("bundle content identity"),
+        );
+        response.payload.binding_store_descriptor.identity =
+            protected_launcher_descriptor_v1_identity(&response.payload.binding_store_descriptor)
+                .expect("bundle descriptor identity");
+        reidentify_response(response);
+    }
+
+    fn resign_and_reencode_authority_bundle(response: &mut ProtectedAuthoritySnapshotResponseV1) {
+        let bundle = &mut response.payload.binding_bundle;
+        let payload_bytes = URL_SAFE_NO_PAD
+            .decode(bundle.payload.as_bytes())
+            .expect("authority payload bytes");
+        bundle.payload_identity =
+            protected_secret_delivery_binding_bundle_payload_v1_identity(&payload_bytes)
+                .expect("authority payload identity");
+        bundle.identity =
+            protected_secret_delivery_binding_bundle_v1_identity(bundle).expect("bundle identity");
+        bundle.signature = URL_SAFE_NO_PAD.encode(
+            signing_key()
+                .sign(
+                    &protected_secret_delivery_binding_bundle_signature_message_v1(
+                        bundle.identity.as_str(),
+                    )
+                    .expect("signature message"),
+                )
+                .to_bytes(),
+        );
+        response
+            .payload
+            .verifier_store
+            .active_binding_bundle_identity = bundle.identity.clone();
+        response.payload.verifier_store.identity =
+            protected_secret_delivery_verifier_store_v1_identity(&response.payload.verifier_store)
+                .expect("verifier store identity");
+        let verifier_bytes =
+            serde_json::to_vec(&response.payload.verifier_store).expect("verifier store bytes");
+        response.payload.verifier_store_bytes = URL_SAFE_NO_PAD.encode(&verifier_bytes);
+        response.payload.verifier_store_descriptor.size = verifier_bytes.len() as u64;
+        response.payload.verifier_store_descriptor.content_identity = Some(
+            protected_launcher_store_content_identity_v1(
+                ProtectedLauncherDescriptorRoleV1::VerifierStore,
+                &verifier_bytes,
+            )
+            .expect("verifier store content identity"),
+        );
+        response.payload.verifier_store_descriptor.identity =
+            protected_launcher_descriptor_v1_identity(&response.payload.verifier_store_descriptor)
+                .expect("verifier store descriptor identity");
+        reencode_binding_bundle(response);
+    }
+
     #[test]
     fn snapshot_request_binds_one_startup_contract_and_graph() {
         let pending = issue_at_v1(&startup(), &identity('b'), &identity('c'), &[7; 32], 100)
@@ -418,6 +684,112 @@ mod tests {
                 .expect("serialized response")
                 .contains(&raw_nonce)
         );
+    }
+
+    #[test]
+    fn verified_snapshot_requires_signed_canonical_authority_payload() {
+        let startup = startup();
+        let pending = issue_at_v1(
+            &startup,
+            &identity('a'),
+            &identity('b'),
+            &[8; 32],
+            1_788_800_000,
+        )
+        .expect("pending snapshot");
+        let response = response_for(pending.request());
+        let verified = pending
+            .reconcile_at(response, 1_788_800_100)
+            .expect("verified snapshot");
+        let parsed = verified
+            .parse_verified_authority_payload()
+            .expect("verified payload");
+        assert_eq!(parsed.payload.schema_version, 1);
+        assert_eq!(
+            parsed.profile.profile_semantic_identity,
+            parsed.implementation_subject.profile_semantic_identity
+        );
+    }
+
+    #[test]
+    fn verified_snapshot_refuses_signature_and_noncanonical_payload_substitution() {
+        let startup = startup();
+        let issue = || {
+            issue_at_v1(
+                &startup,
+                &identity('a'),
+                &identity('b'),
+                &[8; 32],
+                1_788_800_000,
+            )
+            .expect("pending snapshot")
+        };
+
+        let pending = issue();
+        let mut response = response_for(pending.request());
+        response.payload.binding_bundle.signature = URL_SAFE_NO_PAD.encode([0_u8; 64]);
+        reencode_binding_bundle(&mut response);
+        let verified = pending
+            .reconcile_at(response, 1_788_800_100)
+            .expect("verified snapshot");
+        assert!(matches!(
+            verified.parse_verified_authority_payload(),
+            Err(SecretDeliveryAuthoritySnapshotError::BindingBundleSignatureInvalid)
+        ));
+
+        let pending = issue();
+        let mut response = response_for(pending.request());
+        let payload_bytes = URL_SAFE_NO_PAD
+            .decode(response.payload.binding_bundle.payload.as_bytes())
+            .expect("authority payload bytes");
+        response.payload.binding_bundle.payload =
+            URL_SAFE_NO_PAD.encode([payload_bytes.as_slice(), b"\n"].concat());
+        resign_and_reencode_authority_bundle(&mut response);
+        let verified = pending
+            .reconcile_at(response, 1_788_800_100)
+            .expect("verified snapshot");
+        assert!(matches!(
+            verified.parse_verified_authority_payload(),
+            Err(SecretDeliveryAuthoritySnapshotError::BindingBundlePayloadInvalid)
+        ));
+    }
+
+    #[test]
+    fn verified_snapshot_refuses_structurally_invalid_binding_snapshot() {
+        let startup = startup();
+        let pending = issue_at_v1(
+            &startup,
+            &identity('a'),
+            &identity('b'),
+            &[8; 32],
+            1_788_800_000,
+        )
+        .expect("pending snapshot");
+        let mut response = response_for(pending.request());
+        let mut authority = authority_payload();
+        authority.binding_snapshots.push(SecretProviderBindingSnapshotInput {
+            schema_version: 0,
+            source: crate::secret_provider_bindings::SecretProviderBindingSourceInput {
+                schema_version: 1,
+                kind: crate::secret_provider_bindings::SecretProviderBindingSourceKind::AdministratorControlPlane,
+                private_locator: "control-plane://snapshot".into(),
+                authority_scope: BTreeMap::from([("environment".into(), "test".into())]),
+                verification: crate::secret_provider_bindings::SecretProviderBindingVerification::Verified,
+                trust_root_identity: Some(identity('4')),
+                verifier_identity: Some(identity('5')),
+            },
+            bindings: Vec::new(),
+        });
+        response.payload.binding_bundle.payload = URL_SAFE_NO_PAD
+            .encode(serde_jcs::to_vec(&authority).expect("invalid authority payload"));
+        resign_and_reencode_authority_bundle(&mut response);
+        let verified = pending
+            .reconcile_at(response, 1_788_800_100)
+            .expect("verified snapshot");
+        assert!(matches!(
+            verified.parse_verified_authority_payload(),
+            Err(SecretDeliveryAuthoritySnapshotError::BindingBundlePayloadInvalid)
+        ));
     }
 
     #[test]

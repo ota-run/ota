@@ -266,6 +266,7 @@ pub(crate) fn resolve_secret_provider_bindings(
             bindings: BTreeMap::new(),
         });
     }
+    validate_secret_provider_binding_snapshot_structure(snapshots)?;
 
     let requirements_by_identity = requirements
         .requirements
@@ -278,36 +279,9 @@ pub(crate) fn resolve_secret_provider_bindings(
         .collect::<BTreeSet<_>>();
     let mut sources = BTreeMap::new();
     let mut bindings = BTreeMap::new();
-    let mut observed_sources = BTreeSet::new();
-    let mut observed_source_locators = BTreeMap::new();
-    let mut observed_binding_requirements = BTreeSet::new();
 
     for snapshot in snapshots {
-        if snapshot.schema_version != 1 {
-            return Err(SecretProviderBindingError::new(
-                "secret_provider_binding_snapshot_version_unsupported",
-                format!(
-                    "secret provider binding snapshot schema version `{}` is unsupported",
-                    snapshot.schema_version
-                ),
-            ));
-        }
         let source = resolve_source(&snapshot.source)?;
-        if !observed_sources.insert(source.identity.clone()) {
-            return Err(SecretProviderBindingError::new(
-                "secret_provider_binding_source_duplicate",
-                "secret provider binding source appears more than once",
-            ));
-        }
-        if observed_source_locators
-            .insert(source.private_locator.clone(), source.identity.clone())
-            .is_some_and(|identity| identity != source.identity)
-        {
-            return Err(SecretProviderBindingError::new(
-                "secret_provider_binding_source_conflict",
-                "secret provider binding source locator carries conflicting protected evidence",
-            ));
-        }
         let mut source_selected = false;
         for binding in &snapshot.bindings {
             let requirement = requirements_by_identity
@@ -321,15 +295,6 @@ pub(crate) fn resolve_secret_provider_bindings(
                         ),
                     )
                 })?;
-            if !observed_binding_requirements.insert(binding.requirement_identity.clone()) {
-                return Err(SecretProviderBindingError::new(
-                    "secret_provider_binding_ambiguous",
-                    format!(
-                        "secret requirement `{}` resolves to multiple provider bindings",
-                        binding.requirement_identity
-                    ),
-                ));
-            }
             let resolved = resolve_binding(binding, requirement, &source)?;
             if selected.contains(binding.requirement_identity.as_str()) {
                 bindings.insert(binding.requirement_identity.clone(), resolved);
@@ -350,6 +315,67 @@ pub(crate) fn resolve_secret_provider_bindings(
         }
     }
     Ok(ResolvedSecretProviderBindingSet { sources, bindings })
+}
+
+/// Validates every protected snapshot before a later caller selects requirements from it.
+///
+/// This deliberately does not accept a requirement catalog: exact requirement existence and target
+/// reconciliation remain the selected-candidate resolver's responsibility. It does ensure that
+/// malformed, duplicate, conflicting, or internally inconsistent protected snapshots cannot cross
+/// an authenticated transport boundary as structurally valid authority input.
+pub(crate) fn validate_secret_provider_binding_snapshot_structure(
+    snapshots: &[SecretProviderBindingSnapshotInput],
+) -> Result<(), SecretProviderBindingError> {
+    let mut observed_sources = BTreeSet::new();
+    let mut observed_source_locators = BTreeMap::new();
+    let mut observed_binding_requirements = BTreeSet::new();
+    for snapshot in snapshots {
+        if snapshot.schema_version != 1 {
+            return Err(SecretProviderBindingError::new(
+                "secret_provider_binding_snapshot_version_unsupported",
+                format!(
+                    "secret provider binding snapshot schema version `{}` is unsupported",
+                    snapshot.schema_version
+                ),
+            ));
+        }
+        let source = resolve_source(&snapshot.source)?;
+        if !observed_sources.insert(source.identity.clone()) {
+            return Err(SecretProviderBindingError::new(
+                "secret_provider_binding_source_duplicate",
+                "secret provider binding source appears more than once",
+            ));
+        }
+        let source_identity = source.identity.clone();
+        if observed_source_locators
+            .insert(source.private_locator.clone(), source_identity.clone())
+            .is_some_and(|identity| identity != source_identity)
+        {
+            return Err(SecretProviderBindingError::new(
+                "secret_provider_binding_source_conflict",
+                "secret provider binding source locator carries conflicting protected evidence",
+            ));
+        }
+        for binding in &snapshot.bindings {
+            validate_binding_input(binding)?;
+            if binding.authority_scope != snapshot.source.authority_scope {
+                return Err(SecretProviderBindingError::new(
+                    "secret_provider_binding_authority_scope_mismatch",
+                    "secret provider binding authority scope does not exactly match its protected source",
+                ));
+            }
+            if !observed_binding_requirements.insert(binding.requirement_identity.clone()) {
+                return Err(SecretProviderBindingError::new(
+                    "secret_provider_binding_ambiguous",
+                    format!(
+                        "secret requirement `{}` resolves to multiple provider bindings",
+                        binding.requirement_identity
+                    ),
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 pub(crate) fn verify_resolved_secret_provider_binding(
