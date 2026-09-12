@@ -447,22 +447,24 @@ fn validate_recipient(
     recipient: &SecretDeliveryRecipient,
     origin: &SecretDeliveryEffectOrigin,
 ) -> Result<(), SecretDeliveryEffectError> {
-    let (selected, expected_role, expected_subject) = match recipient.kind {
+    let (selected, expected_role, expected_subject, invocation_matches) = match recipient.kind {
         SecretDeliveryRecipientKind::Task => (
             requirement.recipients.tasks.contains(&recipient.name),
             SecretDeliveryClosureRole::SelectedTask,
             vec!["task".to_string(), recipient.name.clone()],
+            origin.invocation.task == recipient.name,
         ),
         SecretDeliveryRecipientKind::Workflow => (
             requirement.recipients.workflows.contains(&recipient.name),
             SecretDeliveryClosureRole::SelectedWorkflow,
             vec!["workflow".to_string(), recipient.name.clone()],
+            true,
         ),
     };
     if !selected
         || origin.closure_role != expected_role
         || origin.selected_subject != expected_subject
-        || origin.invocation.task != recipient.name
+        || !invocation_matches
     {
         return Err(SecretDeliveryEffectError::new(
             "secret_delivery_effect_recipient_mismatch",

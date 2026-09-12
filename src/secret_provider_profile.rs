@@ -1144,7 +1144,9 @@ mod tests {
     use super::*;
     use crate::effect_policy::{
         EffectPolicyInvocation, SecretDeliveryEffectPolicyInput, SecretDeliveryEffectPolicyScope,
-        evaluate_secret_delivery_effect_policy, verify_secret_delivery_effect_policy_decision,
+        evaluate_secret_delivery_effect_policy,
+        evaluate_secret_delivery_effect_policy_from_protected_snapshot,
+        verify_secret_delivery_effect_policy_decision,
     };
     use crate::parser::parse_contract_str;
     use crate::policy_pack::{
@@ -2182,6 +2184,49 @@ secret_requirements:
             assert!(!decision.explicit_typed_deny);
         }
 
+        let protected_pack: OrgPolicyPack =
+            serde_yaml::from_str("policies:\n  effects:\n    mode: compatibility\n").unwrap();
+        let protected = LoadedOrgPolicyPack {
+            source_identity: Some(semantic_contract_identity(&protected_pack).unwrap()),
+            pack: protected_pack,
+            path: Path::new("protected://secret-delivery-authority-snapshot").to_path_buf(),
+            source: PolicyPackSource::RepoPolicy,
+        };
+        let decision = evaluate_secret_delivery_effect_policy_from_protected_snapshot(
+            scope,
+            &protected,
+            &[digest('1'), digest('2')],
+        )
+        .unwrap();
+        assert_eq!(
+            decision.policy_source_evidence.source_kind,
+            "verified_protected_snapshot"
+        );
+        assert_eq!(
+            decision.policy_source_evidence.authority_posture,
+            "independently_administered"
+        );
+        assert_eq!(
+            decision.policy_source_evidence.source_verification_evidence,
+            vec![digest('1'), digest('2')]
+        );
+        for invalid_evidence in [
+            vec![digest('2'), digest('1')],
+            vec![digest('1'), digest('1')],
+            vec![String::from("sha256:invalid"), digest('2')],
+        ] {
+            assert_eq!(
+                evaluate_secret_delivery_effect_policy_from_protected_snapshot(
+                    scope,
+                    &protected,
+                    &invalid_evidence,
+                )
+                .unwrap_err()
+                .code,
+                "effect_policy_protected_source_evidence_invalid"
+            );
+        }
+
         let mut forged = derived.clone();
         forged.effect.identity = digest('8');
         let forged_effects = vec![SecretDeliveryEffectPolicyInput {
@@ -2405,6 +2450,7 @@ secret_requirements:
             effects: &effects,
             loaded_policy: Some(&compatibility_policy),
             policy_decision: Some(&decision),
+            protected_policy_source_evidence: None,
         };
         let evaluation = evaluate_secret_delivery(input).unwrap();
         assert_eq!(
@@ -2711,6 +2757,7 @@ secret_requirements:
             effects: &workflow_effects,
             loaded_policy: Some(&compatibility_policy),
             policy_decision: Some(&workflow_decision),
+            protected_policy_source_evidence: None,
         };
         let workflow_evaluation = evaluate_secret_delivery(workflow_input).unwrap();
         assert_eq!(

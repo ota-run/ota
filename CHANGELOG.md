@@ -26,6 +26,16 @@
 
 ## Unreleased
 
+- Reconstruct one crate-private, provider-free Step 1-6 secret-delivery transaction candidate from
+  an authenticated protected authority snapshot, a challenge-backed invocation context, and the
+  canonical selected `RunPlan`. Core re-derives task and workflow roots, binding/source, profile,
+  implementation subject, exact provider tuple, effects, policy decision, evaluation, and dry-run
+  plan, and refuses selected roots outside the exact native Linux transient structured-command
+  boundary. Protected policy authority now flows only through a crate-private verified-snapshot
+  evaluator and cannot be represented by ordinary policy archive records. This introduces no CLI
+  route, OIDC request, provider contact,
+  materialization, injection, public output, or positive evidence.
+
 - Add the crate-private Core half of the selected-child secret-delivery transaction binding.
   After protected Launcher lease consumption, Core can now originate the closed Protocol request
   on the retained startup-bound session, reconcile the returned private binding and signed public

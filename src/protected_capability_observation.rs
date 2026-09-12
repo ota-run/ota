@@ -81,6 +81,34 @@ pub(crate) struct PendingProtectedCapabilityObservationV1 {
     consumed: bool,
 }
 
+/// Opaque Core-owned proof that one capability observation reconciled to its retained challenge.
+#[derive(Debug, Clone)]
+pub(crate) struct VerifiedProtectedCapabilityObservationV1 {
+    request: ProtectedLauncherCapabilityObservationRequestV1,
+    projection: ProtectedLauncherCapabilityObservationProjectionV1,
+}
+
+impl VerifiedProtectedCapabilityObservationV1 {
+    pub(crate) fn request(&self) -> &ProtectedLauncherCapabilityObservationRequestV1 {
+        &self.request
+    }
+
+    pub(crate) fn projection(&self) -> &ProtectedLauncherCapabilityObservationProjectionV1 {
+        &self.projection
+    }
+
+    #[cfg(test)]
+    pub(crate) fn for_test(
+        request: ProtectedLauncherCapabilityObservationRequestV1,
+        projection: ProtectedLauncherCapabilityObservationProjectionV1,
+    ) -> Self {
+        Self {
+            request,
+            projection,
+        }
+    }
+}
+
 /// A verifier retained after the fixed installation loader reconciles the
 /// administrator-controlled record and installation evidence.
 #[derive(Debug)]
@@ -145,7 +173,8 @@ pub(crate) fn observe_protected_launcher_capability_v1(
     // Reload authority immediately before signature reconciliation so the response cannot rely on
     // verifier or installation truth observed before the Launcher transaction.
     let verifier = load_retained_verifier()?;
-    reconcile_protected_capability_observation_v1(&mut pending, &response, &verifier)
+    retain_reconciled_protected_capability_observation_v1(&mut pending, &response, &verifier)
+        .map(|verified| verified.projection)
 }
 
 impl PendingProtectedCapabilityObservationV1 {
@@ -234,6 +263,19 @@ pub(crate) fn reconcile_protected_capability_observation_v1(
     let observed_at_unix_seconds = u64::try_from(OffsetDateTime::now_utc().unix_timestamp())
         .map_err(|_| ProtectedCapabilityObservationError::InvalidResponse)?;
     reconcile_at_v1(pending, response, verifier, observed_at_unix_seconds)
+}
+
+pub(crate) fn retain_reconciled_protected_capability_observation_v1(
+    pending: &mut PendingProtectedCapabilityObservationV1,
+    response: &ProtectedLauncherCapabilityObservationResponseV1,
+    verifier: &RetainedCapabilityProjectionVerifierV1,
+) -> Result<VerifiedProtectedCapabilityObservationV1, ProtectedCapabilityObservationError> {
+    let request = pending.request.clone();
+    let projection = reconcile_protected_capability_observation_v1(pending, response, verifier)?;
+    Ok(VerifiedProtectedCapabilityObservationV1 {
+        request,
+        projection,
+    })
 }
 
 fn reconcile_at_v1(
@@ -616,7 +658,7 @@ mod tests {
     use super::{
         ProtectedCapabilityObservationError, RetainedCapabilityProjectionVerifierV1, issue_at_v1,
         issue_protected_capability_observation_v1, json_identity, reconcile_at_v1,
-        reconcile_protected_capability_observation_v1, reconcile_verifier_installation,
+        reconcile_verifier_installation, retain_reconciled_protected_capability_observation_v1,
         sha256_bytes_identity,
     };
 
@@ -1003,12 +1045,14 @@ mod tests {
         let verifier = verifier(&signing_key);
         let response = response(&pending, &verifier, &signing_key);
 
-        reconcile_protected_capability_observation_v1(
+        let verified = retain_reconciled_protected_capability_observation_v1(
             &mut pending,
             &response,
             &retained_verifier(verifier),
         )
         .expect("production reconciliation");
+        assert_eq!(verified.request(), pending.request());
+        assert_eq!(verified.projection(), &response.projection);
     }
 
     #[cfg(target_os = "linux")]

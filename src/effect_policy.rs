@@ -484,8 +484,57 @@ pub(crate) fn evaluate_secret_delivery_effect_policy(
     scope: SecretDeliveryEffectPolicyScope<'_>,
     loaded_policy: &LoadedOrgPolicyPack,
 ) -> Result<EffectPolicyDecision, EffectPolicyError> {
-    let decision = build_secret_delivery_effect_policy_decision(scope, loaded_policy)?;
-    verify_secret_delivery_effect_policy_decision(&decision, scope, loaded_policy)?;
+    evaluate_secret_delivery_effect_policy_with_authority(
+        scope,
+        loaded_policy,
+        SecretDeliveryPolicyAuthority::Ordinary,
+    )
+}
+
+pub(crate) fn evaluate_secret_delivery_effect_policy_from_protected_snapshot(
+    scope: SecretDeliveryEffectPolicyScope<'_>,
+    loaded_policy: &LoadedOrgPolicyPack,
+    source_verification_evidence: &[String],
+) -> Result<EffectPolicyDecision, EffectPolicyError> {
+    evaluate_secret_delivery_effect_policy_with_authority(
+        scope,
+        loaded_policy,
+        SecretDeliveryPolicyAuthority::VerifiedProtectedSnapshot(source_verification_evidence),
+    )
+}
+
+pub(crate) fn verify_secret_delivery_effect_policy_decision_from_protected_snapshot(
+    decision: &EffectPolicyDecision,
+    scope: SecretDeliveryEffectPolicyScope<'_>,
+    loaded_policy: &LoadedOrgPolicyPack,
+    source_verification_evidence: &[String],
+) -> Result<(), EffectPolicyError> {
+    verify_secret_delivery_effect_policy_decision_with_authority(
+        decision,
+        scope,
+        loaded_policy,
+        SecretDeliveryPolicyAuthority::VerifiedProtectedSnapshot(source_verification_evidence),
+    )
+}
+
+#[derive(Clone, Copy)]
+enum SecretDeliveryPolicyAuthority<'a> {
+    Ordinary,
+    VerifiedProtectedSnapshot(&'a [String]),
+}
+
+fn evaluate_secret_delivery_effect_policy_with_authority(
+    scope: SecretDeliveryEffectPolicyScope<'_>,
+    loaded_policy: &LoadedOrgPolicyPack,
+    authority: SecretDeliveryPolicyAuthority<'_>,
+) -> Result<EffectPolicyDecision, EffectPolicyError> {
+    let decision = build_secret_delivery_effect_policy_decision(scope, loaded_policy, authority)?;
+    verify_secret_delivery_effect_policy_decision_with_authority(
+        &decision,
+        scope,
+        loaded_policy,
+        authority,
+    )?;
     Ok(decision)
 }
 
@@ -495,7 +544,21 @@ pub(crate) fn verify_secret_delivery_effect_policy_decision(
     scope: SecretDeliveryEffectPolicyScope<'_>,
     loaded_policy: &LoadedOrgPolicyPack,
 ) -> Result<(), EffectPolicyError> {
-    let expected = build_secret_delivery_effect_policy_decision(scope, loaded_policy)?;
+    verify_secret_delivery_effect_policy_decision_with_authority(
+        decision,
+        scope,
+        loaded_policy,
+        SecretDeliveryPolicyAuthority::Ordinary,
+    )
+}
+
+fn verify_secret_delivery_effect_policy_decision_with_authority(
+    decision: &EffectPolicyDecision,
+    scope: SecretDeliveryEffectPolicyScope<'_>,
+    loaded_policy: &LoadedOrgPolicyPack,
+    authority: SecretDeliveryPolicyAuthority<'_>,
+) -> Result<(), EffectPolicyError> {
+    let expected = build_secret_delivery_effect_policy_decision(scope, loaded_policy, authority)?;
     if decision != &expected {
         return Err(EffectPolicyError::new(
             "effect_policy_decision_reconciliation_failed",
@@ -509,6 +572,7 @@ pub(crate) fn verify_secret_delivery_effect_policy_decision(
 fn build_secret_delivery_effect_policy_decision(
     scope: SecretDeliveryEffectPolicyScope<'_>,
     loaded_policy: &LoadedOrgPolicyPack,
+    authority: SecretDeliveryPolicyAuthority<'_>,
 ) -> Result<EffectPolicyDecision, EffectPolicyError> {
     loaded_policy
         .pack
@@ -570,7 +634,8 @@ fn build_secret_delivery_effect_policy_decision(
             "policy snapshot identity is unavailable",
         )
     })?;
-    let source_evidence = policy_source_evidence(loaded_policy, &policy_snapshot_identity)?;
+    let source_evidence =
+        policy_source_evidence(loaded_policy, &policy_snapshot_identity, authority)?;
     let attachment_identities = derived_effects
         .iter()
         .map(|effect| effect.1.clone())
@@ -635,6 +700,7 @@ fn build_secret_delivery_effect_policy_decision(
         effects,
         Vec::new(),
         loaded_policy,
+        authority,
     )
 }
 
@@ -658,7 +724,11 @@ fn build_typed_effect_policy_decision(
             "policy snapshot identity is unavailable",
         )
     })?;
-    let source_evidence = policy_source_evidence(loaded_policy, &policy_snapshot_identity)?;
+    let source_evidence = policy_source_evidence(
+        loaded_policy,
+        &policy_snapshot_identity,
+        SecretDeliveryPolicyAuthority::Ordinary,
+    )?;
     let contract_identity =
         effect_realization_contract_snapshot_identity(contract).map_err(|error| {
             EffectPolicyError::new("effect_policy_contract_identity_failed", error.message)
@@ -875,6 +945,7 @@ fn build_typed_effect_policy_decision(
         effects,
         coarse_decisions,
         loaded_policy,
+        SecretDeliveryPolicyAuthority::Ordinary,
     )
 }
 
@@ -886,6 +957,7 @@ fn finalize_effect_policy_decision(
     mut effects: Vec<EffectPolicyEffectEvaluation>,
     mut coarse_decisions: Vec<SafeTaskEffectGovernanceDecision>,
     loaded_policy: &LoadedOrgPolicyPack,
+    authority: SecretDeliveryPolicyAuthority<'_>,
 ) -> Result<EffectPolicyDecision, EffectPolicyError> {
     effects.sort_by(|left, right| left.realization_identity.cmp(&right.realization_identity));
     coarse_decisions.sort_by(|left, right| {
@@ -949,7 +1021,7 @@ fn finalize_effect_policy_decision(
         explicit_typed_deny,
     };
     decision.identity = decision_identity(&decision)?;
-    verify_effect_policy_decision_structure(&decision, loaded_policy)?;
+    verify_effect_policy_decision_structure(&decision, loaded_policy, authority)?;
     Ok(decision)
 }
 
@@ -988,6 +1060,7 @@ pub fn verify_effect_policy_decision(
 fn verify_effect_policy_decision_structure(
     decision: &EffectPolicyDecision,
     loaded_policy: &LoadedOrgPolicyPack,
+    authority: SecretDeliveryPolicyAuthority<'_>,
 ) -> Result<(), EffectPolicyError> {
     if decision.schema_version != 1 || decision.evaluation_version != "effect_policy_v1" {
         return Err(EffectPolicyError::new(
@@ -1009,7 +1082,7 @@ fn verify_effect_policy_decision_structure(
             "effect policy decision does not bind the loaded policy snapshot",
         ));
     }
-    let expected_source = policy_source_evidence(loaded_policy, expected_snapshot)?;
+    let expected_source = policy_source_evidence(loaded_policy, expected_snapshot, authority)?;
     if decision.policy_source_evidence != expected_source {
         return Err(EffectPolicyError::new(
             "effect_policy_source_evidence_mismatch",
@@ -1201,12 +1274,38 @@ fn verify_effect_policy_decision_structure(
 fn policy_source_evidence(
     loaded: &LoadedOrgPolicyPack,
     policy_snapshot_identity: &str,
+    authority: SecretDeliveryPolicyAuthority<'_>,
 ) -> Result<PolicySourceEvidence, EffectPolicyError> {
-    let (source_kind, authority_posture) = match loaded.source {
-        PolicyPackSource::EnvOverride => ("env_override", "caller_selected"),
-        PolicyPackSource::RepoPolicy => ("repository_policy", "repository_controlled"),
-        PolicyPackSource::WorkspacePolicy => ("workspace_policy", "workspace_controlled"),
+    let (source_kind, authority_posture, evidence) = match authority {
+        SecretDeliveryPolicyAuthority::VerifiedProtectedSnapshot(evidence) => (
+            "verified_protected_snapshot",
+            "independently_administered",
+            evidence,
+        ),
+        SecretDeliveryPolicyAuthority::Ordinary => match loaded.source {
+            PolicyPackSource::EnvOverride => ("env_override", "caller_selected", &[][..]),
+            PolicyPackSource::RepoPolicy => ("repository_policy", "repository_controlled", &[][..]),
+            PolicyPackSource::WorkspacePolicy => {
+                ("workspace_policy", "workspace_controlled", &[][..])
+            }
+        },
     };
+    if matches!(
+        authority,
+        SecretDeliveryPolicyAuthority::VerifiedProtectedSnapshot(_)
+    ) {
+        if evidence.len() < 2
+            || evidence.windows(2).any(|pair| pair[0] >= pair[1])
+            || evidence
+                .iter()
+                .any(|identity| !canonical_sha256_identity(identity))
+        {
+            return Err(EffectPolicyError::new(
+                "effect_policy_protected_source_evidence_invalid",
+                "verified protected policy requires canonical unique snapshot and verifier evidence identities",
+            ));
+        }
+    }
     let location = loaded.path.to_string_lossy();
     let redacted_source_location_identity = format!(
         "sha256:{:x}",
@@ -1218,7 +1317,7 @@ fn policy_source_evidence(
         source_kind,
         redacted_source_location_identity: &redacted_source_location_identity,
         authority_posture,
-        source_verification_evidence: &[],
+        source_verification_evidence: evidence,
     };
     Ok(PolicySourceEvidence {
         schema_version: 1,
@@ -1227,7 +1326,16 @@ fn policy_source_evidence(
         source_kind: source_kind.to_string(),
         redacted_source_location_identity,
         authority_posture: authority_posture.to_string(),
-        source_verification_evidence: Vec::new(),
+        source_verification_evidence: evidence.to_vec(),
+    })
+}
+
+fn canonical_sha256_identity(value: &str) -> bool {
+    value.strip_prefix("sha256:").is_some_and(|digest| {
+        digest.len() == 64
+            && digest
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
     })
 }
 

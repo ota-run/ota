@@ -36,6 +36,7 @@ use sha2::{Digest, Sha256};
 use crate::effect_policy::{
     EffectPolicyDecision, EffectPolicyInvocation, SecretDeliveryEffectPolicyInput,
     SecretDeliveryEffectPolicyScope, verify_secret_delivery_effect_policy_decision,
+    verify_secret_delivery_effect_policy_decision_from_protected_snapshot,
 };
 use crate::policy_pack::{LoadedOrgPolicyPack, PolicyEffectDecision};
 use crate::schema::Contract;
@@ -103,6 +104,7 @@ pub(crate) struct SecretDeliveryEvaluationInput<'a> {
     pub effects: &'a [SecretDeliveryEffectPolicyInput<'a>],
     pub loaded_policy: Option<&'a LoadedOrgPolicyPack>,
     pub policy_decision: Option<&'a EffectPolicyDecision>,
+    pub protected_policy_source_evidence: Option<&'a [String]>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -234,8 +236,17 @@ pub(crate) fn evaluate_secret_delivery(
         ordered_invocations: input.ordered_invocations,
         effects: input.effects,
     };
-    verify_secret_delivery_effect_policy_decision(policy_decision, policy_scope, loaded_policy)
-        .map_err(|details| SecretDeliveryEvaluationError::new(details.code, details.message))?;
+    if let Some(evidence) = input.protected_policy_source_evidence {
+        verify_secret_delivery_effect_policy_decision_from_protected_snapshot(
+            policy_decision,
+            policy_scope,
+            loaded_policy,
+            evidence,
+        )
+    } else {
+        verify_secret_delivery_effect_policy_decision(policy_decision, policy_scope, loaded_policy)
+    }
+    .map_err(|details| SecretDeliveryEvaluationError::new(details.code, details.message))?;
 
     let realized_requirement_identities = input
         .effects
@@ -392,9 +403,16 @@ fn resolved_evaluation(
 fn selected_requirement_identities(
     input: SecretDeliveryEvaluationInput<'_>,
 ) -> Result<Vec<String>, SecretDeliveryEvaluationError> {
-    let catalog = resolve_secret_requirement_catalog(input.contract)
+    selected_secret_requirement_identities(input.contract, input.selected_subject)
+}
+
+pub(crate) fn selected_secret_requirement_identities(
+    contract: &Contract,
+    selected_subject: &[String],
+) -> Result<Vec<String>, SecretDeliveryEvaluationError> {
+    let catalog = resolve_secret_requirement_catalog(contract)
         .map_err(|error| SecretDeliveryEvaluationError::new(error.code, error.message))?;
-    let (selected_task, selected_workflow) = match input.selected_subject {
+    let (selected_task, selected_workflow) = match selected_subject {
         [kind, name] if kind == "task" => (Some(name.as_str()), None),
         [kind, name] if kind == "workflow" => (None, Some(name.as_str())),
         _ => {
