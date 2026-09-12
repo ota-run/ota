@@ -127,6 +127,24 @@ pub(crate) struct VerifiedSecretDeliveryAuthoritySnapshotV1 {
     invocation_context: Option<ProtectedSecretDeliveryInvocationContextV1>,
 }
 
+/// Opaque candidate retained with the exact verified snapshot that produced it. This prevents a
+/// later V2 binding request from pairing otherwise valid candidate truth with another snapshot.
+#[derive(Debug, Clone)]
+pub(crate) struct SnapshotBoundSecretDeliveryTransactionCandidateV1 {
+    protected_snapshot_identity: String,
+    candidate: SemanticallyVerifiedSecretDeliveryTransactionCandidate,
+}
+
+impl SnapshotBoundSecretDeliveryTransactionCandidateV1 {
+    pub(crate) fn protected_snapshot_identity(&self) -> &str {
+        self.protected_snapshot_identity.as_str()
+    }
+
+    pub(crate) fn candidate(&self) -> &SemanticallyVerifiedSecretDeliveryTransactionCandidate {
+        &self.candidate
+    }
+}
+
 /// Same-invocation correlation truth derived from a verified Launcher observation and the exact
 /// selected Core execution graph. It is not evidence of any provider claim.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
@@ -146,6 +164,20 @@ pub(crate) struct ProtectedSecretDeliveryInvocationContextV1 {
     session_identity: String,
     contract_identity: String,
     selected_execution_graph_identity: String,
+}
+
+impl ProtectedSecretDeliveryInvocationContextV1 {
+    pub(crate) fn workflow_run_id(&self) -> &str {
+        self.workflow_run_id.as_str()
+    }
+
+    pub(crate) fn workflow_run_attempt(&self) -> &str {
+        self.workflow_run_attempt.as_str()
+    }
+
+    pub(crate) fn workflow_reference(&self) -> &str {
+        self.workflow_reference.as_str()
+    }
 }
 
 #[derive(serde::Serialize)]
@@ -399,6 +431,10 @@ impl VerifiedSecretDeliveryAuthoritySnapshotV1 {
         &self.startup_continuation
     }
 
+    pub(crate) fn invocation_context(&self) -> Option<&ProtectedSecretDeliveryInvocationContextV1> {
+        self.invocation_context.as_ref()
+    }
+
     /// Reconciles the exact retained bundle bytes, verifies the active outer verifier signature,
     /// then parses the closed Core payload. The payload is never trusted before this boundary.
     pub(crate) fn parse_verified_authority_payload(
@@ -518,7 +554,7 @@ impl VerifiedSecretDeliveryAuthoritySnapshotV1 {
         &self,
         input: SecretDeliveryCandidateReconstructionInput<'_>,
     ) -> Result<
-        SemanticallyVerifiedSecretDeliveryTransactionCandidate,
+        SnapshotBoundSecretDeliveryTransactionCandidateV1,
         SecretDeliveryAuthoritySnapshotError,
     > {
         let verified = self.parse_verified_authority_payload()?;
@@ -832,11 +868,15 @@ impl VerifiedSecretDeliveryAuthoritySnapshotV1 {
         };
         let candidate = derive_secret_delivery_transaction_candidate(candidate_input)
             .map_err(|_| SecretDeliveryAuthoritySnapshotError::CandidateReconstructionInvalid)?;
-        retain_semantically_verified_secret_delivery_transaction_candidate(
+        let candidate = retain_semantically_verified_secret_delivery_transaction_candidate(
             &candidate,
             candidate_input,
         )
-        .map_err(|_| SecretDeliveryAuthoritySnapshotError::CandidateReconstructionInvalid)
+        .map_err(|_| SecretDeliveryAuthoritySnapshotError::CandidateReconstructionInvalid)?;
+        Ok(SnapshotBoundSecretDeliveryTransactionCandidateV1 {
+            protected_snapshot_identity: self.response.protected_snapshot_identity.clone(),
+            candidate,
+        })
     }
 }
 
@@ -850,6 +890,10 @@ mod tests {
         LAUNCHER_STARTUP_CONTINUATION, PROTECTED_AUTHORITY_SNAPSHOT,
         PROTECTED_AUTHORITY_SNAPSHOT_RESPONSE, PROTECTED_LAUNCHER_CAPABILITY_OBSERVATION_CHALLENGE,
         PROTECTED_LAUNCHER_CAPABILITY_OBSERVATION_REQUEST,
+        PROTECTED_LAUNCHER_CAPABILITY_OBSERVATION_SIGNATURE_DOMAIN_V1,
+        PROTECTED_LAUNCHER_CAPABILITY_PROJECTION_VERIFIER,
+        PROTECTED_LAUNCHER_SECRET_DELIVERY_TRANSACTION_BINDING_RESPONSE_V2,
+        PROTECTED_LAUNCHER_SECRET_DELIVERY_TRANSACTION_BINDING_V2,
         PROTECTED_SECRET_DELIVERY_BINDING_BUNDLE,
         PROTECTED_SECRET_DELIVERY_BINDING_BUNDLE_KEY_USAGE_V1,
         PROTECTED_SECRET_DELIVERY_BINDING_BUNDLE_SIGNATURE_DOMAIN_V1,
@@ -859,13 +903,22 @@ mod tests {
         ProtectedLauncherCapabilityObservationProjectionPayloadV1,
         ProtectedLauncherCapabilityObservationProjectionV1,
         ProtectedLauncherCapabilityObservationRequestV1,
-        ProtectedLauncherCapabilityObservationTargetV1, ProtectedLauncherDescriptorAccessV1,
+        ProtectedLauncherCapabilityObservationTargetV1,
+        ProtectedLauncherCapabilityProjectionVerifierV1, ProtectedLauncherDescriptorAccessV1,
         ProtectedLauncherDescriptorKindV1, ProtectedLauncherDescriptorRoleV1,
-        ProtectedLauncherDescriptorV1, ProtectedSecretDeliveryBindingBundleV1,
-        ProtectedSecretDeliveryBindingBundleVerifierV1, ProtectedSecretDeliveryVerifierStoreV1,
-        launcher_startup_continuation_identity, protected_authority_snapshot_payload_v1_identity,
+        ProtectedLauncherDescriptorV1, ProtectedLauncherSecretDeliveryTransactionBindingResponseV2,
+        ProtectedLauncherSecretDeliveryTransactionBindingV2,
+        ProtectedSecretDeliveryBindingBundleV1, ProtectedSecretDeliveryBindingBundleVerifierV1,
+        ProtectedSecretDeliveryVerifierStoreV1, launcher_startup_continuation_identity,
+        protected_authority_snapshot_payload_v1_identity,
         protected_authority_snapshot_response_v1_identity,
-        protected_launcher_descriptor_v1_identity, protected_launcher_store_content_identity_v1,
+        protected_launcher_capability_observation_projection_v1_identity,
+        protected_launcher_capability_observation_signature_message_v1,
+        protected_launcher_capability_projection_key_identity_v1,
+        protected_launcher_capability_projection_verifier_v1_identity,
+        protected_launcher_descriptor_v1_identity,
+        protected_launcher_secret_delivery_transaction_binding_v2_identity,
+        protected_launcher_store_content_identity_v1,
         protected_secret_delivery_binding_bundle_key_identity_v1,
         protected_secret_delivery_binding_bundle_payload_v1_identity,
         protected_secret_delivery_binding_bundle_v1_identity,
@@ -875,10 +928,15 @@ mod tests {
 
     use super::*;
     use crate::parser::parse_contract_str;
-    use crate::protected_capability_observation::VerifiedProtectedCapabilityObservationV1;
+    use crate::protected_capability_observation::{
+        RetainedCapabilityProjectionVerifierV1, VerifiedProtectedCapabilityObservationV1,
+    };
     use crate::runner::{
         ExecutionOverrides, plan_task_execution_structure_for_target_os,
         plan_workflow_execution_structure_for_target_os,
+    };
+    use crate::secret_delivery_transaction_binding::{
+        SecretDeliveryTransactionBindingError, issue_secret_delivery_transaction_binding_v2,
     };
     use crate::secret_provider_bindings::{
         SecretProviderBindingClass, SecretProviderBindingDisclosureClass,
@@ -1382,6 +1440,97 @@ secret_requirements:
             .expect("candidate snapshot")
     }
 
+    fn projection_verifier(signing_key: &SigningKey) -> RetainedCapabilityProjectionVerifierV1 {
+        let public_key = URL_SAFE_NO_PAD.encode(signing_key.verifying_key().as_bytes());
+        let key_identity = protected_launcher_capability_projection_key_identity_v1(&public_key)
+            .expect("projection key identity");
+        let mut verifier = ProtectedLauncherCapabilityProjectionVerifierV1 {
+            schema_version: 1,
+            record_kind: PROTECTED_LAUNCHER_CAPABILITY_PROJECTION_VERIFIER.into(),
+            identity: String::new(),
+            public_key,
+            key_identity,
+            key_usage: "protected_launcher_capability_observation_projection".into(),
+            signature_domain: std::str::from_utf8(
+                PROTECTED_LAUNCHER_CAPABILITY_OBSERVATION_SIGNATURE_DOMAIN_V1,
+            )
+            .expect("signature domain")
+            .into(),
+        };
+        verifier.identity =
+            protected_launcher_capability_projection_verifier_v1_identity(&verifier)
+                .expect("projection verifier identity");
+        RetainedCapabilityProjectionVerifierV1::for_test(verifier, identity('f'))
+    }
+
+    fn v2_binding_response(
+        request: &ota_authority_protocol::ProtectedLauncherSecretDeliveryTransactionBindingRequestV2,
+        verifier: &RetainedCapabilityProjectionVerifierV1,
+        signing_key: &SigningKey,
+    ) -> ProtectedLauncherSecretDeliveryTransactionBindingResponseV2 {
+        let payload = ProtectedLauncherCapabilityObservationProjectionPayloadV1 {
+            schema_version: 1,
+            evidence_kind: "protected_launcher_capability_observation".into(),
+            challenge_identity: request.observation.challenge.identity.clone(),
+            derivation: "verified".into(),
+            target: ProtectedLauncherCapabilityObservationTargetV1 {
+                environment: "self_hosted".into(),
+                os: "linux".into(),
+                architecture: "x64".into(),
+            },
+            capability_class: "systemd_protected_launcher_v4".into(),
+            runner_version: request.observation.runner_version.clone(),
+            signing_key_identity: verifier.verifier().key_identity.clone(),
+        };
+        let projection_identity =
+            protected_launcher_capability_observation_projection_v1_identity(&payload)
+                .expect("projection identity");
+        let projection = ProtectedLauncherCapabilityObservationProjectionV1 {
+            payload,
+            projection_identity: projection_identity.clone(),
+            signature: URL_SAFE_NO_PAD.encode(
+                signing_key
+                    .sign(
+                        &protected_launcher_capability_observation_signature_message_v1(
+                            &projection_identity,
+                        )
+                        .expect("signature message"),
+                    )
+                    .to_bytes(),
+            ),
+        };
+        let mut binding = ProtectedLauncherSecretDeliveryTransactionBindingV2 {
+            schema_version: 2,
+            message_kind: PROTECTED_LAUNCHER_SECRET_DELIVERY_TRANSACTION_BINDING_V2.into(),
+            identity: String::new(),
+            request_identity: request.identity.clone(),
+            launcher_request_identity: request.launcher_request_identity.clone(),
+            startup_continuation_identity: request.startup_continuation_identity.clone(),
+            session_identity: request.session_identity.clone(),
+            protected_snapshot_identity: request.protected_snapshot_identity.clone(),
+            protected_capability_identity: identity('8'),
+            secret_transaction_candidate_identity: request
+                .secret_transaction_candidate_identity
+                .clone(),
+            observation_request_identity: request.observation.identity.clone(),
+            projection_identity,
+            verifier_identity: verifier.verifier().identity.clone(),
+            installation_evidence_identity: verifier.installation_evidence_identity().into(),
+            expires_at_unix_seconds: request.observation.challenge.expires_at_unix_seconds,
+        };
+        binding.identity =
+            protected_launcher_secret_delivery_transaction_binding_v2_identity(&binding)
+                .expect("v2 binding identity");
+        ProtectedLauncherSecretDeliveryTransactionBindingResponseV2 {
+            schema_version: 2,
+            message_kind: PROTECTED_LAUNCHER_SECRET_DELIVERY_TRANSACTION_BINDING_RESPONSE_V2.into(),
+            request_identity: request.identity.clone(),
+            protected_snapshot_identity: request.protected_snapshot_identity.clone(),
+            binding,
+            projection,
+        }
+    }
+
     fn clone_authority_payload(
         payload: &ProtectedSecretDeliveryAuthorityPayloadV1,
     ) -> ProtectedSecretDeliveryAuthorityPayloadV1 {
@@ -1493,6 +1642,66 @@ secret_requirements:
             protected_launcher_descriptor_v1_identity(&response.payload.verifier_store_descriptor)
                 .expect("verifier store descriptor identity");
         reencode_binding_bundle(response);
+    }
+
+    fn freshen_authority_bundle(
+        response: &mut ProtectedAuthoritySnapshotResponseV1,
+        issued_at_unix_seconds: u64,
+    ) {
+        let expires_at_unix_seconds = issued_at_unix_seconds + 300;
+        response.payload.binding_bundle.issued_at_unix_seconds = issued_at_unix_seconds;
+        response.payload.binding_bundle.expires_at_unix_seconds = expires_at_unix_seconds;
+        response.payload.verifier_store.not_before_unix_seconds = issued_at_unix_seconds;
+        response.payload.verifier_store.not_after_unix_seconds = expires_at_unix_seconds;
+        resign_and_reencode_authority_bundle(response);
+    }
+
+    fn reconciled_snapshot_candidate(
+        startup: &LauncherStartupContinuationV1,
+        observation: &VerifiedProtectedCapabilityObservationV1,
+        contract: &Contract,
+        run_plan: &crate::runner::RunPlan,
+        nonce: &[u8; 32],
+        now: u64,
+    ) -> (
+        SnapshotBoundSecretDeliveryTransactionCandidateV1,
+        VerifiedSecretDeliveryAuthoritySnapshotV1,
+    ) {
+        let context = retain_protected_secret_delivery_invocation_context_v1(
+            observation,
+            startup,
+            contract,
+            "task",
+            "publish",
+            run_plan,
+        )
+        .expect("invocation context");
+        let mut pending_snapshot = issue_at_v1(
+            startup,
+            &context.contract_identity,
+            &context.selected_execution_graph_identity,
+            nonce,
+            now,
+        )
+        .expect("snapshot request");
+        pending_snapshot.invocation_context = Some(context);
+        let mut response = response_with_authority_payload(
+            pending_snapshot.request(),
+            &candidate_authority_payload(contract),
+        );
+        freshen_authority_bundle(&mut response, now);
+        let snapshot = pending_snapshot
+            .reconcile_at(response, now)
+            .expect("verified snapshot");
+        let candidate = snapshot
+            .reconstruct_transaction_candidate(SecretDeliveryCandidateReconstructionInput {
+                contract,
+                lane_kind: "task",
+                lane_name: "publish",
+                run_plan,
+            })
+            .expect("snapshot candidate");
+        (candidate, snapshot)
     }
 
     #[test]
@@ -1783,8 +1992,11 @@ secret_requirements:
                 run_plan: &run_plan,
             })
             .expect("candidate");
-        assert_eq!(candidate.candidate().realizations.len(), 1);
-        assert_eq!(candidate.candidate().realizations[0].secret_version, 7);
+        assert_eq!(candidate.candidate().candidate().realizations.len(), 1);
+        assert_eq!(
+            candidate.candidate().candidate().realizations[0].secret_version,
+            7
+        );
 
         let alternate_plan = plan_task_execution_structure_for_target_os(
             &contract,
@@ -1856,9 +2068,17 @@ secret_requirements:
                 run_plan: &workflow_plan,
             })
             .expect("workflow candidate");
-        assert_eq!(workflow_candidate.candidate().realizations.len(), 2);
+        assert_eq!(
+            workflow_candidate
+                .candidate()
+                .candidate()
+                .realizations
+                .len(),
+            2
+        );
         assert!(
             workflow_candidate
+                .candidate()
                 .candidate()
                 .realizations
                 .iter()
@@ -1939,6 +2159,100 @@ secret_requirements:
                 })
                 .unwrap_err(),
             SecretDeliveryAuthoritySnapshotError::CandidateReconstructionInvalid
+        );
+    }
+
+    #[test]
+    fn snapshot_backed_v2_binding_requires_its_exact_invocation_and_is_one_use() {
+        let startup = startup();
+        let contract = candidate_contract();
+        let run_plan = plan_task_execution_structure_for_target_os(
+            &contract,
+            "publish",
+            ExecutionOverrides::default(),
+            "linux",
+        )
+        .expect("selected graph");
+        let observation = verified_capability_observation(&startup);
+        let now = u64::try_from(OffsetDateTime::now_utc().unix_timestamp()).expect("current time");
+        let (candidate, snapshot) = reconciled_snapshot_candidate(
+            &startup,
+            &observation,
+            &contract,
+            &run_plan,
+            &[6; 32],
+            now,
+        );
+
+        assert!(
+            matches!(
+                issue_secret_delivery_transaction_binding_v2(
+                    candidate.clone(),
+                    snapshot,
+                    "different-run",
+                    "1",
+                    "ota-run/ota/.github/workflows/release-gate.yml@refs/heads/main",
+                    "2.337.0",
+                ),
+                Err(SecretDeliveryTransactionBindingError::CandidateInvalid)
+            ),
+            "a V2 binding cannot pair the snapshot candidate with another workflow invocation"
+        );
+
+        let (_, foreign_snapshot) = reconciled_snapshot_candidate(
+            &startup,
+            &observation,
+            &contract,
+            &run_plan,
+            &[7; 32],
+            now,
+        );
+        assert!(matches!(
+            issue_secret_delivery_transaction_binding_v2(
+                candidate.clone(),
+                foreign_snapshot,
+                "1004",
+                "1",
+                "ota-run/ota/.github/workflows/release-gate.yml@refs/heads/main",
+                "2.337.0",
+            ),
+            Err(SecretDeliveryTransactionBindingError::CandidateInvalid)
+        ));
+
+        let (candidate, snapshot) = reconciled_snapshot_candidate(
+            &startup,
+            &observation,
+            &contract,
+            &run_plan,
+            &[8; 32],
+            now,
+        );
+        let pending = issue_secret_delivery_transaction_binding_v2(
+            candidate,
+            snapshot,
+            "1004",
+            "1",
+            "ota-run/ota/.github/workflows/release-gate.yml@refs/heads/main",
+            "2.337.0",
+        )
+        .expect("pending V2 binding");
+        let signing_key = SigningKey::from_bytes(&[9; 32]);
+        let verifier = projection_verifier(&signing_key);
+        let binding_now = pending
+            .request()
+            .observation
+            .challenge
+            .issued_at_unix_seconds;
+        let response = v2_binding_response(pending.request(), &verifier, &signing_key);
+        let mut verified = pending
+            .reconcile(response, &verifier, binding_now)
+            .expect("verified V2 binding");
+        verified
+            .consume_at(&verifier, binding_now)
+            .expect("first V2 consumption");
+        assert_eq!(
+            verified.consume_at(&verifier, binding_now),
+            Err(SecretDeliveryTransactionBindingError::AlreadyConsumed)
         );
     }
 
