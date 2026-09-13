@@ -382,11 +382,13 @@ durable agent workflow belongs in the canonical Ota skill.
   with the exact verified authority snapshot that produced it and refuses cross-snapshot pairing;
   Core `0bd855e9` and Launcher `15b096af9a3d5cae9dba0609eed1a285960a5ef4` pin that exact Protocol
   revision. Launcher derives the V2 response from the retained capability, projection, verifier,
-  and installation evidence before returning it. These V2 APIs remain crate-private and have no
-  Core runtime caller yet. The next Step 7 proof gate is a production same-child inherited-session
-  exchange from Core through Launcher, followed by exact protected Linux/X64 service-path evidence.
-  Until that complete sequence passes, no real GitHub OIDC request, Google provider contact,
-  materialization, injection, positive evidence, Step 8, or V12.2 capability is activated.
+  and installation evidence before returning it. Independent architecture review then exposed an
+  ordering cycle: the existing signed observation is a separate refused child, but Core needs a
+  same-child observation to retain the invocation context before requesting the snapshot. Runtime
+  routing is paused pending the reviewed same-child observation-prelude amendment. The next Step 7
+  proof gate is that exact inherited-session sequence, followed by protected Linux/X64 service-path
+  evidence. Until it passes, no real GitHub OIDC request, Google provider contact, materialization,
+  injection, positive evidence, Step 8, or V12.2 capability is activated.
 - Vinicius' independent v1.6.27 source review confirmed that negative-control projection
   reconciliation is live on runtime proof, emitted-archive verification, and Doctor archive
   loading. It also exposed a narrower adversarial-test gap: the existing digest mutation was
