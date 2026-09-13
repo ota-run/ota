@@ -31,9 +31,16 @@ fn protected_service_path_remains_provider_free_and_task_refusing() {
     assert!(!protected_job.contains("uses:"));
     assert!(protected_job.contains("actions: read"));
     assert!(!protected_job.contains("contents: read"));
-    assert!(protected_job.contains("git -C \"$CORE_SOURCE\" rev-parse HEAD"));
-    assert!(protected_job.contains("status --porcelain --untracked-files=all"));
-    assert!(protected_job.contains("ls-files --others --ignored --exclude-standard"));
+    assert!(protected_job.contains(
+        "git -c safe.directory=\"$CORE_SOURCE\" -C \"$CORE_SOURCE\" rev-parse HEAD"
+    ));
+    assert!(!protected_job.contains("git config --global"));
+    assert!(protected_job.contains(
+        "git -c safe.directory=\"$CORE_SOURCE\" -C \"$CORE_SOURCE\" status --porcelain --untracked-files=all"
+    ));
+    assert!(protected_job.contains(
+        "git -c safe.directory=\"$CORE_SOURCE\" -C \"$CORE_SOURCE\" ls-files --others --ignored --exclude-standard"
+    ));
     assert!(protected_job.contains("find \"$CORE_SOURCE\" -xdev \\( ! -user root -o -perm /022 \\)"));
     assert!(protected_job.contains("expected exactly one live Toolkit artifact"));
     assert!(protected_job.contains("if length == 1 then .[0].archive_download_url"));
