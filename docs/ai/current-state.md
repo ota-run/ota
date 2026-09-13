@@ -377,18 +377,23 @@ durable agent workflow belongs in the canonical Ota skill.
   release compilation and regression suites, first-party synchronization, and independent review.
   No Site, Skills, Examples, Learn, FAQ, Glossary, contract-schema, or public-JSON propagation is
   required because the bridge remains crate-private and provider-free.
-  Protocol `1a2baebc138b601fe28585d1df2a7768f0164113` now adds private V2 reconciliation between
-  the returned binding and the retained capability evidence. Core `628bdfa2` retains a candidate
-  with the exact verified authority snapshot that produced it and refuses cross-snapshot pairing;
-  Core `0bd855e9` and Launcher `15b096af9a3d5cae9dba0609eed1a285960a5ef4` pin that exact Protocol
-  revision. Launcher derives the V2 response from the retained capability, projection, verifier,
-  and installation evidence before returning it. Independent architecture review then exposed an
-  ordering cycle: the existing signed observation is a separate refused child, but Core needs a
-  same-child observation to retain the invocation context before requesting the snapshot. Runtime
-  routing is paused pending the reviewed same-child observation-prelude amendment. The next Step 7
-  proof gate is that exact inherited-session sequence, followed by protected Linux/X64 service-path
-  evidence. Until it passes, no real GitHub OIDC request, Google provider contact, materialization,
-  injection, positive evidence, Step 8, or V12.2 capability is activated.
+  The independently reviewed same-child correction is now committed across all three private
+  owners. Protocol `2c46cb676ef6e0844312bd6a157adec7ccb54de1` binds the closed private
+  observation prelude into the snapshot-bound V2 transaction records and one-use reconciliation.
+  Launcher `d95f895a58138be1aa713fbbf411dc0f07d927e2` derives that prelude from the exact
+  selected child's retained observation and relays the observation, protected snapshot, and V2
+  response in order on one inherited startup-bound session. Core
+  `c125d79eb7fcd1b66e2487d5482d815878182bb1` independently reloads
+  verifier authority, reconciles the same-child prelude, reconstructs the Step 1-6 candidate from
+  the protected snapshot, and retains the exact V2 binding as an unconsumed one-use guard. The
+  command path admits only the systemd V4 broker carrier, refuses unsupported carriers before
+  authority consumption, and remains terminally provider-free even after successful V2
+  reconciliation. Focused regressions prove exact-one V4 activation, secret-refusal precedence,
+  no task start, and the single-session observation/prelude/snapshot/V2 order. Local formatting,
+  release and Linux/X64 cross-compilation, 124 JSON conformance tests, first-party synchronization,
+  and independent review passed. Hosted protected Linux/X64 service-path execution remains the
+  next proof gate. Until it passes, no real GitHub OIDC request, Google provider contact,
+  materialization, injection, positive evidence, Step 8, or V12.2 capability is activated.
 - Vinicius' independent v1.6.27 source review confirmed that negative-control projection
   reconciliation is live on runtime proof, emitted-archive verification, and Doctor archive
   loading. It also exposed a narrower adversarial-test gap: the existing digest mutation was
@@ -1754,28 +1759,22 @@ selected execution, and terminal cleanup. They do not prove a real GitHub OIDC r
 provider contact, secret materialization, process-environment injection, positive provider
 evidence, Step 8, V12.2, or general agent/repository governance.
 
-The private authority-snapshot bridge is now committed in Core. Protocol `d1d1fd4` supplies the
-record-only prerequisite. Core `15f59d87` adds private request/response reconciliation,
-`8c22a18a` verifies the signed protected snapshot and retained bytes, and `f6d4633e`
-independently reconstructs one provider-free Step 1-6 transaction candidate from the exact
-challenge-backed invocation context and canonical selected `RunPlan`. Candidate reconstruction
-re-derives binding/source, profile, implementation subject, provider tuple, effects, protected
-policy authority, evaluation, and dry-run truth. It refuses substituted authority or context and
-selected roots outside the exact native Linux transient structured-command boundary. The final
-batch passed focused release compilation and regression suites, first-party synchronization, and
-independent review. Site, Skills, Examples, Learn, FAQ, Glossary, contract schema, and public JSON
-remain unaffected because no operator-facing route or vocabulary was introduced.
+The provider-free same-child transaction bridge is committed and independently reviewed. Protocol
+`2c46cb676ef6e0844312bd6a157adec7ccb54de1`, Launcher
+`d95f895a58138be1aa713fbbf411dc0f07d927e2`, and Core
+`c125d79eb7fcd1b66e2487d5482d815878182bb1` now bind one exact
+selected-child observation and private prelude to the protected authority snapshot, reconstructed
+Step 1-6 candidate, and snapshot-bound V2 transaction on the inherited startup session. Core keeps
+the resulting V2 guard unconsumed and refuses before provider contact or task execution. Unsupported
+carriers refuse before broker authority consumption. Site, Skills, Examples, Learn, FAQ, Glossary,
+contract schema, and public JSON remain unaffected because this is a crate-private provider-free
+boundary with no new operator workflow, vocabulary, or capability claim.
 
-The bridge is not yet a production transaction. Launcher does not yet relay the protected snapshot
-over the selected child's retained session, Protocol does not yet bind that snapshot into an
-additive V2 transaction-binding exchange, and Core does not yet retain and consume the resulting V2
-binding exactly once. Provider contact remains blocked.
-
-Next action: implement and independently review Protocol's closed snapshot-bound V2
-transaction-binding request, binding, response, identities, and cross-record reconciliation. After
-that immutable Protocol commit, pin it in Launcher and Core, implement the same-child/session relay
-and one-use Core guard, and run the exact protected Linux/X64 service path before considering the
-separate provider-contact slice.
+Next action: run and independently inspect the exact protected Linux/X64 service path at these
+immutable Protocol, Launcher, and Core revisions. It must prove the same selected child completes
+the observation/prelude, authority-snapshot, candidate-reconstruction, and V2 exchanges once, then
+refuses before provider contact or task execution with terminal cleanup and no leaked protected
+identity. Provider contact remains blocked until that hosted gate passes.
 
 Do not touch the unrelated untracked `docs/pressure/agent-authority-signals.md` unless the user
 explicitly asks.
