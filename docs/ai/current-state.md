@@ -1761,7 +1761,7 @@ evidence, Step 8, V12.2, or general agent/repository governance.
 
 The provider-free same-child transaction bridge is committed and independently reviewed. Protocol
 `2c46cb676ef6e0844312bd6a157adec7ccb54de1`, Launcher
-`d95f895a58138be1aa713fbbf411dc0f07d927e2`, and Core
+`103738177d5196216343ad015c5c32cb9e5de8da`, and Core
 `c125d79eb7fcd1b66e2487d5482d815878182bb1` now bind one exact
 selected-child observation and private prelude to the protected authority snapshot, reconstructed
 Step 1-6 candidate, and snapshot-bound V2 transaction on the inherited startup session. Core keeps
@@ -1770,9 +1770,24 @@ carriers refuse before broker authority consumption. Site, Skills, Examples, Lea
 contract schema, and public JSON remain unaffected because this is a crate-private provider-free
 boundary with no new operator workflow, vocabulary, or capability claim.
 
-Next action: run and independently inspect the exact protected Linux/X64 service path at these
-immutable Protocol, Launcher, and Core revisions. It must prove the same selected child completes
-the observation/prelude, authority-snapshot, candidate-reconstruction, and V2 exchanges once, then
+Launcher Root Boundary run `34769935946`, attempt `2`, job `103762475184`, passed at exact Launcher
+`103738177d5196216343ad015c5c32cb9e5de8da`. The job executed exactly one ignored privileged Linux
+regression, `retained_observation_derives_and_rejects_live_substitution`, and reported one pass. It
+proved Launcher-side retained capability derivation, same-child signed projection and private
+prelude construction, protected authority-snapshot response, snapshot-bound V2 derivation, one
+projection signing with projection reuse, and live same-length verifier-store drift refusal. The
+same attempt also passed the two exact production replay-store path regressions and the existing
+proof-wide broker lane. Attempt `1` had passed the new privileged regression but was killed later
+with exit `137` in the existing proof-wide broker lane; that transient failure did not reproduce.
+The hosted result does not prove the final Core command/service route, fixed production
+authority-fixture ownership, production Attestor socket provenance, a real GitHub OIDC request,
+provider contact, materialization, delivery, positive evidence, Step 8, or V12.2.
+
+Next action: add an explicit pressure-only administrator-installed synthetic authority fixture
+without changing the production-empty default, then run and independently inspect the exact Core
+command through the protected Linux/X64 Launcher service path at these immutable Protocol,
+Launcher, and Core revisions. It must prove the same selected child completes the
+observation/prelude, authority-snapshot, candidate-reconstruction, and V2 exchanges once, then
 refuses before provider contact or task execution with terminal cleanup and no leaked protected
 identity. Provider contact remains blocked until that hosted gate passes.
 
