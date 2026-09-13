@@ -377,11 +377,16 @@ durable agent workflow belongs in the canonical Ota skill.
   release compilation and regression suites, first-party synchronization, and independent review.
   No Site, Skills, Examples, Learn, FAQ, Glossary, contract-schema, or public-JSON propagation is
   required because the bridge remains crate-private and provider-free.
-  The next Step 7 proof gate is Protocol's additive snapshot-bound V2 transaction binding, followed
-  by Launcher's same-child/session relay, Core's one-use V2 reconciliation, and an exact protected
-  Linux/X64 service-path run. Until that complete sequence passes, no real GitHub OIDC request,
-  Google provider contact, materialization, injection, positive evidence, Step 8, or V12.2
-  capability is activated.
+  Protocol `1a2baebc138b601fe28585d1df2a7768f0164113` now adds private V2 reconciliation between
+  the returned binding and the retained capability evidence. Core `628bdfa2` retains a candidate
+  with the exact verified authority snapshot that produced it and refuses cross-snapshot pairing;
+  Core `0bd855e9` and Launcher `15b096af9a3d5cae9dba0609eed1a285960a5ef4` pin that exact Protocol
+  revision. Launcher derives the V2 response from the retained capability, projection, verifier,
+  and installation evidence before returning it. These V2 APIs remain crate-private and have no
+  Core runtime caller yet. The next Step 7 proof gate is a production same-child inherited-session
+  exchange from Core through Launcher, followed by exact protected Linux/X64 service-path evidence.
+  Until that complete sequence passes, no real GitHub OIDC request, Google provider contact,
+  materialization, injection, positive evidence, Step 8, or V12.2 capability is activated.
 - Vinicius' independent v1.6.27 source review confirmed that negative-control projection
   reconciliation is live on runtime proof, emitted-archive verification, and Doctor archive
   loading. It also exposed a narrower adversarial-test gap: the existing digest mutation was
