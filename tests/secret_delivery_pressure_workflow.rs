@@ -48,13 +48,43 @@ fn protected_service_path_remains_provider_free_and_task_refusing() {
     assert!(!protected_job.contains("--location-trusted"));
     assert!(WORKFLOW.contains("PRESSURE_REPOSITORY: /srv/ota-v3-pressure"));
     assert!(WORKFLOW.contains("--json -- run governed --grant \"$AUTHORITY_ID\""));
-    assert!(WORKFLOW.contains("test \"$client_status\" -eq 1"));
     assert!(WORKFLOW.contains("selected_execution_failed_boundary_removed"));
+    assert!(WORKFLOW.contains("completion_keys: (.terminal.finalization.completion | keys | sort)"));
     assert!(WORKFLOW.contains(
         "selected secret requirements reached the verified same-child snapshot-bound transaction boundary"
     ));
     assert!(WORKFLOW.contains("test ! -e \"$PRESSURE_REPOSITORY/selected-work-executed\""));
-    assert!(WORKFLOW.contains("jq -S 'del(.request_identity)' \"$CLIENT_RESULT\""));
+    let command_step = protected_job
+        .split("      - name: Prove the protected Core command reaches the provider-free boundary")
+        .nth(1)
+        .expect("protected command step")
+        .split("      - name: Retain bounded evidence for administrator retrieval")
+        .next()
+        .expect("bounded protected command step");
+    let status_check = command_step
+        .find("test \"$client_status\" -eq 1")
+        .expect("client status check");
+    let redaction = command_step[status_check..]
+        .find("jq -S 'del(.request_identity)' \"$CLIENT_RESULT\" >\"$CLIENT_PUBLIC_RESULT\"")
+        .map(|offset| status_check + offset)
+        .expect("client result redaction");
+    let diagnostic = command_step[redaction..]
+        .find("jq -c \\")
+        .map(|offset| redaction + offset)
+        .expect("bounded diagnostic");
+    let diagnostic_input = command_step[diagnostic..]
+        .find("\"$CLIENT_PUBLIC_RESULT\"")
+        .map(|offset| diagnostic + offset)
+        .expect("bounded diagnostic input");
+    let strict_assertion = command_step[diagnostic_input..]
+        .find("jq -e \\")
+        .map(|offset| diagnostic_input + offset)
+        .expect("strict client assertion");
+    assert!(status_check < redaction);
+    assert!(redaction < diagnostic);
+    assert!(diagnostic < diagnostic_input);
+    assert!(diagnostic_input < strict_assertion);
+    assert!(!command_step[diagnostic..strict_assertion].contains("$CLIENT_RESULT"));
     let retention = WORKFLOW
         .split("      - name: Retain bounded evidence for administrator retrieval")
         .nth(1)
