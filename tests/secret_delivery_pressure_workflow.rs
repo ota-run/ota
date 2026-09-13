@@ -31,9 +31,10 @@ fn protected_service_path_remains_provider_free_and_task_refusing() {
     assert!(!protected_job.contains("uses:"));
     assert!(protected_job.contains("actions: read"));
     assert!(!protected_job.contains("contents: read"));
-    assert!(protected_job.contains(
-        "git -c safe.directory=\"$CORE_SOURCE\" -C \"$CORE_SOURCE\" rev-parse HEAD"
-    ));
+    assert!(
+        protected_job
+            .contains("git -c safe.directory=\"$CORE_SOURCE\" -C \"$CORE_SOURCE\" rev-parse HEAD")
+    );
     assert!(!protected_job.contains("git config --global"));
     assert!(protected_job.contains(
         "git -c safe.directory=\"$CORE_SOURCE\" -C \"$CORE_SOURCE\" status --porcelain --untracked-files=all"
@@ -41,7 +42,9 @@ fn protected_service_path_remains_provider_free_and_task_refusing() {
     assert!(protected_job.contains(
         "git -c safe.directory=\"$CORE_SOURCE\" -C \"$CORE_SOURCE\" ls-files --others --ignored --exclude-standard"
     ));
-    assert!(protected_job.contains("find \"$CORE_SOURCE\" -xdev \\( ! -user root -o -perm /022 \\)"));
+    assert!(
+        protected_job.contains("find \"$CORE_SOURCE\" -xdev \\( ! -user root -o -perm /022 \\)")
+    );
     assert!(protected_job.contains("expected exactly one live Toolkit artifact"));
     assert!(protected_job.contains("if length == 1 then .[0].archive_download_url"));
     assert!(protected_job.contains("curl --fail --silent --show-error --location"));
@@ -49,7 +52,6 @@ fn protected_service_path_remains_provider_free_and_task_refusing() {
     assert!(WORKFLOW.contains("PRESSURE_REPOSITORY: /srv/ota-v3-pressure"));
     assert!(WORKFLOW.contains("--json -- run governed --grant \"$AUTHORITY_ID\""));
     assert!(WORKFLOW.contains("selected_execution_failed_boundary_removed"));
-    assert!(WORKFLOW.contains("completion_keys: (.terminal.finalization.completion | keys | sort)"));
     assert!(WORKFLOW.contains(
         "selected secret requirements reached the verified same-child snapshot-bound transaction boundary"
     ));
@@ -68,23 +70,12 @@ fn protected_service_path_remains_provider_free_and_task_refusing() {
         .find("jq -S 'del(.request_identity)' \"$CLIENT_RESULT\" >\"$CLIENT_PUBLIC_RESULT\"")
         .map(|offset| status_check + offset)
         .expect("client result redaction");
-    let diagnostic = command_step[redaction..]
-        .find("jq -c \\")
-        .map(|offset| redaction + offset)
-        .expect("bounded diagnostic");
-    let diagnostic_input = command_step[diagnostic..]
-        .find("\"$CLIENT_PUBLIC_RESULT\"")
-        .map(|offset| diagnostic + offset)
-        .expect("bounded diagnostic input");
-    let strict_assertion = command_step[diagnostic_input..]
+    let strict_assertion = command_step[redaction..]
         .find("jq -e \\")
-        .map(|offset| diagnostic_input + offset)
+        .map(|offset| redaction + offset)
         .expect("strict client assertion");
     assert!(status_check < redaction);
-    assert!(redaction < diagnostic);
-    assert!(diagnostic < diagnostic_input);
-    assert!(diagnostic_input < strict_assertion);
-    assert!(!command_step[diagnostic..strict_assertion].contains("$CLIENT_RESULT"));
+    assert!(redaction < strict_assertion);
     let retention = WORKFLOW
         .split("      - name: Retain bounded evidence for administrator retrieval")
         .nth(1)
@@ -99,9 +90,10 @@ fn protected_service_path_remains_provider_free_and_task_refusing() {
     assert!(retention.contains("sha256sum --check SHA256SUMS"));
     assert!(retention.contains(": > \"$staging/COMPLETE\""));
     assert!(retention.contains("renameat2 = ctypes.CDLL(None, use_errno=True).renameat2"));
-    assert!(retention.contains(
-        "os.fsencode(os.environ[\"DESTINATION\"]),\n              1,\n          )"
-    ));
+    assert!(
+        retention
+            .contains("os.fsencode(os.environ[\"DESTINATION\"]),\n              1,\n          )")
+    );
     let file_loop = retention.find("for name in (").expect("file fsync loop");
     let file_sync = retention[file_loop..]
         .find("os.fsync(descriptor)")

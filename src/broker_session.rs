@@ -184,6 +184,9 @@ use crate::crossing_authority::{
 
 #[cfg(unix)]
 const SESSION_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(250);
+#[cfg(unix)]
+const SYSTEMD_SELECTED_EXECUTION_OPERATION_TIMEOUT: std::time::Duration =
+    std::time::Duration::from_secs(10);
 
 #[cfg(all(unix, target_os = "linux"))]
 const PR_GET_NO_NEW_PRIVS: libc::c_int = 39;
@@ -720,28 +723,31 @@ impl PreparedBrokerCrossing {
             ));
         }
         let systemd_completion = match systemd_startup_binding {
-            Some(startup) => Some(SystemdExecutionCompletion {
-                lease_consumption_admission_identity: session
-                    .lease_consumption_admission_identity
-                    .clone()
-                    .ok_or_else(|| {
-                        String::from(
-                            "systemd launcher lease consumption admission identity is unavailable",
-                        )
-                    })?,
-                work_unit_identity: admission.authorization_request.work_unit_identity.clone(),
-                pending_crossing_transaction_identity: transaction
-                    .evidence()
-                    .broker_consumption
-                    .as_ref()
-                    .expect("verified systemd consumption evidence")
-                    .pending_transaction_identity
-                    .clone(),
-                invocation_id: startup.invocation_id.clone(),
-                startup_continuation: startup,
-                session,
-                persisted: None,
-            }),
+            Some(startup) => {
+                session.begin_systemd_selected_execution_phase()?;
+                Some(SystemdExecutionCompletion {
+                    lease_consumption_admission_identity: session
+                        .lease_consumption_admission_identity
+                        .clone()
+                        .ok_or_else(|| {
+                            String::from(
+                                "systemd launcher lease consumption admission identity is unavailable",
+                            )
+                        })?,
+                    work_unit_identity: admission.authorization_request.work_unit_identity.clone(),
+                    pending_crossing_transaction_identity: transaction
+                        .evidence()
+                        .broker_consumption
+                        .as_ref()
+                        .expect("verified systemd consumption evidence")
+                        .pending_transaction_identity
+                        .clone(),
+                    invocation_id: startup.invocation_id.clone(),
+                    startup_continuation: startup,
+                    session,
+                    persisted: None,
+                })
+            }
             None => None,
         };
         Ok(ConsumedBrokerCrossing {
@@ -2987,6 +2993,20 @@ impl LauncherSession {
 
     pub(crate) fn state(&self) -> LauncherSessionState {
         self.state
+    }
+
+    fn begin_systemd_selected_execution_phase(&mut self) -> Result<(), String> {
+        if self.state != LauncherSessionState::Complete {
+            return Err(String::from(
+                "launcher session cannot begin selected execution before lease consumption",
+            ));
+        }
+        self.operation_timeout = SYSTEMD_SELECTED_EXECUTION_OPERATION_TIMEOUT;
+        self.stream
+            .set_write_timeout(Some(
+                SYSTEMD_SELECTED_EXECUTION_OPERATION_TIMEOUT.min(std::time::Duration::from_secs(5)),
+            ))
+            .map_err(|error| format!("failed to bound selected-execution session I/O: {error}"))
     }
 
     fn send_systemd_process_posture_preface(
@@ -6348,8 +6368,16 @@ pub(crate) mod tests {
     fn systemd_completion_reuses_one_same_child_observation_for_snapshot_bound_v2() {
         let identity = |value: char| format!("sha256:{}", value.to_string().repeat(64));
         let (mut launcher, ota) = UnixStream::pair().expect("socket pair");
-        let session = LauncherSession::from_inherited_descriptor(ota.into_raw_fd())
-            .expect("connected Unix launcher descriptor");
+        let mut session = LauncherSession::from_inherited_descriptor_with_timeout(
+            ota.into_raw_fd(),
+            std::time::Duration::from_millis(20),
+        )
+        .expect("connected Unix launcher descriptor");
+        assert!(session.begin_systemd_selected_execution_phase().is_err());
+        session.state = LauncherSessionState::Complete;
+        session
+            .begin_systemd_selected_execution_phase()
+            .expect("selected-execution protocol phase");
         let mut startup_continuation = LauncherStartupContinuationV1 {
             schema_version: 1,
             identity: String::new(),
@@ -6391,6 +6419,7 @@ pub(crate) mod tests {
         let launcher_thread = std::thread::spawn(move || {
             let observation_request: ota_authority_protocol::ProtectedLauncherCapabilityObservationRequestV1 =
                 read_json_frame(&mut launcher);
+            std::thread::sleep(std::time::Duration::from_millis(300));
             let (observation_response, prelude) =
                 crate::secret_delivery_authority_snapshot::tests::observation_response_and_prelude(
                     &observation_request,
