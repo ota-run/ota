@@ -65002,8 +65002,11 @@ secret_requirements:
                     protected_checks.set(protected_checks.get() + 1);
                     Ok(())
                 },
+                |_, failure| failure,
             );
-            let failure = result.expect_err("unsupported carrier must refuse");
+            let Err(failure) = result else {
+                panic!("unsupported carrier must refuse");
+            };
             assert!(
                 strip_ansi_codes(&failure.message).contains("before authority consumption"),
                 "{label}: {}",
@@ -65028,35 +65031,44 @@ secret_requirements:
         };
         let activations = Cell::new(0);
         let protected_checks = Cell::new(0);
+        let retained_refusals = Cell::new(0);
         let task_started = Cell::new(false);
 
-        let result = (|| {
-            super::enforce_secret_delivery_command_boundary(
-                &admission,
-                Some(crossing),
-                |_| {
-                    activations.set(activations.get() + 1);
-                    Ok(())
-                },
-                |_| {
-                    protected_checks.set(protected_checks.get() + 1);
-                    Err(super::RunCommandFailure {
-                        message: String::from(
-                            "provider contact remains unavailable; refusing before provider contact or task execution",
-                        ),
-                        summary: None,
-                        exit_code: 1,
-                        receipt: None,
-                    })
-                },
-            )?;
-            task_started.set(true);
-            Ok::<(), super::RunCommandFailure>(())
-        })();
+        let result = super::enforce_secret_delivery_command_boundary(
+            &admission,
+            Some(crossing),
+            |_| {
+                activations.set(activations.get() + 1);
+                Ok("active-crossing")
+            },
+            |_| {
+                protected_checks.set(protected_checks.get() + 1);
+                Err(super::RunCommandFailure {
+                    message: String::from(
+                        "provider contact remains unavailable; refusing before provider contact or task execution",
+                    ),
+                    summary: None,
+                    exit_code: 1,
+                    receipt: None,
+                })
+            },
+            |active, failure| {
+                assert_eq!(*active, "active-crossing");
+                retained_refusals.set(retained_refusals.get() + 1);
+                failure
+            },
+        );
 
-        let failure = result.expect_err("provider-free V4 boundary must remain terminal");
+        let failure = match result {
+            Ok(_) => {
+                task_started.set(true);
+                panic!("provider-free V4 boundary must remain terminal");
+            }
+            Err(failure) => failure,
+        };
         assert_eq!(activations.get(), 1);
         assert_eq!(protected_checks.get(), 1);
+        assert_eq!(retained_refusals.get(), 1);
         assert!(!task_started.get());
         assert!(
             failure
@@ -112433,6 +112445,8 @@ fn run_single_contract_target(
     {
         return Err(failure);
     }
+    let crossing_failure_contract = target.contract.clone();
+    let crossing_failure_contract_path = target.contract_path.clone();
     let (_crossing_grant_guard, _crossing_transaction_guard) =
         enforce_secret_delivery_command_boundary(
             &secret_delivery_admission,
@@ -112469,9 +112483,20 @@ fn run_single_contract_target(
                     &secret_delivery_admission,
                 )
             },
+            |_, failure| {
+                ensure_crossing_run_failure_evidence(
+                    failure,
+                    &crossing_failure_contract,
+                    &crossing_failure_contract_path,
+                    task_name,
+                    member,
+                    overrides,
+                    show_receipt,
+                    agent,
+                    reason,
+                )
+            },
         )?;
-    let crossing_failure_contract = target.contract.clone();
-    let crossing_failure_contract_path = target.contract_path.clone();
     let result = crate::runner::with_oci_local_application_plan(
         sandbox_admission
             .as_ref()
@@ -112584,10 +112609,13 @@ fn enforce_secret_delivery_command_boundary<T>(
     crossing: Option<CrossingAuthorityPlan>,
     activate: impl FnOnce(Option<CrossingAuthorityPlan>) -> Result<T, RunCommandFailure>,
     verify_protected_transaction: impl FnOnce(&T) -> Result<(), RunCommandFailure>,
+    retain_protected_refusal: impl FnOnce(&T, RunCommandFailure) -> RunCommandFailure,
 ) -> Result<T, RunCommandFailure> {
     enforce_secret_delivery_crossing_carrier_boundary(admission, crossing.as_ref())?;
     let active = activate(crossing)?;
-    verify_protected_transaction(&active)?;
+    if let Err(failure) = verify_protected_transaction(&active) {
+        return Err(retain_protected_refusal(&active, failure));
+    }
     Ok(active)
 }
 
