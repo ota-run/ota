@@ -1,0 +1,48 @@
+version: 1
+
+project:
+  name: secret-delivery-service-path-pressure
+
+metadata:
+  ota:
+    minimum_version: "1.6.28"
+
+governance:
+  crossing_authority:
+    authority_id: platform-release-authority
+
+tasks:
+  governed:
+    description: Refusal marker for the provider-free protected service-path gate
+    command:
+      exe: python3
+      args:
+        - -c
+        - "from pathlib import Path; Path('selected-work-executed').write_text('executed\\n')"
+    safe_for_agent: false
+
+secret_requirements:
+  provider_api_token:
+    secret_class: authentication_credential
+    purpose: external_api_authentication
+    delivery:
+      kind: process_environment
+      variable: GOOGLE_API_KEY
+    recipients:
+      tasks: [governed]
+      dependencies: deny
+      hooks: deny
+      services: deny
+      helpers: deny
+      containers: deny
+      remote_execution: deny
+      proof_observers: deny
+      negative_controls: deny
+      lifecycle_children: deny
+    constraints:
+      actor_mode: ci
+      environment: test
+      execution_mode: native
+      target_platform: linux
+      runtime_boundary: process
+      capability: segmented_process_environment

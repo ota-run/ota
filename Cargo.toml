@@ -9,6 +9,7 @@ license = "Apache-2.0"
 test-candidate-publication-faults = []
 test-effect-refusal-archive-faults = []
 test-proof-assurance-faults = []
+secret-delivery-pressure = []
 
 [dependencies]
 clap = { version = "4.5.39", features = ["derive"] }
@@ -42,3 +43,8 @@ libc = "0.2.177"
 windows-sys = { version = "0.61.2", features = ["Win32_Storage_FileSystem"] }
 
 [dev-dependencies]
+
+[[bin]]
+name = "ota-secret-delivery-pressure-authority"
+path = "src/bin/ota-secret-delivery-pressure-authority.rs"
+required-features = ["secret-delivery-pressure"]
