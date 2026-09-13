@@ -1762,13 +1762,14 @@ evidence, Step 8, V12.2, or general agent/repository governance.
 The provider-free same-child transaction bridge is committed and independently reviewed. Protocol
 `2c46cb676ef6e0844312bd6a157adec7ccb54de1`, Launcher
 `103738177d5196216343ad015c5c32cb9e5de8da`, and Core
-`c125d79eb7fcd1b66e2487d5482d815878182bb1` now bind one exact
-selected-child observation and private prelude to the protected authority snapshot, reconstructed
-Step 1-6 candidate, and snapshot-bound V2 transaction on the inherited startup session. Core keeps
-the resulting V2 guard unconsumed and refuses before provider contact or task execution. Unsupported
-carriers refuse before broker authority consumption. Site, Skills, Examples, Learn, FAQ, Glossary,
-contract schema, and public JSON remain unaffected because this is a crate-private provider-free
-boundary with no new operator workflow, vocabulary, or capability claim.
+`c125d79eb7fcd1b66e2487d5482d815878182bb1` bind one exact selected-child observation and private
+prelude to the protected authority snapshot, reconstructed Step 1-6 candidate, and snapshot-bound
+V2 transaction on the inherited startup session. Subsequent Core hardening culminated in
+`1ef3242f8fbb8a01121f817979a18d0f42a448c6`, which retains a protected refusal before provider
+contact or task execution. Unsupported carriers refuse before broker authority consumption. Site,
+Skills, Examples, Learn, FAQ, Glossary, contract schema, and public JSON remain unaffected because
+this is a crate-private provider-free boundary with no new operator workflow, vocabulary, or
+capability claim.
 
 Launcher Root Boundary run `34769935946`, attempt `2`, job `103762475184`, passed at exact Launcher
 `103738177d5196216343ad015c5c32cb9e5de8da`. The job executed exactly one ignored privileged Linux
@@ -1783,10 +1784,20 @@ The hosted result does not prove the final Core command/service route, fixed pro
 authority-fixture ownership, production Attestor socket provenance, a real GitHub OIDC request,
 provider contact, materialization, delivery, positive evidence, Step 8, or V12.2.
 
-Next action: add an explicit pressure-only administrator-installed synthetic authority fixture
-without changing the production-empty default, then run and independently inspect the exact Core
-command through the protected Linux/X64 Launcher service path at these immutable Protocol,
-Launcher, and Core revisions. It must prove the same selected child completes the
+The first exact hosted Core service-path run at Core
+`1ef3242f8fbb8a01121f817979a18d0f42a448c6` and Launcher
+`dcbf791f746aeb63dcb6bd1220a67caa0cef2b5c` reached authorization and lease consumption, then
+refused during the subsequent same-child bridge before Core received the V2 binding. It did not
+reach the required provider-free Core refusal. The old journal collapsed that failure to
+`child_boundary_failed`, so it does not identify the failed same-child exchange and is not positive
+service-path evidence.
+
+Launcher `abb1ac26ac6b8cbcc1f039d57d9ae3e9f364633d` independently reviewed and commits the
+pressure-only diagnostic patch. It emits only fixed stage and failure-class tokens for the
+capability observation, authority snapshot, and V2 binding exchanges. Core pins that exact
+Launcher revision. Next action: rebuild and reprovision the protected Linux/X64 host from the two
+immutable revisions, then run the exact Core command once with a fresh authority request. The rerun
+must prove the same selected child completes the
 observation/prelude, authority-snapshot, candidate-reconstruction, and V2 exchanges once, then
 refuses before provider contact or task execution with terminal cleanup and no leaked protected
 identity. Provider contact remains blocked until that hosted gate passes.
