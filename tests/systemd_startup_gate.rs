@@ -143,6 +143,7 @@ fn actual_binary_accepts_only_an_identity_bound_startup_continuation() {
         identity: String::new(),
         message_kind: LAUNCHER_STARTUP_CONTINUATION.into(),
         invocation_id: String::from("integration-test-invocation"),
+        launcher_request_identity: format!("sha256:{}", "4".repeat(64)),
         child_process_identity: format!("sha256:{}", "2".repeat(64)),
         working_directory_identity: format!("sha256:{}", "3".repeat(64)),
         process_posture_identity: posture.identity,

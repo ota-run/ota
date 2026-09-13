@@ -36,14 +36,16 @@
   route, OIDC request, provider contact,
   materialization, injection, public output, or positive evidence.
 
-- Add the crate-private Core half of the selected-child secret-delivery transaction binding.
-  After protected Launcher lease consumption, Core can now originate the closed Protocol request
-  on the retained startup-bound session, reconcile the returned private binding and signed public
-  capability projection against independently reloaded installation authority, and retain a
-  one-use guard that rechecks candidate, startup continuation, signature, installation identity,
-  and expiry immediately before any future provider request. Applicable public commands remain
-  fail-closed: this introduces no protected binding loader, OIDC request, provider contact,
-  materialization, injection, receipt, archive, assurance, or support claim.
+- Complete the provider-free Core half of the selected-child secret-delivery transaction boundary.
+  After ordinary admission selects the exact systemd V4 broker carrier, Core uses the inherited
+  startup-bound session for one signed same-child capability observation, one protected authority
+  snapshot, canonical Step 1-6 candidate reconstruction, and one snapshot-bound V2 binding. The V2
+  request reuses the exact observation and private prelude rather than creating a sibling probe;
+  Core independently reloads installation authority, verifies every response, and retains a
+  one-use guard for a future provider request. Unsupported carriers refuse before broker authority
+  consumption, while the successful V2 path still refuses before task execution because provider
+  contact remains inactive. This introduces no OIDC access, provider contact, materialization,
+  injection, receipt, archive, assurance, or support claim.
 
 - Keep `ota detect` task inference bounded to public task-runner entries and canonical reusable
   GitHub Actions verification steps. Taskfile helpers whose names begin with `_` or declare

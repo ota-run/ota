@@ -14,13 +14,15 @@ use ota_authority_protocol::{
     ProtectedLauncherSecretDeliveryTransactionBindingResponseV1,
     ProtectedLauncherSecretDeliveryTransactionBindingResponseV2,
     ProtectedLauncherSecretDeliveryTransactionBindingV1,
-    ProtectedLauncherSecretDeliveryTransactionBindingV2, launcher_startup_continuation_identity,
+    ProtectedLauncherSecretDeliveryTransactionBindingV2, ProtectedSameChildCapabilityPreludeV1,
+    launcher_startup_continuation_identity,
     protected_launcher_secret_delivery_transaction_binding_request_v1_identity,
     protected_launcher_secret_delivery_transaction_binding_request_v2_identity,
     protected_launcher_secret_delivery_transaction_session_v1_identity,
     reconcile_protected_launcher_secret_delivery_transaction_binding_response_v1,
     reconcile_protected_launcher_secret_delivery_transaction_binding_response_v2,
     validate_protected_launcher_capability_observation_challenge_v1,
+    validate_protected_same_child_capability_prelude_v1,
 };
 use thiserror::Error;
 #[cfg(any(target_os = "linux", test))]
@@ -28,8 +30,9 @@ use time::OffsetDateTime;
 
 use crate::protected_capability_observation::{
     PendingProtectedCapabilityObservationV1, ProtectedCapabilityObservationError,
-    RetainedCapabilityProjectionVerifierV1, issue_protected_capability_observation_v1,
-    reconcile_protected_capability_observation_v1, verify_projection_signature,
+    RetainedCapabilityProjectionVerifierV1, VerifiedProtectedCapabilityObservationV1,
+    issue_protected_capability_observation_v1, reconcile_protected_capability_observation_v1,
+    retain_reconciled_protected_capability_observation_v1, verify_projection_signature,
 };
 use crate::secret_delivery_authority_snapshot::{
     SnapshotBoundSecretDeliveryTransactionCandidateV1, VerifiedSecretDeliveryAuthoritySnapshotV1,
@@ -81,16 +84,70 @@ pub(crate) struct VerifiedSecretDeliveryTransactionBindingV1 {
 pub(crate) struct PendingSecretDeliveryTransactionBindingV2 {
     candidate: SnapshotBoundSecretDeliveryTransactionCandidateV1,
     snapshot: VerifiedSecretDeliveryAuthoritySnapshotV1,
-    observation: PendingProtectedCapabilityObservationV1,
+    prelude: VerifiedSameChildCapabilityPreludeV1,
     request: ProtectedLauncherSecretDeliveryTransactionBindingRequestV2,
 }
 
 pub(crate) struct VerifiedSecretDeliveryTransactionBindingV2 {
     candidate: SnapshotBoundSecretDeliveryTransactionCandidateV1,
     snapshot: VerifiedSecretDeliveryAuthoritySnapshotV1,
+    prelude: VerifiedSameChildCapabilityPreludeV1,
     request: ProtectedLauncherSecretDeliveryTransactionBindingRequestV2,
     response: ProtectedLauncherSecretDeliveryTransactionBindingResponseV2,
     consumed: bool,
+}
+
+/// Core-retained proof that the public observation response and private prelude came from the
+/// selected child's exact startup-bound session. The protected capability identity remains private.
+pub(crate) struct VerifiedSameChildCapabilityPreludeV1 {
+    observation: VerifiedProtectedCapabilityObservationV1,
+    prelude: ProtectedSameChildCapabilityPreludeV1,
+}
+
+impl VerifiedSameChildCapabilityPreludeV1 {
+    pub(crate) fn observation(&self) -> &VerifiedProtectedCapabilityObservationV1 {
+        &self.observation
+    }
+
+    pub(crate) fn prelude(&self) -> &ProtectedSameChildCapabilityPreludeV1 {
+        &self.prelude
+    }
+}
+
+pub(crate) fn reconcile_same_child_capability_prelude_v1(
+    mut pending: PendingProtectedCapabilityObservationV1,
+    response: &ProtectedLauncherCapabilityObservationResponseV1,
+    prelude: ProtectedSameChildCapabilityPreludeV1,
+    startup_continuation: &LauncherStartupContinuationV1,
+    verifier: &RetainedCapabilityProjectionVerifierV1,
+) -> Result<VerifiedSameChildCapabilityPreludeV1, SecretDeliveryTransactionBindingError> {
+    validate_protected_same_child_capability_prelude_v1(&prelude)
+        .map_err(|_| SecretDeliveryTransactionBindingError::ResponseInvalid)?;
+    let observation =
+        retain_reconciled_protected_capability_observation_v1(&mut pending, response, verifier)?;
+    let startup_identity = launcher_startup_continuation_identity(startup_continuation)
+        .map_err(|_| SecretDeliveryTransactionBindingError::StartupContinuationInvalid)?;
+    let session_identity = protected_launcher_secret_delivery_transaction_session_v1_identity(
+        startup_continuation.identity.as_str(),
+    )
+    .map_err(|_| SecretDeliveryTransactionBindingError::ResponseInvalid)?;
+    if startup_identity != startup_continuation.identity
+        || prelude.observation_request_identity != observation.request().identity
+        || prelude.projection_identity != observation.projection().projection_identity
+        || prelude.verifier_identity != verifier.verifier().identity
+        || prelude.installation_evidence_identity != verifier.installation_evidence_identity()
+        || prelude.launcher_request_identity != startup_continuation.launcher_request_identity
+        || prelude.startup_continuation_identity != startup_continuation.identity
+        || prelude.session_identity != session_identity
+        || prelude.expires_at_unix_seconds
+            != observation.request().challenge.expires_at_unix_seconds
+    {
+        return Err(SecretDeliveryTransactionBindingError::ResponseInvalid);
+    }
+    Ok(VerifiedSameChildCapabilityPreludeV1 {
+        observation,
+        prelude,
+    })
 }
 
 pub(crate) fn issue_secret_delivery_transaction_binding_v1(
@@ -146,14 +203,12 @@ pub(crate) fn issue_secret_delivery_transaction_binding_v1(
 }
 
 /// Issues one V2 request only after Core has independently verified the protected snapshot and
-/// reconstructed the candidate from it. This function is provider-free and has no runtime caller.
+/// reconstructed the candidate from it. The active runtime caller remains provider-free and must
+/// refuse before provider contact or task execution.
 pub(crate) fn issue_secret_delivery_transaction_binding_v2(
     candidate: SnapshotBoundSecretDeliveryTransactionCandidateV1,
     snapshot: VerifiedSecretDeliveryAuthoritySnapshotV1,
-    workflow_run_id: &str,
-    workflow_run_attempt: &str,
-    workflow_reference: &str,
-    runner_version: &str,
+    prelude: VerifiedSameChildCapabilityPreludeV1,
 ) -> Result<PendingSecretDeliveryTransactionBindingV2, SecretDeliveryTransactionBindingError> {
     let startup_continuation = snapshot.startup_continuation();
     let invocation_context = snapshot
@@ -167,19 +222,16 @@ pub(crate) fn issue_secret_delivery_transaction_binding_v2(
         || startup_continuation.identity
             != launcher_startup_continuation_identity(startup_continuation)
                 .map_err(|_| SecretDeliveryTransactionBindingError::StartupContinuationInvalid)?
-        || invocation_context.workflow_run_id() != workflow_run_id
-        || invocation_context.workflow_run_attempt() != workflow_run_attempt
-        || invocation_context.workflow_reference() != workflow_reference
+        || invocation_context.workflow_run_id()
+            != prelude.observation.request().challenge.workflow_run_id
+        || invocation_context.workflow_run_attempt()
+            != prelude.observation.request().challenge.workflow_run_attempt
+        || invocation_context.workflow_reference()
+            != prelude.observation.request().challenge.workflow_reference
+        || prelude.prelude.startup_continuation_identity != startup_continuation.identity
     {
         return Err(SecretDeliveryTransactionBindingError::CandidateInvalid);
     }
-    let observation = issue_protected_capability_observation_v1(
-        workflow_run_id,
-        workflow_run_attempt,
-        workflow_reference,
-        runner_version,
-        startup_continuation.launcher_request_identity.as_str(),
-    )?;
     let session_identity = protected_launcher_secret_delivery_transaction_session_v1_identity(
         startup_continuation.identity.as_str(),
     )
@@ -189,10 +241,11 @@ pub(crate) fn issue_secret_delivery_transaction_binding_v2(
         message_kind: PROTECTED_LAUNCHER_SECRET_DELIVERY_TRANSACTION_BINDING_REQUEST_V2.into(),
         identity: String::new(),
         launcher_request_identity: startup_continuation.launcher_request_identity.clone(),
-        observation: observation.request().clone(),
+        observation: prelude.observation.request().clone(),
         secret_transaction_candidate_identity: candidate.candidate().candidate().identity.clone(),
         startup_continuation_identity: startup_continuation.identity.clone(),
         session_identity,
+        same_child_capability_prelude_identity: prelude.prelude.identity.clone(),
         protected_snapshot_identity: snapshot.response().protected_snapshot_identity.clone(),
     };
     request.identity =
@@ -201,7 +254,7 @@ pub(crate) fn issue_secret_delivery_transaction_binding_v2(
     Ok(PendingSecretDeliveryTransactionBindingV2 {
         candidate,
         snapshot,
-        observation,
+        prelude,
         request,
     })
 }
@@ -253,7 +306,7 @@ impl PendingSecretDeliveryTransactionBindingV2 {
     }
 
     pub(crate) fn reconcile(
-        mut self,
+        self,
         response: ProtectedLauncherSecretDeliveryTransactionBindingResponseV2,
         verifier: &RetainedCapabilityProjectionVerifierV1,
         observed_at_unix_seconds: u64,
@@ -265,26 +318,19 @@ impl PendingSecretDeliveryTransactionBindingV2 {
             self.snapshot.request(),
             self.snapshot.response(),
             self.snapshot.startup_continuation(),
+            self.prelude.prelude(),
             verifier.verifier(),
             verifier.installation_evidence_identity(),
             observed_at_unix_seconds,
         )
         .map_err(|_| SecretDeliveryTransactionBindingError::ResponseInvalid)?;
-        let observation_response = ProtectedLauncherCapabilityObservationResponseV1 {
-            schema_version: 1,
-            message_kind:
-                ota_authority_protocol::PROTECTED_LAUNCHER_CAPABILITY_OBSERVATION_RESPONSE.into(),
-            request_identity: self.observation.request().identity.clone(),
-            projection: response.projection.clone(),
-        };
-        reconcile_protected_capability_observation_v1(
-            &mut self.observation,
-            &observation_response,
-            verifier,
-        )?;
+        if response.projection != *self.prelude.observation().projection() {
+            return Err(SecretDeliveryTransactionBindingError::ResponseInvalid);
+        }
         Ok(VerifiedSecretDeliveryTransactionBindingV2 {
             candidate: self.candidate,
             snapshot: self.snapshot,
+            prelude: self.prelude,
             request: self.request,
             response,
             consumed: false,
@@ -363,6 +409,10 @@ impl VerifiedSecretDeliveryTransactionBindingV2 {
         &self.response.binding
     }
 
+    pub(crate) fn prelude(&self) -> &ProtectedSameChildCapabilityPreludeV1 {
+        self.prelude.prelude()
+    }
+
     /// Rechecks all retained V2 truth immediately before a future provider request. Provider
     /// contact remains intentionally outside this slice.
     pub(crate) fn consume_before_provider_request(
@@ -413,6 +463,7 @@ impl VerifiedSecretDeliveryTransactionBindingV2 {
             self.snapshot.request(),
             self.snapshot.response(),
             self.snapshot.startup_continuation(),
+            self.prelude.prelude(),
             verifier.verifier(),
             verifier.installation_evidence_identity(),
             observed_at_unix_seconds,

@@ -64898,11 +64898,177 @@ mod tests {
     };
     use crate::doctor::DoctorPolicySnapshot;
     use crate::output::ExecutionEvidenceClass;
+    use std::cell::Cell;
     use std::collections::{BTreeMap, BTreeSet};
     use std::env;
     use std::fs;
     use std::io::{Read, Write};
     use std::net::TcpListener;
+
+    fn selected_secret_delivery_admission()
+    -> crate::secret_delivery_admission::SecretDeliveryCommandAdmission {
+        let contract: crate::schema::Contract = serde_yaml::from_str(
+            r#"
+version: 1
+metadata:
+  ota:
+    minimum_version: 1.6.28
+project:
+  name: secret-command-boundary
+tasks:
+  publish:
+    command:
+      exe: sh
+      args: ["-c", "touch should-not-exist"]
+secret_requirements:
+  release_token:
+    secret_class: authentication_credential
+    purpose: external_api_authentication
+    delivery:
+      kind: process_environment
+      variable: RELEASE_TOKEN
+    recipients:
+      tasks: [publish]
+      dependencies: deny
+      hooks: deny
+      services: deny
+      helpers: deny
+      containers: deny
+      remote_execution: deny
+      proof_observers: deny
+      negative_controls: deny
+      lifecycle_children: deny
+    constraints:
+      actor_mode: ci
+      environment: production
+      execution_mode: native
+      target_platform: linux
+      runtime_boundary: process
+      capability: segmented_process_environment
+"#,
+        )
+        .expect("secret-delivery contract");
+        let roots = [crate::effect_policy::EffectPolicyInvocation {
+            task: String::from("publish"),
+            origin: String::from("run"),
+        }];
+        crate::secret_delivery_admission::admit_secret_delivery_command(
+            &contract, None, &roots, &roots,
+        )
+        .expect("secret-delivery admission")
+    }
+
+    #[test]
+    fn secret_delivery_command_boundary_refuses_unsupported_carriers_before_activation() {
+        let admission = selected_secret_delivery_admission();
+        let authority_root = tempfile::tempdir().expect("authority root");
+        let repo = tempfile::tempdir().expect("repository root");
+        let (_guard, _contract, prebound) =
+            crate::crossing_authority::tests::install_test_prebound_authority(
+                authority_root.path(),
+                repo.path(),
+            );
+        let (non_v4_binding, _, _) =
+            crate::crossing_authority::tests::broker_binding_v2_with_signing_keys();
+        let (_, _, scope) =
+            crate::crossing_authority::tests::fixture(time::OffsetDateTime::now_utc());
+        let cases = [
+            ("missing", None),
+            (
+                "prebound",
+                Some(super::CrossingAuthorityPlan::PreboundFile(prebound)),
+            ),
+            (
+                "non-v4",
+                Some(super::CrossingAuthorityPlan::AuthorityBroker {
+                    binding: non_v4_binding,
+                    semantic_scope: scope,
+                    actor_mode: String::from("ci"),
+                }),
+            ),
+        ];
+
+        for (label, crossing) in cases {
+            let activations = Cell::new(0);
+            let protected_checks = Cell::new(0);
+            let result = super::enforce_secret_delivery_command_boundary(
+                &admission,
+                crossing,
+                |_| {
+                    activations.set(activations.get() + 1);
+                    Ok(())
+                },
+                |_| {
+                    protected_checks.set(protected_checks.get() + 1);
+                    Ok(())
+                },
+            );
+            let failure = result.expect_err("unsupported carrier must refuse");
+            assert!(
+                strip_ansi_codes(&failure.message).contains("before authority consumption"),
+                "{label}: {}",
+                failure.message
+            );
+            assert_eq!(activations.get(), 0, "{label} activated authority");
+            assert_eq!(protected_checks.get(), 0, "{label} reached protected truth");
+        }
+    }
+
+    #[test]
+    fn secret_delivery_v4_command_boundary_activates_once_then_refuses_before_task() {
+        let admission = selected_secret_delivery_admission();
+        let (binding, _, _) =
+            crate::crossing_authority::tests::broker_binding_v3_with_signing_keys();
+        let (_, _, scope) =
+            crate::crossing_authority::tests::fixture(time::OffsetDateTime::now_utc());
+        let crossing = super::CrossingAuthorityPlan::AuthorityBroker {
+            binding,
+            semantic_scope: scope,
+            actor_mode: String::from("ci"),
+        };
+        let activations = Cell::new(0);
+        let protected_checks = Cell::new(0);
+        let task_started = Cell::new(false);
+
+        let result = (|| {
+            super::enforce_secret_delivery_command_boundary(
+                &admission,
+                Some(crossing),
+                |_| {
+                    activations.set(activations.get() + 1);
+                    Ok(())
+                },
+                |_| {
+                    protected_checks.set(protected_checks.get() + 1);
+                    Err(super::RunCommandFailure {
+                        message: String::from(
+                            "provider contact remains unavailable; refusing before provider contact or task execution",
+                        ),
+                        summary: None,
+                        exit_code: 1,
+                        receipt: None,
+                    })
+                },
+            )?;
+            task_started.set(true);
+            Ok::<(), super::RunCommandFailure>(())
+        })();
+
+        let failure = result.expect_err("provider-free V4 boundary must remain terminal");
+        assert_eq!(activations.get(), 1);
+        assert_eq!(protected_checks.get(), 1);
+        assert!(!task_started.get());
+        assert!(
+            failure
+                .message
+                .contains("provider contact remains unavailable")
+        );
+        assert!(
+            failure
+                .message
+                .contains("before provider contact or task execution")
+        );
+    }
 
     #[test]
     fn lifecycle_assertion_diagnostics_redact_and_limit_utf8_bytes() {
@@ -112061,7 +112227,7 @@ fn run_single_contract_target(
     let typed_policy_observed = typed_effect_admission.is_typed();
     let CommandTypedEffectAdmission {
         typed: typed_effect_admission,
-        secret_delivery: _,
+        secret_delivery: secret_delivery_admission,
         loaded_policy,
     } = typed_effect_admission;
     let replay_input_preflight = task_replay_input_preflight_with_retained_policy(
@@ -112267,10 +112433,16 @@ fn run_single_contract_target(
     {
         return Err(failure);
     }
-    let (_crossing_grant_guard, _crossing_transaction_guard) = match grant_admission {
-        Some(plan) => {
-            let (authority, transaction) =
-                activate_crossing_authority_plan(contract_working_dir(&target.contract_path), plan)
+    let (_crossing_grant_guard, _crossing_transaction_guard) =
+        enforce_secret_delivery_command_boundary(
+            &secret_delivery_admission,
+            grant_admission,
+            |grant_admission| match grant_admission {
+                Some(plan) => {
+                    let (authority, transaction) = activate_crossing_authority_plan(
+                        contract_working_dir(&target.contract_path),
+                        plan,
+                    )
                     .map_err(|error| {
                         crossing_grant_run_failure(
                             &target.contract,
@@ -112285,10 +112457,19 @@ fn run_single_contract_target(
                             &error,
                         )
                     })?;
-            (Some(authority), Some(transaction))
-        }
-        None => (None, None),
-    };
+                    Ok((Some(authority), Some(transaction)))
+                }
+                None => Ok((None, None)),
+            },
+            |_| {
+                enforce_secret_delivery_protected_transaction_boundary(
+                    &target.contract,
+                    selected_task_name.as_str(),
+                    &closure_plan,
+                    &secret_delivery_admission,
+                )
+            },
+        )?;
     let crossing_failure_contract = target.contract.clone();
     let crossing_failure_contract_path = target.contract_path.clone();
     let result = crate::runner::with_oci_local_application_plan(
@@ -112385,15 +112566,9 @@ fn enforce_typed_effect_pre_execution_boundary(
         exit_code: 1,
         receipt: None,
     })?;
-    if let Some(error) = command_secret_delivery_refusal(&admission) {
-        return Err(RunCommandFailure {
-            message: stylize_text_failure("ota run", &render_run_error(error)),
-            summary: None,
-            exit_code: 1,
-            receipt: None,
-        });
-    }
-    if let Some(error) = typed_effect_admission_refusal(&admission.typed) {
+    if !admission.secret_delivery.refuses_execution()
+        && let Some(error) = typed_effect_admission_refusal(&admission.typed)
+    {
         return Err(RunCommandFailure {
             message: stylize_text_failure("ota run", &render_run_error(error)),
             summary: None,
@@ -112402,6 +112577,110 @@ fn enforce_typed_effect_pre_execution_boundary(
         });
     }
     Ok(admission)
+}
+
+fn enforce_secret_delivery_command_boundary<T>(
+    admission: &crate::secret_delivery_admission::SecretDeliveryCommandAdmission,
+    crossing: Option<CrossingAuthorityPlan>,
+    activate: impl FnOnce(Option<CrossingAuthorityPlan>) -> Result<T, RunCommandFailure>,
+    verify_protected_transaction: impl FnOnce(&T) -> Result<(), RunCommandFailure>,
+) -> Result<T, RunCommandFailure> {
+    enforce_secret_delivery_crossing_carrier_boundary(admission, crossing.as_ref())?;
+    let active = activate(crossing)?;
+    verify_protected_transaction(&active)?;
+    Ok(active)
+}
+
+fn enforce_secret_delivery_protected_transaction_boundary(
+    contract: &Contract,
+    task_name: &str,
+    run_plan: &crate::runner::RunPlan,
+    admission: &crate::secret_delivery_admission::SecretDeliveryCommandAdmission,
+) -> Result<(), RunCommandFailure> {
+    if !admission.refuses_execution() {
+        return Ok(());
+    }
+
+    #[cfg(all(unix, target_os = "linux"))]
+    let protected_result = ACTIVE_SYSTEMD_EXECUTION_COMPLETION.with(|active| {
+        let completion = active.borrow().as_ref().cloned()?;
+        let workflow_run_id = std::env::var("GITHUB_RUN_ID").ok()?;
+        let workflow_run_attempt = std::env::var("GITHUB_RUN_ATTEMPT").ok()?;
+        let workflow_reference = std::env::var("GITHUB_WORKFLOW_REF").ok()?;
+        let runner_version = std::env::var("OTA_CAPABILITY_OBSERVATION_RUNNER_VERSION").ok()?;
+        Some(
+            completion
+                .borrow_mut()
+                .request_snapshot_bound_secret_delivery_transaction_binding(
+                    contract,
+                    "task",
+                    task_name,
+                    run_plan,
+                    &workflow_run_id,
+                    &workflow_run_attempt,
+                    &workflow_reference,
+                    &runner_version,
+                ),
+        )
+    });
+
+    #[cfg(not(all(unix, target_os = "linux")))]
+    let protected_result: Option<
+        Result<
+            crate::secret_delivery_transaction_binding::VerifiedSecretDeliveryTransactionBindingV2,
+            String,
+        >,
+    > = {
+        let _ = (contract, task_name, run_plan);
+        None
+    };
+
+    let message = match protected_result {
+        Some(Ok(_binding)) => String::from(
+            "selected secret requirements reached the verified same-child snapshot-bound transaction boundary, but provider contact remains unavailable in this V12.1 Step 7 slice; refusing before provider contact or task execution",
+        ),
+        Some(Err(_)) | None => String::from(
+            "selected secret requirements require protected provider-binding truth through one verified same-child transaction, but that transaction is unavailable; refusing before provider contact or task execution",
+        ),
+    };
+    Err(RunCommandFailure {
+        message: stylize_text_failure("ota run", &message),
+        summary: None,
+        exit_code: 1,
+        receipt: None,
+    })
+}
+
+fn enforce_secret_delivery_crossing_carrier_boundary(
+    admission: &crate::secret_delivery_admission::SecretDeliveryCommandAdmission,
+    crossing: Option<&CrossingAuthorityPlan>,
+) -> Result<(), RunCommandFailure> {
+    if !admission.refuses_execution() {
+        return Ok(());
+    }
+    let supported = matches!(
+        crossing,
+        Some(CrossingAuthorityPlan::AuthorityBroker {
+            binding: crate::crossing_authority::BrokerAuthorityBinding {
+                attestation: crate::crossing_authority::BrokerAttestationBinding::V3(attestation),
+                ..
+            },
+            ..
+        }) if attestation.systemd_launcher_profile_id
+            == ota_authority_protocol::SYSTEMD_LAUNCHER_PROFILE_ID_V4
+    );
+    if supported {
+        return Ok(());
+    }
+    Err(RunCommandFailure {
+        message: stylize_text_failure(
+            "ota run",
+            "selected secret requirements require protected provider-binding truth through the exact systemd V4 broker carrier; refusing before authority consumption, provider contact, or task execution",
+        ),
+        summary: None,
+        exit_code: 1,
+        receipt: None,
+    })
 }
 
 fn selected_workflow_phase_task_roots(
