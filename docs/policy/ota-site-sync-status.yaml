@@ -24,6 +24,6 @@
 
 version: 1
 repository: ota-run/ota-site
-mode: synced
-consumer_commit: 808dbd6cea6c40133940f7cdb0cc0378ad0acc89
-reviewed_ota_commit: 0496756cebb6a1a7109ff568090d0bf313628c0c
+mode: waived
+waiver_reason: "The V12.1 Step 7 protected service-path gate is pressure-only and does not change Site guidance or public capability claims; replace this waiver with the exact committed Core revision after the workflow commit."
+reviewed_ota_commit: ed38e7c9c0114dead8f28c72d8ef05ddeabe49f3
