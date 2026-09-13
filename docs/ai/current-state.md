@@ -1792,15 +1792,23 @@ reach the required provider-free Core refusal. The old journal collapsed that fa
 `child_boundary_failed`, so it does not identify the failed same-child exchange and is not positive
 service-path evidence.
 
-Launcher `abb1ac26ac6b8cbcc1f039d57d9ae3e9f364633d` independently reviewed and commits the
-pressure-only diagnostic patch. It emits only fixed stage and failure-class tokens for the
-capability observation, authority snapshot, and V2 binding exchanges. Core pins that exact
-Launcher revision. Next action: rebuild and reprovision the protected Linux/X64 host from the two
-immutable revisions, then run the exact Core command once with a fresh authority request. The rerun
-must prove the same selected child completes the
-observation/prelude, authority-snapshot, candidate-reconstruction, and V2 exchanges once, then
-refuses before provider contact or task execution with terminal cleanup and no leaked protected
-identity. Provider contact remains blocked until that hosted gate passes.
+Core run `34790066431`, protected Linux/X64 job `103812535677`, at exact Core
+`34fc618a9c7cce70be2cb52803d706375d651cbb`, Launcher
+`abb1ac26ac6b8cbcc1f039d57d9ae3e9f364633d`, and Protocol
+`2c46cb676ef6e0844312bd6a157adec7ccb54de1`, passed protected capability observation and
+endpoint verification. It then reached `authority_snapshot_request_received` but refused before
+the Launcher responder and before Core received a snapshot response or V2 binding. It did not
+reach the provider-free Core refusal, provider contact, or task execution.
+
+Launcher `2a985176e6ad97890ca5088b346ed6ffe3d40cba` independently reviewed and commits the
+pressure-only diagnostic refinement. It adds only the fixed
+`authority_snapshot_request_invalid` marker at the typed snapshot-request decode boundary; it
+does not log request data or alter refusal semantics. Core pins that exact Launcher revision. Next
+action: rebuild and reprovision the protected Linux/X64 host from the immutable revisions, then
+run the exact Core command once with a fresh authority request. The rerun must identify whether
+the request itself is invalid or advance to the retained responder, while preserving refusal
+before provider contact or task execution, terminal cleanup, and no leaked protected identity.
+Provider contact remains blocked until the hosted gate passes.
 
 Do not touch the unrelated untracked `docs/pressure/agent-authority-signals.md` unless the user
 explicitly asks.
