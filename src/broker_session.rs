@@ -946,7 +946,12 @@ impl SystemdExecutionCompletion {
             )
             .map_err(|error| error.to_string())?;
         #[cfg(feature = "secret-delivery-pressure")]
-        pressure_verify_authority_snapshot_request_wire(pending_snapshot.request())?;
+        {
+            let payload =
+                pressure_serialize_authority_snapshot_request(pending_snapshot.request())?;
+            self.session.send_serialized_json(&payload)?;
+        }
+        #[cfg(not(feature = "secret-delivery-pressure"))]
         self.session.send_json(pending_snapshot.request())?;
         let snapshot_response: ota_authority_protocol::ProtectedAuthoritySnapshotResponseV1 =
             self.session.receive_json()?;
@@ -3816,6 +3821,11 @@ impl LauncherSession {
         write_frame(&mut self.stream, &payload)
     }
 
+    #[cfg(feature = "secret-delivery-pressure")]
+    fn send_serialized_json(&mut self, payload: &[u8]) -> Result<(), String> {
+        write_frame(&mut self.stream, payload)
+    }
+
     fn receive_json<T: for<'de> Deserialize<'de>>(&mut self) -> Result<T, String> {
         let frame = self.receive_frame()?;
         serde_json::from_slice(&frame)
@@ -3858,9 +3868,9 @@ impl LauncherSession {
 
 // Pressure-only wire-shape probe. It emits no request values or identities.
 #[cfg(feature = "secret-delivery-pressure")]
-fn pressure_verify_authority_snapshot_request_wire(
+fn pressure_serialize_authority_snapshot_request(
     request: &ota_authority_protocol::ProtectedAuthoritySnapshotRequestV1,
-) -> Result<(), String> {
+) -> Result<Vec<u8>, String> {
     const REQUEST_FIELDS: [&str; 10] = [
         "schema_version",
         "message_kind",
@@ -3873,8 +3883,10 @@ fn pressure_verify_authority_snapshot_request_wire(
         "contract_identity",
         "selected_execution_graph_identity",
     ];
-    let value = serde_json::to_value(request)
+    let payload = serde_json::to_vec(request)
         .map_err(|_| String::from("authority snapshot request serialization failed"))?;
+    let value: serde_json::Value = serde_json::from_slice(&payload)
+        .map_err(|_| String::from("authority snapshot request serialization is invalid"))?;
     let Some(object) = value.as_object() else {
         return Err(String::from(
             "authority snapshot request serialization is not an object",
@@ -3892,8 +3904,10 @@ fn pressure_verify_authority_snapshot_request_wire(
             "authority snapshot request wire shape is incomplete",
         ));
     }
-    eprintln!("ota: bounded pressure stage=authority_snapshot_request_serialized_complete");
-    Ok(())
+    eprintln!(
+        "ota: bounded pressure stage=secret_delivery_outbound_frame_2_authority_snapshot_request_serialized_complete"
+    );
+    Ok(payload)
 }
 
 fn launcher_consumption_intent_persistence_matches(
@@ -4287,11 +4301,16 @@ pub(crate) mod tests {
     }
 
     fn read_json_frame<T: for<'de> Deserialize<'de>>(stream: &mut UnixStream) -> T {
+        let payload = read_frame_payload(stream);
+        serde_json::from_slice(&payload).expect("test frame JSON")
+    }
+
+    fn read_frame_payload(stream: &mut UnixStream) -> Vec<u8> {
         let mut length = [0_u8; 4];
         stream.read_exact(&mut length).expect("test frame length");
         let mut payload = vec![0_u8; u32::from_be_bytes(length) as usize];
         stream.read_exact(&mut payload).expect("test frame payload");
-        serde_json::from_slice(&payload).expect("test frame JSON")
+        payload
     }
 
     fn signed_attestation(
@@ -6472,8 +6491,34 @@ pub(crate) mod tests {
             write_json_frame(&mut launcher, &observation_response);
             write_json_frame(&mut launcher, &prelude);
 
+            let snapshot_request_payload = read_frame_payload(&mut launcher);
+            let snapshot_request_value: serde_json::Value =
+                serde_json::from_slice(&snapshot_request_payload)
+                    .expect("snapshot request frame JSON");
+            let snapshot_request_fields = snapshot_request_value
+                .as_object()
+                .expect("snapshot request object")
+                .keys()
+                .map(String::as_str)
+                .collect::<BTreeSet<_>>();
+            assert_eq!(
+                snapshot_request_fields,
+                BTreeSet::from([
+                    "challenge",
+                    "contract_identity",
+                    "identity",
+                    "launcher_request_identity",
+                    "message_kind",
+                    "nonce",
+                    "schema_version",
+                    "selected_execution_graph_identity",
+                    "session_identity",
+                    "startup_continuation_identity",
+                ])
+            );
             let snapshot_request: ota_authority_protocol::ProtectedAuthoritySnapshotRequestV1 =
-                read_json_frame(&mut launcher);
+                serde_json::from_slice(&snapshot_request_payload)
+                    .expect("typed snapshot request frame");
             assert_eq!(
                 snapshot_request.startup_continuation_identity,
                 expected_startup.identity
