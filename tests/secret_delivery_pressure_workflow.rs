@@ -82,7 +82,7 @@ fn protected_service_path_remains_provider_free_and_task_refusing() {
         .expect("retention step");
     assert!(retention.contains("$CLIENT_PUBLIC_RESULT"));
     assert!(!retention.contains("$CLIENT_RESULT"));
-    assert!(retention.contains("root:${expected_group}:730"));
+    assert!(retention.contains("root:${expected_group}:770"));
     assert!(retention.contains("test -d \"$HOSTED_EVIDENCE_ROOT\""));
     assert!(retention.contains("test ! -L \"$HOSTED_EVIDENCE_ROOT\""));
     assert!(retention.contains("mkdir \"$staging\""));
@@ -103,6 +103,7 @@ fn protected_service_path_remains_provider_free_and_task_refusing() {
         .next()
         .expect("bounded failure diagnostic step");
     assert!(failure_retention.starts_with("\n        if: ${{ failure() }}"));
+    assert!(failure_retention.contains("root:${expected_group}:770"));
     assert!(failure_retention.contains("test -f \"$CLIENT_DIAGNOSTIC\""));
     assert!(
         failure_retention
@@ -123,6 +124,19 @@ fn protected_service_path_remains_provider_free_and_task_refusing() {
         "projection_verifier_loaded",
         "same_child_prelude_reconciliation_refused",
         "same_child_prelude_reconciled",
+        "same_child_prelude_structure_invalid",
+        "same_child_capability_observation_reconciliation_refused",
+        "same_child_startup_continuation_invalid",
+        "same_child_session_identity_derivation_refused",
+        "same_child_startup_continuation_identity_invalid",
+        "same_child_observation_request_identity_mismatch",
+        "same_child_projection_identity_mismatch",
+        "same_child_verifier_identity_mismatch",
+        "same_child_installation_evidence_identity_mismatch",
+        "same_child_launcher_request_identity_mismatch",
+        "same_child_startup_continuation_identity_mismatch",
+        "same_child_session_identity_mismatch",
+        "same_child_expiry_mismatch",
         "invocation_context_reconstruction_refused",
         "invocation_context_reconstructed",
         "authority_snapshot_issue_refused",

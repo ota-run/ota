@@ -121,27 +121,53 @@ pub(crate) fn reconcile_same_child_capability_prelude_v1(
     startup_continuation: &LauncherStartupContinuationV1,
     verifier: &RetainedCapabilityProjectionVerifierV1,
 ) -> Result<VerifiedSameChildCapabilityPreludeV1, SecretDeliveryTransactionBindingError> {
-    validate_protected_same_child_capability_prelude_v1(&prelude)
-        .map_err(|_| SecretDeliveryTransactionBindingError::ResponseInvalid)?;
+    validate_protected_same_child_capability_prelude_v1(&prelude).map_err(|_| {
+        pressure_same_child_refusal_stage("prelude_structure_invalid");
+        SecretDeliveryTransactionBindingError::ResponseInvalid
+    })?;
     let observation =
-        retain_reconciled_protected_capability_observation_v1(&mut pending, response, verifier)?;
-    let startup_identity = launcher_startup_continuation_identity(startup_continuation)
-        .map_err(|_| SecretDeliveryTransactionBindingError::StartupContinuationInvalid)?;
+        retain_reconciled_protected_capability_observation_v1(&mut pending, response, verifier)
+            .map_err(|error| {
+                pressure_same_child_refusal_stage("capability_observation_reconciliation_refused");
+                SecretDeliveryTransactionBindingError::CapabilityObservation(error)
+            })?;
+    let startup_identity =
+        launcher_startup_continuation_identity(startup_continuation).map_err(|_| {
+            pressure_same_child_refusal_stage("startup_continuation_invalid");
+            SecretDeliveryTransactionBindingError::StartupContinuationInvalid
+        })?;
     let session_identity = protected_launcher_secret_delivery_transaction_session_v1_identity(
         startup_continuation.identity.as_str(),
     )
-    .map_err(|_| SecretDeliveryTransactionBindingError::ResponseInvalid)?;
-    if startup_identity != startup_continuation.identity
-        || prelude.observation_request_identity != observation.request().identity
-        || prelude.projection_identity != observation.projection().projection_identity
-        || prelude.verifier_identity != verifier.verifier().identity
-        || prelude.installation_evidence_identity != verifier.installation_evidence_identity()
-        || prelude.launcher_request_identity != startup_continuation.launcher_request_identity
-        || prelude.startup_continuation_identity != startup_continuation.identity
-        || prelude.session_identity != session_identity
-        || prelude.expires_at_unix_seconds
-            != observation.request().challenge.expires_at_unix_seconds
+    .map_err(|_| {
+        pressure_same_child_refusal_stage("session_identity_derivation_refused");
+        SecretDeliveryTransactionBindingError::ResponseInvalid
+    })?;
+    let mismatched_stage = if startup_identity != startup_continuation.identity {
+        Some("startup_continuation_identity_invalid")
+    } else if prelude.observation_request_identity != observation.request().identity {
+        Some("observation_request_identity_mismatch")
+    } else if prelude.projection_identity != observation.projection().projection_identity {
+        Some("projection_identity_mismatch")
+    } else if prelude.verifier_identity != verifier.verifier().identity {
+        Some("verifier_identity_mismatch")
+    } else if prelude.installation_evidence_identity != verifier.installation_evidence_identity() {
+        Some("installation_evidence_identity_mismatch")
+    } else if prelude.launcher_request_identity != startup_continuation.launcher_request_identity {
+        Some("launcher_request_identity_mismatch")
+    } else if prelude.startup_continuation_identity != startup_continuation.identity {
+        Some("startup_continuation_identity_mismatch")
+    } else if prelude.session_identity != session_identity {
+        Some("session_identity_mismatch")
+    } else if prelude.expires_at_unix_seconds
+        != observation.request().challenge.expires_at_unix_seconds
     {
+        Some("expiry_mismatch")
+    } else {
+        None
+    };
+    if let Some(stage) = mismatched_stage {
+        pressure_same_child_refusal_stage(stage);
         return Err(SecretDeliveryTransactionBindingError::ResponseInvalid);
     }
     Ok(VerifiedSameChildCapabilityPreludeV1 {
@@ -149,6 +175,14 @@ pub(crate) fn reconcile_same_child_capability_prelude_v1(
         prelude,
     })
 }
+
+#[cfg(feature = "secret-delivery-pressure")]
+fn pressure_same_child_refusal_stage(stage: &'static str) {
+    eprintln!("ota: bounded pressure stage=secret_delivery_same_child_{stage}");
+}
+
+#[cfg(not(feature = "secret-delivery-pressure"))]
+fn pressure_same_child_refusal_stage(_stage: &'static str) {}
 
 pub(crate) fn issue_secret_delivery_transaction_binding_v1(
     candidate: SemanticallyVerifiedSecretDeliveryTransactionCandidate,
