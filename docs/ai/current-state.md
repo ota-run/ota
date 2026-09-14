@@ -1801,16 +1801,23 @@ endpoint verification. It then reached `authority_snapshot_request_received` and
 received a snapshot response or V2 binding. It did not reach the provider-free Core refusal,
 provider contact, or task execution.
 
-Launcher `967dfd061d292425970da65b4481c0838463a5be` independently reviewed and commits the
-pressure-only diagnostic refinement. It retains the generic decode-refusal marker and adds one
-fixed closed-envelope category: not-object, missing root field, unknown root field, or
-nested/value-invalid. The clone and classification compile only with
-`systemd-pressure-faults`; default builds consume the protected request directly. Core pins that
-exact Launcher revision. Next action: rebuild and reprovision the protected Linux/X64 host from
-the immutable revisions, then run the exact Core command once with a fresh authority request. The
-rerun must identify the closed decode category or advance to the retained responder, while
-preserving refusal before provider contact or task execution, terminal cleanup, and no leaked
-protected identity. Provider contact remains blocked until the hosted gate passes.
+Core run `34797113238`, protected Linux/X64 job `103832271407`, at exact Core
+`a6aa9ae18d4e77226e886aa657d97f310f91926b`, Launcher
+`967dfd061d292425970da65b4481c0838463a5be`, and Protocol
+`2c46cb676ef6e0844312bd6a157adec7ccb54de1`, again passed protected capability observation and
+endpoint verification. It classified the later authority-snapshot refusal as
+`authority_snapshot_request_missing_field`; no snapshot response, V2 binding, provider contact,
+or task execution occurred.
+
+Launcher `68c11b2bc748b1108f88ee90b2e14675b36cea80` independently reviewed and commits the
+pressure-only refinement that names the missing closed-envelope field with one static marker.
+The clone and classification compile only with `systemd-pressure-faults`; default builds consume
+the protected request directly. Core pins that exact Launcher revision. Next action: rebuild and
+reprovision the protected Linux/X64 host from the immutable revisions, then run the exact Core
+command once with a fresh authority request. The rerun must identify the absent closed field or
+advance to the retained responder, while preserving refusal before provider contact or task
+execution, terminal cleanup, and no leaked protected identity. Provider contact remains blocked
+until the hosted gate passes.
 
 Do not touch the unrelated untracked `docs/pressure/agent-authority-signals.md` unless the user
 explicitly asks.
