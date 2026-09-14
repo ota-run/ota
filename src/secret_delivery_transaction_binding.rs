@@ -8,7 +8,6 @@
 use ota_authority_protocol::{
     LauncherStartupContinuationV1, PROTECTED_LAUNCHER_SECRET_DELIVERY_TRANSACTION_BINDING_REQUEST,
     PROTECTED_LAUNCHER_SECRET_DELIVERY_TRANSACTION_BINDING_REQUEST_V2,
-    PROTECTED_LAUNCHER_SECRET_DELIVERY_TRANSACTION_BINDING_RESPONSE_V2,
     ProtectedLauncherCapabilityObservationResponseV1,
     ProtectedLauncherSecretDeliveryTransactionBindingRequestV1,
     ProtectedLauncherSecretDeliveryTransactionBindingRequestV2,
@@ -20,15 +19,19 @@ use ota_authority_protocol::{
     protected_launcher_secret_delivery_transaction_binding_request_v1_identity,
     protected_launcher_secret_delivery_transaction_binding_request_v2_identity,
     protected_launcher_secret_delivery_transaction_session_v1_identity,
-    reconcile_protected_authority_snapshot_response_v1,
     reconcile_protected_launcher_secret_delivery_transaction_binding_response_v1,
     reconcile_protected_launcher_secret_delivery_transaction_binding_response_v2,
     validate_protected_launcher_capability_observation_challenge_v1,
+    validate_protected_same_child_capability_prelude_v1,
+};
+#[cfg(any(test, feature = "secret-delivery-pressure"))]
+use ota_authority_protocol::{
+    PROTECTED_LAUNCHER_SECRET_DELIVERY_TRANSACTION_BINDING_RESPONSE_V2,
+    reconcile_protected_authority_snapshot_response_v1,
     validate_protected_launcher_capability_observation_projection_v1,
     validate_protected_launcher_capability_projection_verifier_v1,
     validate_protected_launcher_secret_delivery_transaction_binding_request_v2,
     validate_protected_launcher_secret_delivery_transaction_binding_v2,
-    validate_protected_same_child_capability_prelude_v1,
 };
 use thiserror::Error;
 #[cfg(any(target_os = "linux", test))]
@@ -198,7 +201,7 @@ fn pressure_binding_v2_stage(stage: &'static str) {
 #[cfg(not(feature = "secret-delivery-pressure"))]
 fn pressure_binding_v2_stage(_stage: &'static str) {}
 
-#[cfg(feature = "secret-delivery-pressure")]
+#[cfg(any(test, feature = "secret-delivery-pressure"))]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn classify_binding_v2_reconciliation(
     request: &ProtectedLauncherSecretDeliveryTransactionBindingRequestV2,
@@ -521,7 +524,7 @@ impl PendingSecretDeliveryTransactionBindingV2 {
         &self.request
     }
 
-    #[cfg(feature = "secret-delivery-pressure")]
+    #[cfg(any(test, feature = "secret-delivery-pressure"))]
     pub(crate) fn classify_reconciliation(
         &self,
         response: &ProtectedLauncherSecretDeliveryTransactionBindingResponseV2,
