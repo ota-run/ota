@@ -945,6 +945,8 @@ impl SystemdExecutionCompletion {
                 &invocation_context,
             )
             .map_err(|error| error.to_string())?;
+        #[cfg(feature = "secret-delivery-pressure")]
+        pressure_verify_authority_snapshot_request_wire(pending_snapshot.request())?;
         self.session.send_json(pending_snapshot.request())?;
         let snapshot_response: ota_authority_protocol::ProtectedAuthoritySnapshotResponseV1 =
             self.session.receive_json()?;
@@ -3852,6 +3854,46 @@ impl LauncherSession {
             Err(error) => Err(error),
         }
     }
+}
+
+// Pressure-only wire-shape probe. It emits no request values or identities.
+#[cfg(feature = "secret-delivery-pressure")]
+fn pressure_verify_authority_snapshot_request_wire(
+    request: &ota_authority_protocol::ProtectedAuthoritySnapshotRequestV1,
+) -> Result<(), String> {
+    const REQUEST_FIELDS: [&str; 10] = [
+        "schema_version",
+        "message_kind",
+        "identity",
+        "challenge",
+        "nonce",
+        "launcher_request_identity",
+        "startup_continuation_identity",
+        "session_identity",
+        "contract_identity",
+        "selected_execution_graph_identity",
+    ];
+    let value = serde_json::to_value(request)
+        .map_err(|_| String::from("authority snapshot request serialization failed"))?;
+    let Some(object) = value.as_object() else {
+        return Err(String::from(
+            "authority snapshot request serialization is not an object",
+        ));
+    };
+    if object.len() != REQUEST_FIELDS.len()
+        || REQUEST_FIELDS
+            .iter()
+            .any(|field| !object.contains_key(*field))
+        || object
+            .keys()
+            .any(|field| !REQUEST_FIELDS.contains(&field.as_str()))
+    {
+        return Err(String::from(
+            "authority snapshot request wire shape is incomplete",
+        ));
+    }
+    eprintln!("ota: bounded pressure stage=authority_snapshot_request_serialized_complete");
+    Ok(())
 }
 
 fn launcher_consumption_intent_persistence_matches(
