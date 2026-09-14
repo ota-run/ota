@@ -52,9 +52,8 @@ fn protected_service_path_remains_provider_free_and_task_refusing() {
     assert!(WORKFLOW.contains("PRESSURE_REPOSITORY: /srv/ota-v3-pressure"));
     assert!(WORKFLOW.contains("--json -- run governed --grant \"$AUTHORITY_ID\""));
     assert!(WORKFLOW.contains("selected_execution_failed_boundary_removed"));
-    assert!(WORKFLOW.contains(
-        "selected secret requirements reached the verified same-child snapshot-bound transaction boundary"
-    ));
+    assert!(WORKFLOW.contains("selected secret requirements reached the verified same-child"));
+    assert!(WORKFLOW.contains("snapshot-bound transaction boundary"));
     assert!(WORKFLOW.contains("test ! -e \"$PRESSURE_REPOSITORY/selected-work-executed\""));
     let command_step = protected_job
         .split("      - name: Prove the protected Core command reaches the provider-free boundary")
@@ -76,6 +75,11 @@ fn protected_service_path_remains_provider_free_and_task_refusing() {
         .expect("strict client assertion");
     assert!(status_check < redaction);
     assert!(redaction < strict_assertion);
+    assert!(command_step.contains("normalized = \" \".join(plain.split())"));
+    assert!(command_step.contains("if normalized.count(expected) != 1:"));
+    assert!(!command_step.contains(
+        "grep -F \\\n            'selected secret requirements reached the verified same-child"
+    ));
     let retention = WORKFLOW
         .split("      - name: Retain bounded evidence for administrator retrieval")
         .nth(1)
@@ -180,6 +184,7 @@ fn protected_service_path_remains_provider_free_and_task_refusing() {
             "expected_terminal_envelope",
             "stderr_available",
             "stage_marker_counts",
+            "binding_v2_stage_counts",
             "exact_snapshot_outbound_marker_count",
             "expected_provider_free_refusal_count",
             "identity_pattern_absent",
