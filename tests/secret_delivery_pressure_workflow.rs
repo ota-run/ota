@@ -51,6 +51,9 @@ fn protected_service_path_remains_provider_free_and_task_refusing() {
     assert!(!protected_job.contains("--location-trusted"));
     assert!(WORKFLOW.contains("PRESSURE_REPOSITORY: /srv/ota-v3-pressure"));
     assert!(WORKFLOW.contains("--json -- run governed --grant \"$AUTHORITY_ID\""));
+    assert!(WORKFLOW.contains(
+        "CLIENT_PRIVACY_STDERR: ${{ runner.temp }}/secret-delivery-service-path-client-privacy-stderr.txt"
+    ));
     assert!(WORKFLOW.contains("selected_execution_failed_boundary_removed"));
     assert!(WORKFLOW.contains("selected secret requirements reached the verified same-child"));
     assert!(WORKFLOW.contains("snapshot-bound transaction boundary"));
@@ -80,6 +83,9 @@ fn protected_service_path_remains_provider_free_and_task_refusing() {
     assert!(!command_step.contains(
         "grep -F \\\n            'selected secret requirements reached the verified same-child"
     ));
+    assert!(command_step.contains("if line not in allowed_binding_v2_lines"));
+    assert!(command_step.contains("\"$CLIENT_RESULT\" \"$CLIENT_PRIVACY_STDERR\"; then"));
+    assert!(!command_step.contains("\"$CLIENT_RESULT\" \"$CLIENT_STDERR\"; then"));
     let retention = WORKFLOW
         .split("      - name: Retain bounded evidence for administrator retrieval")
         .nth(1)
