@@ -8,6 +8,7 @@
 use ota_authority_protocol::{
     LauncherStartupContinuationV1, PROTECTED_LAUNCHER_SECRET_DELIVERY_TRANSACTION_BINDING_REQUEST,
     PROTECTED_LAUNCHER_SECRET_DELIVERY_TRANSACTION_BINDING_REQUEST_V2,
+    PROTECTED_LAUNCHER_SECRET_DELIVERY_TRANSACTION_BINDING_RESPONSE_V2,
     ProtectedLauncherCapabilityObservationResponseV1,
     ProtectedLauncherSecretDeliveryTransactionBindingRequestV1,
     ProtectedLauncherSecretDeliveryTransactionBindingRequestV2,
@@ -19,9 +20,14 @@ use ota_authority_protocol::{
     protected_launcher_secret_delivery_transaction_binding_request_v1_identity,
     protected_launcher_secret_delivery_transaction_binding_request_v2_identity,
     protected_launcher_secret_delivery_transaction_session_v1_identity,
+    reconcile_protected_authority_snapshot_response_v1,
     reconcile_protected_launcher_secret_delivery_transaction_binding_response_v1,
     reconcile_protected_launcher_secret_delivery_transaction_binding_response_v2,
     validate_protected_launcher_capability_observation_challenge_v1,
+    validate_protected_launcher_capability_observation_projection_v1,
+    validate_protected_launcher_capability_projection_verifier_v1,
+    validate_protected_launcher_secret_delivery_transaction_binding_request_v2,
+    validate_protected_launcher_secret_delivery_transaction_binding_v2,
     validate_protected_same_child_capability_prelude_v1,
 };
 use thiserror::Error;
@@ -184,6 +190,182 @@ fn pressure_same_child_refusal_stage(stage: &'static str) {
 #[cfg(not(feature = "secret-delivery-pressure"))]
 fn pressure_same_child_refusal_stage(_stage: &'static str) {}
 
+#[cfg(feature = "secret-delivery-pressure")]
+fn pressure_binding_v2_stage(stage: &'static str) {
+    eprintln!("ota: bounded pressure stage=secret_delivery_binding_v2_{stage}");
+}
+
+#[cfg(not(feature = "secret-delivery-pressure"))]
+fn pressure_binding_v2_stage(_stage: &'static str) {}
+
+#[cfg(feature = "secret-delivery-pressure")]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn classify_binding_v2_reconciliation(
+    request: &ProtectedLauncherSecretDeliveryTransactionBindingRequestV2,
+    response: &ProtectedLauncherSecretDeliveryTransactionBindingResponseV2,
+    snapshot: &VerifiedSecretDeliveryAuthoritySnapshotV1,
+    prelude: &VerifiedSameChildCapabilityPreludeV1,
+    verifier: &RetainedCapabilityProjectionVerifierV1,
+    observed_at_unix_seconds: u64,
+) -> Option<&'static str> {
+    if reconcile_protected_launcher_secret_delivery_transaction_binding_response_v2(
+        request,
+        response,
+        snapshot.request(),
+        snapshot.response(),
+        snapshot.startup_continuation(),
+        prelude.prelude(),
+        verifier.verifier(),
+        verifier.installation_evidence_identity(),
+        observed_at_unix_seconds,
+    )
+    .is_ok()
+    {
+        return None;
+    }
+    Some(
+        if reconcile_protected_authority_snapshot_response_v1(
+            snapshot.request(),
+            snapshot.response(),
+            snapshot.startup_continuation(),
+            observed_at_unix_seconds,
+        )
+        .is_err()
+        {
+            "snapshot_reconciliation_refused"
+        } else if validate_protected_launcher_secret_delivery_transaction_binding_request_v2(
+            request,
+        )
+        .is_err()
+        {
+            "request_invalid"
+        } else if validate_protected_same_child_capability_prelude_v1(prelude.prelude()).is_err() {
+            "prelude_invalid"
+        } else if validate_protected_launcher_capability_observation_challenge_v1(
+            &request.observation.challenge,
+            observed_at_unix_seconds,
+        )
+        .is_err()
+        {
+            "challenge_invalid"
+        } else if validate_protected_launcher_capability_projection_verifier_v1(verifier.verifier())
+            .is_err()
+        {
+            "verifier_invalid"
+        } else if request.startup_continuation_identity != snapshot.startup_continuation().identity
+        {
+            "startup_continuation_identity_mismatch"
+        } else if request.launcher_request_identity
+            != snapshot.startup_continuation().launcher_request_identity
+        {
+            "launcher_request_identity_mismatch"
+        } else if request.same_child_capability_prelude_identity != prelude.prelude().identity {
+            "prelude_identity_mismatch"
+        } else if request.protected_snapshot_identity
+            != snapshot.response().protected_snapshot_identity
+        {
+            "snapshot_identity_mismatch"
+        } else if response.schema_version != 2
+            || response.message_kind
+                != PROTECTED_LAUNCHER_SECRET_DELIVERY_TRANSACTION_BINDING_RESPONSE_V2
+        {
+            "response_shape_invalid"
+        } else if response.request_identity != request.identity {
+            "response_request_identity_mismatch"
+        } else if response.same_child_capability_prelude_identity
+            != request.same_child_capability_prelude_identity
+        {
+            "response_prelude_identity_mismatch"
+        } else if response.protected_snapshot_identity != request.protected_snapshot_identity {
+            "response_snapshot_identity_mismatch"
+        } else if validate_protected_launcher_capability_observation_projection_v1(
+            &response.projection,
+        )
+        .is_err()
+        {
+            "response_projection_invalid"
+        } else if validate_protected_launcher_secret_delivery_transaction_binding_v2(
+            &response.binding,
+        )
+        .is_err()
+        {
+            "binding_invalid"
+        } else {
+            let binding = &response.binding;
+            if binding.request_identity != request.identity {
+                "binding_request_identity_mismatch"
+            } else if binding.launcher_request_identity != request.launcher_request_identity {
+                "binding_launcher_request_identity_mismatch"
+            } else if binding.startup_continuation_identity != request.startup_continuation_identity
+            {
+                "binding_startup_continuation_identity_mismatch"
+            } else if binding.session_identity != request.session_identity {
+                "binding_session_identity_mismatch"
+            } else if binding.same_child_capability_prelude_identity
+                != request.same_child_capability_prelude_identity
+            {
+                "binding_prelude_identity_mismatch"
+            } else if binding.protected_snapshot_identity != request.protected_snapshot_identity
+                || binding.protected_snapshot_identity != response.protected_snapshot_identity
+            {
+                "binding_snapshot_identity_mismatch"
+            } else if binding.secret_transaction_candidate_identity
+                != request.secret_transaction_candidate_identity
+            {
+                "binding_candidate_identity_mismatch"
+            } else if binding.observation_request_identity != request.observation.identity
+                || prelude.prelude().observation_request_identity != request.observation.identity
+            {
+                "binding_observation_identity_mismatch"
+            } else if prelude.prelude().launcher_request_identity
+                != request.launcher_request_identity
+            {
+                "binding_prelude_launcher_request_mismatch"
+            } else if prelude.prelude().startup_continuation_identity
+                != request.startup_continuation_identity
+            {
+                "binding_prelude_startup_continuation_mismatch"
+            } else if prelude.prelude().session_identity != request.session_identity {
+                "binding_prelude_session_mismatch"
+            } else if binding.expires_at_unix_seconds
+                != request.observation.challenge.expires_at_unix_seconds
+                || prelude.prelude().expires_at_unix_seconds
+                    != request.observation.challenge.expires_at_unix_seconds
+            {
+                "binding_expiry_mismatch"
+            } else if binding.projection_identity != response.projection.projection_identity
+                || prelude.prelude().projection_identity != response.projection.projection_identity
+            {
+                "binding_projection_identity_mismatch"
+            } else if binding.verifier_identity != verifier.verifier().identity
+                || prelude.prelude().verifier_identity != verifier.verifier().identity
+            {
+                "binding_verifier_identity_mismatch"
+            } else if response.projection.payload.signing_key_identity
+                != verifier.verifier().key_identity
+            {
+                "binding_signing_key_identity_mismatch"
+            } else if response.projection.payload.challenge_identity
+                != request.observation.challenge.identity
+            {
+                "binding_challenge_identity_mismatch"
+            } else if response.projection.payload.runner_version
+                != request.observation.runner_version
+            {
+                "binding_runner_version_mismatch"
+            } else if binding.installation_evidence_identity
+                != verifier.installation_evidence_identity()
+                || prelude.prelude().installation_evidence_identity
+                    != verifier.installation_evidence_identity()
+            {
+                "binding_installation_evidence_identity_mismatch"
+            } else {
+                "unclassified_protocol_refusal"
+            }
+        },
+    )
+}
+
 pub(crate) fn issue_secret_delivery_transaction_binding_v1(
     candidate: SemanticallyVerifiedSecretDeliveryTransactionCandidate,
     startup_continuation: &LauncherStartupContinuationV1,
@@ -339,6 +521,23 @@ impl PendingSecretDeliveryTransactionBindingV2 {
         &self.request
     }
 
+    #[cfg(feature = "secret-delivery-pressure")]
+    pub(crate) fn classify_reconciliation(
+        &self,
+        response: &ProtectedLauncherSecretDeliveryTransactionBindingResponseV2,
+        verifier: &RetainedCapabilityProjectionVerifierV1,
+        observed_at_unix_seconds: u64,
+    ) -> Option<&'static str> {
+        classify_binding_v2_reconciliation(
+            &self.request,
+            response,
+            &self.snapshot,
+            &self.prelude,
+            verifier,
+            observed_at_unix_seconds,
+        )
+    }
+
     pub(crate) fn reconcile(
         self,
         response: ProtectedLauncherSecretDeliveryTransactionBindingResponseV2,
@@ -346,7 +545,15 @@ impl PendingSecretDeliveryTransactionBindingV2 {
         observed_at_unix_seconds: u64,
     ) -> Result<VerifiedSecretDeliveryTransactionBindingV2, SecretDeliveryTransactionBindingError>
     {
-        reconcile_protected_launcher_secret_delivery_transaction_binding_response_v2(
+        #[cfg(feature = "secret-delivery-pressure")]
+        if let Some(stage) =
+            self.classify_reconciliation(&response, verifier, observed_at_unix_seconds)
+        {
+            pressure_binding_v2_stage(stage);
+            return Err(SecretDeliveryTransactionBindingError::ResponseInvalid);
+        }
+        #[cfg(not(feature = "secret-delivery-pressure"))]
+        if reconcile_protected_launcher_secret_delivery_transaction_binding_response_v2(
             &self.request,
             &response,
             self.snapshot.request(),
@@ -357,8 +564,14 @@ impl PendingSecretDeliveryTransactionBindingV2 {
             verifier.installation_evidence_identity(),
             observed_at_unix_seconds,
         )
-        .map_err(|_| SecretDeliveryTransactionBindingError::ResponseInvalid)?;
+        .is_err()
+        {
+            pressure_binding_v2_stage("reconciliation_refused");
+            return Err(SecretDeliveryTransactionBindingError::ResponseInvalid);
+        }
+        pressure_binding_v2_stage("response_reconciled");
         if response.projection != *self.prelude.observation().projection() {
+            pressure_binding_v2_stage("projection_reuse_mismatch");
             return Err(SecretDeliveryTransactionBindingError::ResponseInvalid);
         }
         Ok(VerifiedSecretDeliveryTransactionBindingV2 {

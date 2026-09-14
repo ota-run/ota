@@ -2362,6 +2362,23 @@ secret_requirements:
             .challenge
             .issued_at_unix_seconds;
         let response = v2_binding_response(pending.request(), &verifier, &signing_key);
+        assert_eq!(
+            pending.classify_reconciliation(&response, &verifier, binding_now),
+            None,
+            "a canonical response must not produce a refusal diagnostic",
+        );
+        let mut substituted = response.clone();
+        substituted.binding.installation_evidence_identity = identity('e');
+        substituted.binding.identity =
+            protected_launcher_secret_delivery_transaction_binding_v2_identity(
+                &substituted.binding,
+            )
+            .expect("substituted binding identity");
+        assert_eq!(
+            pending.classify_reconciliation(&substituted, &verifier, binding_now),
+            Some("binding_installation_evidence_identity_mismatch"),
+            "the classifier must name the exact self-consistent installation substitution",
+        );
         let mut verified = pending
             .reconcile(response, &verifier, binding_now)
             .expect("verified V2 binding");
