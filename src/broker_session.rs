@@ -915,12 +915,17 @@ impl SystemdExecutionCompletion {
                 &self.startup_continuation.launcher_request_identity,
             )
             .map_err(|error| error.to_string())?;
+        pressure_secret_delivery_stage("capability_observation_issued");
         self.session.send_json(pending_observation.request())?;
         let observation_response: ota_authority_protocol::ProtectedLauncherCapabilityObservationResponseV1 =
             self.session.receive_json()?;
         let prelude: ota_authority_protocol::ProtectedSameChildCapabilityPreludeV1 =
             self.session.receive_json()?;
-        let verifier = load_verifier()?;
+        pressure_secret_delivery_stage("capability_observation_response_received");
+        let verifier = load_verifier().inspect_err(|_| {
+            pressure_secret_delivery_stage("projection_verifier_load_refused");
+        })?;
+        pressure_secret_delivery_stage("projection_verifier_loaded");
         let verified_prelude =
             crate::secret_delivery_transaction_binding::reconcile_same_child_capability_prelude_v1(
                 pending_observation,
@@ -929,7 +934,11 @@ impl SystemdExecutionCompletion {
                 &self.startup_continuation,
                 &verifier,
             )
+            .inspect_err(|_| {
+                pressure_secret_delivery_stage("same_child_prelude_reconciliation_refused");
+            })
             .map_err(|error| error.to_string())?;
+        pressure_secret_delivery_stage("same_child_prelude_reconciled");
         let invocation_context = crate::secret_delivery_authority_snapshot::retain_protected_secret_delivery_invocation_context_v1(
             verified_prelude.observation(),
             &self.startup_continuation,
@@ -938,13 +947,21 @@ impl SystemdExecutionCompletion {
             lane_name,
             run_plan,
         )
+        .inspect_err(|_| {
+            pressure_secret_delivery_stage("invocation_context_reconstruction_refused");
+        })
         .map_err(|error| error.to_string())?;
+        pressure_secret_delivery_stage("invocation_context_reconstructed");
         let pending_snapshot =
             crate::secret_delivery_authority_snapshot::issue_secret_delivery_authority_snapshot_v1(
                 &self.startup_continuation,
                 &invocation_context,
             )
+            .inspect_err(|_| {
+                pressure_secret_delivery_stage("authority_snapshot_issue_refused");
+            })
             .map_err(|error| error.to_string())?;
+        pressure_secret_delivery_stage("authority_snapshot_issued");
         #[cfg(feature = "secret-delivery-pressure")]
         {
             let payload =
@@ -3865,6 +3882,14 @@ impl LauncherSession {
         }
     }
 }
+
+#[cfg(feature = "secret-delivery-pressure")]
+fn pressure_secret_delivery_stage(stage: &'static str) {
+    eprintln!("ota: bounded pressure stage=secret_delivery_{stage}");
+}
+
+#[cfg(not(feature = "secret-delivery-pressure"))]
+fn pressure_secret_delivery_stage(_stage: &'static str) {}
 
 // Pressure-only wire-shape probe. It emits no request values or identities.
 #[cfg(feature = "secret-delivery-pressure")]
