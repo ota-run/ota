@@ -1792,23 +1792,25 @@ reach the required provider-free Core refusal. The old journal collapsed that fa
 `child_boundary_failed`, so it does not identify the failed same-child exchange and is not positive
 service-path evidence.
 
-Core run `34790066431`, protected Linux/X64 job `103812535677`, at exact Core
-`34fc618a9c7cce70be2cb52803d706375d651cbb`, Launcher
-`abb1ac26ac6b8cbcc1f039d57d9ae3e9f364633d`, and Protocol
+Core run `34791956966`, protected Linux/X64 job `103817737066`, at exact Core
+`5af6935a389fbc1995493103f40fb7842c485ac4`, Launcher
+`2a985176e6ad97890ca5088b346ed6ffe3d40cba`, and Protocol
 `2c46cb676ef6e0844312bd6a157adec7ccb54de1`, passed protected capability observation and
-endpoint verification. It then reached `authority_snapshot_request_received` but refused before
-the Launcher responder and before Core received a snapshot response or V2 binding. It did not
-reach the provider-free Core refusal, provider contact, or task execution.
+endpoint verification. It then reached `authority_snapshot_request_received` and
+`authority_snapshot_request_invalid`; it refused before the Launcher responder and before Core
+received a snapshot response or V2 binding. It did not reach the provider-free Core refusal,
+provider contact, or task execution.
 
-Launcher `2a985176e6ad97890ca5088b346ed6ffe3d40cba` independently reviewed and commits the
-pressure-only diagnostic refinement. It adds only the fixed
-`authority_snapshot_request_invalid` marker at the typed snapshot-request decode boundary; it
-does not log request data or alter refusal semantics. Core pins that exact Launcher revision. Next
-action: rebuild and reprovision the protected Linux/X64 host from the immutable revisions, then
-run the exact Core command once with a fresh authority request. The rerun must identify whether
-the request itself is invalid or advance to the retained responder, while preserving refusal
-before provider contact or task execution, terminal cleanup, and no leaked protected identity.
-Provider contact remains blocked until the hosted gate passes.
+Launcher `967dfd061d292425970da65b4481c0838463a5be` independently reviewed and commits the
+pressure-only diagnostic refinement. It retains the generic decode-refusal marker and adds one
+fixed closed-envelope category: not-object, missing root field, unknown root field, or
+nested/value-invalid. The clone and classification compile only with
+`systemd-pressure-faults`; default builds consume the protected request directly. Core pins that
+exact Launcher revision. Next action: rebuild and reprovision the protected Linux/X64 host from
+the immutable revisions, then run the exact Core command once with a fresh authority request. The
+rerun must identify the closed decode category or advance to the retained responder, while
+preserving refusal before provider contact or task execution, terminal cleanup, and no leaked
+protected identity. Provider contact remains blocked until the hosted gate passes.
 
 Do not touch the unrelated untracked `docs/pressure/agent-authority-signals.md` unless the user
 explicitly asks.
