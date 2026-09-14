@@ -94,6 +94,83 @@ fn protected_service_path_remains_provider_free_and_task_refusing() {
         retention
             .contains("os.fsencode(os.environ[\"DESTINATION\"]),\n              1,\n          )")
     );
+
+    let failure_retention = WORKFLOW
+        .split("      - name: Retain closed failure diagnostic for administrator retrieval")
+        .nth(1)
+        .expect("failure diagnostic retention step")
+        .split("      - name: Retain bounded evidence for administrator retrieval")
+        .next()
+        .expect("bounded failure diagnostic step");
+    assert!(failure_retention.starts_with("\n        if: ${{ failure() }}"));
+    assert!(failure_retention.contains("test -f \"$CLIENT_DIAGNOSTIC\""));
+    assert!(
+        failure_retention
+            .contains("install -m 0400 \"$CLIENT_DIAGNOSTIC\" \"$staging/client-diagnostic.json\"")
+    );
+    assert!(!failure_retention.contains("CLIENT_STDERR"));
+    assert!(!failure_retention.contains("CLIENT_PUBLIC_RESULT"));
+    assert!(failure_retention.contains("for name in (\"client-diagnostic.json\", \"SHA256SUMS\")"));
+    assert!(failure_retention.contains("renameat2 = ctypes.CDLL(None, use_errno=True).renameat2"));
+    assert!(
+        failure_retention
+            .contains("os.fsencode(os.environ[\"DESTINATION\"]),\n              1,\n          )")
+    );
+    let expected_markers = [
+        "capability_observation_issued",
+        "capability_observation_response_received",
+        "projection_verifier_load_refused",
+        "projection_verifier_loaded",
+        "same_child_prelude_reconciliation_refused",
+        "same_child_prelude_reconciled",
+        "invocation_context_reconstruction_refused",
+        "invocation_context_reconstructed",
+        "authority_snapshot_issue_refused",
+        "authority_snapshot_issued",
+    ];
+    let marker_block = command_step
+        .split("          stage_markers = [\n")
+        .nth(1)
+        .expect("diagnostic marker allowlist")
+        .split("          ]\n")
+        .next()
+        .expect("closed diagnostic marker allowlist");
+    let actual_markers = marker_block
+        .lines()
+        .map(|line| line.trim().trim_matches(',').trim_matches('"'))
+        .collect::<Vec<_>>();
+    assert_eq!(actual_markers, expected_markers);
+
+    let summary_block = command_step
+        .split("          summary = {\n")
+        .nth(1)
+        .expect("failure diagnostic summary")
+        .split("          diagnostic = Path(os.environ[\"CLIENT_DIAGNOSTIC\"])")
+        .next()
+        .expect("closed failure diagnostic summary");
+    let actual_summary_keys = summary_block
+        .lines()
+        .filter_map(|line| {
+            line.strip_prefix("              \"")
+                .and_then(|line| line.split_once("\":").map(|(key, _)| key))
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        actual_summary_keys,
+        [
+            "schema_version",
+            "record_kind",
+            "client_status",
+            "result_json_valid",
+            "expected_client_envelope",
+            "expected_terminal_envelope",
+            "stderr_available",
+            "stage_marker_counts",
+            "exact_snapshot_outbound_marker_count",
+            "expected_provider_free_refusal_count",
+            "identity_pattern_absent",
+        ]
+    );
     let file_loop = retention.find("for name in (").expect("file fsync loop");
     let file_sync = retention[file_loop..]
         .find("os.fsync(descriptor)")
