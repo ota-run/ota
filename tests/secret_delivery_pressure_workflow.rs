@@ -83,7 +83,7 @@ fn protected_service_path_remains_provider_free_and_task_refusing() {
     assert!(!command_step.contains(
         "grep -F \\\n            'selected secret requirements reached the verified same-child"
     ));
-    assert!(command_step.contains("if line not in allowed_binding_v2_lines"));
+    assert!(command_step.contains("line = line.replace(allowed_line, \"\")"));
     assert!(command_step.contains("\"$CLIENT_RESULT\" \"$CLIENT_PRIVACY_STDERR\"; then"));
     assert!(!command_step.contains("\"$CLIENT_RESULT\" \"$CLIENT_STDERR\"; then"));
     let retention = WORKFLOW
