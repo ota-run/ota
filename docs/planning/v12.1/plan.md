@@ -1025,7 +1025,8 @@ verified.
 
 That checkpoint must expose no `send`, `call`, socket, connector, or provider-response path. Its
 tests must poison proxy, custom-CA, netrc, client-certificate, and generic HTTP configuration
-inputs; substitute candidate, V2 binding, endpoint observation, URL, post-acquisition bearer owner,
+inputs; substitute candidate, V3 binding or its transport-dependency record identity, endpoint
+observation, URL, post-acquisition bearer owner,
 audience, target, and realization/invocation identities; and prove refusal or unchanged fixed
 transport posture. The opaque capability
 must not be cloneable, serializable, printable, reusable after consumption, or constructible from a
@@ -1101,9 +1102,12 @@ The checkpoint may add only:
   merely being self-consistent;
 - one explicit mandatory `transport_dependency_record_identity` field in the named adapter's
   `AdapterImplementationSubjectInput`, resolved implementation subject, and implementation-subject
-  identity payload. The same exact field must be retained through the protected binding bundle,
-  invocation binding/realization, authority snapshot, reconstructed candidate, same-child V2
-  transaction, consumed provider capability, and prepared transport. Before installation, the
+  identity payload. The signed protected binding-bundle payload must retain the complete expected
+  `SecretDeliveryTransportDependencyFeatureGraphV1`, complete expected
+  `SecretDeliveryTransportDependencyRecordV1`, and the same record identity; an identity-only
+  protected expectation is insufficient. The same exact identity must be retained through the
+  invocation binding/realization, authority snapshot, reconstructed candidate, additive same-child
+  V3 transaction, consumed provider capability, and prepared transport. Before installation, the
   administrator independently derives the graph and record from the exact reviewed source tree,
   lock bytes, target, and feature selection rather than copying the artifact's embedded claim,
   reconciles them with the artifact-embedded graph and record, and retains the expected closed
@@ -1113,6 +1117,41 @@ The checkpoint may add only:
   configuration. Missing, duplicate, malformed, source/checksum, node, edge, package, version,
   feature, lock-byte, target, subject, carrier, or artifact substitution refuses. Repository,
   workflow, environment, caller, CLI, or response values cannot supply or override either side;
+- one additive `ProtectedLauncherSecretDeliveryTransactionBindingRequestV3`,
+  `ProtectedLauncherSecretDeliveryTransactionBindingV3`, and
+  `ProtectedLauncherSecretDeliveryTransactionBindingResponseV3`. Released V2 records, message
+  kinds, identity domains, and reconciliation remain immutable. The V3 request has exactly
+  `schema_version: 3`, its fixed message kind, `identity`, `launcher_request_identity`,
+  `observation`, `secret_transaction_candidate_identity`, `startup_continuation_identity`,
+  `session_identity`, `same_child_capability_prelude_identity`, `protected_snapshot_identity`, and
+  mandatory `transport_dependency_record_identity`. The V3 binding has exactly
+  `schema_version: 3`, its fixed message kind, `identity`, `request_identity`,
+  `launcher_request_identity`, `startup_continuation_identity`, `session_identity`,
+  `same_child_capability_prelude_identity`, `protected_snapshot_identity`,
+  `protected_capability_identity`, `secret_transaction_candidate_identity`,
+  `observation_request_identity`, `projection_identity`, `verifier_identity`,
+  `installation_evidence_identity`, `expires_at_unix_seconds`, and the same mandatory
+  `transport_dependency_record_identity`. The V3 response has exactly `schema_version: 3`, its
+  fixed message kind, `request_identity`, `same_child_capability_prelude_identity`,
+  `protected_snapshot_identity`, the V3 `binding`, and `projection`. Like V2, the response has no
+  independent identity field or identity domain: reconciliation binds its complete closed content
+  to the retained request and recomputes the nested binding and projection identities. It does not
+  duplicate an independently mutable transport-dependency identity. The new message kinds are
+  `protected_launcher_secret_delivery_transaction_binding_request_v3`,
+  `protected_launcher_secret_delivery_transaction_binding_v3`, and
+  `protected_launcher_secret_delivery_transaction_binding_response_v3`; request and binding
+  identities use the new domains
+  `ota.protected-launcher-secret-delivery-transaction-binding-request.v3\0` and
+  `ota.protected-launcher-secret-delivery-transaction-binding.v3\0`. Request and binding identities
+  use exact JCS over every field except their own `identity`, including
+  `transport_dependency_record_identity`. Core derives the request field only from its semantically
+  reconstructed candidate. Launcher accepts no caller, workflow,
+  environment, CLI, or repository override, validates canonical SHA-256 shape, and copies the exact
+  request identity into the binding after the existing same-child, snapshot, capability,
+  projection, verifier, installation, and expiry checks succeed. Core refuses missing, malformed,
+  V2-fallback, request/binding mismatch, signed-bundle mismatch, embedded-record mismatch, or replay
+  before transport construction. V3 creates no provider authority and cannot authorize dispatch by
+  itself;
 - one crate-private, non-default-feature dispatch owner that consumes
   `PreparedSecretDeliveryProviderTransportV1` by value. It must have no constructor from a plain
   URL, bearer, request, configuration, candidate, or binding record and must expose no reusable
@@ -1143,7 +1182,8 @@ Immediately before constructing the Agent and again before dispatch, Core must r
 transport configuration and exact request against the consumed preparation truth. It must refuse
 any changed method, scheme, host, port, path, existing query, duplicate or missing audience,
 userinfo, fragment, bearer owner, operation identity, endpoint observation, runner version,
-candidate, V2 binding, transport feature graph, or lockfile identity. A failure before dispatch
+candidate, V3 binding, V3 transport-dependency record identity, transport feature graph, or
+lockfile identity. A failure before dispatch
 records zero Core dispatch invocations. There is no Core retry, redirect, origin fallback,
 connection-pool reuse, or second dispatch. The fresh Agent and request are dropped after that one
 terminal invocation. This does not claim independent observation of every lower-layer packet or
@@ -1164,7 +1204,7 @@ Tests must lock consumption and non-reuse of the prepared transport, exact reque
 single-dispatch behavior, dependency-record and implementation-subject reconciliation, response
 bounds, status and media-type refusal, protected-buffer cleanup, redaction, zero durable output,
 and unchanged fixed posture under poisoned proxy, custom-CA, netrc, client-certificate, and generic
-HTTP inputs. The exact protected Linux/X64 workflow must run under the retained same-child V2
+HTTP inputs. The exact protected Linux/X64 workflow must run under the retained additive same-child V3
 service path with `id-token: write`. The selected Core child therefore already exists in its
 blocked startup/session state; the gate must never release its startup continuation or begin the
 selected workload/recipient command. Every pre-dispatch substitution must retain zero Core

@@ -1791,7 +1791,7 @@ The separate Step 7 provider-contact slice amendment is committed at
 `bcc4090bb038211568319749fb6e08c6b60470f4`. It
 binds the first transaction to one administrator-controlled non-production Google installation,
 the dedicated manual provider-pressure workflow, its administrator-bound exact workflow revision,
-the exact same-child V2 transaction, closed OIDC, STS, service-account-token, numeric Secret Manager
+the exact same-child transaction, closed OIDC, STS, service-account-token, numeric Secret Manager
 version, recipient-only injection, interruption, cleanup, privacy, and no-replay boundaries. A
 pressure-only protected HMAC verifier owns expected synthetic-canary truth without storing the
 canary value or creating public secret-derived correlation. Concrete provider references and private
@@ -1828,9 +1828,16 @@ prepared transport. It rejects a non-normal root edge, noncanonical target expre
 substitution, and inconsistent local carriers. It does not yet bind the record into the separately
 administered Protocol/Launcher installation or prove cross-process agreement.
 
-Next action: extend the active Step 7 Protocol and Launcher installation/transaction boundary with
-this exact transport-dependency record identity, then independently review the resulting
-cross-process reconciliation before enabling the already-planned GitHub OIDC-only `GET` checkpoint.
+The active Step 7 plan now proposes an additive V3 transaction exchange because released V2 wire
+records are immutable. The signed administrator-owned binding bundle must carry the complete
+expected dependency graph and record; Core must rederive both and reconcile their record identity
+through the V3 request/binding, candidate, consumed capability, and prepared transport. Protocol
+and Launcher remain relays for the identity and do not interpret Cargo graph semantics.
+
+Next action: independently review and correct the V3 amendment before implementation. After that,
+implement Protocol first, pin its immutable revision in Core and Launcher, then implement the
+protected Launcher relay and Core reconciliation before enabling the already-planned GitHub
+OIDC-only `GET` checkpoint.
 That later checkpoint may make one fixed request-service call and retain one opaque, unadmitted JWT
 buffer only; it still excludes retries, redirects, JWT claim admission, Google STS, IAM Credentials,
 Secret Manager, materialization, injection, positive evidence, Step 8, and V12.2. Site, Skills,
