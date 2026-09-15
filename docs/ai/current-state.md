@@ -1818,27 +1818,24 @@ fresh-second-V2 ownership regression, locked all-target/all-feature compilation,
 diff checks passed; MUSE reported no P1/P2/P3 finding. Repository-wide strict Clippy remains red on
 the pre-existing broad baseline outside this slice.
 
-The proposed GitHub OIDC network-call checkpoint is now specified in the V12.1 plan and remains
-inactive pending independent review and commit. It would consume the prepared transport by value,
-construct one fresh fixed `ureq` Agent, make exactly one request-service `GET`, and retain only one
-opaque, structurally valid but unadmitted JWT buffer. It permits no caller transport, retry,
-redirect, fallback, second request, durable token output, JWT claim admission, Google request, or
-selected workload/recipient command. The existing selected Core child remains blocked on its
-same-child startup/session boundary until terminal refusal and cleanup. The amendment assigns the
-exact lock bytes and normalized `ureq` dependency-feature graph to one closed build-owned record,
-binds it into the implementation subject and administrator installation evidence, requires all
-response/JWT temporaries to use zeroizing protected buffers, and limits request-count posture to a
-non-authoritative Core dispatch-owner counter with provider/lower-layer cardinality explicitly
-`not_proved`. Its exact protected Linux/X64 pressure must prove zero Core dispatch invocations on
-every pre-dispatch substitution, one invocation on success, no credential leakage, no workload
-release, and terminal child/cgroup/scope cleanup.
+The build-owned transport-dependency foundation is committed at Core `cd8e2433`. It derives one
+closed record from locked Cargo metadata for `x86_64-unknown-linux-gnu` with
+`secret-delivery-pressure`, binding the exact raw `Cargo.lock` bytes, normalized `ureq` closure,
+features, source/checksum nodes, normal/build edges, and canonical target expressions. Core
+reconciles that identity through the implementation subject, invocation binding, protected
+authority payload, transaction candidate, provider operation plan, consumed V2 capability, and
+prepared transport. It rejects a non-normal root edge, noncanonical target expression, graph/lock
+substitution, and inconsistent local carriers. It does not yet bind the record into the separately
+administered Protocol/Launcher installation or prove cross-process agreement.
 
-Next action: independently review and correct that proposed GitHub OIDC-only amendment before
-implementation. Live Google provider pressure, local JWT claim admission, Google STS, IAM
-Credentials, Secret Manager access, materialization, injection, positive evidence, Step 8, and
-V12.2 remain unauthorized. Site, Skills, Examples, Learn, FAQ, Glossary, contract schema, and
-public JSON remain unaffected because this planning-only internal checkpoint adds no shipped
-operator workflow, vocabulary, or capability claim.
+Next action: extend the active Step 7 Protocol and Launcher installation/transaction boundary with
+this exact transport-dependency record identity, then independently review the resulting
+cross-process reconciliation before enabling the already-planned GitHub OIDC-only `GET` checkpoint.
+That later checkpoint may make one fixed request-service call and retain one opaque, unadmitted JWT
+buffer only; it still excludes retries, redirects, JWT claim admission, Google STS, IAM Credentials,
+Secret Manager, materialization, injection, positive evidence, Step 8, and V12.2. Site, Skills,
+Examples, Learn, FAQ, Glossary, contract schema, and public JSON remain unaffected because this is
+an internal trust-boundary foundation with no operator workflow, vocabulary, or capability claim.
 
 Do not touch the unrelated untracked `docs/pressure/agent-authority-signals.md` unless the user
 explicitly asks.
