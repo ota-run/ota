@@ -24,6 +24,18 @@
 
 # Lessons
 
+## 2026-09-15
+
+- Pattern: A design-partner pressure pass exposed reusable Ota widening opportunities, but they
+  were neither surfaced to Bobai when discovered nor recorded before work moved on.
+- Correction: At the first credible Ota-owned gap, state it immediately with its category,
+  impact, current boundary, and whether it blocks the partner artifact. Before any pressure
+  closeout or partner follow-up, record every confirmed gap in an Ota-owned discovery or planning
+  record with an owner, `not_proved` limit, and return trigger.
+- Rule: Every design-partner response and pressure pass must end with either `no Ota gap exposed`
+  or a named, tracked Ota gap. Never defer that classification to a later summary or rely on
+  memory to revisit it.
+
 ## 2026-09-07
 
 - Pattern: Design-partner qualification was narrowed to failures Ota could already prove, causing
