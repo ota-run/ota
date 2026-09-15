@@ -1818,13 +1818,27 @@ fresh-second-V2 ownership regression, locked all-target/all-feature compilation,
 diff checks passed; MUSE reported no P1/P2/P3 finding. Repository-wide strict Clippy remains red on
 the pre-existing broad baseline outside this slice.
 
-Next action: define and independently review the explicit GitHub OIDC network-call gate before
-implementation. That gate must prove the exact locked transport feature graph and protected
-Linux/X64 path before one request can be made to GitHub's token service. Live provider pressure,
-Google STS, IAM Credentials, Secret Manager access, materialization, injection, positive evidence,
-Step 8, and V12.2 remain unauthorized. Site, Skills, Examples, Learn, FAQ, Glossary, contract
-schema, and public JSON remain unaffected because this crate-private network-disabled checkpoint
-adds no shipped operator workflow, vocabulary, or capability claim.
+The proposed GitHub OIDC network-call checkpoint is now specified in the V12.1 plan and remains
+inactive pending independent review and commit. It would consume the prepared transport by value,
+construct one fresh fixed `ureq` Agent, make exactly one request-service `GET`, and retain only one
+opaque, structurally valid but unadmitted JWT buffer. It permits no caller transport, retry,
+redirect, fallback, second request, durable token output, JWT claim admission, Google request, or
+selected workload/recipient command. The existing selected Core child remains blocked on its
+same-child startup/session boundary until terminal refusal and cleanup. The amendment assigns the
+exact lock bytes and normalized `ureq` dependency-feature graph to one closed build-owned record,
+binds it into the implementation subject and administrator installation evidence, requires all
+response/JWT temporaries to use zeroizing protected buffers, and limits request-count posture to a
+non-authoritative Core dispatch-owner counter with provider/lower-layer cardinality explicitly
+`not_proved`. Its exact protected Linux/X64 pressure must prove zero Core dispatch invocations on
+every pre-dispatch substitution, one invocation on success, no credential leakage, no workload
+release, and terminal child/cgroup/scope cleanup.
+
+Next action: independently review and correct that proposed GitHub OIDC-only amendment before
+implementation. Live Google provider pressure, local JWT claim admission, Google STS, IAM
+Credentials, Secret Manager access, materialization, injection, positive evidence, Step 8, and
+V12.2 remain unauthorized. Site, Skills, Examples, Learn, FAQ, Glossary, contract schema, and
+public JSON remain unaffected because this planning-only internal checkpoint adds no shipped
+operator workflow, vocabulary, or capability claim.
 
 Do not touch the unrelated untracked `docs/pressure/agent-authority-signals.md` unless the user
 explicitly asks.

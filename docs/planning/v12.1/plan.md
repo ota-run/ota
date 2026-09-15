@@ -1038,13 +1038,147 @@ owner, endpoint and operation reconciliation, and fixed network-disabled `ureq =
 authorized above. It exposes no request send/call, socket, connector, provider response,
 materialization, delivery, execution, or public-output route.
 
-Only a later explicit network-call gate may invoke the GitHub request service. That later gate must
-reconcile the exact transport feature graph and lockfile, prove that
-its final configured agent retains and uses neither environment proxies nor host trust state, and
-add the exact Linux
-protected-path pressure before it can contact Google STS. Google STS, IAM Credentials, Secret
-Manager, materialization, injection, and positive evidence remain unauthorized through the
-transport-preparation checkpoint.
+### GitHub OIDC Network-Call Checkpoint
+
+The next proposed checkpoint may contact only GitHub's Actions OIDC request service. It remains
+inactive until this amendment is independently reviewed and committed. It does not authorize JWT
+claim admission, Google STS, IAM Credentials, Secret Manager, materialization, injection, release
+of the startup continuation, beginning the selected workload/recipient command, positive evidence,
+Step 8, or V12.2.
+
+The checkpoint may add only:
+
+- one closed build-owned `SecretDeliveryTransportDependencyFeatureGraphV1`. The reviewed build
+  owner derives it from
+  `cargo metadata --locked --format-version 1 --filter-platform x86_64-unknown-linux-gnu --features secret-delivery-pressure`
+  against the exact source tree and lock bytes, plus the sorted exact output of
+  `rustc --print cfg --target x86_64-unknown-linux-gnu` for target-expression evaluation. Its exact
+  fields are `schema_version: 1`, fixed
+  `kind: secret_delivery_transport_dependency_feature_graph`, `target_triple`, sorted unique
+  `target_cfg`, `root_package_name`, `root_package_version`, sorted unique
+  `selected_core_features`, fixed `root_dependency_alias: ureq`,
+  `root_dependency_node_identity`, canonical `nodes`, canonical directed activated `edges`, and
+  `feature_graph_identity`. The root is `ota` at the package version in the reviewed source.
+  Traversal begins at the root's one applicable normal dependency-kind entry whose dependency alias
+  is `ureq`, then includes the complete applicable non-dev normal/build transitive closure.
+
+  `SecretDeliveryTransportDependencyNodeV1` has exactly `schema_version: 1`, fixed
+  `kind: secret_delivery_transport_dependency_node`, package `name`, `version`, `source`,
+  `checksum`, sorted unique `enabled_features`, and `node_identity`. It never uses Cargo's opaque
+  PackageId as identity input. `source` is the exact Cargo metadata source string or JSON `null`
+  when absent; `checksum` is the exact lowercase registry checksum or JSON `null` when absent.
+  JCS over every node field except `node_identity`, prefixed by
+  `ota.secret-delivery-transport-dependency-node.v1\0`, derives the canonical package key used by
+  the graph. Distinct Cargo PackageIds that project to one node tuple are ambiguous and refuse.
+
+  `SecretDeliveryTransportDependencyEdgeV1` has exactly `schema_version: 1`, fixed
+  `kind: secret_delivery_transport_dependency_edge`, `from_node_identity`, `to_node_identity`,
+  `dependency_alias`, canonical `dependency_kind` equal to `normal` or `build`,
+  `target_expression`, and `edge_identity`. Each applicable Cargo `dep_kinds[]` member becomes one
+  separate edge; a missing Cargo kind canonicalizes to `normal`. `dev` entries are excluded by the
+  named non-dev build graph before traversal and never create nodes or edges unless the same package
+  is independently reachable through an applicable normal/build entry. A missing target is JSON
+  `null`. A present target must parse with Cargo's platform-expression grammar, evaluate true
+  against the exact target triple and retained `target_cfg`, and serialize through that grammar's
+  canonical Display form; the exact displayed UTF-8 string becomes `target_expression`. Parse
+  failure, non-round-trip display, or a false expression refuses. JCS over every edge field except `edge_identity`,
+  prefixed by `ota.secret-delivery-transport-dependency-edge.v1\0`, derives the edge identity.
+
+  Nodes sort by `node_identity`; edges sort by `edge_identity`; every identity must be unique; every
+  edge endpoint and `root_dependency_node_identity` must name exactly one retained node. Missing,
+  ambiguous, path-substituted, unresolved, duplicate, non-applicable, or dangling graph entries
+  refuse rather than being normalized away. JCS over every graph field except
+  `feature_graph_identity`, prefixed by
+  `ota.secret-delivery-transport-dependency-feature-graph.v1\0`, derives that identity;
+- one closed build-owned `SecretDeliveryTransportDependencyRecordV1` with exact fields
+  `schema_version: 1`, fixed `kind: secret_delivery_transport_dependencies`,
+  `cargo_lock_identity`, `feature_graph_identity`, target triple, root package name and version,
+  sorted unique selected Core features, and `record_identity`. SHA-256 over the exact unmodified
+  `Cargo.lock` bytes prefixed by `ota.secret-delivery-transport-cargo-lock.v1\0` derives the lock
+  identity. JCS over every record field except `record_identity`, prefixed by
+  `ota.secret-delivery-transport-dependencies.v1\0`, derives the record identity. The record's
+  target, root, selected features, and feature-graph identity must equal the graph rather than
+  merely being self-consistent;
+- one explicit mandatory `transport_dependency_record_identity` field in the named adapter's
+  `AdapterImplementationSubjectInput`, resolved implementation subject, and implementation-subject
+  identity payload. The same exact field must be retained through the protected binding bundle,
+  invocation binding/realization, authority snapshot, reconstructed candidate, same-child V2
+  transaction, consumed provider capability, and prepared transport. Before installation, the
+  administrator independently derives the graph and record from the exact reviewed source tree,
+  lock bytes, target, and feature selection rather than copying the artifact's embedded claim,
+  reconciles them with the artifact-embedded graph and record, and retains the expected closed
+  records plus identities in administrator installation evidence. Dispatch rederives the embedded
+  graph and record and reconciles them against that protected expected record, every retained
+  carrier, the implementation subject, source/build/artifact identity, and the prepared
+  configuration. Missing, duplicate, malformed, source/checksum, node, edge, package, version,
+  feature, lock-byte, target, subject, carrier, or artifact substitution refuses. Repository,
+  workflow, environment, caller, CLI, or response values cannot supply or override either side;
+- one crate-private, non-default-feature dispatch owner that consumes
+  `PreparedSecretDeliveryProviderTransportV1` by value. It must have no constructor from a plain
+  URL, bearer, request, configuration, candidate, or binding record and must expose no reusable
+  transport, credential, or response accessor;
+- one fresh `ureq = 3.4.2` Agent constructed from the retained verified configuration immediately
+  before dispatch. No caller Agent, connector, resolver, proxy, TLS configuration, trust root,
+  cookie store, redirect policy, retry policy, middleware, or response reader is accepted;
+- one exact `GET` request derived inside that owner from the retained endpoint profile, endpoint
+  input, endpoint observation, and protected operation. It preserves only the admitted existing
+  query, appends exactly one percent-encoded `audience` equal to the protected WIF provider URL,
+  sends exactly one `Authorization: bearer ...` header, and sends no body, cookie, client
+  certificate, or additional credential-bearing header; and
+- one opaque `RetainedUnadmittedGithubOidcJwtV1` containing only the bounded response JWT bytes.
+  Its Debug output is redacted, it is not cloneable, serializable, printable, or durably writable,
+  and its owned bytes are best-effort zeroized on drop. The raw bounded response body, parser-owned
+  JSON value, and transfer into this owner must each use protected owned buffers that zeroize on
+  success and every refusal path; parsing must leave no additional retained String or byte copy.
+  Only a separately reviewed later claim-reconciliation checkpoint may consume the final owner;
+  and
+- one internal `GithubOidcDispatchAttemptStateV1` owned solely by the dispatch function. Its closed
+  terminal state records Core dispatch invocations with cardinality `0` or `1` and outcome
+  `not_attempted`, `response_received`, or `transport_refused`. Any pressure projection is a
+  separately derived non-secret Core-observed posture carrying only that cardinality and outcome;
+  it is not provider-attested request evidence and provider-side or lower-layer request cardinality
+  remains `not_proved`.
+
+Immediately before constructing the Agent and again before dispatch, Core must re-verify the fixed
+transport configuration and exact request against the consumed preparation truth. It must refuse
+any changed method, scheme, host, port, path, existing query, duplicate or missing audience,
+userinfo, fragment, bearer owner, operation identity, endpoint observation, runner version,
+candidate, V2 binding, transport feature graph, or lockfile identity. A failure before dispatch
+records zero Core dispatch invocations. There is no Core retry, redirect, origin fallback,
+connection-pool reuse, or second dispatch. The fresh Agent and request are dropped after that one
+terminal invocation. This does not claim independent observation of every lower-layer packet or
+provider-side request count.
+
+The response boundary accepts only HTTP `200` and a media type whose essence is
+`application/json`, with at most an optional UTF-8 charset parameter. Core reads at most
+`MAX_OIDC_RESPONSE_BYTES + 1`, refuses overflow before parsing, and uses the existing closed
+`{"value":"..."}` parser and compact-JWT structural check. Non-200 status, redirect, missing or
+unsupported content type, malformed or additional JSON fields, empty or oversized body, read
+failure, timeout, and structurally invalid JWT all terminally refuse. Response headers, body, JWT,
+bearer, URL, and transport errors must not enter arguments, logs, diagnostics, receipts, archives,
+public JSON, or retained artifacts. This checkpoint calls the returned token structurally valid and
+unadmitted only; it does not claim issuer, audience, claims, signature, freshness, Google
+acceptance, or execution authority.
+
+Tests must lock consumption and non-reuse of the prepared transport, exact request construction,
+single-dispatch behavior, dependency-record and implementation-subject reconciliation, response
+bounds, status and media-type refusal, protected-buffer cleanup, redaction, zero durable output,
+and unchanged fixed posture under poisoned proxy, custom-CA, netrc, client-certificate, and generic
+HTTP inputs. The exact protected Linux/X64 workflow must run under the retained same-child V2
+service path with `id-token: write`. The selected Core child therefore already exists in its
+blocked startup/session state; the gate must never release its startup continuation or begin the
+selected workload/recipient command. Every pre-dispatch substitution must retain zero Core
+dispatch invocations, while success invokes the dispatch owner exactly once and receives one
+successful GitHub response. The public pressure posture may retain only the closed non-secret Core
+counter/outcome and must state that provider and lower-layer cardinality are not proved. Every
+terminal path must reap the existing child and complete cgroup, scope, and active-slot cleanup. The
+workflow must use synthetic authority, no repository secret or service-account key, and preserve
+no JWT or runner bearer. A hosted pass proves only the bounded GitHub request-service call on that
+exact revision and runner; it does not authorize or prove Google provider contact.
+
+Only after that checkpoint is implemented, independently reviewed, committed, and passes the exact
+protected Linux/X64 gate may a separate amendment authorize local JWT claim reconciliation. Google
+STS and every later operation remain blocked until that subsequent checkpoint also closes.
 
 The provider client uses a closed transport profile bound into the new profile and implementation-
 subject identities. It performs direct TLS with build-pinned public Web PKI roots and exact DNS/TLS
