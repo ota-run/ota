@@ -784,7 +784,7 @@ fn validate_claim_values(
     validate_canonical_label(&claims[&GithubOidcClaim::EventName], "OIDC event name")
 }
 
-fn validate_google_tuple(
+pub(crate) fn validate_google_tuple(
     input: &SecretDeliveryInvocationBindingInput,
 ) -> Result<(), SecretProviderProfileError> {
     for (value, field) in [

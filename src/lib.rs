@@ -70,6 +70,7 @@ pub(crate) mod secret_delivery_evaluation;
 pub(crate) mod secret_delivery_oidc_endpoint;
 #[cfg(feature = "secret-delivery-pressure")]
 pub mod secret_delivery_pressure_fixture;
+pub(crate) mod secret_delivery_provider_client;
 pub(crate) mod secret_delivery_transaction;
 pub(crate) mod secret_delivery_transaction_binding;
 pub(crate) mod secret_provider_bindings;

@@ -1787,21 +1787,28 @@ No real GitHub OIDC token request was made. Provider contact remains `not_instru
 STS/WIF, Secret Manager access, materialization, process-environment injection, positive provider
 evidence, Step 8, and V12.2 remain unproved and inactive.
 
-The separate Step 7 provider-contact slice amendment is proposed locally in the V12.1 plan. It
+The separate Step 7 provider-contact slice amendment is committed at
+`bcc4090bb038211568319749fb6e08c6b60470f4`. It
 binds the first transaction to one administrator-controlled non-production Google installation,
 the dedicated manual provider-pressure workflow, its administrator-bound exact workflow revision,
 the exact same-child V2 transaction, closed OIDC, STS, service-account-token, numeric Secret Manager
 version, recipient-only injection, interruption, cleanup, privacy, and no-replay boundaries. A
 pressure-only protected HMAC verifier owns expected synthetic-canary truth without storing the
 canary value or creating public secret-derived correlation. Concrete provider references and private
-identities remain protected and are not copied into public planning or workflow input. The proposal
-activates nothing and authorizes no network or provider contact until independently reviewed and
-committed.
+identities remain protected and are not copied into public planning or workflow input.
 
-Next action: independently review and correct that proposed amendment, then commit it before any
-provider-client implementation. Site, Skills, Examples, Learn, FAQ, Glossary, contract schema, and
-public JSON remain unaffected by this planning-only proposal because it adds no shipped operator
-workflow, vocabulary, or capability claim.
+The first implementation batch is now local and stops at a crate-private, network-disabled provider
+client model. It derives exact OIDC, STS, IAM Credentials, and numeric Secret Manager operation
+targets from semantically verified candidate truth; constructs only protected in-memory request
+bytes; and parses bounded closed response shapes with exact token types, lifetimes, resource names,
+canonical encodings, and CRC32C reconciliation. It has no environment, filesystem, socket,
+HTTP-client, V2-consumption, materialization, injection, execution, or public-output consumer.
+
+Next action: independently review and correct that network-disabled model before commit. Network
+enablement, live provider pressure, materialization, injection, positive evidence, Step 8, and V12.2
+remain unauthorized. Site, Skills, Examples, Learn, FAQ, Glossary, contract schema, and public JSON
+remain unaffected because this internal foundation adds no shipped operator workflow, vocabulary,
+or capability claim.
 
 Do not touch the unrelated untracked `docs/pressure/agent-authority-signals.md` unless the user
 explicitly asks.
