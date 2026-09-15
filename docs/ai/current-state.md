@@ -254,11 +254,11 @@ durable agent workflow belongs in the canonical Ota skill.
   or Attestor signing. It does not prove production Core-to-Launcher observation transport, public
   projection reconciliation, production observation-service or accepted-session provenance, OIDC,
   provider contact, secret materialization or delivery, positive provider evidence, or general
-  governance. The endpoint profile and semantic observation verifier remain crate-private. Provider
-  contact stays blocked on the exact protected Linux/X64 compatibility gate: the raw capability
-  identity must remain in the protected launcher transaction, while the workflow must verify one
-  exact signed, closed public observation projection against a fresh canonical one-use public
-  challenge and refuse replay, substitution, duplication, staleness, or signature/schema mismatch.
+  governance. The endpoint profile and semantic observation verifier remain crate-private. The
+  subsequently closed protected Linux/X64 compatibility gate required the raw capability identity
+  to remain in the protected launcher transaction while the workflow verified one exact signed,
+  closed public observation projection against a fresh canonical one-use public challenge and
+  required refusal on replay, substitution, duplication, staleness, or signature/schema mismatch.
   Core must load the matching projection verification key only from the fixed administrator-owned
   verifier record reconciled with protected installation evidence; it cannot trust a workflow- or
   projection-supplied key. Root launcher state owns atomic challenge reservation and consumption;
@@ -377,23 +377,24 @@ durable agent workflow belongs in the canonical Ota skill.
   release compilation and regression suites, first-party synchronization, and independent review.
   No Site, Skills, Examples, Learn, FAQ, Glossary, contract-schema, or public-JSON propagation is
   required because the bridge remains crate-private and provider-free.
-  The independently reviewed same-child correction is now committed across all three private
-  owners. Protocol `2c46cb676ef6e0844312bd6a157adec7ccb54de1` binds the closed private
-  observation prelude into the snapshot-bound V2 transaction records and one-use reconciliation.
-  Launcher `d95f895a58138be1aa713fbbf411dc0f07d927e2` derives that prelude from the exact
-  selected child's retained observation and relays the observation, protected snapshot, and V2
-  response in order on one inherited startup-bound session. Core
-  `c125d79eb7fcd1b66e2487d5482d815878182bb1` independently reloads
-  verifier authority, reconciles the same-child prelude, reconstructs the Step 1-6 candidate from
-  the protected snapshot, and retains the exact V2 binding as an unconsumed one-use guard. The
-  command path admits only the systemd V4 broker carrier, refuses unsupported carriers before
-  authority consumption, and remains terminally provider-free even after successful V2
-  reconciliation. Focused regressions prove exact-one V4 activation, secret-refusal precedence,
-  no task start, and the single-session observation/prelude/snapshot/V2 order. Local formatting,
-  release and Linux/X64 cross-compilation, 124 JSON conformance tests, first-party synchronization,
-  and independent review passed. Hosted protected Linux/X64 service-path execution remains the
-  next proof gate. Until it passes, no real GitHub OIDC request, Google provider contact,
-  materialization, injection, positive evidence, Step 8, or V12.2 capability is activated.
+  The independently reviewed provider-free same-child bridge is now proved through the exact
+  protected Linux/X64 service path. Protocol
+  `2c46cb676ef6e0844312bd6a157adec7ccb54de1`, Launcher
+  `a00f0e1ebd0ba886015a1aa32216ad30b56dcd9a`, and Core
+  `c071fed09ffe42d4ac00979d16dff0967ad208aa` bind one selected child's signed observation,
+  protected snapshot, reconstructed Step 1-6 candidate, and one-use V2 transaction on the same
+  inherited startup session. Core run
+  [34933139633](https://github.com/ota-run/ota/actions/runs/34933139633), protected job
+  `104265387910`, passed that full provider-free route. It executed exactly one ignored Linux
+  capability regression; reconciled one observation, prelude, snapshot, and V2 response; recorded
+  zero protocol mismatch/refusal counters; refused exactly once at the expected provider-free
+  boundary; did not start the selected task; retained no protected capability identity in public
+  output; and completed child reap, scope removal, cgroup cleanup, and active-slot removal. The
+  separate Toolkit job `104265370625` proved only that pinned Toolkit code used its supplied
+  loopback request URL with no OIDC capability at action start. The administrator-retained VPS
+  bundle passed its checksum manifest but is not a publicly durable GitHub artifact. No real GitHub
+  OIDC token request, provider contact, Google STS/WIF or Secret Manager operation,
+  materialization, injection, positive provider evidence, Step 8, or V12.2 capability is activated.
 - Vinicius' independent v1.6.27 source review confirmed that negative-control projection
   reconciliation is live on runtime proof, emitted-archive verification, and Doctor archive
   loading. It also exposed a narrower adversarial-test gap: the existing digest mutation was
@@ -1755,69 +1756,41 @@ and Examples worktrees before editing.
 The sole active implementation version is V12.1, Step 7. The protected Linux/X64 capability and
 endpoint compatibility gate is closed by the exact retained runs and artifacts recorded above.
 Those runs prove bounded protected capability derivation, signed public projection reconciliation,
-selected execution, and terminal cleanup. They do not prove a real GitHub OIDC request, Google
-provider contact, secret materialization, process-environment injection, positive provider
-evidence, Step 8, V12.2, or general agent/repository governance.
+selected execution-path admission, and terminal cleanup. They do not prove a real GitHub OIDC
+request, Google provider contact, secret materialization, process-environment injection, positive
+provider evidence, Step 8, V12.2, or general agent/repository governance.
 
-The provider-free same-child transaction bridge is committed and independently reviewed. Protocol
+The provider-free same-child transaction bridge is committed, independently reviewed, and now
+proved through the exact protected Linux/X64 service path. Protocol
 `2c46cb676ef6e0844312bd6a157adec7ccb54de1`, Launcher
-`103738177d5196216343ad015c5c32cb9e5de8da`, and Core
-`c125d79eb7fcd1b66e2487d5482d815878182bb1` bind one exact selected-child observation and private
-prelude to the protected authority snapshot, reconstructed Step 1-6 candidate, and snapshot-bound
-V2 transaction on the inherited startup session. Subsequent Core hardening culminated in
-`1ef3242f8fbb8a01121f817979a18d0f42a448c6`, which retains a protected refusal before provider
-contact or task execution. Unsupported carriers refuse before broker authority consumption. Site,
-Skills, Examples, Learn, FAQ, Glossary, contract schema, and public JSON remain unaffected because
-this is a crate-private provider-free boundary with no new operator workflow, vocabulary, or
-capability claim.
+`a00f0e1ebd0ba886015a1aa32216ad30b56dcd9a`, and Core
+`c071fed09ffe42d4ac00979d16dff0967ad208aa` bind one selected child's signed observation,
+protected authority snapshot, reconstructed Step 1-6 candidate, and one-use snapshot-bound V2
+transaction on the same inherited startup session.
 
-Launcher Root Boundary run `34769935946`, attempt `2`, job `103762475184`, passed at exact Launcher
-`103738177d5196216343ad015c5c32cb9e5de8da`. The job executed exactly one ignored privileged Linux
-regression, `retained_observation_derives_and_rejects_live_substitution`, and reported one pass. It
-proved Launcher-side retained capability derivation, same-child signed projection and private
-prelude construction, protected authority-snapshot response, snapshot-bound V2 derivation, one
-projection signing with projection reuse, and live same-length verifier-store drift refusal. The
-same attempt also passed the two exact production replay-store path regressions and the existing
-proof-wide broker lane. Attempt `1` had passed the new privileged regression but was killed later
-with exit `137` in the existing proof-wide broker lane; that transient failure did not reproduce.
-The hosted result does not prove the final Core command/service route, fixed production
-authority-fixture ownership, production Attestor socket provenance, a real GitHub OIDC request,
-provider contact, materialization, delivery, positive evidence, Step 8, or V12.2.
+Core run [34933139633](https://github.com/ota-run/ota/actions/runs/34933139633), protected job
+`104265387910`, passed the complete provider-free route. It executed exactly one ignored Linux
+capability regression; reconciled one observation, same-child prelude, authority snapshot, and V2
+response; recorded zero protocol mismatch/refusal counters; reached exactly one expected
+provider-free refusal; did not start the selected task; retained no raw protected capability
+identity or private correlation material in public output; and completed child reap, scope removal,
+cgroup cleanup, and active-slot removal. Toolkit job
+`104265370625` separately proved only that pinned Toolkit code used its supplied loopback URL while
+the action started without an OIDC request capability. MUSE independently reviewed the exact run
+and found no P1/P2/P3 issue.
 
-The first exact hosted Core service-path run at Core
-`1ef3242f8fbb8a01121f817979a18d0f42a448c6` and Launcher
-`dcbf791f746aeb63dcb6bd1220a67caa0cef2b5c` reached authorization and lease consumption, then
-refused during the subsequent same-child bridge before Core received the V2 binding. It did not
-reach the required provider-free Core refusal. The old journal collapsed that failure to
-`child_boundary_failed`, so it does not identify the failed same-child exchange and is not positive
-service-path evidence.
+The administrator-retained VPS bundle at
+`/opt/ota-actions-runner/_work/_ota-pressure-evidence/34933139633-1` passed its checksum manifest,
+but it is not a publicly durable GitHub artifact; GitHub retains only the bounded Toolkit probe.
+No real GitHub OIDC token request was made. Provider contact remains `not_instrumented`; Google
+STS/WIF, Secret Manager access, materialization, process-environment injection, positive provider
+evidence, Step 8, and V12.2 remain unproved and inactive.
 
-Core run `34791956966`, protected Linux/X64 job `103817737066`, at exact Core
-`5af6935a389fbc1995493103f40fb7842c485ac4`, Launcher
-`2a985176e6ad97890ca5088b346ed6ffe3d40cba`, and Protocol
-`2c46cb676ef6e0844312bd6a157adec7ccb54de1`, passed protected capability observation and
-endpoint verification. It then reached `authority_snapshot_request_received` and
-`authority_snapshot_request_invalid`; it refused before the Launcher responder and before Core
-received a snapshot response or V2 binding. It did not reach the provider-free Core refusal,
-provider contact, or task execution.
-
-Core run `34797113238`, protected Linux/X64 job `103832271407`, at exact Core
-`a6aa9ae18d4e77226e886aa657d97f310f91926b`, Launcher
-`967dfd061d292425970da65b4481c0838463a5be`, and Protocol
-`2c46cb676ef6e0844312bd6a157adec7ccb54de1`, again passed protected capability observation and
-endpoint verification. It classified the later authority-snapshot refusal as
-`authority_snapshot_request_missing_field`; no snapshot response, V2 binding, provider contact,
-or task execution occurred.
-
-Launcher `68c11b2bc748b1108f88ee90b2e14675b36cea80` independently reviewed and commits the
-pressure-only refinement that names the missing closed-envelope field with one static marker.
-The clone and classification compile only with `systemd-pressure-faults`; default builds consume
-the protected request directly. Core pins that exact Launcher revision. Next action: rebuild and
-reprovision the protected Linux/X64 host from the immutable revisions, then run the exact Core
-command once with a fresh authority request. The rerun must identify the absent closed field or
-advance to the retained responder, while preserving refusal before provider contact or task
-execution, terminal cleanup, and no leaked protected identity. Provider contact remains blocked
-until the hosted gate passes.
+Next action: draft, independently review, and commit the separate Step 7 provider-contact slice
+amendment required by the V12.1 plan before adding OIDC access, network-client construction, Google
+provider contact, materialization, or injection. Site, Skills, Examples,
+Learn, FAQ, Glossary, contract schema, and public JSON remain unaffected by this provider-free
+proof boundary because it adds no public operator workflow, vocabulary, or capability claim.
 
 Do not touch the unrelated untracked `docs/pressure/agent-authority-signals.md` unless the user
 explicitly asks.
