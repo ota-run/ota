@@ -83,8 +83,17 @@ fn protected_service_path_remains_provider_free_and_task_refusing() {
     assert!(!command_step.contains(
         "grep -F \\\n            'selected secret requirements reached the verified same-child"
     ));
-    assert!(command_step.contains("line = line.replace(allowed_line, \"\")"));
+    assert!(command_step.contains("if line.endswith(allowed_line):"));
+    assert!(command_step.contains("return line[:-len(allowed_line)]"));
+    assert!(command_step.contains("altered pressure marker escaped privacy detection"));
+    assert!(command_step.contains("marker + \"_unexpected\""));
+    assert!(command_step.contains("marker + marker"));
+    assert!(command_step.contains("marker + \" provider_binding=opaque\""));
+    assert!(command_step.contains(
+        "\"ota: bounded pressure stage=secret_delivery_\" + stage\n              for stage in stage_markers"
+    ));
     assert!(command_step.contains("\"$CLIENT_RESULT\" \"$CLIENT_PRIVACY_STDERR\"; then"));
+    assert!(command_step.contains("\"$PRIVATE_DISCLOSURE_PATTERN\" \\"));
     assert!(!command_step.contains("\"$CLIENT_RESULT\" \"$CLIENT_STDERR\"; then"));
     let retention = WORKFLOW
         .split("      - name: Retain bounded evidence for administrator retrieval")
