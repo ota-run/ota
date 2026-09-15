@@ -1805,18 +1805,26 @@ bytes; and parses bounded closed response shapes with exact token types, lifetim
 canonical encodings, and CRC32C reconciliation. It has no environment, filesystem, socket,
 HTTP-client, V2-consumption, materialization, injection, execution, or public-output consumer.
 
-The proposed next checkpoint is authority-bound transport preparation only: one opaque capability
-created by consuming the exact verified V2 transaction, post-consumption OIDC capability-input
-acquisition, endpoint and operation reconciliation, and a fixed no-proxy/no-redirect/WebPKI client
-configuration with no send/call surface. It activates nothing until independently reviewed and
-committed.
+The authority-bound transport-preparation checkpoint was independently reviewed and committed at
+Core `8350b479`. It consumes and semantically re-verifies one exact same-child snapshot-bound V2
+transaction before acquiring the fixed GitHub OIDC request URL and bearer through one private,
+process-wide one-use owner. It reconciles the candidate, protected operation plan, capability
+projection, endpoint observation, and runner version before retaining a fresh `ureq = 3.4.2`
+configuration with default features disabled, Rustls/WebPKI roots, no proxy, no redirects, no
+caller trust or client certificate, and bounded DNS/connect/send/read/global, header, and body
+limits. The checkpoint exposes no request send/call, socket, connector, provider response,
+materialization, delivery, execution, or public-output path. Focused provider-client tests, the
+fresh-second-V2 ownership regression, locked all-target/all-feature compilation, formatting, and
+diff checks passed; MUSE reported no P1/P2/P3 finding. Repository-wide strict Clippy remains red on
+the pre-existing broad baseline outside this slice.
 
-Next action: independently review and correct that transport-preparation amendment before
-implementation. Any network request, live provider pressure, Google STS, IAM Credentials, Secret
-Manager access, materialization, injection, positive evidence, Step 8, and V12.2 remain
-unauthorized. Site, Skills, Examples, Learn, FAQ, Glossary, contract schema, and public JSON remain
-unaffected because this internal planning boundary adds no shipped operator workflow, vocabulary,
-or capability claim.
+Next action: define and independently review the explicit GitHub OIDC network-call gate before
+implementation. That gate must prove the exact locked transport feature graph and protected
+Linux/X64 path before one request can be made to GitHub's token service. Live provider pressure,
+Google STS, IAM Credentials, Secret Manager access, materialization, injection, positive evidence,
+Step 8, and V12.2 remain unauthorized. Site, Skills, Examples, Learn, FAQ, Glossary, contract
+schema, and public JSON remain unaffected because this crate-private network-disabled checkpoint
+adds no shipped operator workflow, vocabulary, or capability claim.
 
 Do not touch the unrelated untracked `docs/pressure/agent-authority-signals.md` unless the user
 explicitly asks.

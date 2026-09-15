@@ -1032,6 +1032,12 @@ must not be cloneable, serializable, printable, reusable after consumption, or c
 plain binding record. Existing pure byte-model helpers remain non-authoritative implementation
 details and cannot become the transport admission boundary.
 
+The authority-bound transport-preparation checkpoint was independently reviewed and committed at
+Core `8350b479`. It adds only the opaque consumed-V2 capability, post-consumption one-use OIDC input
+owner, endpoint and operation reconciliation, and fixed network-disabled `ureq = 3.4.2` posture
+authorized above. It exposes no request send/call, socket, connector, provider response,
+materialization, delivery, execution, or public-output route.
+
 Only a later explicit network-call gate may invoke the GitHub request service. That later gate must
 reconcile the exact transport feature graph and lockfile, prove that
 its final configured agent retains and uses neither environment proxies nor host trust state, and
