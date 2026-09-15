@@ -100,6 +100,7 @@ pub(crate) struct ProtectedSecretDeliveryAuthorityPayloadV1 {
     pub invocation_bindings: Vec<SecretDeliveryInvocationBindingInput>,
     pub profile: SecretDeliveryProfileInput,
     pub implementation_subject: AdapterImplementationSubjectInput,
+    pub transport_dependency_record_identity: String,
     pub policy: OrgPolicyPack,
 }
 
@@ -521,6 +522,11 @@ impl VerifiedSecretDeliveryAuthoritySnapshotV1 {
         let implementation_subject =
             resolve_adapter_implementation_subject(&profile, &payload.implementation_subject)
                 .map_err(|_| SecretDeliveryAuthoritySnapshotError::BindingBundlePayloadInvalid)?;
+        if payload.transport_dependency_record_identity
+            != implementation_subject.transport_dependency_record_identity
+        {
+            return Err(SecretDeliveryAuthoritySnapshotError::BindingBundlePayloadInvalid);
+        }
         validate_secret_provider_binding_snapshot_structure(&payload.binding_snapshots)
             .map_err(|_| SecretDeliveryAuthoritySnapshotError::BindingBundlePayloadInvalid)?;
         if payload
@@ -1074,6 +1080,7 @@ pub(crate) mod tests {
                 source_tree_identity: identity('1'),
                 build_identity: identity('2'),
                 artifact_identity: identity('3'),
+                transport_dependency_record_identity: crate::secret_delivery_transport_dependencies::embedded_transport_dependency_record_identity_v1().expect("transport dependencies"),
                 minimum_core_version: "1.6.28".into(),
                 maximum_exclusive_core_version: "1.7.0".into(),
                 minimum_protocol_version: "1.0.0".into(),
@@ -1087,6 +1094,7 @@ pub(crate) mod tests {
                 },
             },
             profile,
+            transport_dependency_record_identity: crate::secret_delivery_transport_dependencies::embedded_transport_dependency_record_identity_v1().expect("transport dependencies"),
             policy: serde_yaml::from_str("policies:\n  effects:\n    mode: compatibility\n")
                 .expect("policy"),
         }
@@ -1189,6 +1197,7 @@ secret_requirements:
             source_tree_identity: identity('1'),
             build_identity: identity('2'),
             artifact_identity: identity('3'),
+            transport_dependency_record_identity: crate::secret_delivery_transport_dependencies::embedded_transport_dependency_record_identity_v1().expect("transport dependencies"),
             minimum_core_version: "1.6.28".into(),
             maximum_exclusive_core_version: "1.7.0".into(),
             minimum_protocol_version: "1.0.0".into(),
@@ -1275,6 +1284,7 @@ secret_requirements:
                 schema_version: 1,
                 profile_semantic_identity: resolved_profile.profile_semantic_identity.clone(),
                 implementation_subject_identity: resolved_subject.implementation_subject_identity,
+                transport_dependency_record_identity: resolved_subject.transport_dependency_record_identity.clone(),
                 requirement_identity: requirement.identity.clone(),
                 provider_binding_identity: binding.identity.clone(),
                 provider_binding_source_identity: source.identity.clone(),
@@ -1290,6 +1300,7 @@ secret_requirements:
             }],
             profile,
             implementation_subject,
+            transport_dependency_record_identity: resolved_subject.transport_dependency_record_identity,
             policy: serde_yaml::from_str("policies:\n  effects:\n    mode: compatibility\n")
                 .expect("policy"),
         }

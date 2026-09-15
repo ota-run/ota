@@ -160,6 +160,7 @@ pub(crate) struct ResolvedSecretMaterialDeliveryRealization {
     pub provider_binding_source_identity: String,
     pub profile_semantic_identity: String,
     pub implementation_subject_identity: String,
+    pub transport_dependency_record_identity: String,
     pub invocation_binding_identity: String,
     pub target: SecretDeliveryTargetPosture,
 }
@@ -254,6 +255,7 @@ struct RealizationIdentityPayload<'a> {
     provider_binding_source_identity: &'a str,
     profile_semantic_identity: &'a str,
     implementation_subject_identity: &'a str,
+    transport_dependency_record_identity: &'a str,
     invocation_binding_identity: &'a str,
     target: &'a SecretDeliveryTargetPosture,
 }
@@ -377,6 +379,9 @@ pub(crate) fn derive_secret_material_delivery_effect(
                 implementation_subject_identity: &input
                     .implementation_subject
                     .implementation_subject_identity,
+                transport_dependency_record_identity: &input
+                    .implementation_subject
+                    .transport_dependency_record_identity,
                 invocation_binding_identity: &input
                     .invocation_binding
                     .secret_delivery_invocation_binding_identity,
@@ -395,6 +400,10 @@ pub(crate) fn derive_secret_material_delivery_effect(
         implementation_subject_identity: input
             .implementation_subject
             .implementation_subject_identity
+            .clone(),
+        transport_dependency_record_identity: input
+            .implementation_subject
+            .transport_dependency_record_identity
             .clone(),
         invocation_binding_identity: input
             .invocation_binding

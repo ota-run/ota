@@ -73,6 +73,7 @@ pub mod secret_delivery_pressure_fixture;
 pub(crate) mod secret_delivery_provider_client;
 pub(crate) mod secret_delivery_transaction;
 pub(crate) mod secret_delivery_transaction_binding;
+pub(crate) mod secret_delivery_transport_dependencies;
 pub(crate) mod secret_provider_bindings;
 pub(crate) mod secret_provider_profile;
 pub mod secret_requirements;

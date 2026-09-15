@@ -231,6 +231,7 @@ pub(crate) struct AdapterImplementationSubjectInput {
     pub source_tree_identity: String,
     pub build_identity: String,
     pub artifact_identity: String,
+    pub transport_dependency_record_identity: String,
     pub minimum_core_version: String,
     pub maximum_exclusive_core_version: String,
     pub minimum_protocol_version: String,
@@ -248,6 +249,7 @@ pub(crate) struct ResolvedAdapterImplementationSubject {
     pub source_tree_identity: String,
     pub build_identity: String,
     pub artifact_identity: String,
+    pub transport_dependency_record_identity: String,
     pub minimum_core_version: String,
     pub maximum_exclusive_core_version: String,
     pub minimum_protocol_version: String,
@@ -268,6 +270,7 @@ pub(crate) struct SecretDeliveryInvocationBindingInput {
     pub schema_version: u32,
     pub profile_semantic_identity: String,
     pub implementation_subject_identity: String,
+    pub transport_dependency_record_identity: String,
     pub requirement_identity: String,
     pub provider_binding_identity: String,
     pub provider_binding_source_identity: String,
@@ -288,6 +291,7 @@ pub(crate) struct ResolvedSecretDeliveryInvocationBinding {
     pub secret_delivery_invocation_binding_identity: String,
     pub profile_semantic_identity: String,
     pub implementation_subject_identity: String,
+    pub transport_dependency_record_identity: String,
     pub requirement_identity: String,
     pub provider_binding_identity: String,
     pub provider_binding_source_identity: String,
@@ -325,6 +329,7 @@ struct ImplementationSubjectIdentityPayload<'a> {
     source_tree_identity: &'a str,
     build_identity: &'a str,
     artifact_identity: &'a str,
+    transport_dependency_record_identity: &'a str,
     minimum_core_version: &'a str,
     maximum_exclusive_core_version: &'a str,
     minimum_protocol_version: &'a str,
@@ -337,6 +342,7 @@ struct InvocationBindingIdentityPayload<'a> {
     schema_version: u32,
     profile_semantic_identity: &'a str,
     implementation_subject_identity: &'a str,
+    transport_dependency_record_identity: &'a str,
     requirement_identity: &'a str,
     provider_binding_identity: &'a str,
     provider_binding_source_identity: &'a str,
@@ -446,8 +452,26 @@ pub(crate) fn resolve_adapter_implementation_subject(
         (&input.source_tree_identity, "source tree identity"),
         (&input.build_identity, "build identity"),
         (&input.artifact_identity, "artifact identity"),
+        (
+            &input.transport_dependency_record_identity,
+            "transport dependency record identity",
+        ),
     ] {
         validate_sha256_identity(value, field)?;
+    }
+    if input.transport_dependency_record_identity
+        != crate::secret_delivery_transport_dependencies::embedded_transport_dependency_record_identity_v1()
+            .map_err(|_| {
+                error(
+                    "secret_delivery_implementation_subject_transport_dependencies_invalid",
+                    "implementation subject does not bind the embedded transport dependency record",
+                )
+            })?
+    {
+        return Err(error(
+            "secret_delivery_implementation_subject_transport_dependencies_mismatch",
+            "implementation subject transport dependency record does not match the compiled artifact",
+        ));
     }
     validate_version_window(
         &input.minimum_core_version,
@@ -474,6 +498,7 @@ pub(crate) fn resolve_adapter_implementation_subject(
         source_tree_identity: input.source_tree_identity.clone(),
         build_identity: input.build_identity.clone(),
         artifact_identity: input.artifact_identity.clone(),
+        transport_dependency_record_identity: input.transport_dependency_record_identity.clone(),
         minimum_core_version: input.minimum_core_version.clone(),
         maximum_exclusive_core_version: input.maximum_exclusive_core_version.clone(),
         minimum_protocol_version: input.minimum_protocol_version.clone(),
@@ -504,6 +529,8 @@ pub(crate) fn resolve_secret_delivery_invocation_binding(
     }
     if input.profile_semantic_identity != profile.profile_semantic_identity
         || input.implementation_subject_identity != subject.implementation_subject_identity
+        || input.transport_dependency_record_identity
+            != subject.transport_dependency_record_identity
         || input.requirement_identity != requirement.identity
         || input.requirement_identity != binding.requirement_identity
         || input.provider_binding_identity != binding.identity
@@ -564,6 +591,7 @@ pub(crate) fn resolve_secret_delivery_invocation_binding(
         secret_delivery_invocation_binding_identity: String::new(),
         profile_semantic_identity: input.profile_semantic_identity.clone(),
         implementation_subject_identity: input.implementation_subject_identity.clone(),
+        transport_dependency_record_identity: input.transport_dependency_record_identity.clone(),
         requirement_identity: input.requirement_identity.clone(),
         provider_binding_identity: input.provider_binding_identity.clone(),
         provider_binding_source_identity: input.provider_binding_source_identity.clone(),
@@ -618,6 +646,7 @@ pub(crate) fn verify_adapter_implementation_subject(
         source_tree_identity: subject.source_tree_identity.clone(),
         build_identity: subject.build_identity.clone(),
         artifact_identity: subject.artifact_identity.clone(),
+        transport_dependency_record_identity: subject.transport_dependency_record_identity.clone(),
         minimum_core_version: subject.minimum_core_version.clone(),
         maximum_exclusive_core_version: subject.maximum_exclusive_core_version.clone(),
         minimum_protocol_version: subject.minimum_protocol_version.clone(),
@@ -1083,6 +1112,7 @@ fn implementation_subject_identity(
             source_tree_identity: &subject.source_tree_identity,
             build_identity: &subject.build_identity,
             artifact_identity: &subject.artifact_identity,
+            transport_dependency_record_identity: &subject.transport_dependency_record_identity,
             minimum_core_version: &subject.minimum_core_version,
             maximum_exclusive_core_version: &subject.maximum_exclusive_core_version,
             minimum_protocol_version: &subject.minimum_protocol_version,
@@ -1101,6 +1131,7 @@ fn invocation_binding_identity(
             schema_version: binding.schema_version,
             profile_semantic_identity: &binding.profile_semantic_identity,
             implementation_subject_identity: &binding.implementation_subject_identity,
+            transport_dependency_record_identity: &binding.transport_dependency_record_identity,
             requirement_identity: &binding.requirement_identity,
             provider_binding_identity: &binding.provider_binding_identity,
             provider_binding_source_identity: &binding.provider_binding_source_identity,
@@ -1259,6 +1290,7 @@ secret_requirements:
             source_tree_identity: digest('a'),
             build_identity: digest('b'),
             artifact_identity: digest('c'),
+            transport_dependency_record_identity: crate::secret_delivery_transport_dependencies::embedded_transport_dependency_record_identity_v1().unwrap(),
             minimum_core_version: "1.6.28".to_string(),
             maximum_exclusive_core_version: "1.7.0".to_string(),
             minimum_protocol_version: "1.0.0".to_string(),
@@ -1443,6 +1475,7 @@ secret_requirements:
             schema_version: 1,
             profile_semantic_identity: profile.profile_semantic_identity.clone(),
             implementation_subject_identity: subject.implementation_subject_identity.clone(),
+            transport_dependency_record_identity: subject.transport_dependency_record_identity.clone(),
             requirement_identity: requirement.identity.clone(),
             provider_binding_identity: binding.identity.clone(),
             provider_binding_source_identity: source.identity.clone(),
@@ -1537,6 +1570,14 @@ secret_requirements:
                 .unwrap_err()
                 .code,
             "secret_delivery_identity_invalid"
+        );
+        let mut substituted_transport_record = subject_input(&profile);
+        substituted_transport_record.transport_dependency_record_identity = digest('f');
+        assert_eq!(
+            resolve_adapter_implementation_subject(&profile, &substituted_transport_record)
+                .unwrap_err()
+                .code,
+            "secret_delivery_implementation_subject_transport_dependencies_mismatch"
         );
     }
 

@@ -91,6 +91,7 @@ pub(crate) struct SecretDeliveryProviderClientPlanV1 {
 pub(crate) struct SecretDeliveryProviderOperationPlanV1 {
     pub realization_identity: String,
     pub invocation_binding_identity: String,
+    pub transport_dependency_record_identity: String,
     pub oidc_issuer: String,
     pub oidc_audience: String,
     pub sts_audience: String,
@@ -111,6 +112,7 @@ struct PlanIdentityPayload<'a> {
 struct OperationIdentityPayload<'a> {
     realization_identity: &'a str,
     invocation_binding_identity: &'a str,
+    transport_dependency_record_identity: &'a str,
     oidc_issuer: &'a str,
     oidc_audience: &'a str,
     sts_audience: &'a str,
@@ -263,6 +265,7 @@ redacted_debug!(SecretManagerPayloadV1, "value", crc32c);
 pub(crate) struct ConsumedSecretDeliveryProviderCapabilityV1 {
     binding: ota_authority_protocol::ProtectedLauncherSecretDeliveryTransactionBindingV2,
     plan: SecretDeliveryProviderClientPlanV1,
+    transport_dependency_record_identity: String,
 }
 
 impl fmt::Debug for ConsumedSecretDeliveryProviderCapabilityV1 {
@@ -292,6 +295,7 @@ impl fmt::Debug for RetainedGithubOidcRequestCapabilityV1 {
 pub(crate) struct PreparedSecretDeliveryProviderTransportV1 {
     capability: ConsumedSecretDeliveryProviderCapabilityV1,
     oidc: RetainedGithubOidcRequestCapabilityV1,
+    transport_dependency_record_identity: String,
     configuration: UreqConfig,
     maximum_response_body_bytes: usize,
 }
@@ -380,6 +384,17 @@ fn prepare_after_v2_consumption_v1(
             "the initial provider transport requires exactly one selected operation",
         ));
     }
+    let transport_dependency_record_identity = plan.operations[0]
+        .transport_dependency_record_identity
+        .clone();
+    if transport_dependency_record_identity
+        != candidate.candidate().transport_dependency_record_identity
+    {
+        return Err(error(
+            "secret_delivery_provider_transport_dependencies_mismatch",
+            "provider operation does not match the retained transaction dependency record",
+        ));
+    }
     verify_github_actions_oidc_endpoint_observation_v1(
         endpoint_profile,
         &endpoint_input,
@@ -395,7 +410,11 @@ fn prepare_after_v2_consumption_v1(
 
     let configuration = fixed_transport_configuration_v1();
     verify_fixed_transport_configuration_v1(&configuration, MAX_SECRET_RESPONSE_BYTES)?;
-    let capability = ConsumedSecretDeliveryProviderCapabilityV1 { binding, plan };
+    let capability = ConsumedSecretDeliveryProviderCapabilityV1 {
+        binding,
+        plan,
+        transport_dependency_record_identity: transport_dependency_record_identity.clone(),
+    };
     let oidc = RetainedGithubOidcRequestCapabilityV1 {
         endpoint_profile: endpoint_profile.clone(),
         endpoint_input,
@@ -406,6 +425,7 @@ fn prepare_after_v2_consumption_v1(
     Ok(PreparedSecretDeliveryProviderTransportV1 {
         capability,
         oidc,
+        transport_dependency_record_identity,
         configuration,
         maximum_response_body_bytes: MAX_SECRET_RESPONSE_BYTES,
     })
@@ -602,6 +622,21 @@ pub(crate) fn verify_secret_delivery_provider_client_plan_v1(
 fn operation_plan(
     realization: &SecretDeliveryTransactionCandidateRealization,
 ) -> Result<SecretDeliveryProviderOperationPlanV1, SecretDeliveryProviderClientError> {
+    let expected_transport_dependency_record_identity = crate::secret_delivery_transport_dependencies::embedded_transport_dependency_record_identity_v1()
+        .map_err(|_| {
+            error(
+                "secret_delivery_provider_transport_dependencies_invalid",
+                "embedded transport dependency record is invalid",
+            )
+        })?;
+    if realization.transport_dependency_record_identity
+        != expected_transport_dependency_record_identity
+    {
+        return Err(error(
+            "secret_delivery_provider_transport_dependencies_mismatch",
+            "provider operation does not match the active transport dependency record",
+        ));
+    }
     let target = &realization.target;
     if target.operating_system != SecretDeliveryOperatingSystem::Linux
         || target.architecture != SecretDeliveryArchitecture::X86_64
@@ -620,6 +655,9 @@ fn operation_plan(
         schema_version: 1,
         profile_semantic_identity: realization.profile_semantic_identity.clone(),
         implementation_subject_identity: realization.implementation_subject_identity.clone(),
+        transport_dependency_record_identity: realization
+            .transport_dependency_record_identity
+            .clone(),
         requirement_identity: realization.requirement_identity.clone(),
         provider_binding_identity: realization.provider_binding_identity.clone(),
         provider_binding_source_identity: realization.provider_binding_source_identity.clone(),
@@ -663,6 +701,9 @@ fn operation_plan(
     Ok(SecretDeliveryProviderOperationPlanV1 {
         realization_identity: realization.realization_identity.clone(),
         invocation_binding_identity: realization.invocation_binding_identity.clone(),
+        transport_dependency_record_identity: realization
+            .transport_dependency_record_identity
+            .clone(),
         oidc_issuer: realization.oidc_issuer.clone(),
         oidc_audience: realization.oidc_audience.clone(),
         sts_audience: format!(
@@ -917,6 +958,8 @@ fn plan_identity(
             .map(|operation| OperationIdentityPayload {
                 realization_identity: &operation.realization_identity,
                 invocation_binding_identity: &operation.invocation_binding_identity,
+                transport_dependency_record_identity: &operation
+                    .transport_dependency_record_identity,
                 oidc_issuer: &operation.oidc_issuer,
                 oidc_audience: &operation.oidc_audience,
                 sts_audience: &operation.sts_audience,
@@ -1083,6 +1126,8 @@ mod tests {
     }
 
     fn candidate() -> SemanticallyVerifiedSecretDeliveryTransactionCandidate {
+        let transport_dependency_record_identity = crate::secret_delivery_transport_dependencies::embedded_transport_dependency_record_identity_v1()
+            .expect("transport dependencies");
         let realization = SecretDeliveryTransactionCandidateRealization {
             realization_identity: identity('5'),
             requirement_identity: identity('4'),
@@ -1090,6 +1135,7 @@ mod tests {
             provider_binding_source_identity: identity('a'),
             profile_semantic_identity: identity('b'),
             implementation_subject_identity: identity('c'),
+            transport_dependency_record_identity: transport_dependency_record_identity.clone(),
             invocation_binding_identity: identity('d'),
             target: SecretDeliveryTargetPosture {
                 operating_system: SecretDeliveryOperatingSystem::Linux,
@@ -1122,6 +1168,7 @@ mod tests {
             policy_decision_identity: identity('6'),
             selected_invocation_identity: identity('7'),
             execution_graph_identity: identity('8'),
+            transport_dependency_record_identity,
             realizations: vec![realization],
         };
         candidate.identity = secret_delivery_transaction_candidate_identity(&candidate).unwrap();

@@ -11,6 +11,7 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::collections::BTreeSet;
 
 use crate::effect_policy::SecretDeliveryEffectPolicyInput;
 use crate::secret_delivery_evaluation::{
@@ -60,6 +61,7 @@ pub(crate) struct SecretDeliveryTransactionCandidateRealization {
     pub provider_binding_source_identity: String,
     pub profile_semantic_identity: String,
     pub implementation_subject_identity: String,
+    pub transport_dependency_record_identity: String,
     pub invocation_binding_identity: String,
     pub target: crate::secret_provider_profile::SecretDeliveryTargetPosture,
     pub oidc_issuer: String,
@@ -86,6 +88,7 @@ pub(crate) struct SecretDeliveryTransactionCandidate {
     pub policy_decision_identity: String,
     pub selected_invocation_identity: String,
     pub execution_graph_identity: String,
+    pub transport_dependency_record_identity: String,
     pub realizations: Vec<SecretDeliveryTransactionCandidateRealization>,
 }
 
@@ -117,6 +120,7 @@ struct CandidateIdentityPayload<'a> {
     policy_decision_identity: &'a str,
     selected_invocation_identity: &'a str,
     execution_graph_identity: &'a str,
+    transport_dependency_record_identity: &'a str,
     realizations: &'a [SecretDeliveryTransactionCandidateRealization],
 }
 
@@ -206,6 +210,21 @@ pub(crate) fn derive_secret_delivery_transaction_candidate(
             "candidate realizations do not match the retained evaluation and plan",
         ));
     }
+    let transport_dependency_record_identities = realizations
+        .iter()
+        .map(|realization| &realization.transport_dependency_record_identity)
+        .collect::<BTreeSet<_>>();
+    if transport_dependency_record_identities.len() != 1 {
+        return Err(SecretDeliveryTransactionCandidateError::new(
+            "secret_delivery_transaction_candidate_transport_dependencies_ambiguous",
+            "selected secret delivery realizations must bind one transport dependency record",
+        ));
+    }
+    let transport_dependency_record_identity = transport_dependency_record_identities
+        .into_iter()
+        .next()
+        .expect("one transport dependency record identity")
+        .clone();
 
     let mut candidate = SecretDeliveryTransactionCandidate {
         schema_version: 1,
@@ -218,6 +237,7 @@ pub(crate) fn derive_secret_delivery_transaction_candidate(
         policy_decision_identity: policy_decision_identity.to_string(),
         selected_invocation_identity: selected_invocation_identity.to_string(),
         execution_graph_identity: execution_graph_identity.to_string(),
+        transport_dependency_record_identity,
         realizations,
     };
     candidate.identity = secret_delivery_transaction_candidate_identity(&candidate)?;
@@ -270,6 +290,7 @@ pub(crate) fn secret_delivery_transaction_candidate_identity(
         policy_decision_identity: &candidate.policy_decision_identity,
         selected_invocation_identity: &candidate.selected_invocation_identity,
         execution_graph_identity: &candidate.execution_graph_identity,
+        transport_dependency_record_identity: &candidate.transport_dependency_record_identity,
         realizations: &candidate.realizations,
     };
     let canonical = serde_jcs::to_vec(&payload).map_err(|error| {
@@ -296,6 +317,9 @@ fn candidate_realization(
         provider_binding_source_identity: realization.provider_binding_source_identity.clone(),
         profile_semantic_identity: realization.profile_semantic_identity.clone(),
         implementation_subject_identity: realization.implementation_subject_identity.clone(),
+        transport_dependency_record_identity: realization
+            .transport_dependency_record_identity
+            .clone(),
         invocation_binding_identity: realization.invocation_binding_identity.clone(),
         target: realization.target.clone(),
         oidc_issuer: invocation.oidc_issuer.clone(),

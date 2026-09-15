@@ -778,6 +778,7 @@ pub(crate) mod tests {
             policy_decision_identity: identity('6'),
             selected_invocation_identity: identity('7'),
             execution_graph_identity: identity('8'),
+            transport_dependency_record_identity: identity('d'),
             realizations: vec![crate::secret_delivery_transaction::SecretDeliveryTransactionCandidateRealization {
                 realization_identity: identity('5'),
                 requirement_identity: identity('4'),
@@ -785,6 +786,7 @@ pub(crate) mod tests {
                 provider_binding_source_identity: identity('a'),
                 profile_semantic_identity: identity('b'),
                 implementation_subject_identity: identity('c'),
+                transport_dependency_record_identity: identity('d'),
                 invocation_binding_identity: identity('d'),
                 target: SecretDeliveryTargetPosture {
                     operating_system: SecretDeliveryOperatingSystem::Linux,

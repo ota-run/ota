@@ -30,6 +30,7 @@ fs2 = "0.4.3"
 include_dir = "0.7.4"
 sha2 = "0.10.9"
 base64 = "0.22.1"
+cargo-platform = "0.3.3"
 ed25519-dalek = "3.0.0"
 serde_jcs = "0.2.0"
 ureq = { version = "=3.4.2", default-features = false, features = ["rustls"] }
@@ -44,6 +45,14 @@ libc = "0.2.177"
 windows-sys = { version = "0.61.2", features = ["Win32_Storage_FileSystem"] }
 
 [dev-dependencies]
+
+[build-dependencies]
+cargo-platform = "0.3.3"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_jcs = "0.2.0"
+serde_json = "1.0.145"
+sha2 = "0.10.9"
+toml = "1.1.2"
 
 [[bin]]
 name = "ota-secret-delivery-pressure-authority"

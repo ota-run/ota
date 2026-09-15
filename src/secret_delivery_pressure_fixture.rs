@@ -169,6 +169,8 @@ fn render_authority_payload_for_contract(
         source_tree_identity: implementation_source_tree_identity,
         build_identity: implementation_build_identity.into(),
         artifact_identity: implementation_artifact_identity.into(),
+        transport_dependency_record_identity: crate::secret_delivery_transport_dependencies::embedded_transport_dependency_record_identity_v1()
+            .map_err(|_| "pressure transport dependency record is invalid")?,
         minimum_core_version: "1.6.28".into(),
         maximum_exclusive_core_version: "1.7.0".into(),
         minimum_protocol_version: "1.0.0".into(),
@@ -266,6 +268,7 @@ fn render_authority_payload_for_contract(
             schema_version: 1,
             profile_semantic_identity: resolved_profile.profile_semantic_identity,
             implementation_subject_identity: resolved_subject.implementation_subject_identity,
+            transport_dependency_record_identity: resolved_subject.transport_dependency_record_identity.clone(),
             requirement_identity: requirement.identity.clone(),
             provider_binding_identity: binding.identity.clone(),
             provider_binding_source_identity: source.identity.clone(),
@@ -284,6 +287,7 @@ fn render_authority_payload_for_contract(
         }],
         profile,
         implementation_subject,
+        transport_dependency_record_identity: resolved_subject.transport_dependency_record_identity,
         policy: serde_yaml::from_str::<OrgPolicyPack>(
             "policies:\n  effects:\n    mode: compatibility\n",
         )
