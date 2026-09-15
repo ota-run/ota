@@ -862,6 +862,135 @@ Linux/X64 pressure. They do not authorize OIDC access, network-client constructi
 materialization, injection, positive evidence, Step 8, or V12.2. Implementation may begin only
 after the correction is independently reviewed and committed.
 
+#### Step 7 Provider-Contact Slice Amendment (Proposed 2026-09-15)
+
+The provider-free prerequisite is now committed, independently reviewed, and exercised through the
+exact protected Linux/X64 service path. Protocol
+`2c46cb676ef6e0844312bd6a157adec7ccb54de1`, Launcher
+`a00f0e1ebd0ba886015a1aa32216ad30b56dcd9a`, and Core
+`c071fed09ffe42d4ac00979d16dff0967ad208aa` bind one selected child's signed capability
+observation, protected authority snapshot, reconstructed Step 1-6 candidate, and one-use V2
+transaction on the inherited startup session. Core run
+[34933139633](https://github.com/ota-run/ota/actions/runs/34933139633), protected job
+`104265387910`, passed that provider-free path and refused before provider contact or task start.
+This proposed amendment activates nothing until it is independently reviewed and committed.
+
+The first provider target remains the existing public-safe profile class: GitHub Actions OIDC to
+Google Workload Identity Federation, one service-account access token, one exact numeric Secret
+Manager version, and process-environment delivery to the selected transient native Linux/X64
+recipient process tree. The administrator-controlled pressure installation owns one non-production
+Google project, one pool/provider, one service account, and one synthetic canary secret version.
+Their concrete names, resource paths, binding/source identities, and policy identities remain in
+protected installation records and may not enter repository content, workflow inputs, CLI
+arguments, logs, public projections, artifacts, receipts, or archives.
+
+The GitHub workload provider must independently restrict the stable public claim boundary to the
+exact numeric Ota repository and owner identities, the dedicated provider-pressure workflow,
+`workflow_dispatch`, and a self-hosted runner. Its administrator-owned condition must additionally
+require `workflow_sha` to equal the exact independently reviewed Core revision containing that
+workflow. The branch and workflow path are additional routing constraints, not immutable
+implementation identity. Every new pressure revision requires an out-of-band administrator update
+to that exact condition before dispatch; repository code and the workflow cannot update or satisfy
+it by selecting a branch, path, or caller value. Google claim mapping may expose exact run, attempt,
+commit, workflow-commit, actor, and subject values as provider attributes, but Ota must not claim
+those dynamic values are Google-enforced unless the installed provider condition actually requires
+them. Ota's protected invocation tuple must independently bind and reconcile all of those exact
+dynamic claims before any Google request. Repository YAML, caller input, inherited generic
+environment, or a provider response cannot widen either authority source.
+
+The provider transaction may begin only after Core has reconstructed the Step 1-6 candidate,
+reconciled the same-child prelude and protected snapshot, received the exact V2 response, and
+atomically consumed its one-use guard. Consumption occurs immediately before Ota reads the two
+GitHub OIDC capability values or constructs the first network client. Failure, cancellation,
+timeout, or interruption after consumption cannot retry, replay, or transfer the transaction to a
+second child, session, snapshot, candidate, endpoint, or run.
+
+The transaction order is closed:
+
+1. Validate the retained GitHub token-request endpoint profile, request one JWT for the exact WIF
+   audience, and accept no redirect, caller transport, proxy, custom CA, alternate origin, or
+   credential forwarding.
+2. Parse the JWT through one closed structural path and require its exact issuer, audience, subject,
+   repository, owner, workflow, ref, event, runner environment, actor, run, attempt, commit, and
+   workflow-commit claims before any Google contact. Missing, duplicate, malformed, stale, or
+   substituted claims refuse. Google STS acceptance is the initial slice's signature and issuer
+   acknowledgement; Ota must not represent its pre-exchange claim parsing as independent GitHub
+   signing-key verification.
+3. Exchange that JWT with the exact configured Google STS audience, grant type, subject-token type,
+   and requested token type. Reconcile the response type, bounded expiry, and required fields; do
+   not accept a refresh token or caller-selected scope.
+4. Use only the resulting federated token to request one access token for the exact admitted service
+   account and closed cloud-platform scope; separately installed IAM must limit that account to
+   Secret Manager access on the admitted secret. No service-account key, ambient Google credential,
+   metadata-server credential, local ADC file, or inherited bearer may satisfy this step.
+5. Access only the admitted numeric Secret Manager version. `latest`, aliases, alternate projects,
+   pools, providers, service accounts, secrets, versions, endpoints, or response resource names
+   refuse even when the returned bytes have the expected shape.
+6. Retain the secret bytes only in bounded process memory, reconcile them through the protected
+   pressure-canary verifier defined below, construct one recipient-only environment entry from that
+   same verified buffer, start the exact selected structured command in the already-owned process
+   tree, and prove through a fixed pressure helper that the environment entry was present and usable
+   without emitting its value, hash, length, prefix, transformation, environment entry, or provider
+   reference. Parents,
+   siblings, setup, hydration, services, proof helpers, durable logs, raw shell, and processes
+   outside the selected recipient tree are not recipients. Arbitrary descendants inside that tree
+   may inherit the value and remain explicitly unproved rather than represented as excluded.
+
+Provider response acknowledgement is not delivery proof. Before child start, Core must reconcile
+the exact resource version and provider response to the protected invocation tuple. Exact synthetic
+canary truth is owned only by one pressure-only
+`ProtectedSecretDeliveryPressureCanaryVerifierV1` at a fixed root-owned path and singular protected
+installation-manifest role. Its closed record contains exactly its schema version and kind, its
+domain-separated identity, the exact requirement, binding, provider-profile, secret-resource, and
+numeric-version identities, one administrator-generated 256-bit HMAC-SHA256 verifier key, and one
+32-byte expected tag. The key and tag use canonical unpadded base64url and remain protected
+secret-derived correlation material. The record identity is SHA-256 over its exact JCS payload,
+excluding only the identity itself, under
+`ota.secret-delivery-pressure.canary-verifier.v1\0`.
+
+Core loads that record only through a descriptor-retained, no-follow, immediately reobserved
+protected installation path, reconciles every bound identity with the admitted transaction, and
+compares the fetched bytes' HMAC tag in constant time after provider CRC32C validation but before
+environment construction. Missing, duplicate, malformed, path-substituted, metadata-drifted,
+byte-drifted, identity-mismatched, tuple-substituted, key/tag-substituted, or unequal canary truth
+refuses. The same verified byte buffer must move into environment construction without
+re-resolution; test-only mutation between verification and construction must refuse. This record
+contains no secret value, grants no provider authority, exists only under the non-default pressure
+feature, and cannot satisfy an ordinary production requirement.
+
+The selected helper owns no expected secret truth. It is one fixed administrator-installed pressure
+executable whose exact artifact identity and selected graph role are reconciled before provider
+contact; repository or workflow content cannot replace it. Its static success marker proves only
+that the already verified environment entry was present and usable in that recipient; the protected
+HMAC check and same-buffer continuity establish the exact synthetic value. A missing marker, extra
+marker, child failure, non-recipient observation, or any stdout/stderr/artifact leak refuses the
+pressure result. The canary verifier key/tag, secret value, OIDC JWT, federated token, and
+service-account token must never enter public output or be serialized by the transaction to disk or
+diagnostic output. Buffers are released and overwritten where the language/runtime permits, but
+complete memory erasure remains unproved.
+
+Interruption and fault pressure must cover refusal before each network stage; malformed and
+substituted responses; expiry; replay; duplicate response; provider denial; partial read;
+materialization failure; pre-start cancellation; child-start failure; child failure; timeout; and
+termination during execution. Every terminal path must reap the selected child, remove its scope and
+active slot, leave the cgroup empty or absent, close retained descriptors, and prevent reuse of the
+consumed V2 transaction. Provider-issued bearer expiry and external audit logs remain provider-owned;
+Ota must not claim immediate token revocation or deletion of provider-side audit state.
+
+The first pressure workflow is manual and dedicated, with `contents: read` and `id-token: write`, no
+repository secret, no service-account key, and no release or merge authority. Its public output may
+retain only closed non-secret phase postures and approved public identities. Step 8 receipts,
+protected provider attachments, archives, public positive assurance, adapter registration, support,
+other providers, GitHub-hosted runners, local execution, containers, macOS, Windows, raw shell,
+persistent runtimes, arbitrary descendants, privileged escape prevention, exfiltration prevention,
+and complete memory erasure remain unauthorized or unproved.
+
+Implementation may begin only after this amendment is independently reviewed and committed. The
+first implementation batch must stop at protected authority loading and provider-client request and
+response models with network contact disabled. Network enablement, live pressure, materialization,
+and injection advance as separately reviewed commits so no structural test can silently authorize a
+real provider call.
+
 The provider client uses a closed transport profile bound into the new profile and implementation-
 subject identities. It performs direct TLS with build-pinned public Web PKI roots and exact DNS/TLS
 hostname verification; ignores `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, `NO_PROXY`, custom CA,

@@ -175,11 +175,12 @@ durable agent workflow belongs in the canonical Ota skill.
   consistency and leaves independent-administrator rollback, privileged escape, exfiltration, and
   memory erasure unproved. It separately binds a protected-self-hosted-runner-derived OIDC request-
   endpoint profile and exact JWT issuer. ARM64 discovery run `33919324208` confirmed the regional
-  request-service distinction without provider contact, but it does not satisfy the required
-  `linux/x86_64` protected-launcher fixture; provider contact cannot be implemented until that exact
-  compatibility fixture exists. Step 7 keeps GitHub-hosted and repository-provisioned runners,
+  request-service distinction without provider contact, but at that stage it did not satisfy the
+  required `linux/x86_64` protected-launcher fixture. The exact compatibility gate was subsequently
+  closed by the later protected runs recorded below. Step 7 keeps GitHub-hosted and
+  repository-provisioned runners,
   other targets, positive receipts/archives/assurance, adapter support, Step 8, and V12.2 inactive.
-- Step 7 endpoint-compatibility work is in progress. Core `777c42ab` commits a no-checkout
+- Step 7 endpoint-compatibility work began at Core `777c42ab` with a no-checkout
   Linux/X64 discovery workflow that binds the live OIDC request URL shape to the protected runner
   service posture and administrator installation identity. A separate no-`id-token` job uses
   pinned Actions Toolkit code with a loopback fake capability to prove it calls the supplied URL
@@ -284,9 +285,9 @@ durable agent workflow belongs in the canonical Ota skill.
   empty structural verifier and binding snapshots, includes the directory in fresh-state
   reconciliation, and grants no provider authority. The Core gate now binds that exact Launcher
   revision, Protocol `58526f3f29299873e345352963e30b8a1677044f`, and the run's exact Core
-  `github.sha`. Linux runtime proof remains open; provider contact stays blocked until the exact
-  committed Linux/X64 workflow succeeds and its substitution, replay, staleness, verifier,
-  signature, target, revision, and cleanup controls are retained. No OIDC request, provider
+  `github.sha`. At that point Linux runtime proof remained open and provider contact stayed blocked
+  until the exact committed Linux/X64 workflow succeeded with its substitution, replay, staleness,
+  verifier, signature, target, revision, and cleanup controls retained. No OIDC request, provider
   contact, materialization, delivery, Step 8, or V12.2 capability is activated.
   Runs `34386901632` and `34390181756` subsequently executed the exact transaction after canonical
   authority-store provisioning and localized the remaining refusal to retained authority-context
@@ -1786,11 +1787,21 @@ No real GitHub OIDC token request was made. Provider contact remains `not_instru
 STS/WIF, Secret Manager access, materialization, process-environment injection, positive provider
 evidence, Step 8, and V12.2 remain unproved and inactive.
 
-Next action: draft, independently review, and commit the separate Step 7 provider-contact slice
-amendment required by the V12.1 plan before adding OIDC access, network-client construction, Google
-provider contact, materialization, or injection. Site, Skills, Examples,
-Learn, FAQ, Glossary, contract schema, and public JSON remain unaffected by this provider-free
-proof boundary because it adds no public operator workflow, vocabulary, or capability claim.
+The separate Step 7 provider-contact slice amendment is proposed locally in the V12.1 plan. It
+binds the first transaction to one administrator-controlled non-production Google installation,
+the dedicated manual provider-pressure workflow, its administrator-bound exact workflow revision,
+the exact same-child V2 transaction, closed OIDC, STS, service-account-token, numeric Secret Manager
+version, recipient-only injection, interruption, cleanup, privacy, and no-replay boundaries. A
+pressure-only protected HMAC verifier owns expected synthetic-canary truth without storing the
+canary value or creating public secret-derived correlation. Concrete provider references and private
+identities remain protected and are not copied into public planning or workflow input. The proposal
+activates nothing and authorizes no network or provider contact until independently reviewed and
+committed.
+
+Next action: independently review and correct that proposed amendment, then commit it before any
+provider-client implementation. Site, Skills, Examples, Learn, FAQ, Glossary, contract schema, and
+public JSON remain unaffected by this planning-only proposal because it adds no shipped operator
+workflow, vocabulary, or capability claim.
 
 Do not touch the unrelated untracked `docs/pressure/agent-authority-signals.md` unless the user
 explicitly asks.
