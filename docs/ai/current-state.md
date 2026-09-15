@@ -1797,17 +1797,25 @@ pressure-only protected HMAC verifier owns expected synthetic-canary truth witho
 canary value or creating public secret-derived correlation. Concrete provider references and private
 identities remain protected and are not copied into public planning or workflow input.
 
-The first implementation batch is now local and stops at a crate-private, network-disabled provider
-client model. It derives exact OIDC, STS, IAM Credentials, and numeric Secret Manager operation
+The first implementation batch was independently reviewed and committed at
+`77329526e6ec07449c889bac6c3172294620ec4e`. Its crate-private, network-disabled provider client
+model derives exact OIDC, STS, IAM Credentials, and numeric Secret Manager operation
 targets from semantically verified candidate truth; constructs only protected in-memory request
 bytes; and parses bounded closed response shapes with exact token types, lifetimes, resource names,
 canonical encodings, and CRC32C reconciliation. It has no environment, filesystem, socket,
 HTTP-client, V2-consumption, materialization, injection, execution, or public-output consumer.
 
-Next action: independently review and correct that network-disabled model before commit. Network
-enablement, live provider pressure, materialization, injection, positive evidence, Step 8, and V12.2
-remain unauthorized. Site, Skills, Examples, Learn, FAQ, Glossary, contract schema, and public JSON
-remain unaffected because this internal foundation adds no shipped operator workflow, vocabulary,
+The proposed next checkpoint is authority-bound transport preparation only: one opaque capability
+created by consuming the exact verified V2 transaction, post-consumption OIDC capability-input
+acquisition, endpoint and operation reconciliation, and a fixed no-proxy/no-redirect/WebPKI client
+configuration with no send/call surface. It activates nothing until independently reviewed and
+committed.
+
+Next action: independently review and correct that transport-preparation amendment before
+implementation. Any network request, live provider pressure, Google STS, IAM Credentials, Secret
+Manager access, materialization, injection, positive evidence, Step 8, and V12.2 remain
+unauthorized. Site, Skills, Examples, Learn, FAQ, Glossary, contract schema, and public JSON remain
+unaffected because this internal planning boundary adds no shipped operator workflow, vocabulary,
 or capability claim.
 
 Do not touch the unrelated untracked `docs/pressure/agent-authority-signals.md` unless the user

@@ -862,7 +862,7 @@ Linux/X64 pressure. They do not authorize OIDC access, network-client constructi
 materialization, injection, positive evidence, Step 8, or V12.2. Implementation may begin only
 after the correction is independently reviewed and committed.
 
-#### Step 7 Provider-Contact Slice Amendment (Proposed 2026-09-15)
+#### Step 7 Provider-Contact Slice Amendment (Activated 2026-09-15)
 
 The provider-free prerequisite is now committed, independently reviewed, and exercised through the
 exact protected Linux/X64 service path. Protocol
@@ -873,7 +873,9 @@ observation, protected authority snapshot, reconstructed Step 1-6 candidate, and
 transaction on the inherited startup session. Core run
 [34933139633](https://github.com/ota-run/ota/actions/runs/34933139633), protected job
 `104265387910`, passed that provider-free path and refused before provider contact or task start.
-This proposed amendment activates nothing until it is independently reviewed and committed.
+The amendment was independently reviewed and committed at
+`bcc4090bb038211568319749fb6e08c6b60470f4`. It authorizes only the ordered implementation gates
+below; it does not by itself authorize a network request or provider claim.
 
 The first provider target remains the existing public-safe profile class: GitHub Actions OIDC to
 Google Workload Identity Federation, one service-account access token, one exact numeric Secret
@@ -990,6 +992,53 @@ first implementation batch must stop at protected authority loading and provider
 response models with network contact disabled. Network enablement, live pressure, materialization,
 and injection advance as separately reviewed commits so no structural test can silently authorize a
 real provider call.
+
+The first network-disabled model was independently reviewed and committed at
+`77329526e6ec07449c889bac6c3172294620ec4e`. Before any request can be sent, a second
+authority-bound transport-preparation checkpoint must be independently reviewed and committed. It
+may add only:
+
+- one opaque Core-owned consumed-provider-transaction capability that can be constructed only by
+  re-verifying and atomically consuming the exact same-child snapshot-bound V2 transaction;
+- one private capability-input owner that reads the exact GitHub OIDC request URL and bearer only
+  after that consumption and rejects missing, empty, or non-UTF-8 input. Both values remain
+  untrusted runner-supplied capabilities rather than independent identity evidence. Core cannot
+  locally authenticate the initially supplied bearer; GitHub's request service owns that
+  acknowledgement. Opaque ownership must prevent post-acquisition replacement, cross-wiring, or
+  transfer to another request, transaction, or origin, and must retain neither value in
+  diagnostics, arguments, public output, or durable state;
+- reconciliation of the retained endpoint observation and exact protected operation plan before
+  the bearer can be attached to the in-memory OIDC request model; and
+- one fresh synchronous Rust transport configuration using direct dependency `ureq = =3.4.2` with
+  default features disabled and only its Rustls and WebPKI-root features enabled, plus the complete
+  transitive graph pinned by `Cargo.lock`; effective proxy configuration is explicitly reset to
+  `None`, HTTPS is required, redirects and redirect credential forwarding are disabled, cookies and
+  content decompression are absent, caller trust roots and client certificates are unavailable,
+  DNS/connect/send/read and overall timeouts are bounded, response headers and bodies are bounded,
+  and no caller configuration is reusable.
+
+`ureq`'s public configuration builder may inspect ambient proxy variables while constructing its
+default value before Ota overrides the proxy to `None`. Ota therefore claims and tests that ambient
+proxy values are neither retained nor used, not that the dependency never reads them. The final
+configuration must expose `proxy == None`; no request may be built or sent before that state is
+verified.
+
+That checkpoint must expose no `send`, `call`, socket, connector, or provider-response path. Its
+tests must poison proxy, custom-CA, netrc, client-certificate, and generic HTTP configuration
+inputs; substitute candidate, V2 binding, endpoint observation, URL, post-acquisition bearer owner,
+audience, target, and realization/invocation identities; and prove refusal or unchanged fixed
+transport posture. The opaque capability
+must not be cloneable, serializable, printable, reusable after consumption, or constructible from a
+plain binding record. Existing pure byte-model helpers remain non-authoritative implementation
+details and cannot become the transport admission boundary.
+
+Only a later explicit network-call gate may invoke the GitHub request service. That later gate must
+reconcile the exact transport feature graph and lockfile, prove that
+its final configured agent retains and uses neither environment proxies nor host trust state, and
+add the exact Linux
+protected-path pressure before it can contact Google STS. Google STS, IAM Credentials, Secret
+Manager, materialization, injection, and positive evidence remain unauthorized through the
+transport-preparation checkpoint.
 
 The provider client uses a closed transport profile bound into the new profile and implementation-
 subject identities. It performs direct TLS with build-pinned public Web PKI roots and exact DNS/TLS
