@@ -31753,6 +31753,232 @@ agent:
     }
 
     #[test]
+    fn agents_review_requires_one_exact_managed_block() {
+        let contract = r#"
+version: 1
+project:
+  name: ota
+tasks:
+  ci:
+    run: cargo test
+agent:
+  default_task: ci
+  safe_tasks:
+    - ci
+  writable_paths:
+    - src
+  protected_paths:
+    - ota.yaml
+"#;
+        let generated_start = "<!-- ota-generated-agent-guidance:start -->";
+        let generated_end = "<!-- ota-generated-agent-guidance:end -->";
+
+        let duplicate_content = ContractFixture::new(contract);
+        let preview = run_with(["ota", "agents", "--json", duplicate_content.path()]);
+        let json: Value = serde_json::from_str(&preview.stdout).unwrap();
+        let generated = json["content"].as_str().unwrap();
+        duplicate_content.write(
+            "AGENTS.md",
+            &format!("{generated}\n{generated_start}\n# stale managed guidance\n{generated_end}\n"),
+        );
+
+        let duplicate_output = run_with([
+            "ota",
+            "agents",
+            "--review",
+            "--json",
+            duplicate_content.path(),
+        ]);
+        let duplicate_json: Value = serde_json::from_str(&duplicate_output.stdout).unwrap();
+        assert_eq!(duplicate_json["sync_state"], "update_needed");
+
+        for contents in [
+            format!(
+                "{generated_start}\n{generated}{generated_end}\n{generated_start}\n{generated}{generated_end}\n"
+            ),
+            format!("{generated_end}\n{generated_start}\n{generated}{generated_end}\n"),
+        ] {
+            let fixture = ContractFixture::new(contract);
+            fixture.write("AGENTS.md", &contents);
+
+            let output = run_with(["ota", "agents", "--review", "--json", fixture.path()]);
+            let json: Value = serde_json::from_str(&output.stdout).unwrap();
+            assert_eq!(json["sync_state"], "update_needed");
+        }
+    }
+
+    #[test]
+    fn agents_write_refuses_ambiguous_managed_block_markers_without_mutation() {
+        let contract = r#"
+version: 1
+project:
+  name: ota
+tasks:
+  ci:
+    run: cargo test
+agent:
+  default_task: ci
+  safe_tasks:
+    - ci
+  writable_paths:
+    - src
+  protected_paths:
+    - ota.yaml
+"#;
+        let generated_start = "<!-- ota-generated-agent-guidance:start -->";
+        let generated_end = "<!-- ota-generated-agent-guidance:end -->";
+
+        for contents in [
+            format!("{generated_start}\n# stale\n"),
+            format!("# stale\n{generated_end}\n"),
+            format!("{generated_end}\n{generated_start}\n# stale\n"),
+            format!(
+                "{generated_start}\n# stale\n{generated_end}\n{generated_start}\n# duplicate\n{generated_end}\n"
+            ),
+        ] {
+            let fixture = ContractFixture::new(contract);
+            fixture.write("AGENTS.md", &contents);
+
+            let output = run_with(["ota", "agents", "--write", "--json", fixture.path()]);
+
+            assert_eq!(output.exit_code, 1);
+            let json: Value = serde_json::from_str(output.stderr.as_deref().unwrap()).unwrap();
+            assert_eq!(json["ok"], false);
+            assert_eq!(json["written"], false);
+            assert!(json["error"].as_str().unwrap().contains(
+                "managed-block markers are incomplete, duplicate, reversed, or ambiguous"
+            ));
+            assert_eq!(
+                fs::read_to_string(fixture.dir.path().join("AGENTS.md")).unwrap(),
+                contents
+            );
+        }
+    }
+
+    #[test]
+    fn agents_write_refuses_reserved_marker_in_generated_contract_content() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+agent:
+  notes: |
+    <!-- ota-generated-agent-guidance:start -->
+tasks: {}
+"#,
+        );
+
+        let output = run_with(["ota", "agents", "--write", "--json", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        let json: Value = serde_json::from_str(output.stderr.as_deref().unwrap()).unwrap();
+        assert_eq!(json["ok"], false);
+        assert_eq!(json["written"], false);
+        assert!(
+            json["error"]
+                .as_str()
+                .unwrap()
+                .contains("generated content contains a reserved Ota managed-block marker")
+        );
+        assert!(!fixture.dir.path().join("AGENTS.md").exists());
+    }
+
+    #[test]
+    fn agents_write_refuses_unreadable_existing_file_without_mutation() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+agent:
+  default_task: ci
+tasks:
+  ci:
+    run: cargo test
+"#,
+        );
+        let agents_path = fixture.dir.path().join("AGENTS.md");
+        let original = [0xff, 0xfe, 0xfd, b'\n'];
+        fs::write(&agents_path, original).unwrap();
+
+        let output = run_with(["ota", "agents", "--write", "--json", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        let json: Value = serde_json::from_str(output.stderr.as_deref().unwrap()).unwrap();
+        assert_eq!(json["ok"], false);
+        assert_eq!(json["written"], false);
+        assert!(
+            json["error"]
+                .as_str()
+                .unwrap()
+                .contains("existing content could not be read safely")
+        );
+        assert_eq!(fs::read(&agents_path).unwrap(), original);
+    }
+
+    #[test]
+    fn agents_write_preserves_inline_marker_examples_as_unmanaged_content() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+agent:
+  default_task: ci
+tasks:
+  ci:
+    run: cargo test
+"#,
+        );
+        let agents_path = fixture.dir.path().join("AGENTS.md");
+        let original = "Example start marker: <!-- ota-generated-agent-guidance:start --> (documentation only)\nUser content that must survive.\nExample end marker: <!-- ota-generated-agent-guidance:end --> (documentation only)\n";
+        fs::write(&agents_path, original).unwrap();
+
+        let output = run_with(["ota", "agents", "--write", "--json", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["written"], true);
+        let written = fs::read_to_string(&agents_path).unwrap();
+        assert!(written.starts_with(original.trim_end()));
+        assert!(written.contains("User content that must survive."));
+        assert!(written.contains("\n<!-- ota-generated-agent-guidance:start -->\n"));
+        assert!(written.contains("\n<!-- ota-generated-agent-guidance:end -->\n"));
+
+        let review = run_with(["ota", "agents", "--review", "--json", fixture.path()]);
+        let review_json: Value = serde_json::from_str(&review.stdout).unwrap();
+        assert_eq!(review_json["sync_state"], "in_sync");
+    }
+
+    #[test]
+    fn agents_review_accepts_exact_crlf_managed_block_lines() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+agent:
+  default_task: ci
+tasks:
+  ci:
+    run: cargo test
+"#,
+        );
+        let write = run_with(["ota", "agents", "--write", fixture.path()]);
+        assert_eq!(write.exit_code, 0);
+        let agents_path = fixture.dir.path().join("AGENTS.md");
+        let lf = fs::read_to_string(&agents_path).unwrap();
+        fs::write(&agents_path, lf.replace('\n', "\r\n")).unwrap();
+
+        let review = run_with(["ota", "agents", "--review", "--json", fixture.path()]);
+
+        assert_eq!(review.exit_code, 0);
+        let json: Value = serde_json::from_str(&review.stdout).unwrap();
+        assert_eq!(json["sync_state"], "in_sync");
+    }
+
+    #[test]
     fn agents_write_creates_agents_md_from_agent_contract() {
         let fixture = ContractFixture::new(
             r#"
@@ -31804,10 +32030,15 @@ tasks:
         assert!(stdout.contains("Next:"));
         assert!(stdout.contains("ota doctor"));
         let agents_md = fs::read_to_string(fixture.dir.path().join("AGENTS.md")).unwrap();
+        assert!(agents_md.starts_with("<!-- ota-generated-agent-guidance:start -->\n"));
+        assert!(agents_md.ends_with("<!-- ota-generated-agent-guidance:end -->\n"));
         assert!(agents_md.contains("# AGENTS.md"));
         assert!(agents_md.contains("Generated from `./ota.yaml` by `ota agents`."));
         assert!(!agents_md.contains("DO NOT ALTER OR REMOVE COPYRIGHT NOTICES"));
-        assert!(agents_md.contains("Use declared `ota run <task>` paths before raw package-manager, compiler, or test commands"));
+        assert!(agents_md.contains("Use only declared `ota run <task>` paths."));
+        assert!(agents_md.contains(
+            "do not bypass the agent boundary with raw package-manager, compiler, or test commands"
+        ));
         assert!(agents_md.contains("`entrypoint`: `setup` (`ota run setup`)"));
         assert!(agents_md.contains("- `safe_tasks`:"));
         assert!(agents_md.contains("  - `setup` (`ota run setup`)"));
@@ -31880,12 +32111,12 @@ tasks:
         assert!(agents_md.contains("# AGENTS.md"));
         assert!(agents_md.contains("Generated from `./ota.yaml` by `ota agents`."));
         assert!(!agents_md.contains("DO NOT ALTER OR REMOVE COPYRIGHT NOTICES"));
-        assert!(agents_md.contains("Use declared `ota run <task>` paths before raw package-manager, compiler, or test commands"));
+        assert!(agents_md.contains("Use only declared `ota run <task>` paths."));
         assert!(agents_md.contains("`entrypoint`: `setup` (`ota run setup`)"));
     }
 
     #[test]
-    fn agents_write_skips_duplicate_generated_content() {
+    fn agents_write_does_not_accept_unmanaged_duplicate_generated_content() {
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -31913,13 +32144,70 @@ tasks:
 
         assert_eq!(output.exit_code, 0);
         let stdout = strip_ansi(&output.stdout);
-        assert!(stdout.contains("already in sync"));
-        assert_eq!(fs::read_to_string(&agents_path).unwrap(), original);
+        assert!(stdout.contains("appended"));
+        let written = fs::read_to_string(&agents_path).unwrap();
+        assert!(written.starts_with(&original));
+        assert_eq!(
+            written
+                .matches("<!-- ota-generated-agent-guidance:start -->")
+                .count(),
+            1
+        );
+        assert_eq!(
+            written
+                .matches("<!-- ota-generated-agent-guidance:end -->")
+                .count(),
+            1
+        );
 
         let json_output = run_with(["ota", "agents", "--write", "--json", fixture.path()]);
         let json: Value = serde_json::from_str(&json_output.stdout).unwrap();
         assert_eq!(json["mode"], "already_in_sync");
         assert_eq!(json["written"], false);
+    }
+
+    #[test]
+    fn agents_write_migrates_legacy_generated_file_into_one_managed_block() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+agent:
+  default_task: ci
+tasks:
+  ci:
+    run: cargo test
+"#,
+        );
+        let preview = run_with(["ota", "agents", "--json", fixture.path()]);
+        let json: Value = serde_json::from_str(&preview.stdout).unwrap();
+        let generated = json["content"].as_str().unwrap();
+        let agents_path = fixture.dir.path().join("AGENTS.md");
+        fs::write(&agents_path, generated).unwrap();
+
+        let review = run_with(["ota", "agents", "--review", "--json", fixture.path()]);
+        let review_json: Value = serde_json::from_str(&review.stdout).unwrap();
+        assert_eq!(review_json["sync_state"], "update_needed");
+
+        let write = run_with(["ota", "agents", "--write", "--json", fixture.path()]);
+        assert_eq!(write.exit_code, 0);
+        let write_json: Value = serde_json::from_str(&write.stdout).unwrap();
+        assert_eq!(write_json["written"], true);
+        let written = fs::read_to_string(&agents_path).unwrap();
+        assert_eq!(written.matches("# AGENTS.md").count(), 1);
+        assert_eq!(
+            written
+                .matches("<!-- ota-generated-agent-guidance:start -->")
+                .count(),
+            1
+        );
+        assert_eq!(
+            written
+                .matches("<!-- ota-generated-agent-guidance:end -->")
+                .count(),
+            1
+        );
     }
 
     #[test]

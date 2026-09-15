@@ -1603,6 +1603,9 @@ impl CiDirectAggregateInvocationFlags {
                     true
                 }
             }
+            // Agent admission changes who may execute the aggregate, not the aggregate's
+            // contract-owned member sequence.
+            "--agent" => self.seen.insert(token.to_string()),
             "--persistent" | "--ephemeral" => {
                 !self.saw_lifecycle && self.seen.insert(token.to_string()) && {
                     self.saw_lifecycle = true;
@@ -4742,6 +4745,13 @@ tasks:
             ),
             Some(true)
         );
+        assert_eq!(
+            ci_direct_aggregate_invocation_matches(
+                "ota run postgres:verify --agent",
+                "postgres:verify",
+            ),
+            Some(true)
+        );
     }
 
     #[test]
@@ -4776,7 +4786,6 @@ tasks:
             "ota run postgres:verify --dry-run .",
             "ota run postgres:verify --skip-deps .",
             "ota run postgres:verify --json .",
-            "ota run postgres:verify --agent .",
             "ota run postgres:verify --native --container .",
             "ota run postgres:verify --persistent --ephemeral .",
             "ota run postgres:verify --concise --verbose .",

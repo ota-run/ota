@@ -26,6 +26,16 @@
 
 ## Unreleased
 
+- Harden `ota agents --review` and `ota agents --write` to recognize generated guidance only when
+  it exactly occupies one uniquely delimited managed block. Duplicate, reversed, ambiguous, or
+  stale markers no longer appear synchronized merely because matching generated text exists
+  elsewhere in `AGENTS.md`; write mode now refuses ambiguous marker layouts without modifying the
+  file, writes new files with the same markers, and migrates exact legacy generated-only files into
+  one managed block. Contract-authored content containing a reserved marker also refuses instead of
+  manufacturing a second ownership boundary, and unreadable existing files are preserved rather
+  than being mistaken for missing files. Marker text embedded in ordinary prose is preserved and
+  no longer treated as a replacement boundary.
+
 - Reconstruct one crate-private, provider-free Step 1-6 secret-delivery transaction candidate from
   an authenticated protected authority snapshot, a challenge-backed invocation context, and the
   canonical selected `RunPlan`. Core re-derives task and workflow roots, binding/source, profile,
@@ -139,6 +149,11 @@
   to render task `notes` alongside descriptions and runnable commands. Multiline notes retain plain
   output parity, so declared proof limits and external-boundary guidance are visible before an
   agent selects a task.
+
+- Fixed CI verification drift detection to recognize `ota run <aggregate> --agent` as a bounded
+  foreground execution of the declared aggregate. Agent admission changes who may execute the
+  lane, not its contract-owned ordered membership; dry-run, dependency-skipping, alternate-contract,
+  shell-indirected, and malformed invocations remain non-covering.
 
 - Hardened the existing runtime-proof negative-control guarantee with a test-only live-transaction
   fault boundary. Two declared controls now produce distinct valid attestations in one proof run;

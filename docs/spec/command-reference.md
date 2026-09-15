@@ -2142,8 +2142,22 @@ Current behavior:
 - when the repo contract does not declare `agent`, preview mode now behaves like a blocked agent-boundary sync surface instead of a generic scaffold preview: it reports `Agent contract missing`, shows compare-first next steps through `ota detect --dry-run` and `ota init --dry-run`, and surfaces any trustworthy inferred repo signals plus inferred starter agent boundaries under `Repo Signals`
 - `ota agents --write` now refuses when the repo contract still lacks `agent`, so Ota does not write generic guidance that looks more authoritative than the authored contract
 - renders an explicit `Bootstrap` section when `agent.bootstrap.ota` is present, including the approved shell and PowerShell install commands for `ota`
-- preserves existing `AGENTS.md` content and appends or refreshes an ota-managed block instead of overwriting user-authored guidance
-- skips the write if the existing file already contains the generated AGENTS content
+- preserves existing `AGENTS.md` content and appends or refreshes one uniquely delimited
+  ota-managed block instead of overwriting user-authored guidance
+- reports `in sync` and skips the write only when that exact managed block matches the generated
+  guidance; missing, duplicate, reversed, ambiguous, or stale marker state remains `update needed`
+  even when matching generated text exists elsewhere in the file
+- `ota agents --write` appends a managed block when no markers exist, refreshes one valid managed
+  block, and refuses without modifying the file when markers are incomplete, duplicate, reversed,
+  or otherwise ambiguous
+- new files are written with the same managed markers, and a legacy file containing only the exact
+  prior generated guidance is migrated into one managed block instead of duplicating that content
+- contract-authored content containing either reserved managed-block marker refuses in write mode,
+  so generated notes or metadata cannot manufacture a second ownership boundary
+- only a genuinely missing output file enters creation; any other read or decode failure refuses
+  without replacing the existing bytes
+- ownership markers are recognized only as exact standalone lines; inline examples containing the
+  marker text remain user-authored content and are never used as replacement boundaries
 - keeps the generated file lightweight by using short provenance (`Generated from ... by \`ota agents\`.`) instead of an Ota copyright or license banner
 - renders a `Managed block:` label in text output so the ota-owned section is explicit and shows each task list item together with its `ota run ...` command form
 - text preview points directly at the missing boundary and the next safe authoring lane instead of only previewing generated markdown when the contract still lacks `agent`

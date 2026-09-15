@@ -924,7 +924,7 @@ Generated from `./ota.yaml` by `ota agents`.
 
 ## Agent Contract
 
-Use declared `ota run <task>` paths before raw package-manager, compiler, or test commands when this contract already defines the task you need. Drop to raw commands only for narrow debugging or one-off checks that the contract does not model yet.
+Use only declared `ota run <task>` paths. If the contract does not model the work you need, stop and request a contract update; do not bypass the agent boundary with raw package-manager, compiler, or test commands.
 
 - `entrypoint`: `setup` (`ota run setup`)
 - `default_task`: `ci` (`ota run ci`)
@@ -935,21 +935,37 @@ Use declared `ota run <task>` paths before raw package-manager, compiler, or tes
   - `check` (`ota run check`)
   - `test` (`ota run test`)
   - `ci` (`ota run ci`)
-  - `contract:validate` (`ota run contract:validate`)
   - `doctor-annotations` (`ota run doctor-annotations`)
+  - `contract:validate` (`ota run contract:validate`)
+  - `contract:tasks` (`ota run contract:tasks`)
+  - `contract:doctor` (`ota run contract:doctor`)
+  - `agents:sync:check` (`ota run agents:sync:check`)
+  - `compat` (`ota run compat`)
+  - `first-party:sync:check` (`ota run first-party:sync:check`)
+  - `pressure:evidence:site:check` (`ota run pressure:evidence:site:check`)
+  - `skills:sync:check` (`ota run skills:sync:check`)
+  - `schemas:sync` (`ota run schemas:sync`)
+  - `docs:manifest:sync` (`ota run docs:manifest:sync`)
+  - `candidate-publication:faults` (`ota run candidate-publication:faults`)
+  - `effect-refusal-archive:faults` (`ota run effect-refusal-archive:faults`)
+  - `proof-assurance:faults` (`ota run proof-assurance:faults`)
+  - `release-gate` (`ota run release-gate`)
+  - `ux-review` (`ota run ux-review`)
+  - `ux:refresh` (`ota run ux:refresh`)
+  - `dependency-update` (`ota run dependency-update`)
 - `verify_after_changes`:
   - `ci` (`ota run ci`)
-- `writable_paths`: `src`, `docs`, `README.md`, `scripts`, `tests`, `CHANGELOG.md`, `Cargo.toml`
-- `protected_paths`: `Cargo.lock`, `ota.yaml`, `LICENSE`
+- `writable_paths`: `src`, `docs`, `README.md`, `scripts`, `tests`, `tasks`, `CHANGELOG.md`, `Cargo.toml`
+- `protected_paths`: `.github`, `AGENTS.md`, `Cargo.lock`, `ota.yaml`, `LICENSE`
 
 ## Bootstrap
 
 Only install ota if it is missing and installation is approved.
 
 - `source.kind`: `git_rev`
-- `source.rev`: `6538cc074a78b3a0471f976a415238d13307a699`
-- `sh`: `curl -fsSL https://dist.ota.run/install.sh | OTA_GIT_REV=6538cc074a78b3a0471f976a415238d13307a699 sh -s -- --from-git`
-- `powershell`: `$env:OTA_GIT_REV='6538cc074a78b3a0471f976a415238d13307a699'; & ([scriptblock]::Create((irm https://dist.ota.run/install.ps1))) -FromGit`
+- `source.rev`: `1591f574edf76f2c69c6a811dc2b07e5ed3b90d3`
+- `sh`: `curl -fsSL https://dist.ota.run/install.sh | OTA_GIT_REV=1591f574edf76f2c69c6a811dc2b07e5ed3b90d3 sh -s -- --from-git`
+- `powershell`: `$env:OTA_GIT_REV='1591f574edf76f2c69c6a811dc2b07e5ed3b90d3'; & ([scriptblock]::Create((irm https://dist.ota.run/install.ps1))) -FromGit`
 
 ## Notes
 
@@ -959,9 +975,16 @@ Use `ota doctor` to inspect readiness and agent guidance.
 Use `ota tasks` to discover runnable repo actions.
 When a repo already exposes a matching safe task, prefer `ota run <task>` over raw package-manager or language-tool commands.
 Fall back to direct commands only when no truthful Ota task exists or when isolating an Ota defect.
+Agent-safe means admitted through the declared contract, not necessarily read-only; inspect task notes, effects, and writable paths before running maintenance tasks that regenerate tracked artifacts.
 Use `ota run setup` to prepare the repo.
 Use `ota run contract:validate` to self-host the contract validator against this checkout.
 Use `ota run ci` to run the canonical verification path.
+Read `docs/ai/current-state.md` and the active plan before substantive work; they own the current implementation boundary and next proof gate.
+Do not activate a later version or implementation step without an explicit reviewed and committed activation record.
+Do not initiate live provider, credential, cloud, VPS, or network pressure work unless the active plan authorizes that exact boundary and the user explicitly requests it.
+Treat `.github`, `AGENTS.md`, `Cargo.lock`, `ota.yaml`, and `LICENSE` as protected; change them only with explicit task-specific authorization.
+After changing agent guidance, run `ota run agents:sync:check --agent`; regenerate the managed block with `ota agents . --write` only when the contract change is intentional and authorized.
+Preserve unrelated worktree changes and inspect connected Core, Examples, Skills, Site, Learn, FAQ, and Glossary surfaces before declaring product work complete.
 Prefer narrow changes with regression tests.
 Keep public docs and contracts aligned with implementation.
 <!-- ota-generated-agent-guidance:end -->

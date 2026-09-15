@@ -34543,28 +34543,63 @@ pub fn agents(
         );
     }
 
+    if write && agents_generated_content_uses_reserved_markers(&content) {
+        let error = "refusing to write agent guidance because generated content contains a reserved Ota managed-block marker; remove that marker from the contract-authored content and retry";
+        return finalize_debug(
+            match format {
+                OutputFormat::Text => CommandOutput::failure(command_message_failure_text(
+                    "AGENTS",
+                    &compact_output_display,
+                    "Agent guidance could not be written",
+                    error,
+                    &[],
+                )),
+                OutputFormat::Json => CommandOutput::failure(to_json(&AgentsFailure {
+                    ok: false,
+                    path: &path_display,
+                    written: false,
+                    error,
+                    next: None,
+                })),
+            },
+            debug,
+            debug_lines,
+        );
+    }
+
     if write {
-        if let Ok(existing) = fs::read_to_string(&output_path) {
-            if existing == content {
+        let existing = match fs::read_to_string(&output_path) {
+            Ok(existing) => Some(existing),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => {
+                let error = format!(
+                    "refusing to write `{}` because its existing content could not be read safely: {error}",
+                    compact_output_display
+                );
                 return finalize_debug(
                     match format {
-                        OutputFormat::Text => {
-                            CommandOutput::success(render_text("already in sync"))
-                        }
-                        OutputFormat::Json => CommandOutput::success(to_json(&AgentsSuccess {
-                            ok: true,
+                        OutputFormat::Text => CommandOutput::failure(command_message_failure_text(
+                            "AGENTS",
+                            &compact_output_display,
+                            "Agent guidance could not be written",
+                            &error,
+                            &[],
+                        )),
+                        OutputFormat::Json => CommandOutput::failure(to_json(&AgentsFailure {
+                            ok: false,
                             path: &path_display,
-                            output: &output_path_display,
                             written: false,
-                            mode: "already_in_sync",
-                            content: &content,
+                            error: &error,
+                            next: None,
                         })),
                     },
                     debug,
                     debug_lines,
                 );
             }
+        };
 
+        if let Some(existing) = existing {
             if agents_markdown_already_present(&existing, &content) {
                 return finalize_debug(
                     match format {
@@ -34585,7 +34620,43 @@ pub fn agents(
                 );
             }
 
-            let merged = merge_agents_markdown(&existing, &content);
+            let existing_for_merge =
+                if agents_markdown_is_legacy_generated_file(&existing, &content) {
+                    ""
+                } else {
+                    &existing
+                };
+            let merged = match merge_agents_markdown(existing_for_merge, &content) {
+                Ok(merged) => merged,
+                Err(()) => {
+                    let error = format!(
+                        "refusing to write `{}` because its Ota managed-block markers are incomplete, duplicate, reversed, or ambiguous; repair the markers manually and retry",
+                        compact_output_display
+                    );
+                    return finalize_debug(
+                        match format {
+                            OutputFormat::Text => {
+                                CommandOutput::failure(command_message_failure_text(
+                                    "AGENTS",
+                                    &compact_output_display,
+                                    "Agent guidance could not be written",
+                                    &error,
+                                    &[],
+                                ))
+                            }
+                            OutputFormat::Json => CommandOutput::failure(to_json(&AgentsFailure {
+                                ok: false,
+                                path: &path_display,
+                                written: false,
+                                error: &error,
+                                next: None,
+                            })),
+                        },
+                        debug,
+                        debug_lines,
+                    );
+                }
+            };
             return finalize_debug(
                 match fs::write(&output_path, merged.as_bytes()) {
                     Ok(()) => match format {
@@ -34627,8 +34698,10 @@ pub fn agents(
             );
         }
 
+        let managed_content = merge_agents_markdown("", &content)
+            .expect("an empty AGENTS.md cannot contain ambiguous managed-block markers");
         return finalize_debug(
-            match fs::write(&output_path, &content) {
+            match fs::write(&output_path, managed_content.as_bytes()) {
                 Ok(()) => match format {
                     OutputFormat::Text => CommandOutput::success(render_text("wrote")),
                     OutputFormat::Json => CommandOutput::success(to_json(&AgentsSuccess {
@@ -62893,7 +62966,11 @@ fn render_agents_markdown(
     output.push_str("## Agent Contract\n\n");
 
     if let Some(agent) = agent {
-        output.push_str("Use declared `ota run <task>` paths before raw package-manager, compiler, or test commands when this contract already defines the task you need. Drop to raw commands only for narrow debugging or one-off checks that the contract does not model yet.\n\n");
+        if agent.posture == "readiness_strict" {
+            output.push_str("Use only declared `ota run <task>` paths. If the contract does not model the work you need, stop and request a contract update; do not bypass the agent boundary with raw package-manager, compiler, or test commands.\n\n");
+        } else {
+            output.push_str("Use declared `ota run <task>` paths before raw package-manager, compiler, or test commands when this contract already defines the task you need. Drop to raw commands only for narrow debugging or one-off checks that the contract does not model yet.\n\n");
+        }
         if let Some(entrypoint) = agent.entrypoint {
             output.push_str("- `entrypoint`: `");
             output.push_str(entrypoint);
@@ -63317,9 +63394,7 @@ fn agent_boundary_sync_state(
     }
 
     match fs::read_to_string(output_path) {
-        Ok(existing)
-            if existing == content || agents_markdown_already_present(&existing, content) =>
-        {
+        Ok(existing) if agents_markdown_already_present(&existing, content) => {
             AgentBoundarySyncState::InSync
         }
         _ => AgentBoundarySyncState::UpdateNeeded,
@@ -63763,11 +63838,39 @@ fn render_agents_task_list(output: &mut String, label: &str, tasks: &[String]) {
 const AGENTS_GENERATED_START: &str = "<!-- ota-generated-agent-guidance:start -->";
 const AGENTS_GENERATED_END: &str = "<!-- ota-generated-agent-guidance:end -->";
 
-fn merge_agents_markdown(existing: &str, generated: &str) -> String {
-    if let Some(start_index) = existing.find(AGENTS_GENERATED_START)
-        && let Some(end_index) = existing[start_index..].find(AGENTS_GENERATED_END)
-    {
-        let end_index = start_index + end_index + AGENTS_GENERATED_END.len();
+fn agents_managed_block_range(existing: &str) -> Result<Option<(usize, usize)>, ()> {
+    let starts = agents_exact_marker_line_offsets(existing, AGENTS_GENERATED_START);
+    let ends = agents_exact_marker_line_offsets(existing, AGENTS_GENERATED_END);
+
+    match (starts.as_slice(), ends.as_slice()) {
+        ([], []) => Ok(None),
+        ([start_index], [end_index])
+            if start_index + AGENTS_GENERATED_START.len() <= *end_index =>
+        {
+            Ok(Some((*start_index, end_index + AGENTS_GENERATED_END.len())))
+        }
+        _ => Err(()),
+    }
+}
+
+fn agents_exact_marker_line_offsets(existing: &str, marker: &str) -> Vec<usize> {
+    let mut offsets = Vec::new();
+    let mut offset = 0;
+    for line in existing.split_inclusive('\n') {
+        let line_without_newline = line.strip_suffix('\n').unwrap_or(line);
+        let line_without_newline = line_without_newline
+            .strip_suffix('\r')
+            .unwrap_or(line_without_newline);
+        if line_without_newline == marker {
+            offsets.push(offset);
+        }
+        offset += line.len();
+    }
+    offsets
+}
+
+fn merge_agents_markdown(existing: &str, generated: &str) -> Result<String, ()> {
+    if let Some((start_index, end_index)) = agents_managed_block_range(existing)? {
         let mut merged = String::new();
         merged.push_str(existing[..start_index].trim_end());
         if !merged.is_empty() {
@@ -63781,7 +63884,7 @@ fn merge_agents_markdown(existing: &str, generated: &str) -> String {
         }
         merged.push_str(AGENTS_GENERATED_END);
         merged.push_str(&existing[end_index..]);
-        return merged;
+        return Ok(merged);
     }
 
     let mut merged = existing.trim_end().to_string();
@@ -63796,13 +63899,32 @@ fn merge_agents_markdown(existing: &str, generated: &str) -> String {
     }
     merged.push_str(AGENTS_GENERATED_END);
     merged.push('\n');
-    merged
+    Ok(merged)
 }
 
 fn agents_markdown_already_present(existing: &str, generated: &str) -> bool {
     let existing = existing.replace("\r\n", "\n");
     let generated = generated.replace("\r\n", "\n");
-    existing.contains(&generated)
+    let Ok(Some((block_start, block_end))) = agents_managed_block_range(&existing) else {
+        return false;
+    };
+    let managed_start = block_start + AGENTS_GENERATED_START.len();
+    let managed_end = block_end - AGENTS_GENERATED_END.len();
+
+    let expected = if generated.ends_with('\n') {
+        format!("\n{generated}")
+    } else {
+        format!("\n{generated}\n")
+    };
+    existing[managed_start..managed_end] == expected
+}
+
+fn agents_markdown_is_legacy_generated_file(existing: &str, generated: &str) -> bool {
+    existing.replace("\r\n", "\n") == generated.replace("\r\n", "\n")
+}
+
+fn agents_generated_content_uses_reserved_markers(generated: &str) -> bool {
+    generated.contains(AGENTS_GENERATED_START) || generated.contains(AGENTS_GENERATED_END)
 }
 
 fn render_agent_summary_text(agent: &AgentSummary<'_>, include_notes: bool) -> Option<String> {

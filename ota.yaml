@@ -178,6 +178,7 @@ tasks:
         - rust
     depends_on:
       - setup
+      - agents:sync:check
     safe_for_agent: true
   doctor-annotations:
     description: Render ota doctor findings for CI or local review
@@ -271,6 +272,32 @@ tasks:
     requirements:
       toolchains:
         - rust
+    safe_for_agent: true
+  agents:sync:check:
+    description: Verify checked-in agent guidance matches the canonical contract
+    notes: |
+      Use this after changing `agent` contract fields or `AGENTS.md`.
+      It refuses when the managed AGENTS.md block is stale without rewriting the protected file.
+    category: test
+    script: |
+      set -e
+      review="$(cargo run --quiet --bin ota -- agents . --review --json)"
+      printf '%s\n' "$review" | grep -q '"sync_state": "in_sync"'
+    variants:
+      - when:
+          os: windows
+        script: |
+          $review = cargo run --quiet --bin ota -- agents . --review --json | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ($review.sync_state -ne "in_sync") {
+            Write-Error "AGENTS.md managed guidance is out of sync with ota.yaml"
+            exit 1
+          }
+    requirements:
+      toolchains:
+        - rust
+    depends_on:
+      - setup
     safe_for_agent: true
   compat:
     description: Run the compatibility test gate
@@ -606,8 +633,24 @@ agent:
     - check
     - test
     - ci
-    - contract:validate
     - doctor-annotations
+    - contract:validate
+    - contract:tasks
+    - contract:doctor
+    - agents:sync:check
+    - compat
+    - first-party:sync:check
+    - pressure:evidence:site:check
+    - skills:sync:check
+    - schemas:sync
+    - docs:manifest:sync
+    - candidate-publication:faults
+    - effect-refusal-archive:faults
+    - proof-assurance:faults
+    - release-gate
+    - ux-review
+    - ux:refresh
+    - dependency-update
   verify_after_changes:
     - ci
   writable_paths:
@@ -616,9 +659,12 @@ agent:
     - README.md
     - scripts
     - tests
+    - tasks
     - CHANGELOG.md
     - Cargo.toml
   protected_paths:
+    - .github
+    - AGENTS.md
     - Cargo.lock
     - ota.yaml
     - LICENSE
@@ -627,7 +673,7 @@ agent:
       note: Only install ota if it is missing and installation is approved.
       source:
         kind: git_rev
-        rev: 6538cc074a78b3a0471f976a415238d13307a699
+        rev: 1591f574edf76f2c69c6a811dc2b07e5ed3b90d3
   notes: |
     Treat Ota as the default workflow, the way npm is the default in Node repos.
     Use `ota validate` to verify the contract.
@@ -635,8 +681,15 @@ agent:
     Use `ota tasks` to discover runnable repo actions.
     When a repo already exposes a matching safe task, prefer `ota run <task>` over raw package-manager or language-tool commands.
     Fall back to direct commands only when no truthful Ota task exists or when isolating an Ota defect.
+    Agent-safe means admitted through the declared contract, not necessarily read-only; inspect task notes, effects, and writable paths before running maintenance tasks that regenerate tracked artifacts.
     Use `ota run setup` to prepare the repo.
     Use `ota run contract:validate` to self-host the contract validator against this checkout.
     Use `ota run ci` to run the canonical verification path.
+    Read `docs/ai/current-state.md` and the active plan before substantive work; they own the current implementation boundary and next proof gate.
+    Do not activate a later version or implementation step without an explicit reviewed and committed activation record.
+    Do not initiate live provider, credential, cloud, VPS, or network pressure work unless the active plan authorizes that exact boundary and the user explicitly requests it.
+    Treat `.github`, `AGENTS.md`, `Cargo.lock`, `ota.yaml`, and `LICENSE` as protected; change them only with explicit task-specific authorization.
+    After changing agent guidance, run `ota run agents:sync:check --agent`; regenerate the managed block with `ota agents . --write` only when the contract change is intentional and authorized.
+    Preserve unrelated worktree changes and inspect connected Core, Examples, Skills, Site, Learn, FAQ, and Glossary surfaces before declaring product work complete.
     Prefer narrow changes with regression tests.
     Keep public docs and contracts aligned with implementation.
