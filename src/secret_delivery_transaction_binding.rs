@@ -663,6 +663,10 @@ impl VerifiedSecretDeliveryTransactionBindingV2 {
         self.prelude.prelude()
     }
 
+    pub(crate) fn observed_runner_version(&self) -> &str {
+        self.prelude.observation().request().runner_version.as_str()
+    }
+
     /// Rechecks all retained V2 truth immediately before a future provider request. Provider
     /// contact remains intentionally outside this slice.
     pub(crate) fn consume_before_provider_request(

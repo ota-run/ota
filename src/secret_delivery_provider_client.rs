@@ -1,12 +1,15 @@
 //! Network-disabled provider request and response models for secret delivery.
 //!
 //! This module derives exact Google operation targets from semantically verified Core truth. It
-//! cannot read environment variables, consume a V2 transaction, open a socket, contact a provider,
-//! materialize a recipient environment, or publish evidence.
+//! can consume a semantically reverified V2 transaction only to retain a network-disabled transport
+//! posture and then take the one-use GitHub request capability. It cannot open a socket, contact a
+//! provider, materialize a recipient environment, or publish evidence.
 
 #![allow(dead_code)]
 
 use std::fmt;
+use std::sync::{Mutex, OnceLock};
+use std::time::Duration;
 
 use base64::Engine;
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
@@ -14,6 +17,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
+use ureq::config::Config as UreqConfig;
+use ureq::tls::{RootCerts, TlsConfig, TlsProvider};
 
 use crate::secret_delivery_oidc_endpoint::{
     GithubActionsOidcEndpointObservationInputV1, GithubActionsOidcRequestEndpointProfileV1,
@@ -24,6 +29,9 @@ use crate::secret_delivery_transaction::{
     SecretDeliveryTransactionCandidateRealization,
     SemanticallyVerifiedSecretDeliveryTransactionCandidate,
     secret_delivery_transaction_candidate_identity,
+};
+use crate::secret_delivery_transaction_binding::{
+    SecretDeliveryTransactionBindingError, VerifiedSecretDeliveryTransactionBindingV2,
 };
 use crate::secret_provider_profile::{
     GithubOidcClaimValue, SecretDeliveryArchitecture, SecretDeliveryExecutionMode,
@@ -46,6 +54,16 @@ const MAX_TOKEN_RESPONSE_BYTES: usize = 16_384;
 const MAX_SECRET_RESPONSE_BYTES: usize = 96 * 1024;
 const MAX_TOKEN_BYTES: usize = 12_288;
 const MAX_SECRET_BYTES: usize = 65_536;
+const MAX_PROVIDER_RESPONSE_HEADER_BYTES: usize = 16 * 1024;
+const PROVIDER_TIMEOUT_GLOBAL: Duration = Duration::from_secs(30);
+const PROVIDER_TIMEOUT_RESOLVE: Duration = Duration::from_secs(5);
+const PROVIDER_TIMEOUT_CONNECT: Duration = Duration::from_secs(10);
+const PROVIDER_TIMEOUT_SEND: Duration = Duration::from_secs(5);
+const PROVIDER_TIMEOUT_RECEIVE: Duration = Duration::from_secs(10);
+const ACTIONS_ID_TOKEN_REQUEST_URL: &str = "ACTIONS_ID_TOKEN_REQUEST_URL";
+const ACTIONS_ID_TOKEN_REQUEST_TOKEN: &str = "ACTIONS_ID_TOKEN_REQUEST_TOKEN";
+
+static GITHUB_OIDC_CAPABILITY_OWNER: OnceLock<Mutex<bool>> = OnceLock::new();
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct SecretDeliveryProviderClientError {
@@ -239,6 +257,289 @@ redacted_debug!(
     expires_at_unix_seconds
 );
 redacted_debug!(SecretManagerPayloadV1, "value", crc32c);
+
+/// One consumed V2 binding coupled to its exact provider operation plan. This is intentionally
+/// opaque: later transport code cannot substitute another binding, candidate, or operation.
+pub(crate) struct ConsumedSecretDeliveryProviderCapabilityV1 {
+    binding: ota_authority_protocol::ProtectedLauncherSecretDeliveryTransactionBindingV2,
+    plan: SecretDeliveryProviderClientPlanV1,
+}
+
+impl fmt::Debug for ConsumedSecretDeliveryProviderCapabilityV1 {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("ConsumedSecretDeliveryProviderCapabilityV1([PROTECTED])")
+    }
+}
+
+/// The acquired GitHub request capability is retained only after V2 consumption. It has no
+/// accessor until a later explicitly authorized network-call slice owns request dispatch.
+struct RetainedGithubOidcRequestCapabilityV1 {
+    endpoint_profile: GithubActionsOidcRequestEndpointProfileV1,
+    endpoint_input: GithubActionsOidcEndpointObservationInputV1,
+    endpoint_observation: ResolvedGithubActionsOidcEndpointObservationV1,
+    operation: SecretDeliveryProviderOperationPlanV1,
+    bearer: ProtectedProviderValue,
+}
+
+impl fmt::Debug for RetainedGithubOidcRequestCapabilityV1 {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("RetainedGithubOidcRequestCapabilityV1([PROTECTED])")
+    }
+}
+
+/// Fixed, network-disabled transport posture. This contains no Agent, connector, socket, or
+/// dispatch API. A later authorization must consume this exact configuration before any request.
+pub(crate) struct PreparedSecretDeliveryProviderTransportV1 {
+    capability: ConsumedSecretDeliveryProviderCapabilityV1,
+    oidc: RetainedGithubOidcRequestCapabilityV1,
+    configuration: UreqConfig,
+    maximum_response_body_bytes: usize,
+}
+
+impl fmt::Debug for PreparedSecretDeliveryProviderTransportV1 {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("PreparedSecretDeliveryProviderTransportV1([PROTECTED])")
+    }
+}
+
+/// Consumes the exact V2 transaction before retaining a GitHub OIDC request capability. This
+/// checkpoint intentionally stops before constructing an HTTP client or dispatching a request.
+pub(crate) fn prepare_secret_delivery_provider_transport_v1(
+    transaction: &mut VerifiedSecretDeliveryTransactionBindingV2,
+    candidate: &SemanticallyVerifiedSecretDeliveryTransactionCandidate,
+    endpoint_profile: &GithubActionsOidcRequestEndpointProfileV1,
+    endpoint_input: GithubActionsOidcEndpointObservationInputV1,
+    endpoint_observation: ResolvedGithubActionsOidcEndpointObservationV1,
+) -> Result<PreparedSecretDeliveryProviderTransportV1, SecretDeliveryProviderClientError> {
+    let binding = transaction
+        .consume_before_provider_request()
+        .map_err(provider_transport_binding_error)?;
+    let runner_version = transaction.observed_runner_version().to_owned();
+    prepare_after_v2_consumption_v1(
+        binding,
+        &runner_version,
+        candidate,
+        endpoint_profile,
+        endpoint_input,
+        endpoint_observation,
+    )
+}
+
+#[cfg(test)]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn prepare_secret_delivery_provider_transport_at_v1(
+    transaction: &mut VerifiedSecretDeliveryTransactionBindingV2,
+    verifier: &crate::protected_capability_observation::RetainedCapabilityProjectionVerifierV1,
+    observed_at_unix_seconds: u64,
+    candidate: &SemanticallyVerifiedSecretDeliveryTransactionCandidate,
+    endpoint_profile: &GithubActionsOidcRequestEndpointProfileV1,
+    endpoint_input: GithubActionsOidcEndpointObservationInputV1,
+    endpoint_observation: ResolvedGithubActionsOidcEndpointObservationV1,
+) -> Result<PreparedSecretDeliveryProviderTransportV1, SecretDeliveryProviderClientError> {
+    let binding = transaction
+        .consume_at(verifier, observed_at_unix_seconds)
+        .map_err(provider_transport_binding_error)?;
+    let runner_version = transaction.observed_runner_version().to_owned();
+    prepare_after_v2_consumption_v1(
+        binding,
+        &runner_version,
+        candidate,
+        endpoint_profile,
+        endpoint_input,
+        endpoint_observation,
+    )
+}
+
+fn prepare_after_v2_consumption_v1(
+    binding: ota_authority_protocol::ProtectedLauncherSecretDeliveryTransactionBindingV2,
+    retained_runner_version: &str,
+    candidate: &SemanticallyVerifiedSecretDeliveryTransactionCandidate,
+    endpoint_profile: &GithubActionsOidcRequestEndpointProfileV1,
+    endpoint_input: GithubActionsOidcEndpointObservationInputV1,
+    endpoint_observation: ResolvedGithubActionsOidcEndpointObservationV1,
+) -> Result<PreparedSecretDeliveryProviderTransportV1, SecretDeliveryProviderClientError> {
+    let plan = derive_secret_delivery_provider_client_plan_v1(candidate)?;
+    if plan.transaction_candidate_identity != binding.secret_transaction_candidate_identity {
+        return Err(error(
+            "secret_delivery_provider_transport_candidate_mismatch",
+            "consumed V2 binding does not match the provider operation plan",
+        ));
+    }
+    if binding.projection_identity
+        != endpoint_input.protected_launcher_capability_projection_identity
+        || retained_runner_version != endpoint_input.runner_version
+    {
+        return Err(error(
+            "secret_delivery_provider_transport_observation_mismatch",
+            "OIDC endpoint observation does not match the consumed V2 transaction",
+        ));
+    }
+    if plan.operations.len() != 1 {
+        return Err(error(
+            "secret_delivery_provider_transport_operation_ambiguous",
+            "the initial provider transport requires exactly one selected operation",
+        ));
+    }
+    verify_github_actions_oidc_endpoint_observation_v1(
+        endpoint_profile,
+        &endpoint_input,
+        &endpoint_observation,
+    )
+    .map_err(|_| {
+        error(
+            "secret_delivery_provider_transport_endpoint_invalid",
+            "OIDC request capability is outside the retained endpoint profile",
+        )
+    })?;
+    let bearer = take_github_oidc_bearer_v1(&endpoint_input.request_url)?;
+
+    let configuration = fixed_transport_configuration_v1();
+    verify_fixed_transport_configuration_v1(&configuration, MAX_SECRET_RESPONSE_BYTES)?;
+    let capability = ConsumedSecretDeliveryProviderCapabilityV1 { binding, plan };
+    let oidc = RetainedGithubOidcRequestCapabilityV1 {
+        endpoint_profile: endpoint_profile.clone(),
+        endpoint_input,
+        endpoint_observation,
+        operation: capability.plan.operations[0].clone(),
+        bearer,
+    };
+    Ok(PreparedSecretDeliveryProviderTransportV1 {
+        capability,
+        oidc,
+        configuration,
+        maximum_response_body_bytes: MAX_SECRET_RESPONSE_BYTES,
+    })
+}
+
+fn take_github_oidc_bearer_v1(
+    expected_request_url: &str,
+) -> Result<ProtectedProviderValue, SecretDeliveryProviderClientError> {
+    let owner = GITHUB_OIDC_CAPABILITY_OWNER.get_or_init(|| Mutex::new(false));
+    let mut consumed = owner
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if *consumed {
+        return Err(error(
+            "secret_delivery_provider_transport_oidc_input_consumed",
+            "GitHub OIDC request capability has already been consumed",
+        ));
+    }
+    *consumed = true;
+    let request_url = std::env::var_os(ACTIONS_ID_TOKEN_REQUEST_URL);
+    let bearer = std::env::var_os(ACTIONS_ID_TOKEN_REQUEST_TOKEN);
+    let request_url = request_url
+        .ok_or_else(|| {
+            error(
+                "secret_delivery_provider_transport_oidc_input_missing",
+                "GitHub OIDC request URL is unavailable after V2 consumption",
+            )
+        })?
+        .into_string()
+        .map_err(|_| {
+            error(
+                "secret_delivery_provider_transport_oidc_input_invalid",
+                "GitHub OIDC request URL is not valid UTF-8",
+            )
+        })?;
+    let bearer = bearer
+        .ok_or_else(|| {
+            error(
+                "secret_delivery_provider_transport_oidc_input_missing",
+                "GitHub OIDC bearer is unavailable after V2 consumption",
+            )
+        })?
+        .into_string()
+        .map_err(|_| {
+            error(
+                "secret_delivery_provider_transport_oidc_input_invalid",
+                "GitHub OIDC bearer is not valid UTF-8",
+            )
+        })?;
+    if request_url.is_empty() || request_url != expected_request_url {
+        return Err(error(
+            "secret_delivery_provider_transport_oidc_input_mismatch",
+            "GitHub OIDC request URL does not match the retained endpoint observation",
+        ));
+    }
+    let bearer = ProtectedProviderValue::new(bearer.into_bytes())?;
+    validate_bearer(&bearer)?;
+    Ok(bearer)
+}
+
+#[cfg(test)]
+pub(crate) fn reset_github_oidc_capability_owner_for_test() {
+    if let Some(owner) = GITHUB_OIDC_CAPABILITY_OWNER.get() {
+        *owner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = false;
+    }
+}
+
+fn provider_transport_binding_error(
+    _error: SecretDeliveryTransactionBindingError,
+) -> SecretDeliveryProviderClientError {
+    error(
+        "secret_delivery_provider_transport_binding_invalid",
+        "V2 transaction consumption refused before provider transport preparation",
+    )
+}
+
+fn fixed_transport_configuration_v1() -> UreqConfig {
+    UreqConfig::builder()
+        .https_only(true)
+        .proxy(None)
+        .max_redirects(0)
+        .max_response_header_size(MAX_PROVIDER_RESPONSE_HEADER_BYTES)
+        .timeout_global(Some(PROVIDER_TIMEOUT_GLOBAL))
+        .timeout_resolve(Some(PROVIDER_TIMEOUT_RESOLVE))
+        .timeout_connect(Some(PROVIDER_TIMEOUT_CONNECT))
+        .timeout_send_request(Some(PROVIDER_TIMEOUT_SEND))
+        .timeout_send_body(Some(PROVIDER_TIMEOUT_SEND))
+        .timeout_recv_response(Some(PROVIDER_TIMEOUT_RECEIVE))
+        .timeout_recv_body(Some(PROVIDER_TIMEOUT_RECEIVE))
+        .tls_config(
+            TlsConfig::builder()
+                .provider(TlsProvider::Rustls)
+                .root_certs(RootCerts::WebPki)
+                .client_cert(None)
+                .use_sni(true)
+                .disable_verification(false)
+                .build(),
+        )
+        .build()
+}
+
+fn verify_fixed_transport_configuration_v1(
+    configuration: &UreqConfig,
+    maximum_response_body_bytes: usize,
+) -> Result<(), SecretDeliveryProviderClientError> {
+    let tls = configuration.tls_config();
+    let timeouts = configuration.timeouts();
+    if !configuration.https_only()
+        || configuration.proxy().is_some()
+        || configuration.max_redirects() != 0
+        || configuration.max_response_header_size() != MAX_PROVIDER_RESPONSE_HEADER_BYTES
+        || timeouts.global != Some(PROVIDER_TIMEOUT_GLOBAL)
+        || timeouts.resolve != Some(PROVIDER_TIMEOUT_RESOLVE)
+        || timeouts.connect != Some(PROVIDER_TIMEOUT_CONNECT)
+        || timeouts.send_request != Some(PROVIDER_TIMEOUT_SEND)
+        || timeouts.send_body != Some(PROVIDER_TIMEOUT_SEND)
+        || timeouts.recv_response != Some(PROVIDER_TIMEOUT_RECEIVE)
+        || timeouts.recv_body != Some(PROVIDER_TIMEOUT_RECEIVE)
+        || maximum_response_body_bytes != MAX_SECRET_RESPONSE_BYTES
+        || tls.provider() != TlsProvider::Rustls
+        || !matches!(tls.root_certs(), RootCerts::WebPki)
+        || tls.client_cert().is_some()
+        || !tls.use_sni()
+        || tls.disable_verification()
+    {
+        return Err(error(
+            "secret_delivery_provider_transport_posture_invalid",
+            "provider transport posture is not the fixed direct-TLS configuration",
+        ));
+    }
+    Ok(())
+}
 
 pub(crate) fn derive_secret_delivery_provider_client_plan_v1(
     candidate: &SemanticallyVerifiedSecretDeliveryTransactionCandidate,
@@ -673,6 +974,15 @@ fn validate_compact_jwt(value: &str) -> Result<(), SecretDeliveryProviderClientE
 fn bearer_authorization(
     token: ProtectedProviderValue,
 ) -> Result<ProtectedProviderValue, SecretDeliveryProviderClientError> {
+    validate_bearer(&token)?;
+    let mut header = b"Bearer ".to_vec();
+    header.extend_from_slice(&token.0);
+    ProtectedProviderValue::new(header)
+}
+
+fn validate_bearer(
+    token: &ProtectedProviderValue,
+) -> Result<(), SecretDeliveryProviderClientError> {
     let token_text = token.as_utf8()?;
     if token_text
         .bytes()
@@ -683,9 +993,7 @@ fn bearer_authorization(
             "provider bearer token contains unsupported bytes",
         ));
     }
-    let mut header = b"Bearer ".to_vec();
-    header.extend_from_slice(&token.0);
-    ProtectedProviderValue::new(header)
+    Ok(())
 }
 
 fn encode_form(fields: &[(&str, &str)]) -> Vec<u8> {
@@ -1001,5 +1309,129 @@ mod tests {
         refuse(|value| value.google_project = "other-project".into());
         refuse(|value| value.secret_resource.push_str("/other"));
         refuse(|value| value.secret_version = 0);
+    }
+
+    #[test]
+    fn fixed_transport_posture_ignores_ambient_proxy_and_trust_inputs() {
+        let _environment = crate::test_support::env_mutex_lock();
+        let variables = [
+            "HTTP_PROXY",
+            "HTTPS_PROXY",
+            "ALL_PROXY",
+            "NO_PROXY",
+            "SSL_CERT_FILE",
+            "SSL_CERT_DIR",
+            "NETRC",
+        ];
+        let previous = variables
+            .iter()
+            .map(|name| (*name, std::env::var_os(name)))
+            .collect::<Vec<_>>();
+        unsafe {
+            for name in variables {
+                std::env::set_var(name, "https://caller.invalid/credential");
+            }
+        }
+
+        let configuration = fixed_transport_configuration_v1();
+        verify_fixed_transport_configuration_v1(&configuration, MAX_SECRET_RESPONSE_BYTES).unwrap();
+        assert!(configuration.proxy().is_none());
+        assert!(configuration.https_only());
+        assert_eq!(configuration.max_redirects(), 0);
+        assert_eq!(
+            configuration.max_response_header_size(),
+            MAX_PROVIDER_RESPONSE_HEADER_BYTES
+        );
+        assert_eq!(
+            configuration.timeouts().global,
+            Some(PROVIDER_TIMEOUT_GLOBAL)
+        );
+        assert_eq!(
+            configuration.timeouts().resolve,
+            Some(PROVIDER_TIMEOUT_RESOLVE)
+        );
+        assert_eq!(
+            configuration.timeouts().connect,
+            Some(PROVIDER_TIMEOUT_CONNECT)
+        );
+        assert_eq!(
+            configuration.timeouts().send_request,
+            Some(PROVIDER_TIMEOUT_SEND)
+        );
+        assert_eq!(
+            configuration.timeouts().send_body,
+            Some(PROVIDER_TIMEOUT_SEND)
+        );
+        assert_eq!(
+            configuration.timeouts().recv_response,
+            Some(PROVIDER_TIMEOUT_RECEIVE)
+        );
+        assert_eq!(
+            configuration.timeouts().recv_body,
+            Some(PROVIDER_TIMEOUT_RECEIVE)
+        );
+        assert!(matches!(
+            configuration.tls_config().root_certs(),
+            RootCerts::WebPki
+        ));
+
+        unsafe {
+            for (name, value) in previous {
+                match value {
+                    Some(value) => std::env::set_var(name, value),
+                    None => std::env::remove_var(name),
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn retained_bearer_validation_and_debug_remain_redacted() {
+        let bearer = ProtectedProviderValue::new(b"runner-bearer".to_vec()).unwrap();
+        validate_bearer(&bearer).unwrap();
+        assert!(!format!("{bearer:?}").contains("runner-bearer"));
+        assert!(
+            validate_bearer(&ProtectedProviderValue::new(b"runner\n bearer".to_vec()).unwrap())
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn oidc_input_owner_requires_the_retained_url_and_consumes_ambient_capability() {
+        let _environment = crate::test_support::env_mutex_lock();
+        reset_github_oidc_capability_owner_for_test();
+        let previous_url = std::env::var_os(ACTIONS_ID_TOKEN_REQUEST_URL);
+        let previous_token = std::env::var_os(ACTIONS_ID_TOKEN_REQUEST_TOKEN);
+        unsafe {
+            std::env::set_var(
+                ACTIONS_ID_TOKEN_REQUEST_URL,
+                "https://runner.invalid/id-token",
+            );
+            std::env::set_var(ACTIONS_ID_TOKEN_REQUEST_TOKEN, "runner-bearer");
+        }
+
+        let bearer = take_github_oidc_bearer_v1("https://runner.invalid/id-token").unwrap();
+        assert!(!format!("{bearer:?}").contains("runner-bearer"));
+        assert!(take_github_oidc_bearer_v1("https://runner.invalid/id-token").is_err());
+
+        reset_github_oidc_capability_owner_for_test();
+        unsafe {
+            std::env::set_var(ACTIONS_ID_TOKEN_REQUEST_URL, "https://runner.invalid/other");
+            std::env::set_var(ACTIONS_ID_TOKEN_REQUEST_TOKEN, "runner-bearer");
+        }
+        assert!(take_github_oidc_bearer_v1("https://runner.invalid/id-token").is_err());
+        assert!(take_github_oidc_bearer_v1("https://runner.invalid/id-token").is_err());
+
+        unsafe {
+            match previous_url {
+                Some(value) => std::env::set_var(ACTIONS_ID_TOKEN_REQUEST_URL, value),
+                None => std::env::remove_var(ACTIONS_ID_TOKEN_REQUEST_URL),
+            }
+            match previous_token {
+                Some(value) => std::env::set_var(ACTIONS_ID_TOKEN_REQUEST_TOKEN, value),
+                None => std::env::remove_var(ACTIONS_ID_TOKEN_REQUEST_TOKEN),
+            }
+        }
+        reset_github_oidc_capability_owner_for_test();
     }
 }

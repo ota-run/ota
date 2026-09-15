@@ -939,9 +939,19 @@ pub(crate) mod tests {
         ExecutionOverrides, plan_task_execution_structure_for_target_os,
         plan_workflow_execution_structure_for_target_os,
     };
+    use crate::secret_delivery_oidc_endpoint::{
+        GithubActionsOidcEndpointObservationInputV1,
+        github_actions_oidc_request_endpoint_profile_v1,
+        resolve_github_actions_oidc_endpoint_observation_v1,
+    };
+    use crate::secret_delivery_provider_client::{
+        prepare_secret_delivery_provider_transport_at_v1,
+        reset_github_oidc_capability_owner_for_test,
+    };
     use crate::secret_delivery_transaction_binding::{
         SecretDeliveryTransactionBindingError, VerifiedSameChildCapabilityPreludeV1,
-        issue_secret_delivery_transaction_binding_v2, reconcile_same_child_capability_prelude_v1,
+        VerifiedSecretDeliveryTransactionBindingV2, issue_secret_delivery_transaction_binding_v2,
+        reconcile_same_child_capability_prelude_v1,
     };
     use crate::secret_provider_bindings::{
         SecretProviderBindingClass, SecretProviderBindingDisclosureClass,
@@ -1823,6 +1833,80 @@ secret_requirements:
         (candidate, snapshot)
     }
 
+    fn verified_v2_for_provider_transport() -> (
+        VerifiedSecretDeliveryTransactionBindingV2,
+        RetainedCapabilityProjectionVerifierV1,
+        SnapshotBoundSecretDeliveryTransactionCandidateV1,
+        u64,
+    ) {
+        let startup = startup();
+        let contract = candidate_contract();
+        let run_plan = plan_task_execution_structure_for_target_os(
+            &contract,
+            "publish",
+            ExecutionOverrides::default(),
+            "linux",
+        )
+        .expect("selected graph");
+        let now = u64::try_from(OffsetDateTime::now_utc().unix_timestamp()).expect("current time");
+        let (prelude, verifier, signing_key) = reconciled_same_child_prelude(&startup, "1004");
+        let (candidate, snapshot) = reconciled_snapshot_candidate(
+            &startup,
+            prelude.observation(),
+            &contract,
+            &run_plan,
+            &[3; 32],
+            now,
+        );
+        let pending =
+            issue_secret_delivery_transaction_binding_v2(candidate.clone(), snapshot, prelude)
+                .expect("pending V2 binding");
+        let binding_now = pending
+            .request()
+            .observation
+            .challenge
+            .issued_at_unix_seconds;
+        let response = v2_binding_response(pending.request(), &verifier, &signing_key);
+        let verified = pending
+            .reconcile(response, &verifier, binding_now)
+            .expect("verified V2 binding");
+        (verified, verifier, candidate, binding_now)
+    }
+
+    struct OidcEnvironmentGuard {
+        prior_url: Option<std::ffi::OsString>,
+        prior_token: Option<std::ffi::OsString>,
+    }
+
+    impl OidcEnvironmentGuard {
+        fn install(request_url: &str) -> Self {
+            let guard = Self {
+                prior_url: std::env::var_os("ACTIONS_ID_TOKEN_REQUEST_URL"),
+                prior_token: std::env::var_os("ACTIONS_ID_TOKEN_REQUEST_TOKEN"),
+            };
+            unsafe {
+                std::env::set_var("ACTIONS_ID_TOKEN_REQUEST_URL", request_url);
+                std::env::set_var("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "runner-bearer");
+            }
+            guard
+        }
+    }
+
+    impl Drop for OidcEnvironmentGuard {
+        fn drop(&mut self) {
+            unsafe {
+                match &self.prior_url {
+                    Some(value) => std::env::set_var("ACTIONS_ID_TOKEN_REQUEST_URL", value),
+                    None => std::env::remove_var("ACTIONS_ID_TOKEN_REQUEST_URL"),
+                }
+                match &self.prior_token {
+                    Some(value) => std::env::set_var("ACTIONS_ID_TOKEN_REQUEST_TOKEN", value),
+                    None => std::env::remove_var("ACTIONS_ID_TOKEN_REQUEST_TOKEN"),
+                }
+            }
+        }
+    }
+
     #[test]
     fn snapshot_request_binds_one_startup_contract_and_graph() {
         let pending = issue_at_v1(&startup(), &identity('b'), &identity('c'), &[7; 32], 100)
@@ -2389,6 +2473,72 @@ secret_requirements:
             verified.consume_at(&verifier, binding_now),
             Err(SecretDeliveryTransactionBindingError::AlreadyConsumed)
         );
+    }
+
+    #[test]
+    fn provider_transport_preparation_consumes_one_verified_v2_binding_before_oidc_ownership() {
+        let _environment = crate::test_support::env_mutex_lock();
+        reset_github_oidc_capability_owner_for_test();
+        let (mut verified, verifier, candidate_for_prepare, binding_now) =
+            verified_v2_for_provider_transport();
+        let profile = github_actions_oidc_request_endpoint_profile_v1().expect("endpoint profile");
+        let endpoint_input = GithubActionsOidcEndpointObservationInputV1 {
+            schema_version: 1,
+            request_url: "https://run-actions-1-azure-eastus.actions.githubusercontent.com/1//idtoken/123e4567-e89b-12d3-a456-426614174000/123e4567-e89b-12d3-a456-426614174001?api-version=2.0".into(),
+            runner_environment: "self-hosted".into(),
+            runner_os: "linux".into(),
+            runner_architecture: "x64".into(),
+            runner_version: "2.337.0".into(),
+            protected_launcher_capability_projection_identity: verified.binding().projection_identity.clone(),
+        };
+        let endpoint =
+            resolve_github_actions_oidc_endpoint_observation_v1(&profile, &endpoint_input)
+                .expect("endpoint observation");
+        let _oidc_environment = OidcEnvironmentGuard::install(&endpoint_input.request_url);
+        assert!(
+            prepare_secret_delivery_provider_transport_at_v1(
+                &mut verified,
+                &verifier,
+                binding_now,
+                candidate_for_prepare.candidate(),
+                &profile,
+                endpoint_input.clone(),
+                endpoint,
+            )
+            .is_ok()
+        );
+        let (mut fresh_verified, fresh_verifier, fresh_candidate, fresh_binding_now) =
+            verified_v2_for_provider_transport();
+        let fresh_input = GithubActionsOidcEndpointObservationInputV1 {
+            schema_version: 1,
+            request_url: endpoint_input.request_url.clone(),
+            runner_environment: "self-hosted".into(),
+            runner_os: "linux".into(),
+            runner_architecture: "x64".into(),
+            runner_version: "2.337.0".into(),
+            protected_launcher_capability_projection_identity: fresh_verified
+                .binding()
+                .projection_identity
+                .clone(),
+        };
+        let fresh_endpoint =
+            resolve_github_actions_oidc_endpoint_observation_v1(&profile, &fresh_input)
+                .expect("fresh endpoint observation");
+        let error = prepare_secret_delivery_provider_transport_at_v1(
+            &mut fresh_verified,
+            &fresh_verifier,
+            fresh_binding_now,
+            fresh_candidate.candidate(),
+            &profile,
+            fresh_input,
+            fresh_endpoint,
+        )
+        .expect_err("a fresh transaction cannot reacquire the consumed OIDC capability");
+        assert_eq!(
+            error.code,
+            "secret_delivery_provider_transport_oidc_input_consumed"
+        );
+        reset_github_oidc_capability_owner_for_test();
     }
 
     #[test]
