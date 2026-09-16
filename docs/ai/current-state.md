@@ -1828,16 +1828,21 @@ prepared transport. It rejects a non-normal root edge, noncanonical target expre
 substitution, and inconsistent local carriers. It does not yet bind the record into the separately
 administered Protocol/Launcher installation or prove cross-process agreement.
 
-The active Step 7 plan now proposes an additive V3 transaction exchange because released V2 wire
-records are immutable. The signed administrator-owned binding bundle must carry the complete
-expected dependency graph and record; Core must rederive both and reconcile their record identity
-through the V3 request/binding, candidate, consumed capability, and prepared transport. Protocol
-and Launcher remain relays for the identity and do not interpret Cargo graph semantics.
+The additive V3 transaction exchange is committed in Protocol
+`63a352f7a926a2fed0866db0de61749fa701df75`, Launcher
+`19b4b15d79193c5e74fcf0771011ea0ad868755d`, and Core
+`d30cdb278d1db619c91e7f63bec03b6ab0687b7`. Core
+`fc2357ba35bbef979a4af0155f81962fa2608f41` routes the protected same-child session through
+V3 after snapshot and candidate reconstruction; its broker session suite passed 33 tests and MUSE
+found no blocking finding. The exact Core-owned transport-dependency record identity is retained
+in the V3 request and binding. V2 remains immutable historical proof and the completed
+network-disabled V2 transport-preparation checkpoint; that checkpoint is not yet migrated to V3.
 
-Next action: independently review and correct the V3 amendment before implementation. After that,
-implement Protocol first, pin its immutable revision in Core and Launcher, then implement the
-protected Launcher relay and Core reconciliation before enabling the already-planned GitHub
-OIDC-only `GET` checkpoint.
+Next action: push the reviewed Launcher and Core revisions, then run the protected Linux/X64
+service-path compatibility gate at those exact revisions. Local macOS tests and Linux compilation
+do not establish that hosted cross-process result. After the gate, reconcile the complete
+administrator-expected dependency graph and record through a V3-consumed provider capability and
+prepared transport before enabling the planned GitHub OIDC-only `GET` checkpoint.
 That later checkpoint may make one fixed request-service call and retain one opaque, unadmitted JWT
 buffer only; it still excludes retries, redirects, JWT claim admission, Google STS, IAM Credentials,
 Secret Manager, materialization, injection, positive evidence, Step 8, and V12.2. Site, Skills,
