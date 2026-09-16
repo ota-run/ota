@@ -1841,22 +1841,31 @@ network-disabled V2 transport-preparation checkpoint; that checkpoint is not yet
 Run [35095607162](https://github.com/ota-run/ota/actions/runs/35095607162) reached the protected
 Linux/X64 host at exact Core `f59c35e9`, Launcher `19b4b15d`, and Protocol `63a352f7`, but failed
 before capability observation: Cargo could not fetch the new locked Protocol revision into the
-protected runner's read-only persistent Cargo home. It is failure localization only, not V3
-compatibility or provider evidence.
+protected runner's read-only persistent Cargo home. The independently reviewed Core repair
+`d8fd435514a8dedfe83a80b432d71c9ba2d40e12` moves only that test's Cargo home and target directory
+under `RUNNER_TEMP`; it does not alter authority, provider, or execution behavior.
 
-Next action: review and commit the disposable-Cargo-home repair, then queue a new run, reprovision
-the protected host from the resulting exact Core revision and the existing Protocol/Launcher
-revisions, and run the protected Linux/X64 service-path compatibility gate. The previous hosted
-installation and workflow pins belong to the V2 checkpoint; local macOS tests and Linux compilation
-do not establish a V3 cross-process result. The hosted gate must require one post-reconciliation V3
-marker and no V2 completion marker. After the gate, reconcile the
-complete administrator-expected dependency graph and record through a V3-consumed provider capability and
-prepared transport before enabling the planned GitHub OIDC-only `GET` checkpoint.
-That later checkpoint may make one fixed request-service call and retain one opaque, unadmitted JWT
-buffer only; it still excludes retries, redirects, JWT claim admission, Google STS, IAM Credentials,
-Secret Manager, materialization, injection, positive evidence, Step 8, and V12.2. Site, Skills,
-Examples, Learn, FAQ, Glossary, contract schema, and public JSON remain unaffected because this is
-an internal trust-boundary foundation with no operator workflow, vocabulary, or capability claim.
+The exact protected Linux/X64 V3 compatibility gate is now closed by Core run
+[35101698250](https://github.com/ota-run/ota/actions/runs/35101698250): Toolkit job `104812464123`
+and protected job `104812509395` both passed at Core `d8fd435514a8dedfe83a80b432d71c9ba2d40e12`,
+Launcher `19b4b15d79193c5e74fcf0771011ea0ad868755d`, and Protocol
+`63a352f7a926a2fed0866db0de61749fa701df75`. The protected job rebuilt the isolated cache, derived
+and reconciled one signed public capability observation, verified the protected runner's non-secret
+endpoint posture, reconstructed the same-child V3 route, emitted exactly one
+`binding_v3_response_reconciled` marker and zero V2 `response_reconciled` markers, then refused
+exactly once at the expected provider-free boundary. Public evidence retains no raw capability
+identity, bearer, or protected request URL. This is V3 cross-process compatibility proof, not a real
+GitHub OIDC request, provider contact, Google STS/WIF or Secret Manager operation, materialization,
+injection, positive evidence, Step 8, or V12.2 proof.
+
+Next action: independently review and commit this handoff, then reconcile the complete
+administrator-expected dependency graph through a V3-consumed provider capability and prepared
+transport before enabling the planned GitHub OIDC-only `GET` checkpoint. That later checkpoint may
+make one fixed request-service call and retain one opaque, unadmitted JWT buffer only; it still
+excludes retries, redirects, JWT claim admission, Google STS, IAM Credentials, Secret Manager,
+materialization, injection, positive evidence, Step 8, and V12.2. Site, Skills, Examples, Learn,
+FAQ, Glossary, contract schema, and public JSON remain unaffected because this is an internal
+trust-boundary foundation with no operator workflow, vocabulary, or capability claim.
 
 Do not touch the unrelated untracked `docs/pressure/agent-authority-signals.md` unless the user
 explicitly asks.
