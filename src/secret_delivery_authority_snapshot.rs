@@ -900,7 +900,9 @@ pub(crate) mod tests {
         PROTECTED_LAUNCHER_CAPABILITY_OBSERVATION_SIGNATURE_DOMAIN_V1,
         PROTECTED_LAUNCHER_CAPABILITY_PROJECTION_VERIFIER,
         PROTECTED_LAUNCHER_SECRET_DELIVERY_TRANSACTION_BINDING_RESPONSE_V2,
+        PROTECTED_LAUNCHER_SECRET_DELIVERY_TRANSACTION_BINDING_RESPONSE_V3,
         PROTECTED_LAUNCHER_SECRET_DELIVERY_TRANSACTION_BINDING_V2,
+        PROTECTED_LAUNCHER_SECRET_DELIVERY_TRANSACTION_BINDING_V3,
         PROTECTED_SAME_CHILD_CAPABILITY_PRELUDE, PROTECTED_SECRET_DELIVERY_BINDING_BUNDLE,
         PROTECTED_SECRET_DELIVERY_BINDING_BUNDLE_KEY_USAGE_V1,
         PROTECTED_SECRET_DELIVERY_BINDING_BUNDLE_SIGNATURE_DOMAIN_V1,
@@ -914,7 +916,9 @@ pub(crate) mod tests {
         ProtectedLauncherCapabilityProjectionVerifierV1, ProtectedLauncherDescriptorAccessV1,
         ProtectedLauncherDescriptorKindV1, ProtectedLauncherDescriptorRoleV1,
         ProtectedLauncherDescriptorV1, ProtectedLauncherSecretDeliveryTransactionBindingResponseV2,
-        ProtectedLauncherSecretDeliveryTransactionBindingV2, ProtectedSameChildCapabilityPreludeV1,
+        ProtectedLauncherSecretDeliveryTransactionBindingResponseV3,
+        ProtectedLauncherSecretDeliveryTransactionBindingV2,
+        ProtectedLauncherSecretDeliveryTransactionBindingV3, ProtectedSameChildCapabilityPreludeV1,
         ProtectedSecretDeliveryBindingBundleV1, ProtectedSecretDeliveryBindingBundleVerifierV1,
         ProtectedSecretDeliveryVerifierStoreV1, launcher_startup_continuation_identity,
         protected_authority_snapshot_payload_v1_identity,
@@ -925,6 +929,7 @@ pub(crate) mod tests {
         protected_launcher_capability_projection_verifier_v1_identity,
         protected_launcher_descriptor_v1_identity,
         protected_launcher_secret_delivery_transaction_binding_v2_identity,
+        protected_launcher_secret_delivery_transaction_binding_v3_identity,
         protected_launcher_secret_delivery_transaction_session_v1_identity,
         protected_launcher_store_content_identity_v1,
         protected_same_child_capability_prelude_v1_identity,
@@ -957,7 +962,7 @@ pub(crate) mod tests {
     use crate::secret_delivery_transaction_binding::{
         SecretDeliveryTransactionBindingError, VerifiedSameChildCapabilityPreludeV1,
         VerifiedSecretDeliveryTransactionBindingV2, issue_secret_delivery_transaction_binding_v2,
-        reconcile_same_child_capability_prelude_v1,
+        issue_secret_delivery_transaction_binding_v3, reconcile_same_child_capability_prelude_v1,
     };
     use crate::secret_provider_bindings::{
         SecretProviderBindingClass, SecretProviderBindingDisclosureClass,
@@ -1650,6 +1655,83 @@ secret_requirements:
         ProtectedLauncherSecretDeliveryTransactionBindingResponseV2 {
             schema_version: 2,
             message_kind: PROTECTED_LAUNCHER_SECRET_DELIVERY_TRANSACTION_BINDING_RESPONSE_V2.into(),
+            request_identity: request.identity.clone(),
+            same_child_capability_prelude_identity: request
+                .same_child_capability_prelude_identity
+                .clone(),
+            protected_snapshot_identity: request.protected_snapshot_identity.clone(),
+            binding,
+            projection,
+        }
+    }
+
+    pub(crate) fn v3_binding_response(
+        request: &ota_authority_protocol::ProtectedLauncherSecretDeliveryTransactionBindingRequestV3,
+        verifier: &RetainedCapabilityProjectionVerifierV1,
+        signing_key: &SigningKey,
+    ) -> ProtectedLauncherSecretDeliveryTransactionBindingResponseV3 {
+        let payload = ProtectedLauncherCapabilityObservationProjectionPayloadV1 {
+            schema_version: 1,
+            evidence_kind: "protected_launcher_capability_observation".into(),
+            challenge_identity: request.observation.challenge.identity.clone(),
+            derivation: "verified".into(),
+            target: ProtectedLauncherCapabilityObservationTargetV1 {
+                environment: "self_hosted".into(),
+                os: "linux".into(),
+                architecture: "x64".into(),
+            },
+            capability_class: "systemd_protected_launcher_v4".into(),
+            runner_version: request.observation.runner_version.clone(),
+            signing_key_identity: verifier.verifier().key_identity.clone(),
+        };
+        let projection_identity =
+            protected_launcher_capability_observation_projection_v1_identity(&payload)
+                .expect("projection identity");
+        let projection = ProtectedLauncherCapabilityObservationProjectionV1 {
+            payload,
+            projection_identity: projection_identity.clone(),
+            signature: URL_SAFE_NO_PAD.encode(
+                signing_key
+                    .sign(
+                        &protected_launcher_capability_observation_signature_message_v1(
+                            &projection_identity,
+                        )
+                        .expect("signature message"),
+                    )
+                    .to_bytes(),
+            ),
+        };
+        let mut binding = ProtectedLauncherSecretDeliveryTransactionBindingV3 {
+            schema_version: 3,
+            message_kind: PROTECTED_LAUNCHER_SECRET_DELIVERY_TRANSACTION_BINDING_V3.into(),
+            identity: String::new(),
+            request_identity: request.identity.clone(),
+            launcher_request_identity: request.launcher_request_identity.clone(),
+            startup_continuation_identity: request.startup_continuation_identity.clone(),
+            session_identity: request.session_identity.clone(),
+            same_child_capability_prelude_identity: request
+                .same_child_capability_prelude_identity
+                .clone(),
+            protected_snapshot_identity: request.protected_snapshot_identity.clone(),
+            protected_capability_identity: identity('8'),
+            secret_transaction_candidate_identity: request
+                .secret_transaction_candidate_identity
+                .clone(),
+            observation_request_identity: request.observation.identity.clone(),
+            projection_identity,
+            verifier_identity: verifier.verifier().identity.clone(),
+            installation_evidence_identity: verifier.installation_evidence_identity().into(),
+            expires_at_unix_seconds: request.observation.challenge.expires_at_unix_seconds,
+            transport_dependency_record_identity: request
+                .transport_dependency_record_identity
+                .clone(),
+        };
+        binding.identity =
+            protected_launcher_secret_delivery_transaction_binding_v3_identity(&binding)
+                .expect("v3 binding identity");
+        ProtectedLauncherSecretDeliveryTransactionBindingResponseV3 {
+            schema_version: 3,
+            message_kind: PROTECTED_LAUNCHER_SECRET_DELIVERY_TRANSACTION_BINDING_RESPONSE_V3.into(),
             request_identity: request.identity.clone(),
             same_child_capability_prelude_identity: request
                 .same_child_capability_prelude_identity
@@ -2480,6 +2562,76 @@ secret_requirements:
         verified
             .consume_at(&verifier, binding_now)
             .expect("first V2 consumption");
+        assert_eq!(
+            verified.consume_at(&verifier, binding_now),
+            Err(SecretDeliveryTransactionBindingError::AlreadyConsumed)
+        );
+    }
+
+    #[test]
+    fn snapshot_backed_v3_binding_retains_exact_transport_dependency_and_is_one_use() {
+        let startup = startup();
+        let contract = candidate_contract();
+        let run_plan = plan_task_execution_structure_for_target_os(
+            &contract,
+            "publish",
+            ExecutionOverrides::default(),
+            "linux",
+        )
+        .expect("selected graph");
+        let now = u64::try_from(OffsetDateTime::now_utc().unix_timestamp()).expect("current time");
+        let (prelude, verifier, signing_key) = reconciled_same_child_prelude(&startup, "1004");
+        let (candidate, snapshot) = reconciled_snapshot_candidate(
+            &startup,
+            prelude.observation(),
+            &contract,
+            &run_plan,
+            &[10; 32],
+            now,
+        );
+        let pending = issue_secret_delivery_transaction_binding_v3(candidate, snapshot, prelude)
+            .expect("pending V3 binding");
+        let binding_now = pending
+            .request()
+            .observation
+            .challenge
+            .issued_at_unix_seconds;
+        let response = v3_binding_response(pending.request(), &verifier, &signing_key);
+        let mut substituted = response.clone();
+        substituted.binding.transport_dependency_record_identity = identity('f');
+        substituted.binding.identity =
+            protected_launcher_secret_delivery_transaction_binding_v3_identity(
+                &substituted.binding,
+            )
+            .expect("substituted V3 binding identity");
+        assert!(matches!(
+            pending.reconcile(substituted, &verifier, binding_now),
+            Err(SecretDeliveryTransactionBindingError::ResponseInvalid)
+        ));
+
+        let (prelude, verifier, signing_key) = reconciled_same_child_prelude(&startup, "1004");
+        let (candidate, snapshot) = reconciled_snapshot_candidate(
+            &startup,
+            prelude.observation(),
+            &contract,
+            &run_plan,
+            &[11; 32],
+            now,
+        );
+        let pending = issue_secret_delivery_transaction_binding_v3(candidate, snapshot, prelude)
+            .expect("pending V3 binding");
+        let binding_now = pending
+            .request()
+            .observation
+            .challenge
+            .issued_at_unix_seconds;
+        let response = v3_binding_response(pending.request(), &verifier, &signing_key);
+        let mut verified = pending
+            .reconcile(response, &verifier, binding_now)
+            .expect("verified V3 binding");
+        verified
+            .consume_at(&verifier, binding_now)
+            .expect("first V3 consumption");
         assert_eq!(
             verified.consume_at(&verifier, binding_now),
             Err(SecretDeliveryTransactionBindingError::AlreadyConsumed)
