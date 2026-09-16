@@ -1048,6 +1048,67 @@ materialization, delivery, execution, or public-output route.
 The prospective V3 gate must additionally substitute the V3 binding and its
 transport-dependency record identity before it can replace this V2 transport-preparation boundary.
 
+### Complete Transport-Dependency Snapshot Amendment
+
+The complete administrator-expected transport-dependency graph cannot be retained through the
+released V1 authority-snapshot response: V1 repeats the signed binding bundle as both typed fields
+and base64url store bytes, while its one-frame 64 KiB boundary is immutable. This amendment is
+proposed and inactive until independently reviewed and committed. It may add only an additive V2
+authority-snapshot exchange; it does not authorize an OIDC request, a socket, a provider operation,
+materialization, delivery, execution, evidence, Step 8, or V12.2.
+
+The V2 exchange must add closed
+`ProtectedAuthoritySnapshotRequestV2`, `ProtectedAuthoritySnapshotPayloadV2`, and
+`ProtectedAuthoritySnapshotResponseV2` records with distinct fixed message kinds and
+domain-separated request, payload, and response identities. The V2 request retains the exact
+`launcher_request_identity`, `startup_continuation_identity`, `session_identity`,
+`contract_identity`, selected-execution-graph identity, and fresh challenge context from V1. The
+V2 payload retains exactly its `request_identity` plus those same five context identities; each
+must equal the retained V2 request and startup continuation. It must not accept a V1 request or
+response as a V2 substitute, and V1's records, identity domains, store layout, and 64 KiB frame
+limit remain immutable.
+
+The V2 payload has exactly `request_identity`, `launcher_request_identity`,
+`startup_continuation_identity`, `session_identity`, `contract_identity`,
+`selected_execution_graph_identity`, one verifier-store descriptor, one binding-store descriptor,
+and canonical base64url bytes for each respective store. It deliberately does not serialize
+duplicate parsed verifier-store or binding-bundle fields.
+Protocol decodes each exact byte sequence once, rejects duplicate JSON keys, and requires the raw
+store bytes to equal JCS serialization of its decoded closed record before reconciling descriptors,
+the verifier-store record, the binding-bundle record, and their generation relationship. Core alone
+verifies the signed bundle and parses its private payload after that response has reconciled.
+Descriptor role, size, content identity, device/inode separation, canonical encoding, record
+identity, request/session identity, expiry, unknown-field, duplicate-store, malformed-byte, and
+typed/raw substitution all refuse.
+
+The committed 40 KiB inner binding-bundle-payload maximum is not itself a V2 transportability
+allowance: base64url occurs inside the bundle and again for the V2 store field. V2 therefore derives
+the actual canonical response bytes before framing and refuses unless their length is at most
+`65,532` bytes, leaving the immutable four-byte prefix within `MAX_FRAME_BYTES = 65,536`. The
+complete generated graph fixture, full signed authority payload, verifier store, binding bundle,
+and V2 response must be measured together; no fixed inner-payload maximum is treated as proof that
+the outer exchange fits.
+
+The signed protected binding-bundle payload must retain the complete expected
+`SecretDeliveryTransportDependencyFeatureGraphV1`, complete expected
+`SecretDeliveryTransportDependencyRecordV1`, and the same record identity. Before sending V2,
+Core independently rederives only its embedded graph and record. After the V2 response has passed
+structural, descriptor, and bundle-signature reconciliation, Core compares that retained local
+truth with the administrator-signed expectation, implementation subject, invocation binding,
+reconstructed candidate, and V3 transaction carrier. The future V3-consumed capability and
+prepared transport must retain that exact complete expectation rather than a record identity alone.
+Missing, stale, oversized, malformed, replayed, V1-fallback, graph, record, lock-byte, node, edge,
+feature, source/checksum, target, descriptor, store, request, candidate, binding, or carrier
+substitution refuses before an OIDC input is read or an HTTP client is constructed.
+
+Tests must retain a real generated complete graph and prove its complete canonical V2 response
+including its four-byte frame prefix fits the exact one-frame envelope, prove V1 continues to reject
+that expanded bundle without reinterpretation, and refuse duplicate-key/non-JCS raw stores plus
+self-consistent graph/record substitutions after all relevant nested identities are recomputed.
+Launcher and Core must pin one immutable Protocol revision and prove V2 byte/descriptor
+reconciliation through the protected Linux/X64 service path before V3 consumption can replace the
+historical V2 transport-preparation model.
+
 ### GitHub OIDC Network-Call Checkpoint
 
 The next proposed checkpoint may contact only GitHub's Actions OIDC request service. It remains

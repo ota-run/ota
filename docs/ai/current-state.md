@@ -1858,14 +1858,21 @@ identity, bearer, or protected request URL. This is V3 cross-process compatibili
 GitHub OIDC request, provider contact, Google STS/WIF or Secret Manager operation, materialization,
 injection, positive evidence, Step 8, or V12.2 proof.
 
-Next action: independently review and commit this handoff, then reconcile the complete
-administrator-expected dependency graph through a V3-consumed provider capability and prepared
-transport before enabling the planned GitHub OIDC-only `GET` checkpoint. That later checkpoint may
-make one fixed request-service call and retain one opaque, unadmitted JWT buffer only; it still
-excludes retries, redirects, JWT claim admission, Google STS, IAM Credentials, Secret Manager,
-materialization, injection, positive evidence, Step 8, and V12.2. Site, Skills, Examples, Learn,
-FAQ, Glossary, contract schema, and public JSON remain unaffected because this is an internal
-trust-boundary foundation with no operator workflow, vocabulary, or capability claim.
+The complete graph is 32,309 canonical bytes. Protocol `731737048e3bf8912145e404200bdf4264d3e7c8`
+raises only the protected binding-bundle payload limit from 32 KiB to 40 KiB, while preserving the
+64 KiB protected-store bound. MUSE independently reviewed that adjustment with no P1/P2/P3 finding.
+Core cannot yet carry the complete graph through the released V1 authority snapshot because V1
+duplicates the signed bundle as typed fields and base64url bytes inside its frozen 64 KiB frame.
+
+Next action: independently review and commit the proposed additive V2 authority-snapshot amendment.
+It retains descriptor-bound raw stores once and keeps V1 immutable; only after Core, Launcher, and
+Protocol prove its exact protected Linux/X64 byte/descriptor route may V3 consumption replace the
+historical V2 transport-preparation model. The planned GitHub OIDC-only `GET` checkpoint remains
+blocked. It may eventually make one fixed request-service call and retain one opaque, unadmitted JWT
+buffer only; it still excludes retries, redirects, JWT claim admission, Google STS, IAM Credentials,
+Secret Manager, materialization, injection, positive evidence, Step 8, and V12.2. Site, Skills,
+Examples, Learn, FAQ, Glossary, contract schema, and public JSON remain unaffected because this is an
+internal trust-boundary foundation with no operator workflow, vocabulary, or capability claim.
 
 Do not touch the unrelated untracked `docs/pressure/agent-authority-signals.md` unless the user
 explicitly asks.
