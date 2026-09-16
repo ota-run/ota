@@ -1838,12 +1838,18 @@ found no blocking finding. The exact Core-owned transport-dependency record iden
 in the V3 request and binding. V2 remains immutable historical proof and the completed
 network-disabled V2 transport-preparation checkpoint; that checkpoint is not yet migrated to V3.
 
-Next action: review and commit the updated V3 workflow pins and pressure record, reprovision the
-protected host from the exact Protocol, Launcher, and resulting Core revisions, then run the
-protected Linux/X64 service-path compatibility gate at those exact revisions. The
-previous hosted installation and workflow pins belong to the V2 checkpoint; local macOS tests
-and Linux compilation do not establish a V3 cross-process result. The hosted gate must require one
-post-reconciliation V3 marker and no V2 completion marker. After the gate, reconcile the
+Run [35095607162](https://github.com/ota-run/ota/actions/runs/35095607162) reached the protected
+Linux/X64 host at exact Core `f59c35e9`, Launcher `19b4b15d`, and Protocol `63a352f7`, but failed
+before capability observation: Cargo could not fetch the new locked Protocol revision into the
+protected runner's read-only persistent Cargo home. It is failure localization only, not V3
+compatibility or provider evidence.
+
+Next action: review and commit the disposable-Cargo-home repair, then queue a new run, reprovision
+the protected host from the resulting exact Core revision and the existing Protocol/Launcher
+revisions, and run the protected Linux/X64 service-path compatibility gate. The previous hosted
+installation and workflow pins belong to the V2 checkpoint; local macOS tests and Linux compilation
+do not establish a V3 cross-process result. The hosted gate must require one post-reconciliation V3
+marker and no V2 completion marker. After the gate, reconcile the
 complete administrator-expected dependency graph and record through a V3-consumed provider capability and
 prepared transport before enabling the planned GitHub OIDC-only `GET` checkpoint.
 That later checkpoint may make one fixed request-service call and retain one opaque, unadmitted JWT
