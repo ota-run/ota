@@ -1864,9 +1864,14 @@ raises only the protected binding-bundle payload limit from 32 KiB to 40 KiB, wh
 Core cannot yet carry the complete graph through the released V1 authority snapshot because V1
 duplicates the signed bundle as typed fields and base64url bytes inside its frozen 64 KiB frame.
 
-Next action: independently review and commit the proposed additive V2 authority-snapshot and V4
-transaction-binding amendment. It retains descriptor-bound raw stores once and keeps V1 immutable;
-V4 also keeps released V3 snapshot semantics immutable. Only after Core, Launcher, and Protocol
+The additive V2 authority-snapshot and V4 transaction-binding amendment was independently reviewed
+and committed at Core `93a36b23`. Protocol V2 snapshot records were independently reviewed,
+committed, and pushed at `c6bee9b49dc599ccd94bf6b0e60a1894614cb5a4`; they retain canonical
+descriptor-bound raw stores once and leave V1 immutable. Additive Protocol V4 request, binding,
+response, and reconciliation records were independently reviewed, committed, and pushed at
+`e819f95890ea23ae2f336a59fb3ff62cfa858d8b`, including cross-version refusal regressions.
+Next action: pin that immutable Protocol revision in Launcher and Core, then implement their V2
+snapshot and V4 transaction reconciliation. V4 keeps released V3 snapshot semantics immutable. Only after Core, Launcher, and Protocol
 prove the exact protected Linux/X64 V2 byte/descriptor and V4 transaction route may V4 consumption
 replace the historical V2 transport-preparation model. The planned GitHub OIDC-only `GET` checkpoint remains
 blocked. It may eventually make one fixed request-service call and retain one opaque, unadmitted JWT
