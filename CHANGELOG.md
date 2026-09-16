@@ -87,8 +87,6 @@
   projection. It does not instrument or claim OIDC or provider contact and activates no secret
   transaction, materialization, delivery, or selected execution.
 
-## 1.6.28
-
 - Added V12.1 command-scoped secret-delivery admission for `run`, `up`, runtime and lifecycle
   proof, Doctor context, CI projection/re-evaluation, sandbox capability, and harness output. An
   empty selected requirement set preserves existing behavior. A non-empty set now refuses before
