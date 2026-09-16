@@ -1864,10 +1864,11 @@ raises only the protected binding-bundle payload limit from 32 KiB to 40 KiB, wh
 Core cannot yet carry the complete graph through the released V1 authority snapshot because V1
 duplicates the signed bundle as typed fields and base64url bytes inside its frozen 64 KiB frame.
 
-Next action: independently review and commit the proposed additive V2 authority-snapshot amendment.
-It retains descriptor-bound raw stores once and keeps V1 immutable; only after Core, Launcher, and
-Protocol prove its exact protected Linux/X64 byte/descriptor route may V3 consumption replace the
-historical V2 transport-preparation model. The planned GitHub OIDC-only `GET` checkpoint remains
+Next action: independently review and commit the proposed additive V2 authority-snapshot and V4
+transaction-binding amendment. It retains descriptor-bound raw stores once and keeps V1 immutable;
+V4 also keeps released V3 snapshot semantics immutable. Only after Core, Launcher, and Protocol
+prove the exact protected Linux/X64 V2 byte/descriptor and V4 transaction route may V4 consumption
+replace the historical V2 transport-preparation model. The planned GitHub OIDC-only `GET` checkpoint remains
 blocked. It may eventually make one fixed request-service call and retain one opaque, unadmitted JWT
 buffer only; it still excludes retries, redirects, JWT claim admission, Google STS, IAM Credentials,
 Secret Manager, materialization, injection, positive evidence, Step 8, and V12.2. Site, Skills,

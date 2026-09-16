@@ -1054,8 +1054,9 @@ The complete administrator-expected transport-dependency graph cannot be retaine
 released V1 authority-snapshot response: V1 repeats the signed binding bundle as both typed fields
 and base64url store bytes, while its one-frame 64 KiB boundary is immutable. This amendment is
 proposed and inactive until independently reviewed and committed. It may add only an additive V2
-authority-snapshot exchange; it does not authorize an OIDC request, a socket, a provider operation,
-materialization, delivery, execution, evidence, Step 8, or V12.2.
+authority-snapshot exchange and its additive V4 transaction binding; it does not authorize an OIDC
+request, a socket, a provider operation, materialization, delivery, execution, evidence, Step 8,
+or V12.2.
 
 The V2 exchange must add closed
 `ProtectedAuthoritySnapshotRequestV2`, `ProtectedAuthoritySnapshotPayloadV2`, and
@@ -1067,6 +1068,22 @@ V2 payload retains exactly its `request_identity` plus those same five context i
 must equal the retained V2 request and startup continuation. It must not accept a V1 request or
 response as a V2 substitute, and V1's records, identity domains, store layout, and 64 KiB frame
 limit remain immutable.
+
+V2 snapshot truth must not be threaded through the released V3 transaction-binding records: their
+reconciliation APIs and historical semantics are V1-snapshot-specific, while their wire payload has
+no snapshot-version discriminator. The amendment must therefore add closed
+`ProtectedLauncherSecretDeliveryTransactionBindingRequestV4`,
+`ProtectedLauncherSecretDeliveryTransactionBindingV4`, and
+`ProtectedLauncherSecretDeliveryTransactionBindingResponseV4` records with new message kinds and
+domain-separated V4 request/binding identities. V4 retains V3's exact same-child, capability,
+candidate, projection, verifier, installation, expiry, and transport-dependency fields. Its request,
+binding, and response each carry exact `protected_snapshot_schema_version: 2` plus fixed
+`protected_snapshot_record_kind: protected_authority_snapshot_v2`; all three values must equal
+each other and the reconciled V2 snapshot payload. Each V4 carrier's snapshot identity must
+reconcile only through the retained V2 request/response before the existing same-child and
+capability checks. V3 remains immutable historical proof and must refuse a V2 snapshot; V4 must
+refuse V1 fallback, a different schema or kind, and every cross-version request/binding/response
+substitution.
 
 The V2 payload has exactly `request_identity`, `launcher_request_identity`,
 `startup_continuation_identity`, `session_identity`, `contract_identity`,
@@ -1095,7 +1112,7 @@ The signed protected binding-bundle payload must retain the complete expected
 Core independently rederives only its embedded graph and record. After the V2 response has passed
 structural, descriptor, and bundle-signature reconciliation, Core compares that retained local
 truth with the administrator-signed expectation, implementation subject, invocation binding,
-reconstructed candidate, and V3 transaction carrier. The future V3-consumed capability and
+reconstructed candidate, and V4 transaction carrier. The future V4-consumed capability and
 prepared transport must retain that exact complete expectation rather than a record identity alone.
 Missing, stale, oversized, malformed, replayed, V1-fallback, graph, record, lock-byte, node, edge,
 feature, source/checksum, target, descriptor, store, request, candidate, binding, or carrier
@@ -1105,9 +1122,12 @@ Tests must retain a real generated complete graph and prove its complete canonic
 including its four-byte frame prefix fits the exact one-frame envelope, prove V1 continues to reject
 that expanded bundle without reinterpretation, and refuse duplicate-key/non-JCS raw stores plus
 self-consistent graph/record substitutions after all relevant nested identities are recomputed.
-Launcher and Core must pin one immutable Protocol revision and prove V2 byte/descriptor
-reconciliation through the protected Linux/X64 service path before V3 consumption can replace the
-historical V2 transport-preparation model.
+Launcher and Core must pin one immutable Protocol revision and prove V2 byte/descriptor plus V4
+transaction reconciliation through the protected Linux/X64 service path before V4 consumption can
+replace the historical V2 transport-preparation model.
+The adversarial matrix must also reject every V1/V2/V3/V4 request, payload, binding, and response
+substitution, including self-consistent recomputed V4 carriers with a mismatched snapshot
+discriminator.
 
 ### GitHub OIDC Network-Call Checkpoint
 
