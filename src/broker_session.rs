@@ -867,7 +867,7 @@ impl SystemdExecutionCompletion {
         workflow_reference: &str,
         runner_version: &str,
     ) -> Result<
-        crate::secret_delivery_transaction_binding::VerifiedSecretDeliveryTransactionBindingV2,
+        crate::secret_delivery_transaction_binding::VerifiedSecretDeliveryTransactionBindingV3,
         String,
     > {
         self.request_snapshot_bound_secret_delivery_transaction_binding_with_verifier_loader(
@@ -903,7 +903,7 @@ impl SystemdExecutionCompletion {
             String,
         >,
     ) -> Result<
-        crate::secret_delivery_transaction_binding::VerifiedSecretDeliveryTransactionBindingV2,
+        crate::secret_delivery_transaction_binding::VerifiedSecretDeliveryTransactionBindingV3,
         String,
     > {
         let pending_observation =
@@ -986,14 +986,14 @@ impl SystemdExecutionCompletion {
             )
             .map_err(|error| error.to_string())?;
         let pending_binding =
-            crate::secret_delivery_transaction_binding::issue_secret_delivery_transaction_binding_v2(
+            crate::secret_delivery_transaction_binding::issue_secret_delivery_transaction_binding_v3(
                 candidate,
                 snapshot,
                 verified_prelude,
             )
             .map_err(|error| error.to_string())?;
         self.session.send_json(pending_binding.request())?;
-        let binding_response: ota_authority_protocol::ProtectedLauncherSecretDeliveryTransactionBindingResponseV2 =
+        let binding_response: ota_authority_protocol::ProtectedLauncherSecretDeliveryTransactionBindingResponseV3 =
             self.session.receive_json()?;
         let now = u64::try_from(OffsetDateTime::now_utc().unix_timestamp())
             .map_err(|_| String::from("protected transaction binding clock is unavailable"))?;
@@ -6451,7 +6451,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn systemd_completion_reuses_one_same_child_observation_for_snapshot_bound_v2() {
+    fn systemd_completion_reuses_one_same_child_observation_for_snapshot_bound_v3() {
         let identity = |value: char| format!("sha256:{}", value.to_string().repeat(64));
         let (mut launcher, ota) = UnixStream::pair().expect("socket pair");
         let mut session = LauncherSession::from_inherited_descriptor_with_timeout(
@@ -6557,7 +6557,7 @@ pub(crate) mod tests {
                 );
             write_json_frame(&mut launcher, &snapshot_response);
 
-            let binding_request: ota_authority_protocol::ProtectedLauncherSecretDeliveryTransactionBindingRequestV2 =
+            let binding_request: ota_authority_protocol::ProtectedLauncherSecretDeliveryTransactionBindingRequestV3 =
                 read_json_frame(&mut launcher);
             assert_eq!(
                 binding_request.observation.identity,
@@ -6567,8 +6567,13 @@ pub(crate) mod tests {
                 binding_request.same_child_capability_prelude_identity,
                 prelude.identity
             );
+            assert_eq!(
+                binding_request.transport_dependency_record_identity,
+                crate::secret_delivery_transport_dependencies::embedded_transport_dependency_record_identity_v1()
+                    .expect("embedded transport dependency record")
+            );
             let binding_response =
-                crate::secret_delivery_authority_snapshot::tests::v2_binding_response(
+                crate::secret_delivery_authority_snapshot::tests::v3_binding_response(
                     &binding_request,
                     &response_verifier,
                     &signing_key,
@@ -6588,7 +6593,7 @@ pub(crate) mod tests {
                 "2.337.0",
                 || Ok(loader_verifier),
             )
-            .expect("same-session snapshot-bound V2 binding");
+            .expect("same-session snapshot-bound V3 binding");
         assert_eq!(
             verified.binding().same_child_capability_prelude_identity,
             ota_authority_protocol::protected_same_child_capability_prelude_v1_identity(

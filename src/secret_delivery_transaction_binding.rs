@@ -861,6 +861,10 @@ impl VerifiedSecretDeliveryTransactionBindingV3 {
         &self.response.binding
     }
 
+    pub(crate) fn prelude(&self) -> &ProtectedSameChildCapabilityPreludeV1 {
+        self.prelude.prelude()
+    }
+
     /// Rechecks all retained V3 truth immediately before a future provider request. It still does
     /// not construct or dispatch that request.
     pub(crate) fn consume_at(

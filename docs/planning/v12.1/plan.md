@@ -901,8 +901,10 @@ dynamic claims before any Google request. Repository YAML, caller input, inherit
 environment, or a provider response cannot widen either authority source.
 
 The provider transaction may begin only after Core has reconstructed the Step 1-6 candidate,
-reconciled the same-child prelude and protected snapshot, received the exact V2 response, and
-atomically consumed its one-use guard. Consumption occurs immediately before Ota reads the two
+reconciled the same-child prelude and protected snapshot, received the exact additive V3 response
+with its transport-dependency record identity, and atomically consumed its one-use guard. The
+earlier V2 proof and wire records remain immutable historical evidence; V2 does not satisfy this
+provider-contact gate. Consumption occurs immediately before Ota reads the two
 GitHub OIDC capability values or constructs the first network client. Failure, cancellation,
 timeout, or interruption after consumption cannot retry, replay, or transfer the transaction to a
 second child, session, snapshot, candidate, endpoint, or run.
@@ -976,7 +978,7 @@ substituted responses; expiry; replay; duplicate response; provider denial; part
 materialization failure; pre-start cancellation; child-start failure; child failure; timeout; and
 termination during execution. Every terminal path must reap the selected child, remove its scope and
 active slot, leave the cgroup empty or absent, close retained descriptors, and prevent reuse of the
-consumed V2 transaction. Provider-issued bearer expiry and external audit logs remain provider-owned;
+consumed V3 transaction. Provider-issued bearer expiry and external audit logs remain provider-owned;
 Ota must not claim immediate token revocation or deletion of provider-side audit state.
 
 The first pressure workflow is manual and dedicated, with `contents: read` and `id-token: write`, no
@@ -993,13 +995,17 @@ response models with network contact disabled. Network enablement, live pressure
 and injection advance as separately reviewed commits so no structural test can silently authorize a
 real provider call.
 
+The following transport-preparation checkpoint records its completed V2 boundary. It must be
+reconciled to the additive V3 gate before any provider request is enabled.
+
 The first network-disabled model was independently reviewed and committed at
 `77329526e6ec07449c889bac6c3172294620ec4e`. Before any request can be sent, a second
 authority-bound transport-preparation checkpoint must be independently reviewed and committed. It
 may add only:
 
 - one opaque Core-owned consumed-provider-transaction capability that can be constructed only by
-  re-verifying and atomically consuming the exact same-child snapshot-bound V2 transaction;
+  re-verifying and atomically consuming the exact same-child snapshot-bound V2 transaction in this
+  historical network-disabled checkpoint;
 - one private capability-input owner that reads the exact GitHub OIDC request URL and bearer only
   after that consumption and rejects missing, empty, or non-UTF-8 input. Both values remain
   untrusted runner-supplied capabilities rather than independent identity evidence. Core cannot
@@ -1025,7 +1031,7 @@ verified.
 
 That checkpoint must expose no `send`, `call`, socket, connector, or provider-response path. Its
 tests must poison proxy, custom-CA, netrc, client-certificate, and generic HTTP configuration
-inputs; substitute candidate, V3 binding or its transport-dependency record identity, endpoint
+inputs; substitute candidate, V2 binding, endpoint
 observation, URL, post-acquisition bearer owner,
 audience, target, and realization/invocation identities; and prove refusal or unchanged fixed
 transport posture. The opaque capability
@@ -1038,6 +1044,9 @@ Core `8350b479`. It adds only the opaque consumed-V2 capability, post-consumptio
 owner, endpoint and operation reconciliation, and fixed network-disabled `ureq = 3.4.2` posture
 authorized above. It exposes no request send/call, socket, connector, provider response,
 materialization, delivery, execution, or public-output route.
+
+The prospective V3 gate must additionally substitute the V3 binding and its
+transport-dependency record identity before it can replace this V2 transport-preparation boundary.
 
 ### GitHub OIDC Network-Call Checkpoint
 

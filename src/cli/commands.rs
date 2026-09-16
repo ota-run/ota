@@ -112777,7 +112777,7 @@ fn enforce_secret_delivery_protected_transaction_boundary(
     #[cfg(not(all(unix, target_os = "linux")))]
     let protected_result: Option<
         Result<
-            crate::secret_delivery_transaction_binding::VerifiedSecretDeliveryTransactionBindingV2,
+            crate::secret_delivery_transaction_binding::VerifiedSecretDeliveryTransactionBindingV3,
             String,
         >,
     > = {
