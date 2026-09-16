@@ -1838,10 +1838,13 @@ found no blocking finding. The exact Core-owned transport-dependency record iden
 in the V3 request and binding. V2 remains immutable historical proof and the completed
 network-disabled V2 transport-preparation checkpoint; that checkpoint is not yet migrated to V3.
 
-Next action: push the reviewed Launcher and Core revisions, then run the protected Linux/X64
-service-path compatibility gate at those exact revisions. Local macOS tests and Linux compilation
-do not establish that hosted cross-process result. After the gate, reconcile the complete
-administrator-expected dependency graph and record through a V3-consumed provider capability and
+Next action: review and commit the updated V3 workflow pins and pressure record, reprovision the
+protected host from the exact Protocol, Launcher, and resulting Core revisions, then run the
+protected Linux/X64 service-path compatibility gate at those exact revisions. The
+previous hosted installation and workflow pins belong to the V2 checkpoint; local macOS tests
+and Linux compilation do not establish a V3 cross-process result. The hosted gate must require one
+post-reconciliation V3 marker and no V2 completion marker. After the gate, reconcile the
+complete administrator-expected dependency graph and record through a V3-consumed provider capability and
 prepared transport before enabling the planned GitHub OIDC-only `GET` checkpoint.
 That later checkpoint may make one fixed request-service call and retain one opaque, unadmitted JWT
 buffer only; it still excludes retries, redirects, JWT claim admission, Google STS, IAM Credentials,

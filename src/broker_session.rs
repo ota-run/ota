@@ -997,9 +997,11 @@ impl SystemdExecutionCompletion {
             self.session.receive_json()?;
         let now = u64::try_from(OffsetDateTime::now_utc().unix_timestamp())
             .map_err(|_| String::from("protected transaction binding clock is unavailable"))?;
-        pending_binding
+        let binding = pending_binding
             .reconcile(binding_response, &verifier, now)
-            .map_err(|error| error.to_string())
+            .map_err(|error| error.to_string())?;
+        pressure_secret_delivery_stage("binding_v3_response_reconciled");
+        Ok(binding)
     }
 
     pub(crate) fn startup_continuation(&self) -> &LauncherStartupContinuationV1 {

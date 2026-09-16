@@ -1,9 +1,16 @@
 # Secret Delivery Protected Service-Path Gate
 
-This pressure gate proves one exact Core command can traverse the protected Launcher service,
+When it passes at the exact installed revisions, this pressure gate proves one Core command can
+traverse the protected Launcher service,
 reconcile the retained same-child observation, administrator-installed synthetic authority
-snapshot, reconstructed Step 1-6 candidate, and snapshot-bound V2 transaction, then refuse before
+snapshot, reconstructed Step 1-6 candidate, and snapshot-bound V3 transaction, then refuse before
 provider contact or task execution.
+
+The earlier hosted V2 result remains a historical checkpoint. A V3 claim requires a new run with
+the exact Core, Launcher, and Protocol revisions installed and reconciled; changing the workflow
+pins alone is not runtime evidence.
+The V3 run must observe exactly one post-reconciliation V3 completion marker and no V2 binding
+completion marker before accepting the provider-free refusal.
 
 It is intentionally non-production. The default Launcher installation retains empty secret-delivery
 authority stores. The synthetic authority is installed only when the root administrator supplies

@@ -24,6 +24,7 @@
 
 version: 1
 repository: ota-run/ota-site
-mode: synced
+mode: waived
 consumer_commit: 0ee140feea1e63cf79a33944f5cd512e555f161c
-reviewed_ota_commit: 1591f574edf76f2c69c6a811dc2b07e5ed3b90d3
+reviewed_ota_commit: 6c02bd5af7505b80c201e1778c60ba960da18d8e
+waiver_reason: "V3 protected service-path workflow pins and internal pressure wording add no Site operator surface; replace with the exact committed Core revision after review."
