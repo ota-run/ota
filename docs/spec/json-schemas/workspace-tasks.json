@@ -290,6 +290,7 @@
           "$ref": "#/$defs/taskUvLocalProject"
         },
         "frozen_lockfile": { "type": "boolean" },
+        "yarn_release": { "enum": ["classic", "modern"] },
         "inline_builds": { "type": "boolean" },
         "force": { "type": "boolean" },
         "no_root": { "type": "boolean" },

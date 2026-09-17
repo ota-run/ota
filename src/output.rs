@@ -5788,6 +5788,8 @@ pub struct TaskPrepareSummary<'a> {
     pub groups: Vec<&'a str>,
     #[serde(default, skip_serializing_if = "is_false")]
     pub frozen_lockfile: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub yarn_release: Option<&'static str>,
     #[serde(default, skip_serializing_if = "is_false")]
     pub inline_builds: bool,
     #[serde(default, skip_serializing_if = "is_false")]
@@ -5843,6 +5845,8 @@ pub struct WorkspaceTaskPrepareSummary {
     pub groups: Vec<String>,
     #[serde(default, skip_serializing_if = "is_false")]
     pub frozen_lockfile: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub yarn_release: Option<&'static str>,
     #[serde(default, skip_serializing_if = "is_false")]
     pub inline_builds: bool,
     #[serde(default, skip_serializing_if = "is_false")]
@@ -6400,6 +6404,7 @@ pub fn summarize_task_prepare(
             group_mode: None,
             groups: Vec::new(),
             frozen_lockfile: false,
+            yarn_release: None,
             inline_builds: false,
             force: false,
             no_root: false,
@@ -6508,6 +6513,7 @@ fn summarize_tool_bootstrap_prepare_spec(
         group_mode: None,
         groups: Vec::new(),
         frozen_lockfile: false,
+        yarn_release: None,
         inline_builds: false,
         force: false,
         no_root: false,
@@ -6830,6 +6836,12 @@ fn summarize_dependency_hydration_prepare_spec(
         group_mode,
         groups,
         frozen_lockfile,
+        yarn_release: match &spec.source {
+            crate::schema::TaskDependencyHydrationSourceSpec::NodePackageManager(source) => source
+                .yarn_release
+                .map(crate::schema::TaskYarnRelease::label),
+            _ => None,
+        },
         inline_builds,
         force,
         no_root,
@@ -6914,6 +6926,7 @@ fn empty_task_prepare_summary(kind: &'static str) -> TaskPrepareSummary<'static>
         group_mode: None,
         groups: Vec::new(),
         frozen_lockfile: false,
+        yarn_release: None,
         inline_builds: false,
         force: false,
         no_root: false,
@@ -6952,6 +6965,7 @@ pub fn summarize_task_prepare_owned(
             group_mode: None,
             groups: Vec::new(),
             frozen_lockfile: false,
+            yarn_release: None,
             inline_builds: false,
             force: false,
             no_root: false,
@@ -7000,6 +7014,7 @@ pub fn summarize_task_prepare_owned(
                 group_mode: None,
                 groups: Vec::new(),
                 frozen_lockfile: false,
+                yarn_release: None,
                 inline_builds: false,
                 force: false,
                 no_root: false,
@@ -7296,6 +7311,14 @@ pub fn summarize_task_prepare_owned(
                 group_mode,
                 groups,
                 frozen_lockfile,
+                yarn_release: match &spec.source {
+                    crate::schema::TaskDependencyHydrationSourceSpec::NodePackageManager(
+                        source,
+                    ) => source
+                        .yarn_release
+                        .map(crate::schema::TaskYarnRelease::label),
+                    _ => None,
+                },
                 inline_builds,
                 force,
                 no_root,
@@ -7376,6 +7399,7 @@ fn empty_workspace_task_prepare_summary(kind: &'static str) -> WorkspaceTaskPrep
         group_mode: None,
         groups: Vec::new(),
         frozen_lockfile: false,
+        yarn_release: None,
         inline_builds: false,
         force: false,
         no_root: false,
@@ -7413,6 +7437,7 @@ pub fn workspace_prepare_summary_from_task_prepare_summary(
         group_mode: summary.group_mode,
         groups: summary.groups.into_iter().map(str::to_string).collect(),
         frozen_lockfile: summary.frozen_lockfile,
+        yarn_release: summary.yarn_release,
         inline_builds: summary.inline_builds,
         force: summary.force,
         no_root: summary.no_root,

@@ -71544,6 +71544,27 @@ policies:
     }
 
     #[test]
+    fn dependency_hydration_classic_yarn_uses_frozen_lockfile() {
+        let source = crate::schema::TaskDependencyHydrationSourceSpec::NodePackageManager(
+            crate::schema::TaskNodePackageManagerHydrationSourceSpec {
+                cwd: String::from("."),
+                manager: crate::schema::TaskNodePackageManagerKind::Yarn,
+                mode: crate::schema::TaskNodePackageManagerHydrationMode::Install,
+                yarn_release: Some(crate::schema::TaskYarnRelease::Classic),
+                filter: None,
+                frozen_lockfile: true,
+                inline_builds: false,
+                force: false,
+                compose: None,
+            },
+        );
+        let commands = super::dependency_hydration_command_specs(&source);
+        assert_eq!(commands.len(), 1);
+        assert_eq!(commands[0].exe, "yarn");
+        assert_eq!(commands[0].args, ["install", "--frozen-lockfile"]);
+    }
+
+    #[test]
     fn dependency_hydration_prepare_executes_yarn_inline_builds_from_declared_cwd() {
         let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(

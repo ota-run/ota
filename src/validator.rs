@@ -3312,6 +3312,7 @@ fn validate_tasks(
         if let Some(prepare) = task.prepare.as_ref() {
             let backend = task.workflow_backend(contract.execution.as_ref());
             validate_task_prepare(
+                contract,
                 name,
                 prepare,
                 &task.requirements,
@@ -4124,6 +4125,7 @@ fn validate_task_mode_execution(
         }
         if let Some(prepare) = branch.prepare.as_ref() {
             validate_task_prepare(
+                contract,
                 task_name,
                 prepare,
                 &task.requirements,
@@ -6100,6 +6102,7 @@ fn validate_workflow_adapter_inputs(
 }
 
 fn validate_task_prepare(
+    contract: &Contract,
     task_name: &str,
     prepare: &crate::schema::TaskPrepareSpec,
     requirements: &crate::schema::TaskRequirementsSpec,
@@ -6116,6 +6119,7 @@ fn validate_task_prepare(
             }
             for (index, step) in spec.steps.iter().enumerate() {
                 validate_task_prepare_sequence_step(
+                    contract,
                     task_name,
                     index,
                     step,
@@ -6472,6 +6476,30 @@ fn validate_task_prepare(
                     {
                         errors.push(ValidationError::new(format!(
                             "task `{task_name}` prepare `node_package_manager` must not declare `inline_builds: true` unless `manager: yarn`"
+                        )));
+                    }
+                    if source.yarn_release.is_some()
+                        && source.manager != crate::schema::TaskNodePackageManagerKind::Yarn
+                    {
+                        errors.push(ValidationError::new(format!(
+                            "task `{task_name}` prepare `node_package_manager` may declare `yarn_release` only with `manager: yarn`"
+                        )));
+                    }
+                    if source.yarn_release == Some(crate::schema::TaskYarnRelease::Classic)
+                        && source.inline_builds
+                    {
+                        errors.push(ValidationError::new(format!(
+                            "task `{task_name}` prepare `node_package_manager` must not declare `inline_builds: true` with `yarn_release: classic`"
+                        )));
+                    }
+                    if let Some(release) = source.yarn_release
+                        && let Some(major) = exact_declared_yarn_major(contract)
+                        && ((release == crate::schema::TaskYarnRelease::Classic && major != 1)
+                            || (release == crate::schema::TaskYarnRelease::Modern && major < 2))
+                    {
+                        errors.push(ValidationError::new(format!(
+                            "task `{task_name}` prepare `node_package_manager` declares `yarn_release: {}` but exact `toolchains.node.package_managers.yarn` version has incompatible major `{major}`",
+                            release.label()
                         )));
                     }
                     if source.inline_builds
@@ -7174,7 +7202,18 @@ fn validate_task_prepare(
     }
 }
 
+fn exact_declared_yarn_major(contract: &Contract) -> Option<u64> {
+    contract
+        .toolchains
+        .get("node")?
+        .package_managers
+        .get("yarn")
+        .and_then(|version| Version::parse(version.trim().trim_start_matches('v')).ok())
+        .map(|version| version.major)
+}
+
 fn validate_task_prepare_sequence_step(
+    contract: &Contract,
     task_name: &str,
     index: usize,
     step: &crate::schema::TaskPrepareSequenceStepSpec,
@@ -7186,6 +7225,7 @@ fn validate_task_prepare_sequence_step(
     match step {
         crate::schema::TaskPrepareSequenceStepSpec::DependencyHydration(spec) => {
             validate_task_prepare(
+                contract,
                 task_name,
                 &crate::schema::TaskPrepareSpec::DependencyHydration(spec.clone()),
                 requirements,
@@ -7195,6 +7235,7 @@ fn validate_task_prepare_sequence_step(
             );
         }
         crate::schema::TaskPrepareSequenceStepSpec::ToolBootstrap(spec) => validate_task_prepare(
+            contract,
             task_name,
             &crate::schema::TaskPrepareSpec::ToolBootstrap(spec.clone()),
             requirements,
@@ -7203,6 +7244,7 @@ fn validate_task_prepare_sequence_step(
             errors,
         ),
         crate::schema::TaskPrepareSequenceStepSpec::Sequence(spec) => validate_task_prepare(
+            contract,
             task_name,
             &crate::schema::TaskPrepareSpec::Sequence(spec.clone()),
             requirements,
@@ -29955,9 +29997,7 @@ tasks:
 
     #[test]
     fn accepts_prepare_only_yarn_package_manager_hydration_task() {
-        let contract = parse_contract_str(
-            Path::new("ota.yaml"),
-            r#"
+        let source = r#"
 version: 1
 project:
   name: ota
@@ -29986,11 +30026,44 @@ tasks:
         - .yarn/install-state.gz
       network: true
       network_kind: dependency_hydration
-"#,
-        )
-        .unwrap();
+"#;
+        let contract = parse_contract_str(Path::new("ota.yaml"), source).unwrap();
 
         validate_contract(&contract).expect("yarn package-manager prepare should validate");
+
+        let classic = source
+            .replace("yarn: \"4.11.0\"", "yarn: \"1.22.22\"")
+            .replace(
+                "manager: yarn",
+                "manager: yarn\n        yarn_release: classic",
+            );
+        let classic_contract = parse_contract_str(Path::new("ota.yaml"), &classic).unwrap();
+        validate_contract(&classic_contract).expect("classic Yarn prepare should validate");
+
+        let mismatched_major = source.replace(
+            "manager: yarn",
+            "manager: yarn\n        yarn_release: classic",
+        );
+        let mismatched_major_contract =
+            parse_contract_str(Path::new("ota.yaml"), &mismatched_major).unwrap();
+        assert!(validate_contract(&mismatched_major_contract).is_err());
+
+        let modern_on_classic = classic.replace("yarn_release: classic", "yarn_release: modern");
+        let modern_on_classic_contract =
+            parse_contract_str(Path::new("ota.yaml"), &modern_on_classic).unwrap();
+        assert!(validate_contract(&modern_on_classic_contract).is_err());
+
+        let invalid = classic.replace(
+            "frozen_lockfile: true",
+            "frozen_lockfile: true\n        inline_builds: true",
+        );
+        let invalid_contract = parse_contract_str(Path::new("ota.yaml"), &invalid).unwrap();
+        assert!(validate_contract(&invalid_contract).is_err());
+
+        let invalid_manager = classic.replace("manager: yarn", "manager: pnpm");
+        let invalid_manager_contract =
+            parse_contract_str(Path::new("ota.yaml"), &invalid_manager).unwrap();
+        assert!(validate_contract(&invalid_manager_contract).is_err());
     }
 
     #[test]

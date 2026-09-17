@@ -54338,6 +54338,9 @@ fn collect_prepare_field_paths(
                     if source.frozen_lockfile {
                         fields.push(format!("{prefix}.source.frozen_lockfile"));
                     }
+                    if source.yarn_release.is_some() {
+                        fields.push(format!("{prefix}.source.yarn_release"));
+                    }
                     if source.inline_builds {
                         fields.push(format!("{prefix}.source.inline_builds"));
                     }
@@ -57274,6 +57277,7 @@ fn render_task_prepare_text(prepare: &crate::output::TaskPrepareSummary<'_>) -> 
             prepare.group_mode,
             &prepare.groups,
             prepare.frozen_lockfile,
+            prepare.yarn_release,
             prepare.inline_builds,
             prepare.force,
             prepare.no_root,
@@ -57368,6 +57372,7 @@ fn render_workspace_task_prepare_text(prepare: &WorkspaceTaskPrepareSummary) -> 
             prepare.group_mode,
             &prepare.groups,
             prepare.frozen_lockfile,
+            prepare.yarn_release,
             prepare.inline_builds,
             prepare.force,
             prepare.no_root,
@@ -57486,6 +57491,7 @@ fn render_dependency_hydration_prepare_text<T: AsRef<str>>(
     group_mode: Option<&str>,
     groups: &[T],
     frozen_lockfile: bool,
+    yarn_release: Option<&str>,
     inline_builds: bool,
     force: bool,
     no_root: bool,
@@ -57522,6 +57528,7 @@ fn render_dependency_hydration_prepare_text<T: AsRef<str>>(
             if frozen_lockfile {
                 command.push(' ');
                 command.push_str(match manager {
+                    "yarn" if yarn_release == Some("classic") => "--frozen-lockfile",
                     "yarn" => "--immutable",
                     _ => "--frozen-lockfile",
                 });
@@ -74143,6 +74150,7 @@ tasks:
                         group_mode: None,
                         groups: Vec::new(),
                         frozen_lockfile: true,
+                        yarn_release: None,
                         inline_builds: false,
                         force: false,
                         no_root: false,
@@ -74171,6 +74179,7 @@ tasks:
                         group_mode: None,
                         groups: Vec::new(),
                         frozen_lockfile: false,
+                        yarn_release: None,
                         inline_builds: false,
                         force: false,
                         no_root: false,
@@ -74197,6 +74206,7 @@ tasks:
                 group_mode: None,
                 groups: Vec::new(),
                 frozen_lockfile: false,
+                yarn_release: None,
                 inline_builds: false,
                 force: false,
                 no_root: false,
@@ -74261,7 +74271,7 @@ tasks:
             notes: None,
             category: None,
             preview: String::from(
-                "hydrate package dependencies with yarn install --immutable in `.`",
+                "hydrate package dependencies with yarn install --frozen-lockfile in `.`",
             ),
             launch_preview: None,
             env: env.clone(),
@@ -74290,6 +74300,7 @@ tasks:
                 group_mode: None,
                 groups: Vec::new(),
                 frozen_lockfile: true,
+                yarn_release: Some("classic"),
                 inline_builds: false,
                 force: false,
                 no_root: false,
@@ -74360,6 +74371,7 @@ tasks:
                 group_mode: None,
                 groups: Vec::new(),
                 frozen_lockfile: true,
+                yarn_release: None,
                 inline_builds: false,
                 force: false,
                 no_root: false,
@@ -74397,7 +74409,7 @@ tasks:
 
         assert!(
             rendered.contains(
-                "Prepare: hydrate package dependencies with `yarn install --immutable` in `.`"
+                "Prepare: hydrate package dependencies with `yarn install --frozen-lockfile` in `.`"
             ),
             "{rendered}"
         );
@@ -74452,6 +74464,7 @@ tasks:
                 group_mode: None,
                 groups: Vec::new(),
                 frozen_lockfile: true,
+                yarn_release: None,
                 inline_builds: true,
                 force: false,
                 no_root: false,
@@ -74535,6 +74548,7 @@ tasks:
                 group_mode: None,
                 groups: Vec::new(),
                 frozen_lockfile: false,
+                yarn_release: None,
                 inline_builds: false,
                 force: true,
                 no_root: false,
@@ -74620,6 +74634,7 @@ tasks:
                 group_mode: None,
                 groups: Vec::new(),
                 frozen_lockfile: false,
+                yarn_release: None,
                 inline_builds: false,
                 force: false,
                 no_root: false,
@@ -74721,6 +74736,7 @@ tasks:
                 group_mode: None,
                 groups: Vec::new(),
                 frozen_lockfile: false,
+                yarn_release: None,
                 inline_builds: false,
                 force: false,
                 no_root: false,
@@ -74823,6 +74839,7 @@ tasks:
                 group_mode: None,
                 groups: Vec::new(),
                 frozen_lockfile: false,
+                yarn_release: None,
                 inline_builds: false,
                 force: false,
                 no_root: false,
@@ -74908,6 +74925,7 @@ tasks:
                 group_mode: None,
                 groups: Vec::new(),
                 frozen_lockfile: false,
+                yarn_release: None,
                 inline_builds: false,
                 force: false,
                 no_root: false,
@@ -74993,6 +75011,7 @@ tasks:
                 group_mode: None,
                 groups: Vec::new(),
                 frozen_lockfile: false,
+                yarn_release: None,
                 inline_builds: false,
                 force: false,
                 no_root: false,
@@ -75078,6 +75097,7 @@ tasks:
                 group_mode: None,
                 groups: Vec::new(),
                 frozen_lockfile: false,
+                yarn_release: None,
                 inline_builds: false,
                 force: false,
                 no_root: false,
@@ -75879,6 +75899,7 @@ workflows:
                         group_mode: None,
                         groups: Vec::new(),
                         frozen_lockfile: false,
+                        yarn_release: None,
                         inline_builds: false,
                         force: false,
                         no_root: false,

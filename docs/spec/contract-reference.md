@@ -2405,7 +2405,8 @@ Task-effect rules:
     - `prepare.source.cwd`: required repo-relative working directory for the install invocation
     - `prepare.source.manager`: required package manager; ota currently ships `npm`, `pnpm`, `yarn`, and `bun`
     - `prepare.source.mode`: required install mode; ota currently ships `install` and `ci`
-    - `prepare.source.frozen_lockfile`: optional explicit lockfile strictness for `pnpm install --frozen-lockfile`, `yarn install --immutable`, or `bun install --frozen-lockfile`
+    - `prepare.source.frozen_lockfile`: optional explicit lockfile strictness for `pnpm install --frozen-lockfile`, Yarn install, or `bun install --frozen-lockfile`
+    - `prepare.source.yarn_release`: optional `classic` or `modern` with `manager: yarn` (defaults to `modern` for existing contracts); strict Classic renders `yarn install --frozen-lockfile`, while strict modern Yarn renders `yarn install --immutable`. Classic cannot use `inline_builds: true`.
     - `prepare.source.inline_builds`: optional explicit Yarn inline-build ownership for `yarn install --inline-builds`; valid only with `manager: yarn` and `mode: install`
     - `prepare.source.force`: optional explicit npm override ownership for `npm install --force` or `npm ci --force`; valid only with `manager: npm` and `mode: install` or `mode: ci`, and should be treated as an exceptional hydration lane rather than a normal default
     - `prepare.source.compose`: optional Compose invocation wrapper for typed hydration through a declared service container
@@ -2494,7 +2495,7 @@ Task-effect rules:
 - `prepare.source.manager: pnpm` currently uses `mode: install`; use `frozen_lockfile: true` when the repo truth is strict `pnpm install --frozen-lockfile`
 - `prepare.source.manager: npm` currently supports `mode: install` or `mode: ci`; use `mode: ci` when the repo truth is lockfile-strict npm hydration
 - `prepare.source.manager: npm` may also declare `force: true` when the repo truth is explicitly `npm install --force` or `npm ci --force`; keep that override deliberate because it weakens normal npm safety semantics
-- `prepare.source.manager: yarn` currently uses `mode: install`; use `frozen_lockfile: true` when the repo truth is strict `yarn install --immutable`
+- `prepare.source.manager: yarn` uses `mode: install`; use `frozen_lockfile: true` for strict modern Yarn, or also declare `yarn_release: classic` for strict Yarn 1 `yarn install --frozen-lockfile`
 - `prepare.source.manager: yarn` may also declare `inline_builds: true` when the repo truth is `yarn install --inline-builds`
 - `prepare.source.manager: bun` currently uses `mode: install`; use `frozen_lockfile: true` when the repo truth is strict `bun install --frozen-lockfile`
 - `prepare.source.compose` wraps the typed hydration lane through `docker|podman compose exec/run`; keep package-manager truth under `prepare.source.kind` and service/container truth under `prepare.source.compose`

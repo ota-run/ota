@@ -1556,6 +1556,7 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
             "mode": { "enum": ["install", "ci"] },
             "filter": { "type": "string" },
             "frozen_lockfile": { "type": "boolean" },
+            "yarn_release": { "enum": ["classic", "modern"] },
             "inline_builds": { "type": "boolean" },
             "force": { "type": "boolean" },
             "compose": { "$ref": "#/$defs/taskComposeInvocation" }

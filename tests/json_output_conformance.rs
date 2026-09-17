@@ -8181,7 +8181,7 @@ toolchains:
   node:
     version: "22"
     package_managers:
-      pnpm: "10"
+      yarn: "1.22.22"
   python:
     version: "3.12"
 tasks:
@@ -8204,7 +8204,8 @@ tasks:
           source:
             kind: node_package_manager
             cwd: .
-            manager: pnpm
+            manager: yarn
+            yarn_release: classic
             mode: install
             frozen_lockfile: true
         - kind: dependency_hydration
@@ -8243,6 +8244,51 @@ tasks:
     assert_eq!(json["tasks"][1]["name"], "verify");
     assert_eq!(json["tasks"][1]["kind"], "aggregate");
     assert_eq!(json["tasks"][1]["aggregate"]["tasks"][0], "setup");
+}
+
+#[test]
+fn tasks_json_output_reports_classic_yarn_hydration() {
+    let fixture = TempDir::new().expect("fixture");
+    write_contract(
+        &fixture,
+        r#"
+version: 1
+project:
+  name: classic-yarn
+toolchains:
+  node:
+    version: "22"
+    package_managers:
+      yarn: "1.22.22"
+tasks:
+  setup:
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: node_package_manager
+        cwd: .
+        manager: yarn
+        yarn_release: classic
+        mode: install
+        frozen_lockfile: true
+    requirements:
+      toolchains: [node]
+    effects:
+      writes: [node_modules]
+      network: true
+      network_kind: dependency_hydration
+"#,
+    );
+
+    let json = run_ota(
+        &["tasks", "--json", fixture.path().to_str().unwrap()],
+        fixture.path(),
+    );
+    let prepare = &json["tasks"][0]["prepare"];
+    assert_eq!(prepare["yarn_release"], "classic");
+    assert_eq!(prepare["frozen_lockfile"], true);
+    assert_matches_schema("tasks.json", &json);
 }
 
 #[test]
@@ -9041,7 +9087,7 @@ toolchains:
   node:
     version: "22"
     package_managers:
-      pnpm: "10"
+      yarn: "1.22.22"
   python:
     version: "3.12"
 tasks:
@@ -9054,7 +9100,8 @@ tasks:
           source:
             kind: node_package_manager
             cwd: .
-            manager: pnpm
+            manager: yarn
+            yarn_release: classic
             mode: install
             frozen_lockfile: true
         - kind: dependency_hydration
@@ -9086,6 +9133,11 @@ tasks:
     );
     assert_eq!(json["repos"][0]["tasks"][0]["kind"], "sequence");
     assert_eq!(json["repos"][0]["tasks"][0]["prepare"]["kind"], "sequence");
+    assert_eq!(
+        json["repos"][0]["tasks"][0]["prepare"]["steps"][0]["yarn_release"],
+        "classic"
+    );
+    assert_matches_schema("workspace-tasks.json", &json);
 }
 
 #[test]

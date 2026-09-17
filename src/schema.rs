@@ -8105,6 +8105,8 @@ pub struct TaskNodePackageManagerHydrationSourceSpec {
     pub manager: TaskNodePackageManagerKind,
     pub mode: TaskNodePackageManagerHydrationMode,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub yarn_release: Option<TaskYarnRelease>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub filter: Option<String>,
     #[serde(default, skip_serializing_if = "is_false")]
     pub frozen_lockfile: bool,
@@ -8116,6 +8118,22 @@ pub struct TaskNodePackageManagerHydrationSourceSpec {
     pub compose: Option<TaskComposeInvocationSpec>,
 }
 
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskYarnRelease {
+    Classic,
+    Modern,
+}
+
+impl TaskYarnRelease {
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Classic => "classic",
+            Self::Modern => "modern",
+        }
+    }
+}
+
 impl TaskNodePackageManagerHydrationSourceSpec {
     pub const fn lockfile_flag(&self) -> Option<&'static str> {
         if !self.frozen_lockfile {
@@ -8124,7 +8142,10 @@ impl TaskNodePackageManagerHydrationSourceSpec {
         match self.manager {
             TaskNodePackageManagerKind::Npm => None,
             TaskNodePackageManagerKind::Pnpm => Some("--frozen-lockfile"),
-            TaskNodePackageManagerKind::Yarn => Some("--immutable"),
+            TaskNodePackageManagerKind::Yarn => Some(match self.yarn_release {
+                Some(TaskYarnRelease::Classic) => "--frozen-lockfile",
+                _ => "--immutable",
+            }),
             TaskNodePackageManagerKind::Bun => Some("--frozen-lockfile"),
         }
     }
@@ -10661,6 +10682,7 @@ tasks:
             cwd: String::from("."),
             manager: super::TaskNodePackageManagerKind::Pnpm,
             mode: super::TaskNodePackageManagerHydrationMode::Install,
+            yarn_release: None,
             filter: None,
             frozen_lockfile: true,
             inline_builds: false,
@@ -10681,6 +10703,7 @@ tasks:
             cwd: String::from("."),
             manager: super::TaskNodePackageManagerKind::Yarn,
             mode: super::TaskNodePackageManagerHydrationMode::Install,
+            yarn_release: None,
             filter: None,
             frozen_lockfile: true,
             inline_builds: true,
@@ -10693,11 +10716,20 @@ tasks:
             yarn.command_preview(),
             "yarn install --immutable --inline-builds"
         );
+        let mut yarn_classic = yarn.clone();
+        yarn_classic.yarn_release = Some(super::TaskYarnRelease::Classic);
+        yarn_classic.inline_builds = false;
+        assert_eq!(yarn_classic.lockfile_flag(), Some("--frozen-lockfile"));
+        assert_eq!(
+            yarn_classic.command_preview(),
+            "yarn install --frozen-lockfile"
+        );
 
         let npm = super::TaskNodePackageManagerHydrationSourceSpec {
             cwd: String::from("."),
             manager: super::TaskNodePackageManagerKind::Npm,
             mode: super::TaskNodePackageManagerHydrationMode::Install,
+            yarn_release: None,
             filter: None,
             frozen_lockfile: true,
             inline_builds: false,
@@ -10712,6 +10744,7 @@ tasks:
             cwd: String::from("."),
             manager: super::TaskNodePackageManagerKind::Npm,
             mode: super::TaskNodePackageManagerHydrationMode::Ci,
+            yarn_release: None,
             filter: None,
             frozen_lockfile: false,
             inline_builds: false,
@@ -10725,6 +10758,7 @@ tasks:
             cwd: String::from("."),
             manager: super::TaskNodePackageManagerKind::Bun,
             mode: super::TaskNodePackageManagerHydrationMode::Install,
+            yarn_release: None,
             filter: None,
             frozen_lockfile: true,
             inline_builds: false,
@@ -10976,6 +11010,7 @@ tasks:
                         cwd: String::from("app"),
                         manager: super::TaskNodePackageManagerKind::Npm,
                         mode: super::TaskNodePackageManagerHydrationMode::Ci,
+                        yarn_release: None,
                         filter: None,
                         frozen_lockfile: false,
                         inline_builds: false,
@@ -11081,6 +11116,7 @@ tasks:
                                 cwd: String::from("."),
                                 manager: super::TaskNodePackageManagerKind::Pnpm,
                                 mode: super::TaskNodePackageManagerHydrationMode::Install,
+                                yarn_release: None,
                                 filter: None,
                                 frozen_lockfile: true,
                                 inline_builds: false,

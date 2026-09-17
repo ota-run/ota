@@ -26,6 +26,10 @@
 
 ## Unreleased
 
+- Support explicit `yarn_release: classic` in typed node-package hydration so strict Yarn 1
+  setup uses `--frozen-lockfile` rather than modern Yarn's `--immutable`. Existing Yarn contracts
+  keep their modern behavior; Classic plus `inline_builds` is rejected.
+
 - Harden `ota agents --review` and `ota agents --write` to recognize generated guidance only when
   it exactly occupies one uniquely delimited managed block. Duplicate, reversed, ambiguous, or
   stale markers no longer appear synchronized merely because matching generated text exists
