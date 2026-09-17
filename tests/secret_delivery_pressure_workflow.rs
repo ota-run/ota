@@ -55,6 +55,11 @@ fn protected_service_path_remains_provider_free_and_task_refusing() {
         3
     );
     assert!(protected_job.contains("test_verify_protected_runner_listener.py"));
+    assert!(protected_job.contains("export PYTHONDONTWRITEBYTECODE=1"));
+    assert!(
+        protected_job.find("export PYTHONDONTWRITEBYTECODE=1")
+            < protected_job.find("test_verify_protected_runner_listener.py")
+    );
     assert!(!protected_job.contains("Runner.Worker"));
     assert!(!protected_job.contains("$PPID"));
     assert!(!protected_job.contains("os.getppid"));
