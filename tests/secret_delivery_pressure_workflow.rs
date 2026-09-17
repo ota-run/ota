@@ -20,6 +20,8 @@
 
 const WORKFLOW: &str =
     include_str!("../.github/workflows/secret-delivery-oidc-endpoint-evidence.yml");
+const LISTENER_VERIFIER: &str =
+    include_str!("../.github/ota/verify-protected-runner-listener.py");
 
 #[test]
 fn protected_service_path_remains_provider_free_and_task_refusing() {
@@ -46,13 +48,23 @@ fn protected_service_path_remains_provider_free_and_task_refusing() {
         protected_job.contains("find \"$CORE_SOURCE\" -xdev \\( ! -user root -o -perm /022 \\)")
     );
     assert!(protected_job.contains("expected exactly one live Toolkit artifact"));
+    assert_eq!(
+        protected_job
+            .matches("verify-protected-runner-listener.py")
+            .count(),
+        3
+    );
+    assert!(protected_job.contains("test_verify_protected_runner_listener.py"));
+    assert!(!protected_job.contains("Runner.Worker"));
+    assert!(!protected_job.contains("$PPID"));
+    assert!(!protected_job.contains("os.getppid"));
     assert!(protected_job.contains("if length == 1 then .[0].archive_download_url"));
     assert!(protected_job.contains("curl --fail --silent --show-error --location"));
     assert!(!protected_job.contains("--location-trusted"));
     assert!(WORKFLOW.contains("PRESSURE_REPOSITORY: /srv/ota-v3-pressure"));
     assert!(
         WORKFLOW.contains(
-            "EXPECTED_LAUNCHER_SOURCE_REVISION: 35da0efc2c77995321be39cb3a131acf8623f3e3"
+            "EXPECTED_LAUNCHER_SOURCE_REVISION: 84eefe0a8ffc2a3d8ff745d54850d3c5312319d1"
         )
     );
     assert!(
@@ -106,7 +118,7 @@ fn protected_service_path_remains_provider_free_and_task_refusing() {
     assert!(command_step.contains("\"$PRIVATE_DISCLOSURE_PATTERN\" \\"));
     assert!(!command_step.contains("\"$CLIENT_RESULT\" \"$CLIENT_STDERR\"; then"));
     let retention = WORKFLOW
-        .split("      - name: Retain bounded evidence for administrator retrieval")
+        .split("      - name: Retain checksummed job-owned evidence for administrator retrieval")
         .nth(1)
         .expect("retention step");
     assert!(retention.contains("$CLIENT_PUBLIC_RESULT"));
@@ -125,15 +137,24 @@ fn protected_service_path_remains_provider_free_and_task_refusing() {
     );
 
     let failure_retention = WORKFLOW
-        .split("      - name: Retain closed failure diagnostic for administrator retrieval")
+        .split("      - name: Retain checksummed job-owned failure diagnostic for administrator retrieval")
         .nth(1)
         .expect("failure diagnostic retention step")
-        .split("      - name: Retain bounded evidence for administrator retrieval")
+        .split("      - name: Retain checksummed job-owned evidence for administrator retrieval")
         .next()
         .expect("bounded failure diagnostic step");
     assert!(failure_retention.starts_with("\n        if: ${{ failure() }}"));
     assert!(failure_retention.contains("root:${expected_group}:770"));
-    assert!(failure_retention.contains("test -f \"$CLIENT_DIAGNOSTIC\""));
+    let pre_client_guard = failure_retention
+        .find("if [[ ! -f \"$CLIENT_DIAGNOSTIC\" ]]; then")
+        .expect("pre-client failure guard");
+    let failure_destination = failure_retention
+        .find("destination=\"$HOSTED_EVIDENCE_ROOT")
+        .expect("failure diagnostic destination");
+    assert!(pre_client_guard < failure_destination);
+    assert!(failure_retention.contains(
+        "primary failure preceded protected client execution; retaining no synthetic diagnostic"
+    ));
     assert!(
         failure_retention
             .contains("install -m 0400 \"$CLIENT_DIAGNOSTIC\" \"$staging/client-diagnostic.json\"")
@@ -146,6 +167,13 @@ fn protected_service_path_remains_provider_free_and_task_refusing() {
         failure_retention
             .contains("os.fsencode(os.environ[\"DESTINATION\"]),\n              1,\n          )")
     );
+    assert!(LISTENER_VERIFIER.contains("LISTENER = Path(\"/opt/ota-actions-runner/bin/Runner.Listener\")"));
+    assert!(LISTENER_VERIFIER.contains("verify_root_owned_chain(LISTENER)"));
+    assert!(LISTENER_VERIFIER.contains("listener_metadata.st_nlink != 1"));
+    assert!(LISTENER_VERIFIER.contains("job_runner_executable"));
+    assert!(LISTENER_VERIFIER.contains("Listener identity does not match the installation manifest"));
+    assert!(LISTENER_VERIFIER.contains("INSTALLATION_IDENTITY_DOMAIN"));
+    assert!(LISTENER_VERIFIER.contains("CANONICAL_SEMVER.fullmatch(version)"));
     let expected_markers = [
         "capability_observation_issued",
         "capability_observation_response_received",
