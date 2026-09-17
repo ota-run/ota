@@ -26,5 +26,5 @@ version: 1
 repository: ota-run/ota-site
 mode: waived
 consumer_commit: 0ee140feea1e63cf79a33944f5cd512e555f161c
-reviewed_ota_commit: 1b328f5845581541b83661ad4d1f53e99c9887ac
-waiver_reason: "The internal V2/V4 protected service-path pressure fixture and workflow add no Site operator surface or public capability; replace with the exact committed Core revision after review."
+reviewed_ota_commit: 76ae12e0da652c91432e7f919ed77681b5ecfdd3
+waiver_reason: "Core 76ae12e0 adds an internal V2/V4 protected service-path pressure fixture and workflow, with no Site operator surface or public capability."

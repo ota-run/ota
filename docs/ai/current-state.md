@@ -1884,11 +1884,12 @@ reservation after valid failed pre-binding completion and an invalid V4 test ide
 repaired and independently rechecked; the local Linux/arm64 durable-refusal regression and
 Launcher canonical verification pass. Launcher `35da0ef` and Core `b3a217d5` are pushed; Core
 handoff `d4dfe1d8` is also pushed. The V2/V4 pressure fixture, exact-revision workflow, and
-bounded runbook update are under independent review. The protected Linux/X64 host still has the
-historical installation and its runner is active; neither is V4 evidence. Next action: finish
-pressure review, commit and push the exact Core revision, stop the runner, reprovision the host
-from that Core revision plus Launcher `35da0ef` and Protocol `e819f958`, then dispatch and
-reconcile the protected service-path gate. The existing V3 workflow is not V4 evidence. V4 keeps
+bounded runbook were independently reviewed without P1/P2/P3 findings and committed at Core
+`76ae12e0`. This is not hosted proof. The protected Linux/X64 host still has the historical
+installation and its runner is active; neither is V4 evidence. Next action: push Core, stop the
+runner, reprovision the host from the exact Core revision plus Launcher `35da0ef` and Protocol
+`e819f958`, then dispatch and reconcile the protected service-path gate. The existing V3 workflow
+is not V4 evidence. V4 keeps
 released V3 snapshot semantics immutable. Only after Core, Launcher, and Protocol
 prove the exact protected Linux/X64 V2 byte/descriptor and V4 transaction route may V4 consumption
 replace the historical V2 transport-preparation model. The planned GitHub OIDC-only `GET` checkpoint remains
