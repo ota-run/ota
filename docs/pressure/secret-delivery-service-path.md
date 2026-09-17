@@ -3,14 +3,15 @@
 When it passes at the exact installed revisions, this pressure gate proves one Core command can
 traverse the protected Launcher service,
 reconcile the retained same-child observation, administrator-installed synthetic authority
-snapshot, reconstructed Step 1-6 candidate, and snapshot-bound V3 transaction, then refuse before
+V2 snapshot with the complete build-owned transport graph, reconstructed Step 1-6 candidate, and
+snapshot-bound V4 transaction, then refuse before
 provider contact or task execution.
 
-The earlier hosted V2 result remains a historical checkpoint. A V3 claim requires a new run with
+The earlier hosted V2 and V3 results remain historical checkpoints. A V4 claim requires a new run with
 the exact Core, Launcher, and Protocol revisions installed and reconciled; changing the workflow
 pins alone is not runtime evidence.
-The V3 run must observe exactly one post-reconciliation V3 completion marker and no V2 binding
-completion marker before accepting the provider-free refusal.
+The V4 run must observe exactly one post-reconciliation V2 snapshot marker and one V4 binding
+marker, with no V3 or V2 binding completion marker, before accepting the provider-free refusal.
 
 It is intentionally non-production. The default Launcher installation retains empty secret-delivery
 authority stores. The synthetic authority is installed only when the root administrator supplies
@@ -53,8 +54,10 @@ arguments plus:
 
 The provisioner derives the installed Core build and artifact identities itself, requires the
 request's Core revision to match the installed source build, generates a separate signing key, and
-installs a bounded signed bundle and verifier store. The builder returns only the private authority
-payload and the exact public run context required by the selected Ota child.
+installs a bounded signed bundle and verifier store. The V4 pressure builder returns only a V2
+private authority payload containing the complete embedded transport graph and record, plus the
+exact public run context required by the selected Ota child. The historical `ota-v3-pressure`
+directory name does not identify the transaction version.
 
 Provisioning also writes a root-owned mode `0644` public record at
 `/usr/share/ota/authority-launcher/secret-delivery-pressure-installation.json`. It binds the exact

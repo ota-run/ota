@@ -1101,6 +1101,7 @@ impl SystemdExecutionCompletion {
         let snapshot = pending_snapshot
             .reconcile(snapshot_response)
             .map_err(|error| error.to_string())?;
+        pressure_secret_delivery_stage("authority_snapshot_v2_response_reconciled");
         let candidate = snapshot
             .reconstruct_transaction_candidate(
                 crate::secret_delivery_authority_snapshot::SecretDeliveryCandidateReconstructionInput {
@@ -1123,9 +1124,11 @@ impl SystemdExecutionCompletion {
             self.session.receive_json()?;
         let now = u64::try_from(OffsetDateTime::now_utc().unix_timestamp())
             .map_err(|_| String::from("protected transaction binding clock is unavailable"))?;
-        pending_binding
+        let binding = pending_binding
             .reconcile(binding_response, &verifier, now)
-            .map_err(|error| error.to_string())
+            .map_err(|error| error.to_string())?;
+        pressure_secret_delivery_stage("binding_v4_response_reconciled");
+        Ok(binding)
     }
 
     pub(crate) fn startup_continuation(&self) -> &LauncherStartupContinuationV1 {

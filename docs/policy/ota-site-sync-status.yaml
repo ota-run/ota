@@ -27,4 +27,4 @@ repository: ota-run/ota-site
 mode: waived
 consumer_commit: 0ee140feea1e63cf79a33944f5cd512e555f161c
 reviewed_ota_commit: 1b328f5845581541b83661ad4d1f53e99c9887ac
-waiver_reason: "The proposed internal V2 authority-snapshot and V4 transaction boundary adds no Site operator surface; replace with the exact committed Core revision after review."
+waiver_reason: "The internal V2/V4 protected service-path pressure fixture and workflow add no Site operator surface or public capability; replace with the exact committed Core revision after review."

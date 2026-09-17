@@ -34,7 +34,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::parser::load_contract;
 use crate::policy_pack::OrgPolicyPack;
-use crate::secret_delivery_authority_snapshot::ProtectedSecretDeliveryAuthorityPayloadV1;
+use crate::secret_delivery_authority_snapshot::ProtectedSecretDeliveryAuthorityPayloadV2;
 use crate::secret_delivery_evaluation::selected_secret_requirement_identities;
 use crate::secret_provider_bindings::{
     SecretProviderBindingClass, SecretProviderBindingDisclosureClass, SecretProviderBindingInput,
@@ -82,7 +82,7 @@ struct PressureAuthorityInstallationV1 {
     schema_version: u32,
     record_kind: String,
     request_identity: String,
-    authority_payload: ProtectedSecretDeliveryAuthorityPayloadV1,
+    authority_payload: ProtectedSecretDeliveryAuthorityPayloadV2,
     selected_process_environment: BTreeMap<String, String>,
 }
 
@@ -260,9 +260,12 @@ fn render_authority_payload_for_contract(
     })
     .collect();
 
-    let authority_payload = ProtectedSecretDeliveryAuthorityPayloadV1 {
-        schema_version: 1,
-        record_kind: "protected_secret_delivery_authority_payload".into(),
+    let (transport_dependency_feature_graph, transport_dependency_record) =
+        crate::secret_delivery_transport_dependencies::embedded_transport_dependency_expectation_v1()
+            .map_err(|_| "pressure transport dependency expectation is unavailable")?;
+    let authority_payload = ProtectedSecretDeliveryAuthorityPayloadV2 {
+        schema_version: 2,
+        record_kind: "protected_secret_delivery_authority_payload_v2".into(),
         binding_snapshots: vec![snapshot],
         invocation_bindings: vec![SecretDeliveryInvocationBindingInput {
             schema_version: 1,
@@ -287,7 +290,9 @@ fn render_authority_payload_for_contract(
         }],
         profile,
         implementation_subject,
+        transport_dependency_feature_graph,
         transport_dependency_record_identity: resolved_subject.transport_dependency_record_identity,
+        transport_dependency_record,
         policy: serde_yaml::from_str::<OrgPolicyPack>(
             "policies:\n  effects:\n    mode: compatibility\n",
         )
@@ -479,8 +484,23 @@ secret_requirements:
         .expect("payload");
         let parsed: serde_json::Value = serde_json::from_slice(&payload).expect("installation");
         assert_eq!(serde_jcs::to_vec(&parsed).expect("canonical"), payload);
-        let authority: ProtectedSecretDeliveryAuthorityPayloadV1 =
+        assert!(
+            serde_jcs::to_vec(&parsed["authority_payload"])
+                .expect("canonical authority payload")
+                .len()
+                <= ota_authority_protocol::MAX_PROTECTED_SECRET_DELIVERY_BINDING_BUNDLE_PAYLOAD_BYTES_V1
+        );
+        let authority: ProtectedSecretDeliveryAuthorityPayloadV2 =
             serde_json::from_value(parsed["authority_payload"].clone()).expect("closed payload");
+        assert_eq!(authority.schema_version, 2);
+        assert_eq!(
+            authority.transport_dependency_record_identity,
+            authority.transport_dependency_record.record_identity
+        );
+        crate::secret_delivery_transport_dependencies::verify_transport_dependency_feature_graph_v1(
+            &authority.transport_dependency_feature_graph,
+        )
+        .expect("complete pressure graph");
         assert_eq!(authority.binding_snapshots.len(), 1);
         assert_eq!(authority.invocation_bindings.len(), 1);
         assert_eq!(

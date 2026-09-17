@@ -50,6 +50,16 @@ fn protected_service_path_remains_provider_free_and_task_refusing() {
     assert!(protected_job.contains("curl --fail --silent --show-error --location"));
     assert!(!protected_job.contains("--location-trusted"));
     assert!(WORKFLOW.contains("PRESSURE_REPOSITORY: /srv/ota-v3-pressure"));
+    assert!(
+        WORKFLOW.contains(
+            "EXPECTED_LAUNCHER_SOURCE_REVISION: 35da0efc2c77995321be39cb3a131acf8623f3e3"
+        )
+    );
+    assert!(
+        WORKFLOW.contains(
+            "EXPECTED_PROTOCOL_SOURCE_REVISION: e819f95890ea23ae2f336a59fb3ff62cfa858d8b"
+        )
+    );
     assert!(WORKFLOW.contains("--json -- run governed --grant \"$AUTHORITY_ID\""));
     assert!(WORKFLOW.contains(
         "CLIENT_PRIVACY_STDERR: ${{ runner.temp }}/secret-delivery-service-path-client-privacy-stderr.txt"
@@ -160,6 +170,9 @@ fn protected_service_path_remains_provider_free_and_task_refusing() {
         "invocation_context_reconstructed",
         "authority_snapshot_issue_refused",
         "authority_snapshot_issued",
+        "authority_snapshot_v2_response_reconciled",
+        "binding_v3_response_reconciled",
+        "binding_v4_response_reconciled",
     ];
     let marker_block = command_step
         .split("          stage_markers = [\n")
@@ -173,6 +186,13 @@ fn protected_service_path_remains_provider_free_and_task_refusing() {
         .map(|line| line.trim().trim_matches(',').trim_matches('"'))
         .collect::<Vec<_>>();
     assert_eq!(actual_markers, expected_markers);
+    assert!(
+        command_step
+            .contains(".stage_marker_counts.authority_snapshot_v2_response_reconciled == 1")
+    );
+    assert!(command_step.contains(".stage_marker_counts.binding_v4_response_reconciled == 1"));
+    assert!(command_step.contains(".stage_marker_counts.binding_v3_response_reconciled == 0"));
+    assert!(command_step.contains(".binding_v2_stage_counts.response_reconciled == 0"));
 
     let summary_block = command_step
         .split("          summary = {\n")
