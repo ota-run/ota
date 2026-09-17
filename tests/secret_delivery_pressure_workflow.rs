@@ -20,8 +20,7 @@
 
 const WORKFLOW: &str =
     include_str!("../.github/workflows/secret-delivery-oidc-endpoint-evidence.yml");
-const LISTENER_VERIFIER: &str =
-    include_str!("../.github/ota/verify-protected-runner-listener.py");
+const LISTENER_VERIFIER: &str = include_str!("../.github/ota/verify-protected-runner-listener.py");
 
 #[test]
 fn protected_service_path_remains_provider_free_and_task_refusing() {
@@ -63,13 +62,16 @@ fn protected_service_path_remains_provider_free_and_task_refusing() {
     assert!(!protected_job.contains("Runner.Worker"));
     assert!(!protected_job.contains("$PPID"));
     assert!(!protected_job.contains("os.getppid"));
+    assert!(protected_job.contains("--property=ProtectSystem"));
+    assert!(protected_job.contains("--property=ReadWritePaths"));
+    assert!(protected_job.contains("protected runner writable-path whitelist is invalid"));
     assert!(protected_job.contains("if length == 1 then .[0].archive_download_url"));
     assert!(protected_job.contains("curl --fail --silent --show-error --location"));
     assert!(!protected_job.contains("--location-trusted"));
     assert!(WORKFLOW.contains("PRESSURE_REPOSITORY: /srv/ota-v3-pressure"));
     assert!(
         WORKFLOW.contains(
-            "EXPECTED_LAUNCHER_SOURCE_REVISION: 84eefe0a8ffc2a3d8ff745d54850d3c5312319d1"
+            "EXPECTED_LAUNCHER_SOURCE_REVISION: ca8d4ab342fdc775a534767374ab15ead583a468"
         )
     );
     assert!(
@@ -172,11 +174,16 @@ fn protected_service_path_remains_provider_free_and_task_refusing() {
         failure_retention
             .contains("os.fsencode(os.environ[\"DESTINATION\"]),\n              1,\n          )")
     );
-    assert!(LISTENER_VERIFIER.contains("LISTENER = Path(\"/opt/ota-actions-runner/bin/Runner.Listener\")"));
+    assert!(
+        LISTENER_VERIFIER
+            .contains("LISTENER = Path(\"/opt/ota-actions-runner/bin/Runner.Listener\")")
+    );
     assert!(LISTENER_VERIFIER.contains("verify_root_owned_chain(LISTENER)"));
     assert!(LISTENER_VERIFIER.contains("listener_metadata.st_nlink != 1"));
     assert!(LISTENER_VERIFIER.contains("job_runner_executable"));
-    assert!(LISTENER_VERIFIER.contains("Listener identity does not match the installation manifest"));
+    assert!(
+        LISTENER_VERIFIER.contains("Listener identity does not match the installation manifest")
+    );
     assert!(LISTENER_VERIFIER.contains("INSTALLATION_IDENTITY_DOMAIN"));
     assert!(LISTENER_VERIFIER.contains("CANONICAL_SEMVER.fullmatch(version)"));
     let expected_markers = [
@@ -226,6 +233,62 @@ fn protected_service_path_remains_provider_free_and_task_refusing() {
     assert!(command_step.contains(".stage_marker_counts.binding_v4_response_reconciled == 1"));
     assert!(command_step.contains(".stage_marker_counts.binding_v3_response_reconciled == 0"));
     assert!(command_step.contains(".binding_v2_stage_counts.response_reconciled == 0"));
+    assert!(
+        command_step.contains("provider-free refusal lacked required V2/V4 pressure markers; ")
+    );
+    assert!(
+        command_step.contains(
+            "the installed Core binary omitted secret-delivery-pressure instrumentation "
+        )
+    );
+    let sandbox_block = protected_job
+        .split("          expected_runner_write_paths = {\n")
+        .nth(1)
+        .expect("runner writable-path allowlist")
+        .split("          installation_path = Path(os.environ[\"INSTALLATION_EVIDENCE\"])\n")
+        .next()
+        .expect("closed runner writable-path guard");
+    let sandbox_paths = sandbox_block
+        .lines()
+        .map(|line| line.trim().trim_matches(',').trim_matches('"'))
+        .filter(|line| line.starts_with('/'))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        sandbox_paths,
+        [
+            "/opt/ota-actions-runner/_diag",
+            "/opt/ota-actions-runner/_work",
+            "/var/lib/ota/authority-job-evidence",
+        ]
+    );
+    assert!(
+        sandbox_block.contains("observed_runner_properties.get(\"ProtectSystem\") != \"strict\"")
+    );
+    assert!(
+        sandbox_block
+            .contains("set(observed_runner_properties.get(\"ReadWritePaths\", \"\").split())")
+    );
+    assert!(
+        sandbox_block
+            .contains("len(observed_runner_properties.get(\"ReadWritePaths\", \"\").split())")
+    );
+    assert_eq!(sandbox_block.matches(" or ").count(), 2);
+
+    let instrumentation_guard = command_step
+        .split("          if (\n              summary[\"expected_provider_free_refusal_count\"] == 1\n")
+        .nth(1)
+        .expect("V2/V4 instrumentation guard")
+        .split("          PY\n")
+        .next()
+        .expect("closed V2/V4 instrumentation guard");
+    assert!(instrumentation_guard.contains(
+        "summary[\"stage_marker_counts\"][\"authority_snapshot_v2_response_reconciled\"] == 0"
+    ));
+    assert!(
+        instrumentation_guard
+            .contains("summary[\"stage_marker_counts\"][\"binding_v4_response_reconciled\"] == 0")
+    );
+    assert_eq!(instrumentation_guard.matches(" and ").count(), 2);
 
     let summary_block = command_step
         .split("          summary = {\n")
@@ -320,4 +383,12 @@ fn protected_service_path_remains_provider_free_and_task_refusing() {
         assert!(retention.contains(filename));
     }
     assert!(!WORKFLOW.contains("ota run governed --grant"));
+
+    let service_path = include_str!("../docs/pressure/secret-delivery-service-path.md");
+    assert!(
+        service_path.contains("cargo build --locked --release --features secret-delivery-pressure")
+    );
+    assert!(service_path.contains("--bin ota"));
+    assert!(service_path.contains("--bin ota-secret-delivery-pressure-authority"));
+    assert!(service_path.contains("A normal release build omits the bounded V2/V4"));
 }

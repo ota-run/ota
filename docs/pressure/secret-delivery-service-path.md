@@ -43,9 +43,18 @@ stopped. Create one closed request containing the exact queued run context:
 }
 ```
 
-Install the tracked contract at `/srv/ota-v3-pressure/ota.yaml`, the exact source-built Core binary,
-and the non-default `ota-secret-delivery-pressure-authority` builder. Reprovision with the ordinary
-arguments plus:
+Install the tracked contract at `/srv/ota-v3-pressure/ota.yaml` and build both pressure artifacts
+from the exact Core revision with the non-default `secret-delivery-pressure` feature:
+
+```bash
+cargo build --locked --release --features secret-delivery-pressure \
+  --bin ota \
+  --bin ota-secret-delivery-pressure-authority
+```
+
+Install that feature-enabled `ota` binary and the non-default
+`ota-secret-delivery-pressure-authority` builder. A normal release build omits the bounded V2/V4
+stage instrumentation and cannot satisfy this gate. Reprovision with the ordinary arguments plus:
 
 ```text
 --secret-delivery-pressure-builder-binary /usr/lib/ota-authority/bin/ota-secret-delivery-pressure-authority
