@@ -26,6 +26,11 @@
 
 ## Unreleased
 
+- Show a compact `Ota Readiness` success summary before runtime endpoint publication in rich
+  output. The summary names only the resolved listener, aggregate probe count, and observed
+  attempt; detailed targets and failure diagnostics remain retry-only, and JSON/plain output stays
+  unchanged.
+
 - Support explicit `yarn_release: classic` in typed node-package hydration so strict Yarn 1
   setup uses `--frozen-lockfile` rather than modern Yarn's `--immutable`. Existing Yarn contracts
   keep their modern behavior; Classic plus `inline_builds` is rejected.

@@ -618,6 +618,9 @@ where
     )?;
     let stdout = join_stream_reader(stdout_handle)?;
     let stderr = join_stream_reader(stderr_handle)?;
+    if let Some(readiness_probe) = readiness_probe.as_ref() {
+        readiness_probe.unbind_notifier();
+    }
     if let Some(loader) = loader {
         loader.stop();
     }
@@ -10459,7 +10462,20 @@ struct RemoteReadinessProbeTarget {
 struct RuntimeReadinessProbe {
     state: Arc<RuntimeReadinessProbeState>,
     stop: Arc<AtomicBool>,
+    output: Arc<Mutex<ReadinessOutputPosture>>,
     handle: Option<thread::JoinHandle<()>>,
+}
+
+struct ReadinessOutputPosture {
+    rich: bool,
+    notifier: Option<StreamPhaseNotifier>,
+    success_publication: ReadinessSuccessPublication,
+}
+
+#[derive(Clone, Copy)]
+enum ReadinessSuccessPublication {
+    WaitForQuiet,
+    Immediate,
 }
 
 #[derive(Debug)]
@@ -10477,6 +10493,18 @@ struct RuntimeReadinessProbeOutcome {
 }
 
 impl RuntimeReadinessProbe {
+    fn bind_notifier(&self, notifier: StreamPhaseNotifier) {
+        if let Ok(mut output) = self.output.lock() {
+            output.notifier = Some(notifier);
+        }
+    }
+
+    fn unbind_notifier(&self) {
+        if let Ok(mut output) = self.output.lock() {
+            output.notifier = None;
+        }
+    }
+
     fn wait_then_stop_and_collect(mut self, grace: Duration) -> RuntimeReadinessProbeOutcome {
         let deadline = Instant::now() + grace;
         while !self.state.observed.load(Ordering::Relaxed)
@@ -10588,6 +10616,12 @@ fn record_readiness_probe_failure(
     Some(report.clone())
 }
 
+fn current_readiness_probe_report(
+    state: &RuntimeReadinessProbeState,
+) -> Option<ReadinessProbeReport> {
+    state.report.lock().ok().map(|report| report.clone())
+}
+
 fn format_readiness_probe_progress(report: &ReadinessProbeReport) -> String {
     let mut lines = vec![String::from("🦦 Ota Readiness")];
     if let Some(listener) = report.listener.as_deref() {
@@ -10610,6 +10644,20 @@ fn format_readiness_probe_progress(report: &ReadinessProbeReport) -> String {
     lines.join("\n")
 }
 
+fn format_readiness_probe_success(
+    report: &ReadinessProbeReport,
+    probe_count: usize,
+    observation: u32,
+) -> String {
+    let mut lines = vec![String::from("🦦 Ota Readiness")];
+    if let Some(listener) = report.listener.as_deref() {
+        lines.push(format!("→ listener: `{listener}`"));
+    }
+    lines.push(format!("→ probes: {probe_count}/{probe_count} passed"));
+    lines.push(format!("→ result: ready on observation {}", observation));
+    lines.join("\n")
+}
+
 fn emit_readiness_probe_progress(
     notifier: Option<&StreamPhaseNotifier>,
     stop: &AtomicBool,
@@ -10620,6 +10668,60 @@ fn emit_readiness_probe_progress(
         notifier.wait_for_quiet_output(Duration::from_millis(300), stop);
         let _guard = notifier.begin_output();
         eprintln!("\n{progress}");
+    }
+}
+
+fn emit_readiness_probe_success(
+    notifier: Option<&StreamPhaseNotifier>,
+    rich_output: bool,
+    success_publication: ReadinessSuccessPublication,
+    stop: &AtomicBool,
+    report: Option<&ReadinessProbeReport>,
+    probe_count: usize,
+    observation: u32,
+    ready_line: Option<&str>,
+) {
+    let Some(ready_line) = ready_line else {
+        return;
+    };
+    let output =
+        readiness_probe_success_output(rich_output, report, probe_count, observation, ready_line);
+
+    if let Some(notifier) = notifier {
+        if matches!(
+            success_publication,
+            ReadinessSuccessPublication::WaitForQuiet
+        ) {
+            notifier.wait_for_quiet_output(Duration::from_millis(300), stop);
+        }
+        let _guard = notifier.begin_output();
+        clear_stream_phase_line();
+        eprintln!("{output}");
+    } else {
+        clear_stream_phase_line();
+        eprintln!("{output}");
+    }
+}
+
+fn readiness_probe_success_output(
+    rich_output: bool,
+    report: Option<&ReadinessProbeReport>,
+    probe_count: usize,
+    observation: u32,
+    ready_line: &str,
+) -> String {
+    if rich_output {
+        report
+            .map(|report| {
+                format!(
+                    "\n{}{}",
+                    format_readiness_probe_success(report, probe_count, observation),
+                    ready_line
+                )
+            })
+            .unwrap_or_else(|| ready_line.to_string())
+    } else {
+        ready_line.to_string()
     }
 }
 
@@ -11887,14 +11989,15 @@ fn execute_native_launch_command(
                 });
                 let resolved_runtime =
                     resolve_native_task_runtime(runtime_spec, task_name, &mut child, None)?;
-                let readiness_probe = start_runtime_readiness_probe(
+                let readiness_probe = start_runtime_readiness_probe_with_success_publication(
                     contract,
                     runtime_spec,
                     resolved_runtime.as_ref(),
                     true,
+                    notifier.clone(),
                     // Endpoint publication is an Ota control-plane event. Do not let
                     // continuous application output suppress it for native launches.
-                    None,
+                    ReadinessSuccessPublication::Immediate,
                     interrupt_epoch,
                 );
                 let status = wait_for_child_with_runtime_readiness_budget(
@@ -11922,6 +12025,9 @@ fn execute_native_launch_command(
                         task: task_name.to_string(),
                         source,
                     })?;
+                if let Some(readiness_probe) = readiness_probe.as_ref() {
+                    readiness_probe.unbind_notifier();
+                }
                 if let Some(loader) = loader {
                     loader.stop();
                 }
@@ -28051,7 +28157,7 @@ fn execute_native_task_command(
                         )
                     })
                 });
-                let stderr_notifier = notifier;
+                let stderr_notifier = notifier.clone();
                 let stderr_log = live_log.as_ref().map(|tee| tee.stderr.clone());
                 let stderr_handle = child.stderr.take().map(|stderr| {
                     thread::spawn(move || {
@@ -28067,12 +28173,13 @@ fn execute_native_task_command(
 
                 let resolved_runtime =
                     resolve_native_task_runtime(runtime_spec, task_name, &mut child, None)?;
-                let readiness_probe = start_runtime_readiness_probe(
+                let readiness_probe = start_runtime_readiness_probe_with_success_publication(
                     contract,
                     runtime_spec,
                     resolved_runtime.as_ref(),
                     true,
-                    None,
+                    notifier.clone(),
+                    ReadinessSuccessPublication::Immediate,
                     interrupt_epoch,
                 );
                 let status = wait_for_child_with_runtime_readiness_budget(
@@ -28100,6 +28207,9 @@ fn execute_native_task_command(
                         task: task_name.to_string(),
                         source,
                     })?;
+                if let Some(readiness_probe) = readiness_probe.as_ref() {
+                    readiness_probe.unbind_notifier();
+                }
                 if let Some(loader) = loader {
                     loader.stop();
                 }
@@ -30683,6 +30793,26 @@ fn start_runtime_readiness_probe(
     notifier: Option<StreamPhaseNotifier>,
     interrupt_epoch: u64,
 ) -> Option<RuntimeReadinessProbe> {
+    start_runtime_readiness_probe_with_success_publication(
+        contract,
+        runtime_spec,
+        runtime,
+        announce_ready_endpoint,
+        notifier,
+        ReadinessSuccessPublication::WaitForQuiet,
+        interrupt_epoch,
+    )
+}
+
+fn start_runtime_readiness_probe_with_success_publication(
+    contract: Option<&Contract>,
+    runtime_spec: Option<&TaskRuntimeSpec>,
+    runtime: Option<&ResolvedTaskRuntime>,
+    announce_ready_endpoint: bool,
+    notifier: Option<StreamPhaseNotifier>,
+    success_publication: ReadinessSuccessPublication,
+    interrupt_epoch: u64,
+) -> Option<RuntimeReadinessProbe> {
     let runtime_spec = runtime_spec?;
     let runtime = runtime?;
     if !resolved_runtime_has_public_endpoint(runtime) {
@@ -30704,34 +30834,41 @@ fn start_runtime_readiness_probe(
         )),
     });
     let stop = Arc::new(AtomicBool::new(false));
+    let output = Arc::new(Mutex::new(ReadinessOutputPosture {
+        rich: announce_ready_endpoint && should_show_stream_phase_loader(),
+        notifier,
+        success_publication,
+    }));
     let thread_state = Arc::clone(&state);
     let thread_stop = Arc::clone(&stop);
-    let probe_notifier = notifier;
+    let thread_output = Arc::clone(&output);
     let thread_targets = readiness_targets.clone();
     let handle = thread::spawn(move || {
         let mut interrupt_grace_applied = false;
         let mut next_probe_at = Instant::now() + timing.start_period;
         let mut failed_probes = 0u32;
+        let mut probe_attempts = 0u32;
         while !thread_stop.load(Ordering::Relaxed) {
             if Instant::now() >= next_probe_at {
+                probe_attempts = probe_attempts.saturating_add(1);
                 match readiness_targets_observation_with_timeout(
                     thread_targets.as_slice(),
                     timing.timeout,
                 ) {
                     Ok(()) => {
                         thread_state.observed.store(true, Ordering::Relaxed);
-                        if let Some(line) = ready_line.as_deref() {
-                            if let Some(notifier) = probe_notifier.as_ref() {
-                                notifier.wait_for_quiet_output(
-                                    Duration::from_millis(300),
-                                    thread_stop.as_ref(),
-                                );
-                                let _guard = notifier.begin_output();
-                                eprintln!("{line}");
-                            } else {
-                                clear_stream_phase_line();
-                                eprintln!("{line}");
-                            }
+                        let report = current_readiness_probe_report(&thread_state);
+                        if let Ok(output) = thread_output.lock() {
+                            emit_readiness_probe_success(
+                                output.notifier.as_ref(),
+                                output.rich,
+                                output.success_publication,
+                                thread_stop.as_ref(),
+                                report.as_ref(),
+                                thread_targets.len(),
+                                probe_attempts,
+                                ready_line.as_deref(),
+                            );
                         }
                         break;
                     }
@@ -30740,11 +30877,13 @@ fn start_runtime_readiness_probe(
                         if let Some(report) =
                             record_readiness_probe_failure(&thread_state, failed_probes, &failure)
                         {
-                            emit_readiness_probe_progress(
-                                probe_notifier.as_ref(),
-                                thread_stop.as_ref(),
-                                &report,
-                            );
+                            if let Ok(output) = thread_output.lock() {
+                                emit_readiness_probe_progress(
+                                    output.notifier.as_ref(),
+                                    thread_stop.as_ref(),
+                                    &report,
+                                );
+                            }
                         }
                         if let Some(retries) = timing.retries
                             && failed_probes >= retries
@@ -30761,23 +30900,24 @@ fn start_runtime_readiness_probe(
                 while std::time::Instant::now() < grace_deadline
                     && !thread_stop.load(Ordering::Relaxed)
                 {
+                    probe_attempts = probe_attempts.saturating_add(1);
                     if readiness_targets_observed_with_timeout(
                         thread_targets.as_slice(),
                         timing.timeout,
                     ) {
                         thread_state.observed.store(true, Ordering::Relaxed);
-                        if let Some(line) = ready_line.as_deref() {
-                            if let Some(notifier) = probe_notifier.as_ref() {
-                                notifier.wait_for_quiet_output(
-                                    Duration::from_millis(300),
-                                    thread_stop.as_ref(),
-                                );
-                                let _guard = notifier.begin_output();
-                                eprintln!("{line}");
-                            } else {
-                                clear_stream_phase_line();
-                                eprintln!("{line}");
-                            }
+                        let report = current_readiness_probe_report(&thread_state);
+                        if let Ok(output) = thread_output.lock() {
+                            emit_readiness_probe_success(
+                                output.notifier.as_ref(),
+                                output.rich,
+                                output.success_publication,
+                                thread_stop.as_ref(),
+                                report.as_ref(),
+                                thread_targets.len(),
+                                probe_attempts,
+                                ready_line.as_deref(),
+                            );
                         }
                         return;
                     }
@@ -30800,6 +30940,7 @@ fn start_runtime_readiness_probe(
     Some(RuntimeReadinessProbe {
         state,
         stop,
+        output,
         handle: Some(handle),
     })
 }
@@ -34592,6 +34733,11 @@ fn exec_persistent_container_task_command(
                     StreamPhaseLoaderPolicy::Delayed,
                 );
                 let notifier = loader.as_ref().map(|loader| loader.notifier());
+                if let (Some(readiness_probe), Some(notifier)) =
+                    (readiness_probe, notifier.as_ref())
+                {
+                    readiness_probe.bind_notifier(notifier.clone());
+                }
                 let mut child = container
                     .stdin(Stdio::inherit())
                     .stdout(Stdio::piped())
@@ -34653,6 +34799,9 @@ fn exec_persistent_container_task_command(
                         task: task_name.to_string(),
                         source,
                     })?;
+                if let Some(readiness_probe) = readiness_probe {
+                    readiness_probe.unbind_notifier();
+                }
                 if let Some(loader) = loader {
                     loader.stop();
                 }
@@ -34678,6 +34827,9 @@ fn exec_persistent_container_task_command(
                     &running_loader_label_for_backend(task_name, Backend::Container),
                     StreamPhaseLoaderPolicy::Delayed,
                 );
+                if let (Some(readiness_probe), Some(loader)) = (readiness_probe, loader.as_ref()) {
+                    readiness_probe.bind_notifier(loader.notifier());
+                }
                 let mut child = container
                     .stdin(Stdio::inherit())
                     .stdout(Stdio::inherit())
@@ -34704,6 +34856,9 @@ fn exec_persistent_container_task_command(
                     task: task_name.to_string(),
                     source,
                 })?;
+                if let Some(readiness_probe) = readiness_probe {
+                    readiness_probe.unbind_notifier();
+                }
                 if let Some(loader) = loader {
                     loader.stop();
                 }
@@ -49233,6 +49388,217 @@ tasks:
             rendered,
             "\n\n⚈ External:  http://127.0.0.1:49153/\n⦾ Internal:  http://0.0.0.0:3000/\n\n"
         );
+    }
+
+    #[test]
+    fn readiness_probe_success_summary_is_generic_and_attempt_bound() {
+        let report = super::ReadinessProbeReport {
+            listener: Some(String::from("site")),
+            target: String::from("http://127.0.0.1:3000/"),
+            attempts_total: Some(12),
+            attempts_used: 2,
+            attempts_remaining: Some(10),
+            timeout_ms: Some(3_000),
+            interval_ms: 5_000,
+            start_period_ms: 10_000,
+            last_failure: None,
+        };
+
+        assert_eq!(
+            super::format_readiness_probe_success(&report, 2, 2),
+            "🦦 Ota Readiness\n→ listener: `site`\n→ probes: 2/2 passed\n→ result: ready on observation 2"
+        );
+    }
+
+    #[test]
+    fn readiness_probe_success_summary_never_treats_retry_budget_as_attempt_total() {
+        let report = super::ReadinessProbeReport {
+            listener: None,
+            target: String::from("tcp://127.0.0.1:3000"),
+            attempts_total: Some(0),
+            attempts_used: 1,
+            attempts_remaining: Some(0),
+            timeout_ms: None,
+            interval_ms: 200,
+            start_period_ms: 0,
+            last_failure: None,
+        };
+
+        assert_eq!(
+            super::format_readiness_probe_success(&report, 1, 1),
+            "🦦 Ota Readiness\n→ probes: 1/1 passed\n→ result: ready on observation 1"
+        );
+    }
+
+    #[test]
+    fn readiness_probe_success_output_stays_endpoint_only_without_rich_output() {
+        let report = super::ReadinessProbeReport {
+            listener: Some(String::from("site")),
+            target: String::from("http://127.0.0.1:3000/"),
+            attempts_total: Some(12),
+            attempts_used: 0,
+            attempts_remaining: Some(12),
+            timeout_ms: Some(3_000),
+            interval_ms: 5_000,
+            start_period_ms: 10_000,
+            last_failure: None,
+        };
+        let endpoint = "\n\nExternal: http://127.0.0.1:3000/\n\n";
+
+        assert_eq!(
+            super::readiness_probe_success_output(false, Some(&report), 1, 1, endpoint),
+            endpoint
+        );
+        assert!(
+            super::readiness_probe_success_output(true, Some(&report), 1, 1, endpoint)
+                .contains("🦦 Ota Readiness")
+        );
+    }
+
+    #[test]
+    fn readiness_probe_unbinds_late_loader_notifier_before_loader_teardown() {
+        let probe = super::RuntimeReadinessProbe {
+            state: std::sync::Arc::new(super::RuntimeReadinessProbeState {
+                observed: std::sync::atomic::AtomicBool::new(false),
+                budget_exhausted: std::sync::atomic::AtomicBool::new(false),
+                report: std::sync::Mutex::new(super::ReadinessProbeReport {
+                    listener: None,
+                    target: String::new(),
+                    attempts_total: None,
+                    attempts_used: 0,
+                    attempts_remaining: None,
+                    timeout_ms: None,
+                    interval_ms: 0,
+                    start_period_ms: 0,
+                    last_failure: None,
+                }),
+            }),
+            stop: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            output: std::sync::Arc::new(std::sync::Mutex::new(super::ReadinessOutputPosture {
+                rich: true,
+                notifier: None,
+                success_publication: super::ReadinessSuccessPublication::WaitForQuiet,
+            })),
+            handle: None,
+        };
+        let notifier = super::StreamPhaseNotifier {
+            saw_output: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            shown: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            output_lock: std::sync::Arc::new(std::sync::Mutex::new(())),
+            last_output_at: std::sync::Arc::new(std::sync::Mutex::new(std::time::Instant::now())),
+        };
+
+        probe.bind_notifier(notifier);
+        assert!(
+            probe
+                .output
+                .lock()
+                .expect("readiness output should be readable")
+                .notifier
+                .is_some()
+        );
+        probe.unbind_notifier();
+        assert!(
+            probe
+                .output
+                .lock()
+                .expect("readiness output should be readable")
+                .notifier
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn loader_hook_unbinds_readiness_notifier_before_teardown() {
+        let mut command = Command::new("sh");
+        command.args(["-c", "exit 0"]);
+        let notifier = super::StreamPhaseNotifier {
+            saw_output: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            shown: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            output_lock: std::sync::Arc::new(std::sync::Mutex::new(())),
+            last_output_at: std::sync::Arc::new(std::sync::Mutex::new(std::time::Instant::now())),
+        };
+        let (_, readiness_probe) =
+            super::run_streaming_command_with_capture_with_loader_hook_options(
+                &mut command,
+                "readiness teardown fixture",
+                true,
+                true,
+                None,
+                move |_| {
+                    Some(super::RuntimeReadinessProbe {
+                        state: std::sync::Arc::new(super::RuntimeReadinessProbeState {
+                            observed: std::sync::atomic::AtomicBool::new(false),
+                            budget_exhausted: std::sync::atomic::AtomicBool::new(false),
+                            report: std::sync::Mutex::new(super::ReadinessProbeReport {
+                                listener: None,
+                                target: String::new(),
+                                attempts_total: None,
+                                attempts_used: 0,
+                                attempts_remaining: None,
+                                timeout_ms: None,
+                                interval_ms: 0,
+                                start_period_ms: 0,
+                                last_failure: None,
+                            }),
+                        }),
+                        stop: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                        output: std::sync::Arc::new(std::sync::Mutex::new(
+                            super::ReadinessOutputPosture {
+                                rich: true,
+                                notifier: Some(notifier),
+                                success_publication:
+                                    super::ReadinessSuccessPublication::WaitForQuiet,
+                            },
+                        )),
+                        handle: None,
+                    })
+                },
+            )
+            .expect("streaming helper should complete");
+        let readiness_probe = readiness_probe.expect("fixture should return readiness probe");
+
+        assert!(
+            readiness_probe
+                .output
+                .lock()
+                .expect("readiness output should be readable")
+                .notifier
+                .is_none(),
+            "loader helper must detach the probe before stopping its loader"
+        );
+    }
+
+    #[test]
+    fn readiness_probe_success_display_preserves_retry_budget_report() {
+        let state = super::RuntimeReadinessProbeState {
+            observed: std::sync::atomic::AtomicBool::new(false),
+            budget_exhausted: std::sync::atomic::AtomicBool::new(false),
+            report: std::sync::Mutex::new(super::ReadinessProbeReport {
+                listener: Some(String::from("site")),
+                target: String::from("http://127.0.0.1:3000/"),
+                attempts_total: Some(12),
+                attempts_used: 0,
+                attempts_remaining: Some(12),
+                timeout_ms: Some(3_000),
+                interval_ms: 5_000,
+                start_period_ms: 10_000,
+                last_failure: None,
+            }),
+        };
+        let failure = super::ReadinessAttemptFailure {
+            target: String::from("http://127.0.0.1:3000/"),
+            detail: String::from("Connection refused"),
+        };
+
+        super::record_readiness_probe_failure(&state, 1, &failure)
+            .expect("failure should update the report");
+        let report = super::current_readiness_probe_report(&state)
+            .expect("report should remain available for success display");
+
+        assert_eq!(report.attempts_used, 1);
+        assert_eq!(report.attempts_remaining, Some(11));
+        assert_eq!(report.last_failure.as_deref(), Some("Connection refused"));
     }
 
     #[test]
