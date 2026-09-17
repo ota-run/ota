@@ -26,5 +26,5 @@ version: 1
 repository: ota-run/ota-site
 mode: waived
 consumer_commit: 0ee140feea1e63cf79a33944f5cd512e555f161c
-reviewed_ota_commit: f4f6ed389bb192a110575fc948b33c0a88fe43ae
-waiver_reason: "Pending exact Core custody-correction commit updates only internal provider-free pressure planning and administrator runbooks; no Site operator surface or public capability changes."
+reviewed_ota_commit: 554ba92fc61baa6d2bd07c2f2f09e65292e0d780
+waiver_reason: "Core 554ba92f updates only internal provider-free pressure custody planning and administrator runbooks; no Site operator surface or public capability changes."
