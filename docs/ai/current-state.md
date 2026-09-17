@@ -1858,7 +1858,8 @@ identity, bearer, or protected request URL. This is V3 cross-process compatibili
 GitHub OIDC request, provider contact, Google STS/WIF or Secret Manager operation, materialization,
 injection, positive evidence, Step 8, or V12.2 proof.
 
-The complete graph is 32,309 canonical bytes. Protocol `731737048e3bf8912145e404200bdf4264d3e7c8`
+The prior V3 gate measured its complete graph at 32,309 canonical bytes; the generated graph size
+must be rechecked for each build. Protocol `731737048e3bf8912145e404200bdf4264d3e7c8`
 raises only the protected binding-bundle payload limit from 32 KiB to 40 KiB, while preserving the
 64 KiB protected-store bound. MUSE independently reviewed that adjustment with no P1/P2/P3 finding.
 Core cannot yet carry the complete graph through the released V1 authority snapshot because V1
@@ -1870,8 +1871,23 @@ committed, and pushed at `c6bee9b49dc599ccd94bf6b0e60a1894614cb5a4`; they retain
 descriptor-bound raw stores once and leave V1 immutable. Additive Protocol V4 request, binding,
 response, and reconciliation records were independently reviewed, committed, and pushed at
 `e819f95890ea23ae2f336a59fb3ff62cfa858d8b`, including cross-version refusal regressions.
-Next action: pin that immutable Protocol revision in Launcher and Core, then implement their V2
-snapshot and V4 transaction reconciliation. V4 keeps released V3 snapshot semantics immutable. Only after Core, Launcher, and Protocol
+Launcher `35da0ef` and Core `b3a217d5` pin that Protocol revision and commit the focused V2
+snapshot/V4 reconciliation and service relay. Core reconstructs one
+provider-free candidate from the verified V2 payload, requests V2/V4 on its refusal lane, and
+rechecks V4 before one-use consumption. Launcher retains live capability derivation, reserves and
+consumes the V2 exchange in its descriptor-retained replay store, and relays V2/V4 only in order
+through the selected-child session. Core's same-session V2/V4 regression, Launcher Linux/X64
+cross-compilation and strict Clippy, local Linux/arm64 framed-relay and replay regressions, and
+Core's complete-graph V2-fit/V1-overflow regression pass; none is the protected Linux/X64
+service-path proof gate. MUSE's whole-batch review found two Launcher P2s: an unconsumed V2
+reservation after valid failed pre-binding completion and an invalid V4 test identity. Both were
+repaired and independently rechecked; the local Linux/arm64 durable-refusal regression and
+Launcher canonical verification pass. Launcher `35da0ef` is pushed; Core `b3a217d5` awaits the
+exact-revision handoff commit and push.
+Next action: push Core after this handoff, update the protected pressure installation and workflow
+from historical V3 pins/assertions to exact V2/V4 revisions, and run the protected
+Linux/X64 service gate. The existing V3 workflow is not V4 evidence. V4 keeps released V3
+snapshot semantics immutable. Only after Core, Launcher, and Protocol
 prove the exact protected Linux/X64 V2 byte/descriptor and V4 transaction route may V4 consumption
 replace the historical V2 transport-preparation model. The planned GitHub OIDC-only `GET` checkpoint remains
 blocked. It may eventually make one fixed request-service call and retain one opaque, unadmitted JWT
