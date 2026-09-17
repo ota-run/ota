@@ -24,6 +24,7 @@
 
 version: 1
 repository: ota-run/skills
-mode: synced
+mode: waived
 consumer_commit: fdb48539e61397d24ac89d2c187c68f61d3d315b
-reviewed_ota_commit: 1591f574edf76f2c69c6a811dc2b07e5ed3b90d3
+reviewed_ota_commit: 0320f62d8801bde0ae44cccb06847696b0768b2f
+waiver_reason: "Pending exact Core hosted-evidence custody implementation changes an internal provider-free pressure workflow and administrator runbook only; no agent authoring, review, or pressure protocol guidance changes."

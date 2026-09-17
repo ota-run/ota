@@ -1144,8 +1144,9 @@ one-shot capture service must refuse malformed, missing, duplicate, stale, cance
 symlinked, mounted, hard-linked, owner/mode/type-mismatched, oversized, incomplete, unexpected, or
 mutating capture attempts. It must distinguish the closed success set from the closed
 failure-diagnostic set: a complete failed-job diagnostic may be captured only as `failure`, while
-an incomplete or malformed failed input refuses and no failure capture can satisfy the success
-record. It must retain a bounded retry/failed-state policy so a stale or incomplete trigger cannot
+an incomplete or malformed failed input refuses and no failure capture can satisfy the
+`success_set` capture class. The public class is custody of a closed job-produced set, not root
+validation of the job's assertions. It must retain a bounded retry/failed-state policy so a stale or incomplete trigger cannot
 later satisfy a new run.
 
 The root service must reopen every source directory and file descriptor-relatively beneath the fixed
@@ -1153,7 +1154,8 @@ source root with no symlink, magic-link, alias, or mount traversal; verify pre/p
 copying; compute its own digests from the bytes it captures; fsync the files and directories; and
 publish with no replacement into a root-only store. It must then emit one root-owned, non-secret,
 closed public capture record for that exact run and attempt, binding the administrator-installed
-request and installation identities, source revisions, outcome class, and root-computed bundle
+request and installation identities, source revisions, capture class (`success_set` or
+`failure_diagnostic_set`), and root-computed bundle
 digest. Core may accept only that record after verifying its root-owned path and mode, closed shape,
 exact run/attempt and installation/request identities, and one-use/no-clobber posture. The record
 is a job-inaccessible root-custodied copy of job-produced evidence. It proves neither independent

@@ -75,9 +75,10 @@ them from the job account.
 
 The job may stage its bounded evidence set and `COMPLETE` marker, but its files and checksum are only
 capture inputs. Wait for the root-owned public capture record at the provisioned path and verify the
-exact run, attempt, installation/request identities, source revisions, outcome class, and
-root-computed bundle digest. A `failure` record is diagnostic only and never authorizes the success
-gate. Retrieve retained bytes only as the host administrator from the root-only capture store.
+exact run, attempt, installation/request identities, source revisions, capture class, and
+root-computed bundle digest. A `failure_diagnostic_set` record is diagnostic only and never
+satisfies the `success_set` custody class. Neither class is root validation of the job's
+assertions. Retrieve retained bytes only as the host administrator from the root-only capture store.
 
 This is a job-inaccessible root-custodied copy of job-produced evidence, not independent attestation
 of job assertions or immutability against the root administrator. A missing, malformed, stale,
