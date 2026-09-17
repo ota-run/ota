@@ -1129,10 +1129,51 @@ The adversarial matrix must also reject every V1/V2/V3/V4 request, payload, bind
 substitution, including self-consistent recomputed V4 carriers with a mismatched snapshot
 discriminator.
 
+#### Protected Hosted-Evidence Custody Correction (Proposed 2026-09-17)
+
+The provider-free protected Linux/X64 service-path gate may retain a bounded job-produced evidence
+set only through a separately provisioned root capture service. The job-owned staging directory and
+its self-generated checksum manifest are not administrator-owned or independently attested evidence.
+They are an input to capture only; a completed hosted job remains service-path evidence, but no
+local bundle may be described as durable administrator custody until this correction passes.
+
+The root provisioner must derive one exact final source path from the administrator-installed
+pressure request's canonical run and attempt. A systemd path unit may trigger only on that exact
+non-staging `COMPLETE` path, never a broad job-writable directory or inferred run identifier. The
+one-shot capture service must refuse malformed, missing, duplicate, stale, cancelled, aliased,
+symlinked, mounted, hard-linked, owner/mode/type-mismatched, oversized, incomplete, unexpected, or
+mutating capture attempts. It must distinguish the closed success set from the closed
+failure-diagnostic set: a complete failed-job diagnostic may be captured only as `failure`, while
+an incomplete or malformed failed input refuses and no failure capture can satisfy the success
+record. It must retain a bounded retry/failed-state policy so a stale or incomplete trigger cannot
+later satisfy a new run.
+
+The root service must reopen every source directory and file descriptor-relatively beneath the fixed
+source root with no symlink, magic-link, alias, or mount traversal; verify pre/post metadata while
+copying; compute its own digests from the bytes it captures; fsync the files and directories; and
+publish with no replacement into a root-only store. It must then emit one root-owned, non-secret,
+closed public capture record for that exact run and attempt, binding the administrator-installed
+request and installation identities, source revisions, outcome class, and root-computed bundle
+digest. Core may accept only that record after verifying its root-owned path and mode, closed shape,
+exact run/attempt and installation/request identities, and one-use/no-clobber posture. The record
+is a job-inaccessible root-custodied copy of job-produced evidence. It proves neither independent
+provenance of the job's assertions nor immutability against the trusted root administrator.
+
+This correction may add only the pressure-only Launcher capture module, its fixed root systemd
+service/path units and provisioned directories, the Core workflow's closed capture wait and public
+record reconciliation, the Core protected-service-path runbook, the Launcher independently
+administered-pressure runbook, and adversarial/provisioning/hosted tests. It creates no Protocol
+wire type, generic archive, OIDC request, network client, provider contact, materialization,
+injection, selected-work release, receipt, archive, positive evidence, Step 8, or V12.2 capability.
+It may be implemented only after this amendment is independently reviewed and committed; the changed
+custody path then requires a fresh exact protected Linux/X64 run.
+
 ### GitHub OIDC Network-Call Checkpoint
 
-The next proposed checkpoint may contact only GitHub's Actions OIDC request service. It remains
-inactive until this amendment is independently reviewed and committed. It does not authorize JWT
+The separate proposed provider-contact and GitHub OIDC network-call amendment may contact only
+GitHub's Actions OIDC request service. It remains inactive until that separate amendment is
+independently reviewed and committed. Committing the hosted-evidence custody correction does not
+activate it. It does not authorize JWT
 claim admission, Google STS, IAM Credentials, Secret Manager, materialization, injection, release
 of the startup continuation, beginning the selected workload/recipient command, positive evidence,
 Step 8, or V12.2.

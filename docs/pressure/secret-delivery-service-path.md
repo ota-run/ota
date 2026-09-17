@@ -66,6 +66,24 @@ posture, and four selected-process environment values. It contains no private au
 store identity, provider locator, protected capability identity, signing key, bearer, or secret
 value.
 
+## Hosted Evidence Custody
+
+After the independently reviewed hosted-evidence custody correction is installed, provisioning also
+installs a root-owned capture path and one-shot service. They derive the one permitted job evidence
+directory from this installation's exact workflow run and attempt; do not start, edit, or repoint
+them from the job account.
+
+The job may stage its bounded evidence set and `COMPLETE` marker, but its files and checksum are only
+capture inputs. Wait for the root-owned public capture record at the provisioned path and verify the
+exact run, attempt, installation/request identities, source revisions, outcome class, and
+root-computed bundle digest. A `failure` record is diagnostic only and never authorizes the success
+gate. Retrieve retained bytes only as the host administrator from the root-only capture store.
+
+This is a job-inaccessible root-custodied copy of job-produced evidence, not independent attestation
+of job assertions or immutability against the root administrator. A missing, malformed, stale,
+replayed, or substituted record fails the gate. This procedure does not authorize an OIDC request,
+provider contact, materialization, delivery, or selected-work release.
+
 ## Acceptance
 
 The hosted command must return the specific provider-free Step 7 refusal, never create

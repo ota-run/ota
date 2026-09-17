@@ -1900,6 +1900,16 @@ process-environment injection, positive provider evidence, Step 8, and V12.2 rem
 inactive. Site, Skills, Examples, Learn, FAQ, Glossary, contract schema, and public JSON remain
 unaffected because this remains an internal provider-free trust-boundary foundation.
 
+The proposed Step 7 hosted-evidence custody correction authorizes no implementation yet. It would
+add only a root-owned, exact-run capture service and public capture record for the provider-free
+pressure bundle, plus the connected Core and Launcher pressure runbooks. It must reject incomplete,
+substituted, replayed, failed-as-success, and changing job-owned inputs; copy the closed set through
+no-follow descriptor-relative reads; recompute hashes as root; and make one root-custodied copy
+available without exposing private correlation truth. It must not be confused with independent
+attestation of workflow assertions, nor activate the separate provider-contact/OIDC network-call
+amendment, delivery, Step 8, or V12.2. Its exact implementation and a fresh hosted run remain
+blocked on independent review and commit of the amendment.
+
 Do not touch the unrelated untracked `docs/pressure/agent-authority-signals.md` unless the user
 explicitly asks.
 
