@@ -34,7 +34,7 @@ cargo-platform = "0.3.3"
 ed25519-dalek = "3.0.0"
 serde_jcs = "0.2.0"
 ureq = { version = "=3.4.2", default-features = false, features = ["rustls"] }
-ota-authority-protocol = { git = "https://github.com/ota-run/authority-protocol.git", rev = "63a352f7a926a2fed0866db0de61749fa701df75" }
+ota-authority-protocol = { git = "https://github.com/ota-run/authority-protocol.git", rev = "e819f95890ea23ae2f336a59fb3ff62cfa858d8b" }
 quick-xml = "0.41.0"
 tempfile = "3.23.0"
 

@@ -1052,8 +1052,8 @@ transport-dependency record identity before it can replace this V2 transport-pre
 
 The complete administrator-expected transport-dependency graph cannot be retained through the
 released V1 authority-snapshot response: V1 repeats the signed binding bundle as both typed fields
-and base64url store bytes, while its one-frame 64 KiB boundary is immutable. This amendment is
-proposed and inactive until independently reviewed and committed. It may add only an additive V2
+and base64url store bytes, while its one-frame 64 KiB boundary is immutable. This amendment was
+independently reviewed and committed at Core `93a36b23`. It authorizes only an additive V2
 authority-snapshot exchange and its additive V4 transaction binding; it does not authorize an OIDC
 request, a socket, a provider operation, materialization, delivery, execution, evidence, Step 8,
 or V12.2.

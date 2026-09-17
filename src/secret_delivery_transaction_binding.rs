@@ -6,16 +6,20 @@
 #![allow(dead_code)]
 
 use ota_authority_protocol::{
-    LauncherStartupContinuationV1, PROTECTED_LAUNCHER_SECRET_DELIVERY_TRANSACTION_BINDING_REQUEST,
+    LauncherStartupContinuationV1, PROTECTED_AUTHORITY_SNAPSHOT_V2,
+    PROTECTED_LAUNCHER_SECRET_DELIVERY_TRANSACTION_BINDING_REQUEST,
     PROTECTED_LAUNCHER_SECRET_DELIVERY_TRANSACTION_BINDING_REQUEST_V2,
     PROTECTED_LAUNCHER_SECRET_DELIVERY_TRANSACTION_BINDING_REQUEST_V3,
+    PROTECTED_LAUNCHER_SECRET_DELIVERY_TRANSACTION_BINDING_REQUEST_V4,
     ProtectedLauncherCapabilityObservationResponseV1,
     ProtectedLauncherSecretDeliveryTransactionBindingRequestV1,
     ProtectedLauncherSecretDeliveryTransactionBindingRequestV2,
     ProtectedLauncherSecretDeliveryTransactionBindingRequestV3,
+    ProtectedLauncherSecretDeliveryTransactionBindingRequestV4,
     ProtectedLauncherSecretDeliveryTransactionBindingResponseV1,
     ProtectedLauncherSecretDeliveryTransactionBindingResponseV2,
     ProtectedLauncherSecretDeliveryTransactionBindingResponseV3,
+    ProtectedLauncherSecretDeliveryTransactionBindingResponseV4,
     ProtectedLauncherSecretDeliveryTransactionBindingV1,
     ProtectedLauncherSecretDeliveryTransactionBindingV2,
     ProtectedLauncherSecretDeliveryTransactionBindingV3, ProtectedSameChildCapabilityPreludeV1,
@@ -23,10 +27,12 @@ use ota_authority_protocol::{
     protected_launcher_secret_delivery_transaction_binding_request_v1_identity,
     protected_launcher_secret_delivery_transaction_binding_request_v2_identity,
     protected_launcher_secret_delivery_transaction_binding_request_v3_identity,
+    protected_launcher_secret_delivery_transaction_binding_request_v4_identity,
     protected_launcher_secret_delivery_transaction_session_v1_identity,
     reconcile_protected_launcher_secret_delivery_transaction_binding_response_v1,
     reconcile_protected_launcher_secret_delivery_transaction_binding_response_v2,
     reconcile_protected_launcher_secret_delivery_transaction_binding_response_v3,
+    reconcile_protected_launcher_secret_delivery_transaction_binding_response_v4,
     validate_protected_launcher_capability_observation_challenge_v1,
     validate_protected_same_child_capability_prelude_v1,
 };
@@ -51,6 +57,7 @@ use crate::protected_capability_observation::{
 };
 use crate::secret_delivery_authority_snapshot::{
     SnapshotBoundSecretDeliveryTransactionCandidateV1, VerifiedSecretDeliveryAuthoritySnapshotV1,
+    VerifiedSecretDeliveryAuthoritySnapshotV2,
 };
 #[cfg(test)]
 use crate::secret_delivery_transaction::SecretDeliveryTransactionCandidate;
@@ -127,6 +134,24 @@ pub(crate) struct VerifiedSecretDeliveryTransactionBindingV3 {
     prelude: VerifiedSameChildCapabilityPreludeV1,
     request: ProtectedLauncherSecretDeliveryTransactionBindingRequestV3,
     response: ProtectedLauncherSecretDeliveryTransactionBindingResponseV3,
+    consumed: bool,
+}
+
+/// Additive V4 state binds only the expanded V2 snapshot. V1-V3 remain immutable historical
+/// carriers and cannot be used as substitutes for the complete transport dependency expectation.
+pub(crate) struct PendingSecretDeliveryTransactionBindingV4 {
+    candidate: SnapshotBoundSecretDeliveryTransactionCandidateV1,
+    snapshot: VerifiedSecretDeliveryAuthoritySnapshotV2,
+    prelude: VerifiedSameChildCapabilityPreludeV1,
+    request: ProtectedLauncherSecretDeliveryTransactionBindingRequestV4,
+}
+
+pub(crate) struct VerifiedSecretDeliveryTransactionBindingV4 {
+    candidate: SnapshotBoundSecretDeliveryTransactionCandidateV1,
+    snapshot: VerifiedSecretDeliveryAuthoritySnapshotV2,
+    prelude: VerifiedSameChildCapabilityPreludeV1,
+    request: ProtectedLauncherSecretDeliveryTransactionBindingRequestV4,
+    response: ProtectedLauncherSecretDeliveryTransactionBindingResponseV4,
     consumed: bool,
 }
 
@@ -567,6 +592,81 @@ pub(crate) fn issue_secret_delivery_transaction_binding_v3(
     })
 }
 
+/// Issues an additive V4 request only after Core has reverified a V2 authority snapshot and its
+/// complete build-owned transport expectation. It remains a private relay and cannot contact a
+/// provider or construct an OIDC client.
+pub(crate) fn issue_secret_delivery_transaction_binding_v4(
+    candidate: SnapshotBoundSecretDeliveryTransactionCandidateV1,
+    snapshot: VerifiedSecretDeliveryAuthoritySnapshotV2,
+    prelude: VerifiedSameChildCapabilityPreludeV1,
+) -> Result<PendingSecretDeliveryTransactionBindingV4, SecretDeliveryTransactionBindingError> {
+    let startup_continuation = snapshot.startup_continuation();
+    let invocation_context = snapshot.invocation_context();
+    let authority_payload = snapshot
+        .parse_verified_authority_payload()
+        .map_err(|_| SecretDeliveryTransactionBindingError::CandidateInvalid)?;
+    let (expected_graph, expected_record) =
+        crate::secret_delivery_transport_dependencies::embedded_transport_dependency_expectation_v1()
+            .map_err(|_| SecretDeliveryTransactionBindingError::CandidateInvalid)?;
+    let candidate_record_identity = &candidate
+        .candidate()
+        .candidate()
+        .transport_dependency_record_identity;
+    if authority_payload.payload.transport_dependency_feature_graph != expected_graph
+        || authority_payload.payload.transport_dependency_record != expected_record
+        || authority_payload
+            .payload
+            .transport_dependency_record_identity
+            != expected_record.record_identity
+        || candidate.candidate().candidate().identity
+            != secret_delivery_transaction_candidate_identity(candidate.candidate().candidate())
+                .map_err(|_| SecretDeliveryTransactionBindingError::CandidateInvalid)?
+        || candidate.protected_snapshot_identity()
+            != snapshot.response().protected_snapshot_identity
+        || candidate_record_identity != &expected_record.record_identity
+        || startup_continuation.identity
+            != launcher_startup_continuation_identity(startup_continuation)
+                .map_err(|_| SecretDeliveryTransactionBindingError::StartupContinuationInvalid)?
+        || invocation_context.workflow_run_id()
+            != prelude.observation.request().challenge.workflow_run_id
+        || invocation_context.workflow_run_attempt()
+            != prelude.observation.request().challenge.workflow_run_attempt
+        || invocation_context.workflow_reference()
+            != prelude.observation.request().challenge.workflow_reference
+        || prelude.prelude.startup_continuation_identity != startup_continuation.identity
+    {
+        return Err(SecretDeliveryTransactionBindingError::CandidateInvalid);
+    }
+    let session_identity = protected_launcher_secret_delivery_transaction_session_v1_identity(
+        startup_continuation.identity.as_str(),
+    )
+    .map_err(|_| SecretDeliveryTransactionBindingError::RequestInvalid)?;
+    let mut request = ProtectedLauncherSecretDeliveryTransactionBindingRequestV4 {
+        schema_version: 4,
+        message_kind: PROTECTED_LAUNCHER_SECRET_DELIVERY_TRANSACTION_BINDING_REQUEST_V4.into(),
+        identity: String::new(),
+        launcher_request_identity: startup_continuation.launcher_request_identity.clone(),
+        observation: prelude.observation.request().clone(),
+        secret_transaction_candidate_identity: candidate.candidate().candidate().identity.clone(),
+        startup_continuation_identity: startup_continuation.identity.clone(),
+        session_identity,
+        same_child_capability_prelude_identity: prelude.prelude.identity.clone(),
+        protected_snapshot_identity: snapshot.response().protected_snapshot_identity.clone(),
+        protected_snapshot_schema_version: 2,
+        protected_snapshot_record_kind: PROTECTED_AUTHORITY_SNAPSHOT_V2.into(),
+        transport_dependency_record_identity: expected_record.record_identity,
+    };
+    request.identity =
+        protected_launcher_secret_delivery_transaction_binding_request_v4_identity(&request)
+            .map_err(|_| SecretDeliveryTransactionBindingError::RequestInvalid)?;
+    Ok(PendingSecretDeliveryTransactionBindingV4 {
+        candidate,
+        snapshot,
+        prelude,
+        request,
+    })
+}
+
 impl PendingSecretDeliveryTransactionBindingV1 {
     pub(crate) fn request(&self) -> &ProtectedLauncherSecretDeliveryTransactionBindingRequestV1 {
         &self.request
@@ -712,6 +812,99 @@ impl PendingSecretDeliveryTransactionBindingV3 {
             response,
             consumed: false,
         })
+    }
+}
+
+impl PendingSecretDeliveryTransactionBindingV4 {
+    pub(crate) fn request(&self) -> &ProtectedLauncherSecretDeliveryTransactionBindingRequestV4 {
+        &self.request
+    }
+
+    pub(crate) fn reconcile(
+        self,
+        response: ProtectedLauncherSecretDeliveryTransactionBindingResponseV4,
+        verifier: &RetainedCapabilityProjectionVerifierV1,
+        observed_at_unix_seconds: u64,
+    ) -> Result<VerifiedSecretDeliveryTransactionBindingV4, SecretDeliveryTransactionBindingError>
+    {
+        reconcile_protected_launcher_secret_delivery_transaction_binding_response_v4(
+            &self.request,
+            &response,
+            self.snapshot.request(),
+            self.snapshot.response(),
+            self.snapshot.startup_continuation(),
+            self.prelude.prelude(),
+            verifier.verifier(),
+            verifier.installation_evidence_identity(),
+            observed_at_unix_seconds,
+        )
+        .map_err(|_| SecretDeliveryTransactionBindingError::ResponseInvalid)?;
+        if response.projection != *self.prelude.observation().projection() {
+            return Err(SecretDeliveryTransactionBindingError::ResponseInvalid);
+        }
+        Ok(VerifiedSecretDeliveryTransactionBindingV4 {
+            candidate: self.candidate,
+            snapshot: self.snapshot,
+            prelude: self.prelude,
+            request: self.request,
+            response,
+            consumed: false,
+        })
+    }
+}
+
+impl VerifiedSecretDeliveryTransactionBindingV4 {
+    pub(crate) fn binding(
+        &self,
+    ) -> &ota_authority_protocol::ProtectedLauncherSecretDeliveryTransactionBindingV4 {
+        &self.response.binding
+    }
+
+    pub(crate) fn consume_at(
+        &mut self,
+        verifier: &RetainedCapabilityProjectionVerifierV1,
+        observed_at_unix_seconds: u64,
+    ) -> Result<
+        ota_authority_protocol::ProtectedLauncherSecretDeliveryTransactionBindingV4,
+        SecretDeliveryTransactionBindingError,
+    > {
+        if self.consumed {
+            return Err(SecretDeliveryTransactionBindingError::AlreadyConsumed);
+        }
+        let candidate = self.candidate.candidate().candidate();
+        let verified_authority = self
+            .snapshot
+            .parse_verified_authority_payload()
+            .map_err(|_| SecretDeliveryTransactionBindingError::ResponseInvalid)?;
+        let expected_record = &verified_authority.payload.transport_dependency_record;
+        if candidate.identity
+            != secret_delivery_transaction_candidate_identity(candidate)
+                .map_err(|_| SecretDeliveryTransactionBindingError::CandidateInvalid)?
+            || candidate.identity != self.request.secret_transaction_candidate_identity
+            || candidate.transport_dependency_record_identity != expected_record.record_identity
+            || self.request.transport_dependency_record_identity != expected_record.record_identity
+            || self.response.binding.transport_dependency_record_identity
+                != expected_record.record_identity
+            || self.candidate.protected_snapshot_identity()
+                != self.snapshot.response().protected_snapshot_identity
+        {
+            return Err(SecretDeliveryTransactionBindingError::ResponseInvalid);
+        }
+        reconcile_protected_launcher_secret_delivery_transaction_binding_response_v4(
+            &self.request,
+            &self.response,
+            self.snapshot.request(),
+            self.snapshot.response(),
+            self.snapshot.startup_continuation(),
+            self.prelude.prelude(),
+            verifier.verifier(),
+            verifier.installation_evidence_identity(),
+            observed_at_unix_seconds,
+        )
+        .map_err(|_| SecretDeliveryTransactionBindingError::ResponseInvalid)?;
+        verify_projection_signature(&self.response.projection, verifier.verifier())?;
+        self.consumed = true;
+        Ok(self.response.binding.clone())
     }
 }
 

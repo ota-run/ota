@@ -145,6 +145,16 @@ struct RecordIdentityPayload<'a> {
 
 pub(crate) fn embedded_transport_dependency_record_v1()
 -> Result<SecretDeliveryTransportDependencyRecordV1, SecretDeliveryTransportDependenciesError> {
+    Ok(embedded_transport_dependency_expectation_v1()?.1)
+}
+
+pub(crate) fn embedded_transport_dependency_expectation_v1() -> Result<
+    (
+        SecretDeliveryTransportDependencyFeatureGraphV1,
+        SecretDeliveryTransportDependencyRecordV1,
+    ),
+    SecretDeliveryTransportDependenciesError,
+> {
     let embedded = serde_json::from_str::<EmbeddedSecretDeliveryTransportDependenciesV1>(
         include_str!(concat!(
             env!("OUT_DIR"),
@@ -167,12 +177,109 @@ pub(crate) fn embedded_transport_dependency_record_v1()
     }
     verify_transport_dependency_feature_graph_v1(&embedded.feature_graph)?;
     verify_transport_dependency_record_v1(&embedded.record, &embedded.feature_graph)?;
-    Ok(embedded.record)
+    Ok((embedded.feature_graph, embedded.record))
 }
 
 pub(crate) fn embedded_transport_dependency_record_identity_v1()
 -> Result<String, SecretDeliveryTransportDependenciesError> {
     Ok(embedded_transport_dependency_record_v1()?.record_identity)
+}
+
+#[cfg(test)]
+pub(crate) fn test_only_substituted_transport_dependency_expectation_v1() -> Result<
+    (
+        SecretDeliveryTransportDependencyFeatureGraphV1,
+        SecretDeliveryTransportDependencyRecordV1,
+    ),
+    SecretDeliveryTransportDependenciesError,
+> {
+    let (mut graph, mut record) = embedded_transport_dependency_expectation_v1()?;
+    let root_dependency_node_identity = graph.root_dependency_node_identity.clone();
+    let node = graph
+        .nodes
+        .iter_mut()
+        .find(|node| node.node_identity != root_dependency_node_identity)
+        .ok_or_else(|| {
+            error(
+                "secret_delivery_transport_dependency_graph_invalid",
+                "embedded transport dependency graph has no substitutable node",
+            )
+        })?;
+    let original_node_identity = node.node_identity.clone();
+    node.source = Some("git+https://example.invalid/alternate-transport".into());
+    node.checksum = None;
+    node.node_identity = domain_identity(
+        NODE_DOMAIN,
+        &NodeIdentityPayload {
+            schema_version: node.schema_version,
+            kind: &node.kind,
+            name: &node.name,
+            version: &node.version,
+            source: &node.source,
+            checksum: &node.checksum,
+            enabled_features: &node.enabled_features,
+        },
+    )?;
+    let substituted_node_identity = node.node_identity.clone();
+    for edge in &mut graph.edges {
+        if edge.from_node_identity == original_node_identity {
+            edge.from_node_identity = substituted_node_identity.clone();
+        }
+        if edge.to_node_identity == original_node_identity {
+            edge.to_node_identity = substituted_node_identity.clone();
+        }
+        edge.edge_identity = domain_identity(
+            EDGE_DOMAIN,
+            &EdgeIdentityPayload {
+                schema_version: edge.schema_version,
+                kind: &edge.kind,
+                from_node_identity: &edge.from_node_identity,
+                to_node_identity: &edge.to_node_identity,
+                dependency_alias: &edge.dependency_alias,
+                dependency_kind: &edge.dependency_kind,
+                target_expression: &edge.target_expression,
+            },
+        )?;
+    }
+    graph
+        .nodes
+        .sort_by(|left, right| left.node_identity.cmp(&right.node_identity));
+    graph
+        .edges
+        .sort_by(|left, right| left.edge_identity.cmp(&right.edge_identity));
+    graph.feature_graph_identity = domain_identity(
+        GRAPH_DOMAIN,
+        &GraphIdentityPayload {
+            schema_version: graph.schema_version,
+            kind: &graph.kind,
+            target_triple: &graph.target_triple,
+            target_cfg: &graph.target_cfg,
+            root_package_name: &graph.root_package_name,
+            root_package_version: &graph.root_package_version,
+            selected_core_features: &graph.selected_core_features,
+            root_dependency_alias: &graph.root_dependency_alias,
+            root_dependency_node_identity: &graph.root_dependency_node_identity,
+            nodes: &graph.nodes,
+            edges: &graph.edges,
+        },
+    )?;
+    record.feature_graph_identity = graph.feature_graph_identity.clone();
+    record.record_identity = domain_identity(
+        RECORD_DOMAIN,
+        &RecordIdentityPayload {
+            schema_version: record.schema_version,
+            kind: &record.kind,
+            cargo_lock_identity: &record.cargo_lock_identity,
+            feature_graph_identity: &record.feature_graph_identity,
+            target_triple: &record.target_triple,
+            root_package_name: &record.root_package_name,
+            root_package_version: &record.root_package_version,
+            selected_core_features: &record.selected_core_features,
+        },
+    )?;
+    verify_transport_dependency_feature_graph_v1(&graph)?;
+    verify_transport_dependency_record_v1(&record, &graph)?;
+    Ok((graph, record))
 }
 
 pub(crate) fn verify_transport_dependency_feature_graph_v1(

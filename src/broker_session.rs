@@ -1004,6 +1004,130 @@ impl SystemdExecutionCompletion {
         Ok(binding)
     }
 
+    #[allow(clippy::too_many_arguments)]
+    #[cfg(target_os = "linux")]
+    pub(crate) fn request_snapshot_bound_secret_delivery_transaction_binding_v4(
+        &mut self,
+        contract: &crate::schema::Contract,
+        lane_kind: &str,
+        lane_name: &str,
+        run_plan: &crate::runner::RunPlan,
+        workflow_run_id: &str,
+        workflow_run_attempt: &str,
+        workflow_reference: &str,
+        runner_version: &str,
+    ) -> Result<
+        crate::secret_delivery_transaction_binding::VerifiedSecretDeliveryTransactionBindingV4,
+        String,
+    > {
+        self.request_snapshot_bound_secret_delivery_transaction_binding_v4_with_verifier_loader(
+            contract,
+            lane_kind,
+            lane_name,
+            run_plan,
+            workflow_run_id,
+            workflow_run_attempt,
+            workflow_reference,
+            runner_version,
+            || {
+                crate::protected_capability_observation::load_retained_verifier()
+                    .map_err(|error| error.to_string())
+            },
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    #[cfg(any(target_os = "linux", test))]
+    fn request_snapshot_bound_secret_delivery_transaction_binding_v4_with_verifier_loader(
+        &mut self,
+        contract: &crate::schema::Contract,
+        lane_kind: &str,
+        lane_name: &str,
+        run_plan: &crate::runner::RunPlan,
+        workflow_run_id: &str,
+        workflow_run_attempt: &str,
+        workflow_reference: &str,
+        runner_version: &str,
+        load_verifier: impl FnOnce() -> Result<
+            crate::protected_capability_observation::RetainedCapabilityProjectionVerifierV1,
+            String,
+        >,
+    ) -> Result<
+        crate::secret_delivery_transaction_binding::VerifiedSecretDeliveryTransactionBindingV4,
+        String,
+    > {
+        let pending_observation =
+            crate::protected_capability_observation::issue_protected_capability_observation_v1(
+                workflow_run_id,
+                workflow_run_attempt,
+                workflow_reference,
+                runner_version,
+                &self.startup_continuation.launcher_request_identity,
+            )
+            .map_err(|error| error.to_string())?;
+        self.session.send_json(pending_observation.request())?;
+        let observation_response: ota_authority_protocol::ProtectedLauncherCapabilityObservationResponseV1 =
+            self.session.receive_json()?;
+        let prelude: ota_authority_protocol::ProtectedSameChildCapabilityPreludeV1 =
+            self.session.receive_json()?;
+        let verifier = load_verifier()?;
+        let verified_prelude =
+            crate::secret_delivery_transaction_binding::reconcile_same_child_capability_prelude_v1(
+                pending_observation,
+                &observation_response,
+                prelude,
+                &self.startup_continuation,
+                &verifier,
+            )
+            .map_err(|error| error.to_string())?;
+        let invocation_context = crate::secret_delivery_authority_snapshot::retain_protected_secret_delivery_invocation_context_v1(
+            verified_prelude.observation(),
+            &self.startup_continuation,
+            contract,
+            lane_kind,
+            lane_name,
+            run_plan,
+        )
+        .map_err(|error| error.to_string())?;
+        let pending_snapshot =
+            crate::secret_delivery_authority_snapshot::issue_secret_delivery_authority_snapshot_v2(
+                &self.startup_continuation,
+                &invocation_context,
+            )
+            .map_err(|error| error.to_string())?;
+        self.session.send_json(pending_snapshot.request())?;
+        let snapshot_response: ota_authority_protocol::ProtectedAuthoritySnapshotResponseV2 =
+            self.session.receive_json()?;
+        let snapshot = pending_snapshot
+            .reconcile(snapshot_response)
+            .map_err(|error| error.to_string())?;
+        let candidate = snapshot
+            .reconstruct_transaction_candidate(
+                crate::secret_delivery_authority_snapshot::SecretDeliveryCandidateReconstructionInput {
+                    contract,
+                    lane_kind,
+                    lane_name,
+                    run_plan,
+                },
+            )
+            .map_err(|error| error.to_string())?;
+        let pending_binding =
+            crate::secret_delivery_transaction_binding::issue_secret_delivery_transaction_binding_v4(
+                candidate,
+                snapshot,
+                verified_prelude,
+            )
+            .map_err(|error| error.to_string())?;
+        self.session.send_json(pending_binding.request())?;
+        let binding_response: ota_authority_protocol::ProtectedLauncherSecretDeliveryTransactionBindingResponseV4 =
+            self.session.receive_json()?;
+        let now = u64::try_from(OffsetDateTime::now_utc().unix_timestamp())
+            .map_err(|_| String::from("protected transaction binding clock is unavailable"))?;
+        pending_binding
+            .reconcile(binding_response, &verifier, now)
+            .map_err(|error| error.to_string())
+    }
+
     pub(crate) fn startup_continuation(&self) -> &LauncherStartupContinuationV1 {
         &self.startup_continuation
     }
@@ -6603,6 +6727,109 @@ pub(crate) mod tests {
             )
             .expect("prelude identity")
         );
+        launcher_thread.join().expect("launcher thread");
+    }
+
+    #[test]
+    fn systemd_completion_uses_v2_snapshot_and_v4_binding_on_one_session() {
+        let identity = |value: char| format!("sha256:{}", value.to_string().repeat(64));
+        let (mut launcher, ota) = UnixStream::pair().expect("socket pair");
+        let mut session = LauncherSession::from_inherited_descriptor_with_timeout(
+            ota.into_raw_fd(),
+            std::time::Duration::from_millis(20),
+        )
+        .expect("connected Unix launcher descriptor");
+        session.state = LauncherSessionState::Complete;
+        session
+            .begin_systemd_selected_execution_phase()
+            .expect("selected phase");
+        let mut startup = LauncherStartupContinuationV1 {
+            schema_version: 1,
+            identity: String::new(),
+            message_kind: ota_authority_protocol::LAUNCHER_STARTUP_CONTINUATION.into(),
+            invocation_id: "invocation-v4".into(),
+            launcher_request_identity: identity('9'),
+            child_process_identity: identity('a'),
+            working_directory_identity: identity('b'),
+            process_posture_identity: identity('c'),
+            principal_mapping_identity: identity('d'),
+        };
+        startup.identity =
+            launcher_startup_continuation_identity(&startup).expect("startup identity");
+        let expected_startup = startup.clone();
+        let mut completion = SystemdExecutionCompletion {
+            session,
+            startup_continuation: startup,
+            invocation_id: "invocation-v4".into(),
+            lease_consumption_admission_identity: identity('1'),
+            work_unit_identity: identity('2'),
+            pending_crossing_transaction_identity: identity('8'),
+            persisted: None,
+        };
+        let contract = crate::secret_delivery_authority_snapshot::tests::candidate_contract();
+        let run_plan = crate::runner::plan_task_execution_structure_for_target_os(
+            &contract,
+            "publish",
+            crate::runner::ExecutionOverrides::default(),
+            "linux",
+        )
+        .expect("selected graph");
+        let signing_key = SigningKey::from_bytes(&[9; 32]);
+        let response_verifier =
+            crate::secret_delivery_authority_snapshot::tests::projection_verifier(&signing_key);
+        let loader_verifier =
+            crate::secret_delivery_authority_snapshot::tests::projection_verifier(&signing_key);
+        let fixture_contract = contract.clone();
+        let launcher_thread = std::thread::spawn(move || {
+            let observation_request: ota_authority_protocol::ProtectedLauncherCapabilityObservationRequestV1 =
+                read_json_frame(&mut launcher);
+            let (observation_response, prelude) =
+                crate::secret_delivery_authority_snapshot::tests::observation_response_and_prelude(
+                    &observation_request,
+                    &expected_startup,
+                    &response_verifier,
+                    &signing_key,
+                );
+            write_json_frame(&mut launcher, &observation_response);
+            write_json_frame(&mut launcher, &prelude);
+            let snapshot_request: ota_authority_protocol::ProtectedAuthoritySnapshotRequestV2 =
+                read_json_frame(&mut launcher);
+            assert_eq!(snapshot_request.schema_version, 2);
+            let snapshot_response =
+                crate::secret_delivery_authority_snapshot::tests::snapshot_response_v2_for_contract(
+                    &snapshot_request,
+                    &fixture_contract,
+                );
+            write_json_frame(&mut launcher, &snapshot_response);
+            let binding_request: ota_authority_protocol::ProtectedLauncherSecretDeliveryTransactionBindingRequestV4 =
+                read_json_frame(&mut launcher);
+            assert_eq!(binding_request.protected_snapshot_schema_version, 2);
+            assert_eq!(
+                binding_request.protected_snapshot_identity,
+                snapshot_response.protected_snapshot_identity
+            );
+            let binding_response =
+                crate::secret_delivery_authority_snapshot::tests::v4_binding_response(
+                    &binding_request,
+                    &response_verifier,
+                    &signing_key,
+                );
+            write_json_frame(&mut launcher, &binding_response);
+        });
+        let verified = completion
+            .request_snapshot_bound_secret_delivery_transaction_binding_v4_with_verifier_loader(
+                &contract,
+                "task",
+                "publish",
+                &run_plan,
+                "1004",
+                "1",
+                "ota-run/ota/.github/workflows/release-gate.yml@refs/heads/main",
+                "2.337.0",
+                || Ok(loader_verifier),
+            )
+            .expect("same-session V2/V4 binding");
+        assert_eq!(verified.binding().protected_snapshot_schema_version, 2);
         launcher_thread.join().expect("launcher thread");
     }
 
