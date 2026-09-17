@@ -1867,37 +1867,38 @@ duplicates the signed bundle as typed fields and base64url bytes inside its froz
 
 The additive V2 authority-snapshot and V4 transaction-binding amendment was independently reviewed
 and committed at Core `93a36b23`. Protocol V2 snapshot records were independently reviewed,
-committed, and pushed at `c6bee9b49dc599ccd94bf6b0e60a1894614cb5a4`; they retain canonical
-descriptor-bound raw stores once and leave V1 immutable. Additive Protocol V4 request, binding,
-response, and reconciliation records were independently reviewed, committed, and pushed at
-`e819f95890ea23ae2f336a59fb3ff62cfa858d8b`, including cross-version refusal regressions.
-Launcher `35da0ef` and Core `b3a217d5` pin that Protocol revision and commit the focused V2
-snapshot/V4 reconciliation and service relay. Core reconstructs one
-provider-free candidate from the verified V2 payload, requests V2/V4 on its refusal lane, and
-rechecks V4 before one-use consumption. Launcher retains live capability derivation, reserves and
-consumes the V2 exchange in its descriptor-retained replay store, and relays V2/V4 only in order
-through the selected-child session. Core's same-session V2/V4 regression, Launcher Linux/X64
-cross-compilation and strict Clippy, local Linux/arm64 framed-relay and replay regressions, and
-Core's complete-graph V2-fit/V1-overflow regression pass; none is the protected Linux/X64
-service-path proof gate. MUSE's whole-batch review found two Launcher P2s: an unconsumed V2
-reservation after valid failed pre-binding completion and an invalid V4 test identity. Both were
-repaired and independently rechecked; the local Linux/arm64 durable-refusal regression and
-Launcher canonical verification pass. Launcher `35da0ef` and Core `b3a217d5` are pushed; Core
-handoff `d4dfe1d8` is also pushed. The V2/V4 pressure fixture, exact-revision workflow, and
-bounded runbook were independently reviewed without P1/P2/P3 findings and committed at Core
-`76ae12e0`. This is not hosted proof. The protected Linux/X64 host still has the historical
-installation and its runner is active; neither is V4 evidence. Next action: push Core, stop the
-runner, reprovision the host from the exact Core revision plus Launcher `35da0ef` and Protocol
-`e819f958`, then dispatch and reconcile the protected service-path gate. The existing V3 workflow
-is not V4 evidence. V4 keeps
-released V3 snapshot semantics immutable. Only after Core, Launcher, and Protocol
-prove the exact protected Linux/X64 V2 byte/descriptor and V4 transaction route may V4 consumption
-replace the historical V2 transport-preparation model. The planned GitHub OIDC-only `GET` checkpoint remains
-blocked. It may eventually make one fixed request-service call and retain one opaque, unadmitted JWT
-buffer only; it still excludes retries, redirects, JWT claim admission, Google STS, IAM Credentials,
-Secret Manager, materialization, injection, positive evidence, Step 8, and V12.2. Site, Skills,
-Examples, Learn, FAQ, Glossary, contract schema, and public JSON remain unaffected because this is an
-internal trust-boundary foundation with no operator workflow, vocabulary, or capability claim.
+committed, and pushed at `c6bee9b49dc599ccd94bf6b0e60a1894614cb5a4`; additive V4 request,
+binding, response, and reconciliation records were independently reviewed, committed, and pushed at
+`e819f95890ea23ae2f336a59fb3ff62cfa858d8b`. Launcher `35da0ef` and Core
+`083d9d62` bind the focused V2 snapshot/V4 reconciliation and service relay. Core reconstructs one
+provider-free candidate from verified V2 payload, requests V2/V4 on its refusal lane, and rechecks
+V4 before one-use consumption. Launcher retains live capability derivation, reserves and consumes
+the V2 exchange in its descriptor-retained replay store, and relays V2/V4 only through the selected
+child session. The fixture, exact-revision workflow, and bounded runbook were independently reviewed
+without P1/P2/P3 findings.
+
+The exact protected Linux/X64 V2/V4 service-path gate passed in Core
+[run 35210008681](https://github.com/ota-run/ota/actions/runs/35210008681): Toolkit job
+`105165017052` and protected job `105165215459` ran against Core
+`083d9d62620fe6f092f51085237c6089ab97777c`, Launcher
+`35da0efc2c77995321be39cb3a131acf8623f3e3`, and Protocol
+`e819f95890ea23ae2f336a59fb3ff62cfa858d8b`. The protected job derived and reconciled one signed
+public capability observation, one authority-snapshot V2 response, and one binding V4 response;
+recorded no listed protocol mismatch/refusal counters; reached exactly one expected provider-free
+refusal before task execution; left `selected-work-executed` absent; and completed child reap,
+scope removal, cgroup cleanup, and active-slot removal. The separate Toolkit job started without an
+OIDC request capability and proved only that pinned Toolkit code used its supplied loopback URL.
+
+The protected host retains a checksummed bundle at
+`/opt/ota-actions-runner/_work/_ota-pressure-evidence/35210008681-1`. It is job-owned local
+evidence available to an administrator through root access, not administrator-owned, independently
+durable, or public GitHub artifact evidence; its checksum manifest is created by the job. GitHub
+retains only the bounded Toolkit probe artifact. A stronger long-term custody claim requires a
+separate administrator-owned capture path and a new run. No real GitHub OIDC request was made;
+provider contact is `not_instrumented`. Google STS/WIF, Secret Manager access, materialization,
+process-environment injection, positive provider evidence, Step 8, and V12.2 remain unproved and
+inactive. Site, Skills, Examples, Learn, FAQ, Glossary, contract schema, and public JSON remain
+unaffected because this remains an internal provider-free trust-boundary foundation.
 
 Do not touch the unrelated untracked `docs/pressure/agent-authority-signals.md` unless the user
 explicitly asks.
