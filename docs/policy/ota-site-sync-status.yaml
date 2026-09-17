@@ -26,5 +26,5 @@ version: 1
 repository: ota-run/ota-site
 mode: waived
 consumer_commit: 0ee140feea1e63cf79a33944f5cd512e555f161c
-reviewed_ota_commit: 0320f62d8801bde0ae44cccb06847696b0768b2f
-waiver_reason: "Pending exact Core hosted-evidence custody implementation changes an internal provider-free pressure workflow and administrator runbook only; no Site operator surface or public capability changes."
+reviewed_ota_commit: 7ef8af1a552ffcc97cbff9550aee47016f4faf38
+waiver_reason: "Core 7ef8af1a changes an internal provider-free pressure workflow and administrator runbook only; no Site operator surface or public capability changes."
