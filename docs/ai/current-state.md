@@ -1900,15 +1900,27 @@ process-environment injection, positive provider evidence, Step 8, and V12.2 rem
 inactive. Site, Skills, Examples, Learn, FAQ, Glossary, contract schema, and public JSON remain
 unaffected because this remains an internal provider-free trust-boundary foundation.
 
-The proposed Step 7 hosted-evidence custody correction authorizes no implementation yet. It would
-add only a root-owned, exact-run capture service and public capture record for the provider-free
-pressure bundle, plus the connected Core and Launcher pressure runbooks. It must reject incomplete,
-substituted, replayed, failed-as-success, and changing job-owned inputs; copy the closed set through
-no-follow descriptor-relative reads; recompute hashes as root; and make one root-custodied copy
-available without exposing private correlation truth. It must not be confused with independent
-attestation of workflow assertions, nor activate the separate provider-contact/OIDC network-call
-amendment, delivery, Step 8, or V12.2. Its exact implementation and a fresh hosted run remain
-blocked on independent review and commit of the amendment.
+The hosted-evidence custody implementation is in Core `7ef8af1a552ffcc97cbff9550aee47016f4faf38`
+and Launcher `19b4f7af4527073ef15520d9a6b43b7bcc654229`; Core `65cefc753dd762f34b5939d244316a1a9e829e79`
+pins the reviewed Launcher `84eefe0a8ffc2a3d8ff745d54850d3c5312319d1` documentation revision, while
+Core `61efe2544b0d8cd0d8aeb7297a3e3dd19cf97358` records the corresponding first-party waiver
+reconciliation. No fresh custody run exists yet. The required
+special sequence is: dispatch the exact Core workflow while the protected runner is stopped; wait
+until its self-hosted job is queued; record its run, attempt, ref, head SHA, repository context, and
+Runner.Listener version; then write the root-owned mode `0400` request and reprovision with both
+`--secret-delivery-pressure-builder-binary` and `--secret-delivery-pressure-request`. Verify the
+installation and capture units before starting the runner for that exact attempt. A rerun requires
+a new request and fresh provisioned state.
+
+The resulting custody gate is limited to a root-custodied copy of bounded provider-free job
+evidence and a provider-free refusal. It must reject incomplete, substituted, replayed,
+failed-as-success, and changing job-owned inputs; copy the closed set through no-follow
+descriptor-relative reads; recompute hashes as root; and make one root-custodied copy available
+without exposing private correlation truth. It is not independent attestation of workflow
+assertions and does not prove provider-mediated secret delivery, a real OIDC request, provider
+contact, materialization, injection, positive provider evidence, Step 8, or V12.2. The special
+Linux/X64 run remains the next proof gate; until it passes those capabilities remain unproved or
+inactive.
 
 Do not touch the unrelated untracked `docs/pressure/agent-authority-signals.md` unless the user
 explicitly asks.
