@@ -1904,7 +1904,39 @@ The hosted-evidence custody implementation is in Core `7ef8af1a552ffcc97cbff9550
 and Launcher `19b4f7af4527073ef15520d9a6b43b7bcc654229`; Core `65cefc753dd762f34b5939d244316a1a9e829e79`
 pins the reviewed Launcher `84eefe0a8ffc2a3d8ff745d54850d3c5312319d1` documentation revision, while
 Core `61efe2544b0d8cd0d8aeb7297a3e3dd19cf97358` records the corresponding first-party waiver
-reconciliation. No fresh custody run exists yet. The required
+reconciliation. No successful custody run exists yet. On 22 September, Core workflow
+[`35718397185`](https://github.com/ota-run/ota/actions/runs/35718397185) at
+`f4381cafe5bfc9fff5e67a160aad5c216d94f077` reached
+the self-hosted queue while the runner remained stopped, but was cancelled before execution. Its
+fresh root-owned request was removed after the cancellation. On 22 September, an independently
+reviewed one-time administrator-owned operational reset of this borrowed host completed; it is not
+a shipped Ota retirement capability. The root-only helper (SHA-256
+`8c10f83dcd2fd958d7ebe7785fbcd64b53d2cf28a28c7814f9db83edfc2ebffa`) captured a closed 49-entry
+managed inventory and 26 protected ancestor records, retained only three allowlisted public
+installation records in a root-owned archive, destroyed the prior private authority state and
+signing keys, and removed all 48 reset targets. Independent post-reset review verified that every
+authority unit is absent/inactive, managed sockets and runtime are absent, the protected runner
+service, hardening drop-in, binary, checkout, accounts, and GitHub runner registration remain
+intact and inactive, and no job/execution principal remains. The helper journal is terminal and
+must not be rerun or resumed. At that reset boundary, no new authority installation, request,
+dispatch, runner start, or hosted custody proof existed. The first fresh attempt,
+[`35730801737`](https://github.com/ota-run/ota/actions/runs/35730801737), at Core
+`f4381cafe5bfc9fff5e67a160aad5c216d94f077`, Launcher
+`ca8d4ab342fdc775a534767374ab15ead583a468`, and Protocol
+`e819f95890ea23ae2f336a59fb3ff62cfa858d8b`, reached the protected provider-free command and
+retained its job-owned closed evidence set, but its final root-custody reconciliation failed. The
+root capture service correctly failed closed: its store directory was held through an `O_PATH`
+descriptor that cannot `fsync`, and its `UMask=0077` reduced the intended public capture record
+from `0644` to `0600`. That run establishes neither custody nor the broader hosted gate; the
+runner was stopped immediately after it became terminal. Launcher `eee7dc636b0cc3a89d33ce6b1b82d5dfa4c56032`
+reopens only the verified directory through constrained descriptor-relative `openat2`, then writes
+and data-syncs the complete temporary record before explicitly finalizing it to `0644`, verifying
+its exact protection, and publishing it. Independent review found no P1/P2/P3 issues; focused
+Linux/X64 capture tests passed `6/6`, the capture-unit assertion passed `1/1`, and local
+`ota run verify --agent` passed. Core now pins that immutable Launcher repair. A new administrator reset,
+rebuild, request, and run are required; this failed state must not be repaired or reused. The
+unchanged provisioner fresh-state precondition remains the authoritative gate before rebuild. The
+required
 special sequence is: dispatch the exact Core workflow while the protected runner is stopped; wait
 until its self-hosted job is queued; record its run, attempt, ref, head SHA, repository context, and
 Runner.Listener version; then write the root-owned mode `0400` request and reprovision with both

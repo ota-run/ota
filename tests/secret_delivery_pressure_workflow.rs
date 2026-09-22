@@ -71,7 +71,7 @@ fn protected_service_path_remains_provider_free_and_task_refusing() {
     assert!(WORKFLOW.contains("PRESSURE_REPOSITORY: /srv/ota-v3-pressure"));
     assert!(
         WORKFLOW.contains(
-            "EXPECTED_LAUNCHER_SOURCE_REVISION: ca8d4ab342fdc775a534767374ab15ead583a468"
+            "EXPECTED_LAUNCHER_SOURCE_REVISION: eee7dc636b0cc3a89d33ce6b1b82d5dfa4c56032"
         )
     );
     assert!(
