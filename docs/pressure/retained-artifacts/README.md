@@ -6,8 +6,8 @@ the run into provider, delivery, or general governance evidence.
 
 ## V4 Protected Capability And OIDC Endpoint Compatibility
 
-- Source run: https://github.com/ota-run/ota/actions/runs/34443349694
-- Protected job: https://github.com/ota-run/ota/actions/runs/34443349694/job/102762828509
+- Source run: [34443349694](https://github.com/ota-run/ota/actions/runs/34443349694)
+- Protected job: [102762828509](https://github.com/ota-run/ota/actions/runs/34443349694/job/102762828509)
 - Core revision: `a93d65650e6d74167515fedc43a62ea9cc657489`
 - Launcher revision: `017d866bf9aab8b193ef0ce0515acc95545f3399`
 - Protocol revision: `d16947b87d84e66a4164a275c703b47fce6ded20`

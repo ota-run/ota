@@ -645,25 +645,36 @@ if warn["projection"]["identity"] == deny["projection"]["identity"]:
 PY
 stage=ci_provider_checkout_re_evaluation
 expected_projection_identity=$(jq -r '.projection.identity' "$proof_root/ci-projection-warn.json")
-"$ota" json validate --schema ci-projection.json --allow-exit 1 \
-  --assert-eq ok=false --assert-eq code=effect_policy_denied \
-  --assert-eq projection.governance.effect_policy_decision.aggregate_decision=deny \
-  --assert-eq projection.governance.effect_policy_decision.explicit_typed_deny=true \
-  --write-payload "$proof_root/ci-provider-checkout-refusal.json" \
-  -- "$ota" ci projection --workflow typed --mode native \
+current_projection_identity=$(jq -r '.projection.identity' "$proof_root/ci-projection-deny.json")
+if "$ota" ci projection --workflow typed --mode native \
     --target-os "${OTA_PRESSURE_TARGET_OS:-linux}" \
-    --expect-identity "$expected_projection_identity" --json "$ci_fixture"
+    --expect-identity "$expected_projection_identity" --json "$ci_fixture" \
+    > "$proof_root/ci-provider-checkout-refusal.json"; then
+  provider_checkout_status=0
+else
+  provider_checkout_status=$?
+fi
+[ "$provider_checkout_status" -eq 1 ] \
+  || fail "provider checkout returned $provider_checkout_status, expected 1"
 python3 - "$proof_root/ci-projection-warn.json" \
+  "$proof_root/ci-projection-deny.json" \
   "$proof_root/ci-provider-checkout-refusal.json" <<'PY'
 import json
 import pathlib
 import sys
 
-expected, observed = [json.loads(pathlib.Path(path).read_text()) for path in sys.argv[1:]]
-if expected["projection"]["identity"] == observed["projection"]["identity"]:
-    raise SystemExit("provider checkout accepted the stale projected identity")
-if observed["code"] != "effect_policy_denied":
-    raise SystemExit(f"provider checkout did not return typed policy refusal: {observed}")
+expected, current, observed = [json.loads(pathlib.Path(path).read_text()) for path in sys.argv[1:]]
+expected_identity = expected["projection"]["identity"]
+current_identity = current["projection"]["identity"]
+if expected_identity == current_identity:
+    raise SystemExit("typed effect-policy drift did not change the provider projection identity")
+if set(observed) != {"ok", "code", "message"} or observed["ok"] is not False:
+    raise SystemExit(f"provider checkout did not return the closed generic refusal: {observed}")
+if observed["code"] != "projection_identity_mismatch":
+    raise SystemExit(f"provider checkout did not reject the stale projected identity: {observed}")
+message = observed.get("message", "")
+if expected_identity not in message or current_identity not in message:
+    raise SystemExit("provider checkout did not bind both stale and re-evaluated identities")
 PY
 test ! -e "$ci_fixture/setup-sentinel" || fail "CI projection executed workflow setup"
 test ! -e "$ci_fixture/.ota/state/logs" || fail "CI projection created durable execution logs"

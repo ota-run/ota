@@ -29,11 +29,15 @@ confidence-threshold = 0.8
 allow = [
   "Apache-2.0",
   "BSD-3-Clause",
+  "ISC",
   "MIT",
   "Unicode-3.0",
   "Zlib",
 ]
-exceptions = []
+exceptions = [
+  # `ureq` uses the Mozilla WebPKI root set. Keep this data-license exception scoped to it.
+  { allow = ["CDLA-Permissive-2.0"], name = "webpki-roots" },
+]
 
 [bans]
 multiple-versions = "warn"

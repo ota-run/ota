@@ -5,3 +5,7 @@ https://github.com/ota-run/ota/releases/
 # Ignore external redirects that lychee may have issues with
 https://discord.gg/45mBMzSkKC
 https://ota.run/blogs
+
+# These services intentionally reject automated link-check clients.
+^https://www\.reddit\.com/r/ClaudeCode/comments/1vsyn8t/what_i_learned_running_25_claude_code_and_codex/$
+^https://x\.com/otaready$
