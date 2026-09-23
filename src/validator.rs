@@ -41919,12 +41919,12 @@ secret_requirements:
         };
         let floor_error = |version| {
             validate_contract(&contract(version))
-                .unwrap_err()
-                .errors()
-                .iter()
-                .any(|error| {
-                    error.message
-                        == "`secret_requirements` requires `metadata.ota.minimum_version` of at least `1.6.28`"
+                .err()
+                .is_some_and(|err| {
+                    err.errors().iter().any(|error| {
+                        error.message
+                            == "`secret_requirements` requires `metadata.ota.minimum_version` of at least `1.6.28`"
+                    })
                 })
         };
 
