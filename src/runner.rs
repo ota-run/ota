@@ -54771,6 +54771,9 @@ env:
       default: from-container
 tasks:
   setup:
+    requirements:
+      env:
+        - OTA_CONTAINER_FLAG
     script: |
       printf "$OTA_CONTAINER_FLAG" > env.txt
       printf ready > prepared.txt
@@ -55564,7 +55567,7 @@ printf 'node stub\n'
         assert_eq!(outcome.exit_code, 0);
         let log = fs::read_to_string(bin_dir.join("devbox.log")).unwrap();
         assert!(log.contains("install"), "{log}");
-        assert!(log.contains("run -- sh -lc"), "{log}");
+        assert!(log.contains("run -- pnpm install"), "{log}");
         assert!(log.contains("pnpm"), "{log}");
         assert!(log.contains("install"), "{log}");
     }
@@ -55792,7 +55795,7 @@ tasks:
         assert_eq!(fs::read_to_string(activation_log).unwrap(), "activated\n");
         let log = fs::read_to_string(devbox_log).unwrap();
         assert!(log.contains("install"), "{log}");
-        assert!(log.contains("run -- sh -lc"), "{log}");
+        assert!(log.contains("run -- pnpm install"), "{log}");
     }
 
     #[cfg(unix)]
@@ -56099,6 +56102,9 @@ env:
         - /opt/ota/bin
 tasks:
   setup:
+    requirements:
+      env:
+        - PATH
     script: |
       printf "$PATH" > path.txt
 "#,
@@ -56163,6 +56169,9 @@ env:
       default: from-container
 tasks:
   setup:
+    requirements:
+      env:
+        - OTA_CONTAINER_FLAG
     script: |
       printf "$OTA_CONTAINER_FLAG" > env.txt
       printf ready > prepared.txt
@@ -61928,6 +61937,9 @@ env:
 tasks:
   setup:
     run: printf "$OTA_REMOTE_ENV" > prepared.txt
+    requirements:
+      env:
+        - OTA_REMOTE_ENV
 "#,
             dir.path().display()
         );
@@ -62003,6 +62015,9 @@ env:
 tasks:
   setup:
     run: printf "$OTA_REMOTE_ENV" > prepared.txt
+    requirements:
+      env:
+        - OTA_REMOTE_ENV
 "#,
             dir.path().display()
         );
@@ -62242,6 +62257,9 @@ env:
 tasks:
   setup:
     run: printf "$OTA_REMOTE_ENV" > prepared.txt
+    requirements:
+      env:
+        - OTA_REMOTE_ENV
 "#,
             dir.path().display()
         );
@@ -62327,6 +62345,9 @@ env:
 tasks:
   setup:
     run: printf "$OTA_REMOTE_ENV" > prepared.txt
+    requirements:
+      env:
+        - OTA_REMOTE_ENV
 "#,
             dir.path().display()
         );
