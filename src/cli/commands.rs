@@ -66024,7 +66024,7 @@ policies:
             ["replay_inputs:identity:workflow:verify"]
         );
         assert!(requirement.policy_identity.starts_with("sha256:"));
-        assert_eq!(requirement.selected_closure, ["report", "verify"]);
+        assert_eq!(requirement.selected_closure, ["verify", "report"]);
         assert!(requirement.unknown_selector_identities.is_empty());
         let projection_json = serde_json::to_string(&projection).unwrap();
         assert!(!projection_json.contains("observed_identity"));
@@ -105082,6 +105082,11 @@ tasks:
     requirements:
       toolchains:
         - node
+workflows:
+  default: verify
+  verify:
+    run:
+      task: verify
 "#,
         )
         .unwrap();
@@ -105090,7 +105095,7 @@ tasks:
             &contract,
             Path::new("ota.yaml"),
             ExecutionOverrides::default(),
-            None,
+            Some("verify"),
             "READY",
             &[],
         );
