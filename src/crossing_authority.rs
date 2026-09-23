@@ -2605,6 +2605,10 @@ fn broker_trust_store_path() -> Option<PathBuf> {
 
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
 fn system_trust_store_path() -> Option<PathBuf> {
+    #[cfg(test)]
+    if let Some(path) = TEST_SYSTEM_TRUST_STORE_PATH.with(|current| current.borrow().clone()) {
+        return Some(path);
+    }
     None
 }
 

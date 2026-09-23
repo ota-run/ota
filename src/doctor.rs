@@ -1139,8 +1139,16 @@ fn precondition_requirement_surface(
     mode: DoctorMode,
     workflow_name: Option<&str>,
 ) -> RequirementSurface {
-    scoped_precondition_selection(contract, mode, workflow_name, ExecutionOverrides::default())
-        .requirement_surface
+    scoped_precondition_selection(
+        contract,
+        mode,
+        workflow_name,
+        ExecutionOverrides {
+            backend: Some(backend_for_mode(mode)),
+            ..ExecutionOverrides::default()
+        },
+    )
+    .requirement_surface
 }
 
 #[derive(Debug, Clone, Default)]
