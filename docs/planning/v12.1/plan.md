@@ -1129,7 +1129,7 @@ The adversarial matrix must also reject every V1/V2/V3/V4 request, payload, bind
 substitution, including self-consistent recomputed V4 carriers with a mismatched snapshot
 discriminator.
 
-#### Protected Hosted-Evidence Custody Correction (Proposed 2026-09-17)
+#### Protected Hosted-Evidence Custody Correction (Implemented And Proved 2026-09-22)
 
 The provider-free protected Linux/X64 service-path gate may retain a bounded job-produced evidence
 set only through a separately provisioned root capture service. The job-owned staging directory and
@@ -1168,7 +1168,17 @@ administered-pressure runbook, and adversarial/provisioning/hosted tests. It cre
 wire type, generic archive, OIDC request, network client, provider contact, materialization,
 injection, selected-work release, receipt, archive, positive evidence, Step 8, or V12.2 capability.
 It may be implemented only after this amendment is independently reviewed and committed; the changed
-custody path then requires a fresh exact protected Linux/X64 run.
+custody path then requires a fresh exact protected Linux/X64 run. That implementation was independently
+reviewed and committed at Core `b9c5d0b65eaca9d15d975e5913ba16135337e6b7` and Launcher
+`eee7dc636b0cc3a89d33ce6b1b82d5dfa4c56032`. The fresh exact Core run
+[`35748662341`](https://github.com/ota-run/ota/actions/runs/35748662341), attempt `1`, passed on the
+protected Linux/X64 runner. Its root capture service retained the closed success set in root-only
+state, verified the captured checksum manifest, and published the run-bound public record
+`sha256:ed085656fe9c16254429bfaffb971ee13fe2df6f2c75608b9c09e93896f8b64f` with root-computed bundle
+digest `sha256:f334e62c4b863696e2f857aea840e216d2f037a61f0ce64fef9c50f3d6d8bfd4`. This proves custody of
+job-produced bytes and their binding after capture, not independent semantic validation of the job
+or any provider, materialization, injection, selected-work, positive-evidence, Step 8, or V12.2
+claim.
 
 ### GitHub OIDC Network-Call Checkpoint
 

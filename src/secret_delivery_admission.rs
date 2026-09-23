@@ -103,6 +103,15 @@ pub(crate) fn admit_secret_delivery_command(
     roots: &[EffectPolicyInvocation],
     ordered_invocations: &[EffectPolicyInvocation],
 ) -> Result<SecretDeliveryCommandAdmission, SecretDeliveryAdmissionError> {
+    let catalog = resolve_secret_requirement_catalog(contract).map_err(|error| {
+        SecretDeliveryAdmissionError {
+            code: error.code,
+            message: error.message,
+        }
+    })?;
+    if catalog.requirements.is_empty() {
+        return not_applicable_admission(contract, workflow_name);
+    }
     let selected_subject = selected_subject(contract, workflow_name, roots)?;
     let applicable = selected_subject_has_secret_requirement(contract, &selected_subject)?;
     if applicable {
@@ -157,8 +166,56 @@ pub(crate) fn secret_delivery_applies_to_selected_subject(
     workflow_name: Option<&str>,
     roots: &[EffectPolicyInvocation],
 ) -> Result<bool, SecretDeliveryAdmissionError> {
+    let catalog = resolve_secret_requirement_catalog(contract).map_err(|error| {
+        SecretDeliveryAdmissionError {
+            code: error.code,
+            message: error.message,
+        }
+    })?;
+    if catalog.requirements.is_empty() {
+        return Ok(false);
+    }
     let selected_subject = selected_subject(contract, workflow_name, roots)?;
     selected_subject_has_secret_requirement(contract, &selected_subject)
+}
+
+fn not_applicable_admission(
+    contract: &Contract,
+    workflow_name: Option<&str>,
+) -> Result<SecretDeliveryCommandAdmission, SecretDeliveryAdmissionError> {
+    let contract_snapshot_identity =
+        semantic_contract_identity(contract).map_err(|message| SecretDeliveryAdmissionError {
+            code: "secret_delivery_admission_contract_identity_failed",
+            message,
+        })?;
+    let empty_subject: Vec<String> = Vec::new();
+    let identity = projection_identity(&PublicProjectionIdentityInput {
+        schema_version: 1,
+        contract_snapshot_identity: &contract_snapshot_identity,
+        selected_subject: &empty_subject,
+        workflow_name,
+        ordered_invocations: &[],
+        status: SecretDeliveryAdmissionStatus::NotApplicable,
+        applicable: false,
+        refusal_code: None,
+        availability: "not_checked",
+        provider_contact: "not_attempted",
+        delivery: "not_attempted",
+        execution_started: false,
+    })?;
+    Ok(SecretDeliveryCommandAdmission {
+        projection: SecretDeliveryPublicProjection {
+            schema_version: 1,
+            identity,
+            status: SecretDeliveryAdmissionStatus::NotApplicable,
+            applicable: false,
+            refusal_code: None,
+            availability: String::from("not_checked"),
+            provider_contact: String::from("not_attempted"),
+            delivery: String::from("not_attempted"),
+            execution_started: false,
+        },
+    })
 }
 
 fn selected_subject_has_secret_requirement(

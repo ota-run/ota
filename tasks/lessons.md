@@ -448,3 +448,27 @@
 - Rule: External pressure signals require product judgment, not summary alone. Record them as
   hypotheses with exact sources and `not_proved` limits; never turn them into implementation,
   activation, public capability claims, or outreach without separate evidence and authorization.
+
+## 2026-09-18
+
+- Pattern: An external-thread recommendation collapsed two distinct defects into one causal story
+  and treated an inference as settled before advising the user to act.
+- Correction: Establish the chronology, ownership boundary, and exact claim for each defect before
+  giving a verdict or drafting a public response. Separate verified fact, inference, and
+  recommendation. If the source leaves a material ambiguity, say so and do not supply
+  action-ready copy as though the premise were certain.
+- Rule: An arbitral finding must be traceable to exact evidence. Do not convert a plausible reading
+  into a recommendation until competing interpretations have been checked or explicitly bounded.
+
+## 2026-09-23
+
+- Pattern: An opportunity assessment treated a foundation application primarily as an eligibility
+  and timing decision instead of leading with the irreversible strategic cost of transferring the
+  project's trademark, accounts, assets, and governance.
+- Correction: Evaluate every accelerator, foundation, grant, and consortium opportunity first for
+  ownership, IP, trademark, governance, exclusivity, control, and future financing constraints.
+  State any material conflict with Ota's company, fundraising, grant, licensing, acquisition, or
+  Spydar strategy before discussing application strength or preparation work.
+- Rule: Do not recommend an opportunity by benefits alone. If participation can narrow Ota's future
+  options or move founder-controlled assets to another institution, call that out as the decisive
+  gate and recommend against applying unless Bobai explicitly chooses that trade-off.

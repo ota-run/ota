@@ -10896,14 +10896,15 @@ tasks:
     run: echo ok
 "#,
         );
+        let snapshot = serde_json::json!({
+            "version": 1,
+            "project": { "name": "receipt-demo" },
+            "tasks": { "demo": { "run": "echo ok" } }
+        });
         let (snapshot_ref, snapshot_hash) = write_receipt_snapshot(
             &fixture,
             "receipt-baseline-missing-supported-execution",
-            serde_json::json!({
-                "version": 1,
-                "project": { "name": "receipt-demo" },
-                "tasks": { "demo": { "run": "echo ok" } }
-            }),
+            snapshot.clone(),
         );
 
         fixture.write(
@@ -10948,6 +10949,7 @@ tasks:
             serde_json::from_str(&fs::read_to_string(&baseline_path).unwrap()).unwrap();
         baseline["receipt"]["contract_snapshot_ref"] = Value::String(snapshot_ref);
         baseline["receipt"]["contract_snapshot_hash"] = Value::String(snapshot_hash);
+        attach_native_selected_execution_graph(&mut baseline, &snapshot);
         fs::write(
             &baseline_path,
             serde_json::to_string_pretty(&baseline).unwrap(),
@@ -11079,16 +11081,17 @@ env:
                     .find(|finding| finding["summary"] == "No tasks defined in contract")
                     .cloned()
                     .unwrap();
+                let snapshot = serde_json::json!({
+                        "version": 1,
+                        "project": { "name": "receipt-diff" }
+                    });
                 let (snapshot_ref, snapshot_hash) = write_receipt_snapshot(
                     &fixture,
                     "receipt-diff-baseline",
-                    serde_json::json!({
-                        "version": 1,
-                        "project": { "name": "receipt-diff" }
-                    }),
+                    snapshot.clone(),
                 );
 
-                let baseline_payload = serde_json::json!({
+                let mut baseline_payload = serde_json::json!({
                     "ok": false,
                     "path": fixture.file_path().display().to_string(),
                     "mode": "receipt",
@@ -11130,6 +11133,7 @@ env:
                         }
                     ]
                 });
+                attach_native_selected_execution_graph(&mut baseline_payload, &snapshot);
                 fixture.write(
                     ".ota/receipts/repo-receipt-20260412-101010-123Z.json",
                     &serde_json::to_string_pretty(&baseline_payload).unwrap(),
@@ -12067,17 +12071,16 @@ project:
         let current = run_with(["ota", "receipt", "--json", fixture.path()]);
         assert_eq!(current.exit_code, 1);
 
-        let (snapshot_ref, snapshot_hash) = write_receipt_snapshot(
-            &fixture,
-            "receipt-diff-gate-pass",
-            serde_json::json!({
-                "version": 1,
-                "project": { "name": "receipt-diff" }
-            }),
-        );
+        let snapshot = serde_json::json!({
+            "version": 1,
+            "project": { "name": "receipt-diff" }
+        });
+        let (snapshot_ref, snapshot_hash) =
+            write_receipt_snapshot(&fixture, "receipt-diff-gate-pass", snapshot.clone());
         let mut baseline: Value = serde_json::from_str(&current.stdout).unwrap();
         baseline["receipt"]["contract_snapshot_hash"] = Value::String(snapshot_hash);
         baseline["receipt"]["contract_snapshot_ref"] = Value::String(snapshot_ref);
+        attach_native_selected_execution_graph(&mut baseline, &snapshot);
 
         fs::create_dir_all(fixture.dir.path().join(".ota/receipts")).unwrap();
         let baseline_file = fixture
@@ -12848,51 +12851,53 @@ project:
                     .dir
                     .path()
                     .join(".ota/receipts/baseline-receipt.json");
+                let snapshot = serde_json::json!({
+                    "version": 1,
+                    "project": { "name": "receipt-diff" }
+                });
                 let (snapshot_ref, snapshot_hash) = write_receipt_snapshot(
                     &fixture,
                     "receipt-diff-explicit-file",
-                    serde_json::json!({
-                        "version": 1,
-                        "project": { "name": "receipt-diff" }
-                    }),
+                    snapshot.clone(),
                 );
-                fs::write(
-                    &baseline_file,
-                    serde_json::to_string_pretty(&serde_json::json!({
+                let mut baseline_value = serde_json::json!({
+                    "ok": false,
+                    "path": fixture.file_path().display().to_string(),
+                    "mode": "receipt",
+                    "summary": {
+                        "error_count": 1,
+                        "warn_count": 0,
+                        "info_count": 0,
+                        "step_count": 1
+                    },
+                    "receipt": {
                         "ok": false,
                         "path": fixture.file_path().display().to_string(),
-                        "mode": "receipt",
+                        "scope": "repo",
+                        "contract": fixture.file_path().display().to_string(),
+                        "contract_snapshot_hash": snapshot_hash,
+                        "contract_snapshot_ref": snapshot_ref,
+                        "backend": "native",
                         "summary": {
                             "error_count": 1,
                             "warn_count": 0,
                             "info_count": 0,
                             "step_count": 1
                         },
-                        "receipt": {
-                            "ok": false,
-                            "path": fixture.file_path().display().to_string(),
-                            "scope": "repo",
-                            "contract": fixture.file_path().display().to_string(),
-                            "contract_snapshot_hash": snapshot_hash,
-                            "contract_snapshot_ref": snapshot_ref,
-                            "backend": "native",
-                            "summary": {
-                                "error_count": 1,
-                                "warn_count": 0,
-                                "info_count": 0,
-                                "step_count": 1
-                            },
-                            "steps": [
-                                {
-                                    "order": 1,
-                                    "label": "readiness",
-                                    "status": "NOT READY"
-                                }
-                            ]
-                        },
-                        "findings": [unchanged]
-                    }))
-                    .unwrap(),
+                        "steps": [
+                            {
+                                "order": 1,
+                                "label": "readiness",
+                                "status": "NOT READY"
+                            }
+                        ]
+                    },
+                    "findings": [unchanged]
+                });
+                attach_native_selected_execution_graph(&mut baseline_value, &snapshot);
+                fs::write(
+                    &baseline_file,
+                    serde_json::to_string_pretty(&baseline_value).unwrap(),
                 )
                 .unwrap();
 
@@ -15784,6 +15789,9 @@ env:
 tasks:
   setup:
     run: printf "$OTA_REMOTE_ENV" > prepared.txt
+    requirements:
+      env:
+        - OTA_REMOTE_ENV
 "#,
                 fixture.path()
             ),
@@ -15869,6 +15877,9 @@ env:
 tasks:
   setup:
     run: printf "$OTA_REMOTE_ENV" > prepared.txt
+    requirements:
+      env:
+        - OTA_REMOTE_ENV
 "#,
                 fixture.path()
             ),
@@ -15954,6 +15965,9 @@ env:
 tasks:
   setup:
     run: printf "$OTA_REMOTE_ENV" > prepared.txt
+    requirements:
+      env:
+        - OTA_REMOTE_ENV
 "#,
                 fixture.path()
             ),
@@ -16136,6 +16150,9 @@ env:
 tasks:
   setup:
     run: printf "$OTA_REMOTE_ENV" > prepared.txt
+    requirements:
+      env:
+        - OTA_REMOTE_ENV
 "#,
                 fixture.path()
             ),
@@ -16220,6 +16237,9 @@ env:
 tasks:
   setup:
     run: printf "$OTA_REMOTE_ENV" > prepared.txt
+    requirements:
+      env:
+        - OTA_REMOTE_ENV
 "#,
                 fixture.path()
             ),
@@ -16306,6 +16326,9 @@ env:
 tasks:
   setup:
     run: printf "$OTA_REMOTE_ENV" > prepared.txt
+    requirements:
+      env:
+        - OTA_REMOTE_ENV
 "#,
                 fixture.path()
             ),
@@ -16392,6 +16415,9 @@ env:
 tasks:
   setup:
     run: printf "$OTA_REMOTE_ENV" > prepared.txt
+    requirements:
+      env:
+        - OTA_REMOTE_ENV
 "#,
                 fixture.path()
             ),
@@ -16658,6 +16684,9 @@ version: 1
 project:
   name: ota
 env:
+  vars:
+    OTA_DEV_REQUIRED:
+      required: true
   sources:
     - kind: dotenv
       path: .env.local
@@ -16665,6 +16694,9 @@ env:
 tasks:
   dev:
     run: printf ready
+    requirements:
+      env:
+        - OTA_DEV_REQUIRED
 "#,
         );
 
@@ -30536,6 +30568,9 @@ env:
 tasks:
   setup:
     run: cargo build
+    requirements:
+      env:
+        - OTA_TEST_BASE_URL
 "#,
         );
         fixture.write(".env", "OTA_TEST_BASE_URL=\"unterminated\n");
@@ -30655,7 +30690,7 @@ tasks:
 
         assert_eq!(output.exit_code, 0);
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
-        assert_eq!(json["summary"]["contract_count"], 1);
+        assert_eq!(json["summary"]["contract_count"], 0);
         assert_eq!(json["summary"]["source_count"], 1);
     }
 
@@ -50541,6 +50576,50 @@ tasks:
             if let Some(parent) = path.parent() {
                 fs::create_dir_all(parent).unwrap();
             }
+            if relative.starts_with(".ota/receipts/") && relative.ends_with(".json") {
+                if let Ok(mut baseline) = serde_json::from_str::<serde_json::Value>(contents) {
+                    let needs_graph = baseline.get("receipt").is_some_and(|receipt| {
+                        receipt.get("scope").and_then(|scope| scope.as_str()) == Some("repo")
+                    }) && baseline.get("archive_context").is_none()
+                        && baseline
+                            .pointer("/receipt/contract_snapshot_ref")
+                            .and_then(|value| value.as_str())
+                            .is_some();
+                    if needs_graph {
+                        let snapshot_ref = baseline
+                            .pointer("/receipt/contract_snapshot_ref")
+                            .and_then(|value| value.as_str())
+                            .unwrap_or_default()
+                            .to_string();
+                        let snapshot_path = self.dir.path().join(&snapshot_ref);
+                        if let Ok(snapshot_bytes) = fs::read(&snapshot_path) {
+                            if let Ok(snapshot) =
+                                serde_json::from_slice::<serde_json::Value>(&snapshot_bytes)
+                            {
+                                let is_remote = baseline
+                                    .pointer("/receipt/backend")
+                                    .and_then(|value| value.as_str())
+                                    == Some("remote");
+                                if is_remote {
+                                    attach_remote_selected_execution_graph(
+                                        &mut baseline,
+                                        &snapshot,
+                                    );
+                                } else {
+                                    attach_native_selected_execution_graph(
+                                        &mut baseline,
+                                        &snapshot,
+                                    );
+                                }
+                                let updated =
+                                    serde_json::to_string_pretty(&baseline).expect("baseline json");
+                                fs::write(path, updated).unwrap();
+                                return;
+                            }
+                        }
+                    }
+                }
+            }
             fs::write(path, contents).unwrap();
         }
     }
@@ -50558,6 +50637,54 @@ tasks:
             std::str::from_utf8(&bytes).expect("utf8 snapshot"),
         );
         (relative, hash)
+    }
+
+    fn attach_native_selected_execution_graph(
+        baseline: &mut serde_json::Value,
+        snapshot: &serde_json::Value,
+    ) {
+        let contract: crate::schema::Contract =
+            serde_json::from_value(snapshot.clone()).expect("snapshot contract");
+        let plan = crate::runner::plan_workflow_execution_structure_with_overrides(
+            &contract,
+            None,
+            crate::runner::ExecutionOverrides {
+                backend: Some(crate::schema::Backend::Native),
+                ..crate::runner::ExecutionOverrides::default()
+            },
+        )
+        .expect("native selected execution graph");
+        let identity = plan.identity.clone();
+        baseline["archive_context"] = serde_json::json!({
+            "schema_version": 4,
+            "kind": "readiness",
+            "lane_kind": "workflow",
+            "lane_name": "default",
+            "selected_execution_graph": plan
+        });
+        let receipt = baseline.get_mut("receipt").expect("baseline has receipt");
+        let evaluated = receipt
+            .as_object_mut()
+            .expect("receipt object")
+            .entry("evaluated_inputs")
+            .or_insert_with(|| serde_json::Value::Array(Vec::new()));
+        let arr = evaluated.as_array_mut().expect("evaluated_inputs array");
+        arr.retain(|input| {
+            input.get("id").and_then(|id| id.as_str()) != Some("execution_graph:selected")
+        });
+        arr.push(serde_json::json!({
+            "id": "execution_graph:selected",
+            "kind": "selected_execution_graph",
+            "input_class": "contract_truth",
+            "identity": identity
+        }));
+    }
+
+    fn attach_remote_selected_execution_graph(
+        baseline: &mut serde_json::Value,
+        snapshot: &serde_json::Value,
+    ) {
+        attach_native_selected_execution_graph(baseline, snapshot);
     }
 
     fn write_remote_history_receipt(fixture: &ContractFixture) {

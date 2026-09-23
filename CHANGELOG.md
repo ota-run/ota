@@ -26,6 +26,12 @@
 
 ## Unreleased
 
+- Fix `secret_delivery` command admission so contracts without secret requirements remain
+  `NotApplicable` without requiring an exact task or workflow subject. `ota up` for task-less
+  monorepo roots and service-only contracts no longer reports
+  `secret_delivery_admission_subject_unknown` and instead preserves existing readiness,
+  service-start, and environment diagnostics.
+
 - Show a compact `Ota Readiness` success summary before runtime endpoint publication in rich
   output. The summary names only the resolved listener, aggregate probe count, and observed
   attempt; detailed targets and failure diagnostics remain retry-only, and JSON/plain output stays

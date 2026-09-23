@@ -1933,26 +1933,35 @@ reopens only the verified directory through constrained descriptor-relative `ope
 and data-syncs the complete temporary record before explicitly finalizing it to `0644`, verifying
 its exact protection, and publishing it. Independent review found no P1/P2/P3 issues; focused
 Linux/X64 capture tests passed `6/6`, the capture-unit assertion passed `1/1`, and local
-`ota run verify --agent` passed. Core now pins that immutable Launcher repair. A new administrator reset,
-rebuild, request, and run are required; this failed state must not be repaired or reused. The
-unchanged provisioner fresh-state precondition remains the authoritative gate before rebuild. The
-required
-special sequence is: dispatch the exact Core workflow while the protected runner is stopped; wait
-until its self-hosted job is queued; record its run, attempt, ref, head SHA, repository context, and
-Runner.Listener version; then write the root-owned mode `0400` request and reprovision with both
-`--secret-delivery-pressure-builder-binary` and `--secret-delivery-pressure-request`. Verify the
-installation and capture units before starting the runner for that exact attempt. A rerun requires
-a new request and fresh provisioned state.
+`ota run verify --agent` passed. Core `b9c5d0b65eaca9d15d975e5913ba16135337e6b7` pins that immutable
+Launcher repair. The failed state was archived and not reused.
 
-The resulting custody gate is limited to a root-custodied copy of bounded provider-free job
-evidence and a provider-free refusal. It must reject incomplete, substituted, replayed,
-failed-as-success, and changing job-owned inputs; copy the closed set through no-follow
-descriptor-relative reads; recompute hashes as root; and make one root-custodied copy available
-without exposing private correlation truth. It is not independent attestation of workflow
-assertions and does not prove provider-mediated secret delivery, a real OIDC request, provider
-contact, materialization, injection, positive provider evidence, Step 8, or V12.2. The special
-Linux/X64 run remains the next proof gate; until it passes those capabilities remain unproved or
-inactive.
+The required fresh special sequence then completed in Core
+[`35748662341`](https://github.com/ota-run/ota/actions/runs/35748662341), attempt `1`, dispatched
+at `1.6.28-implementation` / exact Core `b9c5d0b65eaca9d15d975e5913ba16135337e6b7`. Its protected
+job `106816778715` ran on `ota-authority-aws-16-171-42-182` under Runner.Listener `2.337.0` only
+after a root-owned mode-`0400` request and fresh provisioned state bound that exact run and attempt.
+Both GitHub jobs passed. The root capture service copied the closed five-file success set into
+root-only `0700` state, recomputed and verified its checksum manifest, and published exactly one
+root-owned `0644`, no-clobber public record at
+`/usr/share/ota/authority-launcher/hosted-evidence-captures/35748662341-1.json`. Its canonical
+record identity is `sha256:ed085656fe9c16254429bfaffb971ee13fe2df6f2c75608b9c09e93896f8b64f`, its
+root-computed bundle digest is `sha256:f334e62c4b863696e2f857aea840e216d2f037a61f0ce64fef9c50f3d6d8bfd4`,
+and it binds exact Launcher `eee7dc636b0cc3a89d33ce6b1b82d5dfa4c56032` and Protocol
+`e819f95890ea23ae2f336a59fb3ff62cfa858d8b`. The protected job recorded exactly one snapshot-V2
+and one binding-V4 reconciliation, exactly one expected provider-free refusal, no selected-work
+marker, and terminal child/scope/cgroup/active-slot cleanup. MUSE independently reviewed the final
+evidence with no P1/P2/P3 findings. The runner was stopped immediately after the completed attempt;
+its disabled unit has `Restart=no` and no Listener or Worker remains. Its intentional SIGTERM exits
+`143` and leaves systemd in `failed`, so a future reviewed run must preserve this record and only
+`reset-failed` as its own fresh-run preparation step.
+
+This closes only the hosted-evidence custody gate: a root-custodied copy of bounded job-produced,
+provider-free evidence and the corresponding provider-free refusal. The root service does not
+independently validate the job assertions and the trusted root administrator remains in the trust
+base. It does not prove a real GitHub OIDC request, provider contact, Google STS/WIF or Secret
+Manager activity, materialization, injection, selected-work execution, positive provider evidence,
+Step 8, or V12.2. This custody completion alone authorizes no additional provider-contact work.
 
 Do not touch the unrelated untracked `docs/pressure/agent-authority-signals.md` unless the user
 explicitly asks.
