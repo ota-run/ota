@@ -1696,7 +1696,24 @@ fn candidate_source_path(root: &Path, path: &str) -> Result<Option<String>, Dete
     }
 
     let source_path = root.join(path);
-    if !source_path.is_file() {
+    let source_metadata = match fs::metadata(&source_path) {
+        Ok(metadata) => metadata,
+        Err(source)
+            if matches!(
+                source.kind(),
+                std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+            ) =>
+        {
+            return Ok(None);
+        }
+        Err(source) => {
+            return Err(DetectError::Read {
+                path: source_path.display().to_string(),
+                source,
+            });
+        }
+    };
+    if !source_metadata.is_file() {
         return Ok(None);
     }
     let canonical_root = fs::canonicalize(root).map_err(|source| DetectError::Read {
@@ -1746,9 +1763,7 @@ fn detector_discovery_inventory(root: &Path) -> Result<Vec<DiscoveryInventoryEnt
         }
     }
     for path in find_files_with_extensions(root, &["sln", "csproj"], 4)? {
-        if let Ok(relative) = path.strip_prefix(root) {
-            paths.insert(relative.to_string_lossy().replace('\\', "/"));
-        }
+        paths.insert(path.to_string_lossy().replace('\\', "/"));
     }
     for entry in fs::read_dir(root).map_err(|source| DetectError::Read {
         path: root.display().to_string(),
@@ -7511,10 +7526,24 @@ fn collect_files_with_extensions(
     depth: usize,
     matches: &mut Vec<PathBuf>,
 ) -> Result<(), DetectError> {
-    for entry in fs::read_dir(directory).map_err(|source| DetectError::Read {
-        path: directory.display().to_string(),
-        source,
-    })? {
+    let entries = match fs::read_dir(directory) {
+        Ok(entries) => entries,
+        // This is optional heuristic discovery. A protected descendant cannot contribute a
+        // .NET marker, but must not make unrelated repository detection fail.
+        Err(source)
+            if directory != root && source.kind() == std::io::ErrorKind::PermissionDenied =>
+        {
+            return Ok(());
+        }
+        Err(source) => {
+            return Err(DetectError::Read {
+                path: directory.display().to_string(),
+                source,
+            });
+        }
+    };
+
+    for entry in entries {
         let entry = entry.map_err(|source| DetectError::Read {
             path: directory.display().to_string(),
             source,
@@ -9072,8 +9101,8 @@ mod tests {
     use tempfile::TempDir;
 
     use super::{
-        CandidateDisposition, Confidence, DetectReport, InferenceSourceClass, detect_repo,
-        detector_discovery_inventory, source_bound_candidate_foundation,
+        CandidateDisposition, Confidence, DetectError, DetectReport, InferenceSourceClass,
+        detect_repo, detector_discovery_inventory, source_bound_candidate_foundation,
     };
     use crate::schema::{
         EnvSource, EnvSourceKind, ServiceManagerKind, ServiceReadinessKind, ToolchainProvider,
@@ -9996,6 +10025,115 @@ gem "rails"
                 && inference.source == "global.json#sdk.version"
                 && inference.confidence == Confidence::High
         }));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ignores_permission_denied_optional_dotnet_subtree() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let fixture = Fixture::new();
+        fixture.write(
+            "src/App/App.csproj",
+            r#"<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+  </PropertyGroup>
+</Project>"#,
+        );
+        fixture.write(
+            "OrbStack/ota-v3-pressure-arm64/etc/credstore/placeholder",
+            "protected\n",
+        );
+        let blocked = fixture
+            .path()
+            .join("OrbStack/ota-v3-pressure-arm64/etc/credstore");
+        let restore = fs::metadata(&blocked)
+            .expect("protected subtree metadata")
+            .permissions();
+        let mut denied = restore.clone();
+        denied.set_mode(0o000);
+        fs::set_permissions(&blocked, denied).expect("protect optional subtree");
+
+        let result = (|| -> Result<(), DetectError> {
+            let report = detect_repo(fixture.path())?;
+            assert_eq!(
+                report
+                    .contract
+                    .toolchains
+                    .get("dotnet")
+                    .map(|toolchain| toolchain.provider),
+                Some(ToolchainProvider::Dotnet)
+            );
+            let capture = report.source_bound_candidate()?;
+            assert_eq!(
+                capture
+                    .contract
+                    .toolchains
+                    .get("dotnet")
+                    .map(|toolchain| toolchain.provider),
+                Some(ToolchainProvider::Dotnet)
+            );
+            assert!(
+                capture
+                    .candidate
+                    .discovery_inventory
+                    .iter()
+                    .any(|entry| entry.path == "src/App/App.csproj")
+            );
+            Ok(())
+        })();
+
+        fs::set_permissions(&blocked, restore).expect("restore protected subtree permissions");
+        result.expect("optional inaccessible subtree must not block detection or capture");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn refuses_unreadable_detector_root() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let fixture = Fixture::new();
+        fixture.write("App.csproj", "<Project />\n");
+        let root = fixture.path();
+        let restore = fs::metadata(root)
+            .expect("fixture root metadata")
+            .permissions();
+        let mut denied = restore.clone();
+        denied.set_mode(0o000);
+        fs::set_permissions(root, denied).expect("protect fixture root");
+
+        let result = detect_repo(root);
+
+        fs::set_permissions(root, restore).expect("restore fixture root permissions");
+        assert!(
+            matches!(result, Err(DetectError::Read { .. })),
+            "an unreadable requested root must remain an explicit detection error"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn source_bound_candidate_refuses_unreadable_selected_source() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let fixture = Fixture::new();
+        fixture.write("App.csproj", "<Project />\n");
+        let report = detect_repo(fixture.path()).expect("initial detection");
+        let source = fixture.path().join("App.csproj");
+        let restore = fs::metadata(&source)
+            .expect("selected source metadata")
+            .permissions();
+        let mut denied = restore.clone();
+        denied.set_mode(0o000);
+        fs::set_permissions(&source, denied).expect("protect selected source");
+
+        let result = report.source_bound_candidate();
+
+        fs::set_permissions(&source, restore).expect("restore selected source permissions");
+        let error = result.expect_err("selected source must remain fail-closed");
+        assert!(matches!(error, DetectError::Read { .. }));
+        assert!(error.to_string().contains("App.csproj"));
     }
 
     #[test]

@@ -26,6 +26,12 @@
 
 ## Unreleased
 
+- Keep optional nested .NET marker discovery resilient to permission-protected host subtrees.
+  `ota doctor` and source-bound `ota detect` candidates now skip only descendant
+  `PermissionDenied` directories during heuristic `.sln`/`.csproj` discovery, while unreadable
+  requested roots and selected sources still refuse. Source-bound candidate inventory now retains
+  nested .NET marker observations instead of silently dropping them.
+
 - Fix `secret_delivery` command admission so contracts without secret requirements remain
   `NotApplicable` without requiring an exact task or workflow subject. `ota up` for task-less
   monorepo roots and service-only contracts no longer reports
