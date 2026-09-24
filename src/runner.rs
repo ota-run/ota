@@ -24,13 +24,20 @@ use std::cell::RefCell;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
+#[cfg(unix)]
+use std::ffi::CString;
 use std::ffi::{OsStr, OsString};
 use std::fs::{self, File};
 use std::hash::{Hash, Hasher};
-use std::io::{self, IsTerminal, Read, Write};
+use std::io::{self, IsTerminal, Read, Seek, Write};
 use std::net::{TcpListener, TcpStream, ToSocketAddrs};
 #[cfg(unix)]
-use std::os::unix::fs::MetadataExt;
+use std::os::fd::{AsRawFd, FromRawFd};
+#[cfg(unix)]
+use std::os::unix::{
+    ffi::OsStrExt,
+    fs::{MetadataExt, OpenOptionsExt},
+};
 use std::path::Component;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -818,6 +825,10 @@ pub enum RunError {
     },
     #[error("task `{task}` cannot enforce read-only replay baseline consumption: {reason}")]
     ReplayBaselineReadOnlyBoundaryUnavailable { task: String, reason: String },
+    #[error(
+        "task `{task}` cannot prepare linked-worktree Git metadata for container execution: {details}"
+    )]
+    LinkedWorktreeGitMetadataUnavailable { task: String, details: String },
     #[error("task `{task}` cannot apply the admitted sandbox policy: {details}")]
     SandboxPolicyApplicationFailed { task: String, details: String },
     #[error(
@@ -2024,6 +2035,7 @@ fn verify_oci_local_boundary_application(
     engine: &str,
     container_name: &str,
     expected_repo_root: Option<&Path>,
+    expected_linked_worktree_git_mount_plan: Option<&ContainerLinkedWorktreeGitMountPlan>,
 ) -> Result<String, RunError> {
     let Some(segment_plan) = oci_local_segment_plan(task_name) else {
         return Ok(String::new());
@@ -2188,6 +2200,12 @@ fn verify_oci_local_boundary_application(
         .collect::<BTreeSet<_>>();
     let mut allowed_mount_destinations = expected_writable.clone();
     allowed_mount_destinations.insert(String::from("/workspace"));
+    if let Some(plan) = expected_linked_worktree_git_mount_plan {
+        allowed_mount_destinations.insert(String::from(CONTAINER_LINKED_WORKTREE_GIT_ROOT));
+        allowed_mount_destinations.insert(String::from(CONTAINER_WORKSPACE_GIT_POINTER));
+        allowed_mount_destinations.insert(plan.administrative_gitdir_target.clone());
+        verify_oci_linked_worktree_git_mount_application(task_name, &mounts, plan)?;
+    }
     validate_oci_mount_destinations(task_name, &mounts, &allowed_mount_destinations)?;
     let mut observed_writable = BTreeSet::new();
     let mut writable_mounts = Vec::new();
@@ -3082,9 +3100,13 @@ const OTA_STATE_DIR: &str = "state";
 const OTA_OWNERSHIP_ID_FILE: &str = "ownership-id";
 const OTA_MANAGED_ENGINES_FILE: &str = "managed-engines";
 const OTA_ISOLATED_FILE_MOUNTS_DIR: &str = "isolated-file-mounts";
+const OTA_RUNNER_LINKED_WORKTREE_GIT_MOUNTS_DIR: &str = "ota-linked-worktree-git-mounts";
+const OTA_RUNNER_LINKED_WORKTREE_GIT_TEMP_ROOT_PREFIX: &str = "ota-linked-worktree-git";
 const OTA_RUN_EXECUTION_LOCK_FILE: &str = "run-execution.lock";
 const OTA_LIFECYCLE_PROOF_LOCK_FILE: &str = "lifecycle-proof.lock";
 const OTA_ACTIVE_EXECUTIONS_FILE: &str = "active-executions.json";
+const CONTAINER_LINKED_WORKTREE_GIT_ROOT: &str = "/.ota-linked-worktree-git";
+const CONTAINER_WORKSPACE_GIT_POINTER: &str = "/workspace/.git";
 const CONTAINER_AUTO_PUBLICATION_MAX_ATTEMPTS: usize = 5;
 const EPHEMERAL_CONFLICT_RECLAIM_MAX_ATTEMPTS: usize = 5;
 const DEPENDENCY_ISOLATION_VOLUME_REMOVE_MAX_ATTEMPTS: usize = 12;
@@ -5076,7 +5098,100 @@ fn validate_oci_mount_destinations(
             return Err(RunError::SandboxPolicyApplicationFailed {
                 task: task_name.to_string(),
                 details: format!(
-                    "oci_local engine inspection observed undeclared mount `{destination}`; the enforced boundary permits only the repository root and declared writable or isolated carve-outs"
+                    "oci_local engine inspection observed undeclared mount `{destination}`; the enforced boundary permits only declared repository, writable, isolated, and linked-worktree Git mounts"
+                ),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn verify_oci_linked_worktree_git_mount_application(
+    task_name: &str,
+    mounts: &[serde_json::Value],
+    plan: &ContainerLinkedWorktreeGitMountPlan,
+) -> Result<(), RunError> {
+    if !plan.read_only {
+        return Err(RunError::SandboxPolicyApplicationFailed {
+            task: task_name.to_string(),
+            details: String::from(
+                "oci_local linked-worktree Git metadata must be planned as read-only",
+            ),
+        });
+    }
+    for (destination, expected_source) in [
+        (
+            CONTAINER_LINKED_WORKTREE_GIT_ROOT,
+            plan.common_git_dir.as_path(),
+        ),
+        (
+            CONTAINER_WORKSPACE_GIT_POINTER,
+            plan.workspace_pointer_source.as_path(),
+        ),
+        (
+            plan.administrative_gitdir_target.as_str(),
+            plan.administrative_pointer_source.as_path(),
+        ),
+    ] {
+        let observed = mounts
+            .iter()
+            .filter(|mount| {
+                mount.get("Destination").and_then(serde_json::Value::as_str) == Some(destination)
+            })
+            .collect::<Vec<_>>();
+        if observed.len() != 1 {
+            return Err(RunError::SandboxPolicyApplicationFailed {
+                task: task_name.to_string(),
+                details: format!(
+                    "oci_local engine inspection expected exactly one linked-worktree Git mount at `{destination}`, observed {}",
+                    observed.len()
+                ),
+            });
+        }
+        let observed = observed[0];
+        let mount_type = observed
+            .get("Type")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+        let writable = observed
+            .get("RW")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+        if mount_type != "bind" || writable {
+            return Err(RunError::SandboxPolicyApplicationFailed {
+                task: task_name.to_string(),
+                details: format!(
+                    "oci_local linked-worktree Git mount `{destination}` must be a read-only bind mount"
+                ),
+            });
+        }
+        let observed_source = PathBuf::from(
+            observed
+                .get("Source")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default(),
+        )
+        .canonicalize()
+        .map_err(|error| RunError::SandboxPolicyApplicationFailed {
+            task: task_name.to_string(),
+            details: format!(
+                "oci_local could not canonicalize linked-worktree Git mount source for `{destination}`: {error}"
+            ),
+        })?;
+        let expected_source = expected_source.canonicalize().map_err(|error| {
+            RunError::SandboxPolicyApplicationFailed {
+                task: task_name.to_string(),
+                details: format!(
+                    "oci_local could not canonicalize expected linked-worktree Git source `{}`: {error}",
+                    expected_source.display()
+                ),
+            }
+        })?;
+        if observed_source != expected_source {
+            return Err(RunError::SandboxPolicyApplicationFailed {
+                task: task_name.to_string(),
+                details: format!(
+                    "oci_local linked-worktree Git mount `{destination}` source does not match the planned canonical source"
                 ),
             });
         }
@@ -26319,6 +26434,7 @@ fn persistent_container_shape_token(
     publications: &[ContainerPortPublication],
     isolated_paths: &[String],
     memory_bytes: Option<u64>,
+    linked_worktree_git_mount_identity: Option<&str>,
 ) -> String {
     let mut hasher = DefaultHasher::new();
     shared_local_backend_name.hash(&mut hasher);
@@ -26342,6 +26458,7 @@ fn persistent_container_shape_token(
         isolated_path.hash(&mut hasher);
     }
     memory_bytes.hash(&mut hasher);
+    linked_worktree_git_mount_identity.hash(&mut hasher);
     format!("{:x}", hasher.finish())
 }
 
@@ -31252,6 +31369,13 @@ fn execute_ephemeral_container_task_command(
     let prepared_runtime =
         resolve_container_task_runtime_from_publications(runtime, listener_publications);
     let workspace_mount_source = container_workspace_mount_source(working_dir);
+    let linked_worktree_git_mount_plan = container_linked_worktree_git_mount_plan(
+        task_name,
+        working_dir,
+        sandbox_plan
+            .as_ref()
+            .is_some_and(|plan| plan.read_only_repo_root),
+    )?;
     let sandbox_writable_mount_sources = match sandbox_plan.as_ref() {
         Some(plan) => {
             let mut sources = BTreeMap::new();
@@ -31310,6 +31434,10 @@ fn execute_ephemeral_container_task_command(
         _ => container_workspace_mount_arg(&workspace_mount_source),
     };
     create.arg(workspace_mount).arg("-w").arg("/workspace");
+    append_container_linked_worktree_git_mount_args(
+        &mut create,
+        linked_worktree_git_mount_plan.as_ref(),
+    );
     append_container_host_user_arg(&mut create);
     append_container_host_user_home_arg(&mut create, env_overrides);
     if sandbox_plan
@@ -31415,6 +31543,7 @@ fn execute_ephemeral_container_task_command(
         engine,
         &container_name,
         Some(workspace_mount_source.as_path()),
+        linked_worktree_git_mount_plan.as_ref(),
     ) {
         let _ = remove_persistent_container(engine, &container_name, task_name);
         return Err(error);
@@ -31897,6 +32026,13 @@ fn create_idle_ephemeral_container(
         });
     }
     let workspace_mount_source = container_workspace_mount_source(working_dir);
+    let linked_worktree_git_mount_plan = container_linked_worktree_git_mount_plan(
+        task_name,
+        working_dir,
+        sandbox_plan
+            .as_ref()
+            .is_some_and(|plan| plan.read_only_repo_root),
+    )?;
     let mut create = container_engine_command(engine);
     create
         .arg("create")
@@ -31926,6 +32062,10 @@ fn create_idle_ephemeral_container(
         _ => container_workspace_mount_arg(&workspace_mount_source),
     };
     create.arg(workspace_mount).arg("-w").arg("/workspace");
+    append_container_linked_worktree_git_mount_args(
+        &mut create,
+        linked_worktree_git_mount_plan.as_ref(),
+    );
     append_container_host_user_arg(&mut create);
     append_container_host_user_home_arg(&mut create, env_overrides);
     if sandbox_plan
@@ -32008,6 +32148,7 @@ fn create_idle_ephemeral_container(
             engine,
             container_name,
             Some(workspace_mount_source.as_path()),
+            linked_worktree_git_mount_plan.as_ref(),
         ) {
             let _ = remove_persistent_container(engine, container_name, task_name);
             return Err(error);
@@ -32040,6 +32181,8 @@ fn execute_persistent_container_task_command(
     dependency_isolation_paths: &[String],
     mode: TaskExecutionMode,
 ) -> Result<TaskCommandOutput, RunError> {
+    let linked_worktree_git_mount_plan =
+        container_linked_worktree_git_mount_plan(task_name, working_dir, false)?;
     let identity_seed = container_identity_seed(
         context_name,
         shared_local_backend_name,
@@ -32061,6 +32204,9 @@ fn execute_persistent_container_task_command(
         publications,
         dependency_isolation_paths,
         memory_bytes,
+        linked_worktree_git_mount_plan
+            .as_ref()
+            .map(|plan| plan.identity.as_str()),
     );
 
     let mut reconciliation = match ensure_persistent_container_ready(
@@ -32079,6 +32225,7 @@ fn execute_persistent_container_task_command(
         publications,
         listener_publications,
         dependency_isolation_paths,
+        linked_worktree_git_mount_plan.as_ref(),
     )? {
         PersistentContainerEnsureResult::Ready(reconciliation) => reconciliation,
         PersistentContainerEnsureResult::Failure(failure) => return Ok(failure),
@@ -32124,6 +32271,7 @@ fn execute_persistent_container_task_command(
                 publications,
                 listener_publications,
                 dependency_isolation_paths,
+                linked_worktree_git_mount_plan.as_ref(),
             )? {
                 PersistentContainerEnsureResult::Ready(_) => {
                     reconciliation =
@@ -32235,6 +32383,7 @@ fn execute_persistent_container_task_command(
             publications,
             listener_publications,
             dependency_isolation_paths,
+            linked_worktree_git_mount_plan.as_ref(),
         )? {
             PersistentContainerEnsureResult::Ready(_) => {
                 reconciliation = PersistentContainerReconciliation::recreated(
@@ -32417,6 +32566,7 @@ fn ensure_persistent_container_ready(
     publications: &[ContainerPortPublication],
     listener_publications: &[(String, ContainerPortPublication)],
     dependency_isolation_paths: &[String],
+    linked_worktree_git_mount_plan: Option<&ContainerLinkedWorktreeGitMountPlan>,
 ) -> Result<PersistentContainerEnsureResult, RunError> {
     let removed_drifted_family = reconcile_persistent_container_family(
         task_name,
@@ -32447,6 +32597,7 @@ fn ensure_persistent_container_ready(
             publications,
             listener_publications,
             dependency_isolation_paths,
+            linked_worktree_git_mount_plan,
         )?;
         if status.exit_code != 0 {
             return Ok(PersistentContainerEnsureResult::Failure(
@@ -32499,6 +32650,7 @@ fn ensure_persistent_container_ready(
             publications,
             listener_publications,
             dependency_isolation_paths,
+            linked_worktree_git_mount_plan,
         )?;
         if create.exit_code != 0 {
             if let Some(port) = parse_container_host_port_conflict(&create.stderr)
@@ -32565,6 +32717,7 @@ fn ensure_persistent_container_ready(
                 publications,
                 listener_publications,
                 dependency_isolation_paths,
+                linked_worktree_git_mount_plan,
             )?;
             if create.exit_code != 0 {
                 if let Some(port) = parse_container_host_port_conflict(&create.stderr)
@@ -32949,6 +33102,7 @@ fn create_persistent_container(
     publications: &[ContainerPortPublication],
     listener_publications: &[(String, ContainerPortPublication)],
     dependency_isolation_paths: &[String],
+    linked_worktree_git_mount_plan: Option<&ContainerLinkedWorktreeGitMountPlan>,
 ) -> Result<ContainerCommandOutput, RunError> {
     preflight_container_host_publications(task_name, listener_publications)?;
     record_repo_managed_engine(task_name, working_dir, engine)?;
@@ -32975,6 +33129,7 @@ fn create_persistent_container(
         "-w".to_string(),
         "/workspace".to_string(),
     ];
+    append_container_linked_worktree_git_mount_vec(&mut args, linked_worktree_git_mount_plan);
     if let Some(platform) = platform {
         args.push("--platform".to_string());
         args.push(platform.to_string());
@@ -33407,7 +33562,13 @@ fn remove_persistent_container(
     if let Some(sandbox_task) =
         oci_local_boundary_task_for_terminal_inspection(engine, container_name)
     {
-        match verify_oci_local_boundary_application(&sandbox_task, engine, container_name, None) {
+        match verify_oci_local_boundary_application(
+            &sandbox_task,
+            engine,
+            container_name,
+            None,
+            None,
+        ) {
             Ok(identity) => {
                 record_oci_local_terminal_application(engine, container_name, identity.as_str())
             }
@@ -35659,6 +35820,1101 @@ pub(crate) fn container_workspace_mount_arg(workspace_mount_source: &Path) -> St
     )
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ContainerLinkedWorktreeGitMountPlan {
+    common_git_dir: PathBuf,
+    workspace_pointer_source: PathBuf,
+    administrative_pointer_source: PathBuf,
+    container_administrative_git_dir: String,
+    administrative_gitdir_target: String,
+    read_only: bool,
+    identity: String,
+}
+
+fn container_linked_worktree_git_mount_plan(
+    task_name: &str,
+    working_dir: &Path,
+    read_only: bool,
+) -> Result<Option<ContainerLinkedWorktreeGitMountPlan>, RunError> {
+    let workspace_mount_source = container_workspace_mount_source(working_dir);
+    let workspace_git_file = workspace_mount_source.join(".git");
+    let workspace_git_metadata = match fs::symlink_metadata(&workspace_git_file) {
+        Ok(metadata) if metadata.file_type().is_dir() => return Ok(None),
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            return Err(linked_worktree_git_metadata_unavailable(
+                task_name,
+                format!(
+                    "workspace Git metadata `{}` is a symlink and cannot be safely translated",
+                    workspace_git_file.display()
+                ),
+            ));
+        }
+        Ok(metadata) if metadata.file_type().is_file() => metadata,
+        Ok(_) => {
+            return Err(linked_worktree_git_metadata_unavailable(
+                task_name,
+                format!(
+                    "workspace Git metadata `{}` is neither a directory nor a regular file",
+                    workspace_git_file.display()
+                ),
+            ));
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(linked_worktree_git_metadata_unavailable(
+                task_name,
+                format!(
+                    "could not inspect workspace Git metadata `{}`: {error}",
+                    workspace_git_file.display()
+                ),
+            ));
+        }
+    };
+    debug_assert!(workspace_git_metadata.file_type().is_file());
+
+    let workspace_pointer = fs::read_to_string(&workspace_git_file).map_err(|error| {
+        linked_worktree_git_metadata_unavailable(
+            task_name,
+            format!(
+                "could not read linked-worktree pointer `{}`: {error}",
+                workspace_git_file.display()
+            ),
+        )
+    })?;
+    let Some(worktree_git_dir_value) = workspace_pointer.strip_prefix("gitdir:") else {
+        return Err(linked_worktree_git_metadata_unavailable(
+            task_name,
+            format!(
+                "regular workspace Git metadata `{}` is not a supported linked-worktree pointer",
+                workspace_git_file.display()
+            ),
+        ));
+    };
+    let worktree_git_dir_value = linked_worktree_git_metadata_value(
+        task_name,
+        workspace_git_file.as_path(),
+        worktree_git_dir_value,
+    )?;
+    let worktree_git_dir = resolve_linked_worktree_git_metadata_path(
+        task_name,
+        workspace_mount_source.as_path(),
+        worktree_git_dir_value,
+        "linked-worktree administrative directory",
+    )?;
+    let worktree_git_dir_metadata = fs::metadata(&worktree_git_dir).map_err(|error| {
+        linked_worktree_git_metadata_unavailable(
+            task_name,
+            format!(
+                "could not inspect linked-worktree administrative directory `{}`: {error}",
+                worktree_git_dir.display()
+            ),
+        )
+    })?;
+    if !worktree_git_dir_metadata.is_dir() {
+        return Err(linked_worktree_git_metadata_unavailable(
+            task_name,
+            format!(
+                "linked-worktree administrative path `{}` is not a directory",
+                worktree_git_dir.display()
+            ),
+        ));
+    }
+
+    let commondir_path = worktree_git_dir.join("commondir");
+    let common_git_dir_value =
+        linked_worktree_git_metadata_file_value(task_name, commondir_path.as_path(), "commondir")?;
+    let common_git_dir = resolve_linked_worktree_git_metadata_path(
+        task_name,
+        worktree_git_dir.as_path(),
+        common_git_dir_value.as_str(),
+        "common Git directory",
+    )?;
+    let worktrees_dir = common_git_dir
+        .join("worktrees")
+        .canonicalize()
+        .map_err(|error| {
+            linked_worktree_git_metadata_unavailable(
+                task_name,
+                format!(
+                    "could not canonicalize common Git worktrees directory below `{}`: {error}",
+                    common_git_dir.display()
+                ),
+            )
+        })?;
+    if worktree_git_dir.parent() != Some(worktrees_dir.as_path()) {
+        return Err(linked_worktree_git_metadata_unavailable(
+            task_name,
+            format!(
+                "linked-worktree administrative directory `{}` is not a direct child of `{}`",
+                worktree_git_dir.display(),
+                worktrees_dir.display()
+            ),
+        ));
+    }
+    let worktree_name = worktree_git_dir
+        .file_name()
+        .and_then(OsStr::to_str)
+        .filter(|name| linked_worktree_container_path_component_is_safe(name))
+        .ok_or_else(|| {
+            linked_worktree_git_metadata_unavailable(
+                task_name,
+                format!(
+                    "linked-worktree administrative directory `{}` has an unsafe container path component",
+                    worktree_git_dir.display()
+                ),
+            )
+        })?;
+
+    let expected_workspace_git_file = workspace_git_file.canonicalize().map_err(|error| {
+        linked_worktree_git_metadata_unavailable(
+            task_name,
+            format!(
+                "could not canonicalize workspace Git pointer `{}`: {error}",
+                workspace_git_file.display()
+            ),
+        )
+    })?;
+    let administrative_backlink = worktree_git_dir.join("gitdir");
+    let administrative_backlink_value = linked_worktree_git_metadata_file_value(
+        task_name,
+        administrative_backlink.as_path(),
+        "administrative gitdir backlink",
+    )?;
+    let observed_workspace_git_file = resolve_linked_worktree_git_metadata_path(
+        task_name,
+        worktree_git_dir.as_path(),
+        administrative_backlink_value.as_str(),
+        "administrative gitdir backlink",
+    )?;
+    if observed_workspace_git_file != expected_workspace_git_file {
+        return Err(linked_worktree_git_metadata_unavailable(
+            task_name,
+            format!(
+                "linked-worktree administrative backlink `{}` does not resolve to workspace Git pointer `{}`",
+                administrative_backlink.display(),
+                workspace_git_file.display()
+            ),
+        ));
+    }
+    linked_worktree_git_alternates_are_supported(task_name, common_git_dir.as_path())?;
+
+    let topology_identity = sha256_identity(
+        format!(
+            "linked-worktree-git-v1\0{}\0{}\0{}\0{read_only}",
+            workspace_mount_source.display(),
+            common_git_dir.display(),
+            worktree_git_dir.display(),
+        )
+        .as_bytes(),
+    );
+    let (state_dir, state_directory) = runner_owned_linked_worktree_git_mount_state_directory(
+        task_name,
+        topology_identity.as_str(),
+        workspace_mount_source.as_path(),
+        common_git_dir.as_path(),
+    )?;
+    let container_administrative_git_dir =
+        format!("{CONTAINER_LINKED_WORKTREE_GIT_ROOT}/worktrees/{worktree_name}");
+    let administrative_gitdir_target = format!("{container_administrative_git_dir}/gitdir");
+    let (workspace_pointer_source, workspace_pointer_identity) =
+        retain_runner_owned_linked_worktree_git_mount_state_file(
+            task_name,
+            &state_directory,
+            state_dir.as_path(),
+            "workspace.git",
+            format!("gitdir: {container_administrative_git_dir}\n").as_bytes(),
+        )?;
+    let (administrative_pointer_source, administrative_pointer_identity) =
+        retain_runner_owned_linked_worktree_git_mount_state_file(
+            task_name,
+            &state_directory,
+            state_dir.as_path(),
+            "administrative.gitdir",
+            format!("{CONTAINER_WORKSPACE_GIT_POINTER}\n").as_bytes(),
+        )?;
+    let identity = sha256_identity(
+        format!(
+            "linked-worktree-git-mount-plan-v2\0{topology_identity}\0{workspace_pointer_identity}\0{administrative_pointer_identity}"
+        )
+        .as_bytes(),
+    );
+
+    Ok(Some(ContainerLinkedWorktreeGitMountPlan {
+        common_git_dir,
+        workspace_pointer_source,
+        administrative_pointer_source,
+        container_administrative_git_dir,
+        administrative_gitdir_target,
+        read_only,
+        identity,
+    }))
+}
+
+fn linked_worktree_git_metadata_unavailable(task_name: &str, details: String) -> RunError {
+    RunError::LinkedWorktreeGitMetadataUnavailable {
+        task: task_name.to_string(),
+        details,
+    }
+}
+
+fn linked_worktree_git_metadata_value<'a>(
+    task_name: &str,
+    path: &Path,
+    value: &'a str,
+) -> Result<&'a str, RunError> {
+    let value = value.trim();
+    if value.is_empty() || value.lines().count() != 1 {
+        return Err(linked_worktree_git_metadata_unavailable(
+            task_name,
+            format!(
+                "linked-worktree metadata `{}` must contain one non-empty path",
+                path.display()
+            ),
+        ));
+    }
+    Ok(value)
+}
+
+fn linked_worktree_git_metadata_file_value(
+    task_name: &str,
+    path: &Path,
+    label: &str,
+) -> Result<String, RunError> {
+    let metadata = fs::symlink_metadata(path).map_err(|error| {
+        linked_worktree_git_metadata_unavailable(
+            task_name,
+            format!("could not inspect {label} `{}`: {error}", path.display()),
+        )
+    })?;
+    if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
+        return Err(linked_worktree_git_metadata_unavailable(
+            task_name,
+            format!("{label} `{}` is not a regular file", path.display()),
+        ));
+    }
+    let contents = fs::read_to_string(path).map_err(|error| {
+        linked_worktree_git_metadata_unavailable(
+            task_name,
+            format!("could not read {label} `{}`: {error}", path.display()),
+        )
+    })?;
+    Ok(linked_worktree_git_metadata_value(task_name, path, contents.as_str())?.to_string())
+}
+
+fn resolve_linked_worktree_git_metadata_path(
+    task_name: &str,
+    base_dir: &Path,
+    value: &str,
+    label: &str,
+) -> Result<PathBuf, RunError> {
+    let path = Path::new(value);
+    let candidate = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        base_dir.join(path)
+    };
+    candidate.canonicalize().map_err(|error| {
+        linked_worktree_git_metadata_unavailable(
+            task_name,
+            format!(
+                "could not canonicalize {label} `{}`: {error}",
+                candidate.display()
+            ),
+        )
+    })
+}
+
+fn linked_worktree_container_path_component_is_safe(value: &str) -> bool {
+    !value.is_empty()
+        && value != "."
+        && value != ".."
+        && !value.contains(['/', '\\', ':', '\n', '\r'])
+}
+
+fn linked_worktree_git_alternates_are_supported(
+    task_name: &str,
+    common_git_dir: &Path,
+) -> Result<(), RunError> {
+    let alternates = common_git_dir.join("objects/info/alternates");
+    let metadata = match fs::symlink_metadata(&alternates) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => {
+            return Err(linked_worktree_git_metadata_unavailable(
+                task_name,
+                format!(
+                    "could not inspect Git object alternates `{}`: {error}",
+                    alternates.display()
+                ),
+            ));
+        }
+    };
+    if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
+        return Err(linked_worktree_git_metadata_unavailable(
+            task_name,
+            format!(
+                "Git object alternates `{}` is not a regular file",
+                alternates.display()
+            ),
+        ));
+    }
+    let contents = fs::read_to_string(&alternates).map_err(|error| {
+        linked_worktree_git_metadata_unavailable(
+            task_name,
+            format!(
+                "could not read Git object alternates `{}`: {error}",
+                alternates.display()
+            ),
+        )
+    })?;
+    if contents.lines().any(|line| !line.trim().is_empty()) {
+        return Err(linked_worktree_git_metadata_unavailable(
+            task_name,
+            format!(
+                "Git object alternates `{}` are not supported for container linked-worktree execution",
+                alternates.display()
+            ),
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn runner_owned_linked_worktree_git_mount_state_directory(
+    task_name: &str,
+    topology_identity: &str,
+    workspace_mount_source: &Path,
+    common_git_dir: &Path,
+) -> Result<(PathBuf, File), RunError> {
+    let (runner_state_root, runner_state_directory) =
+        runner_owned_linked_worktree_git_mount_runtime_root(task_name)?;
+    let (state_root, state_root_directory) = ensure_runner_owned_linked_worktree_directory_entry(
+        task_name,
+        &runner_state_directory,
+        runner_state_root.as_path(),
+        OTA_RUNNER_LINKED_WORKTREE_GIT_MOUNTS_DIR,
+        "runner linked-worktree state root",
+        RunnerOwnedLinkedWorktreeDirectoryProtection::Private,
+    )?;
+    if state_root.starts_with(workspace_mount_source) || state_root.starts_with(common_git_dir) {
+        return Err(linked_worktree_git_metadata_unavailable(
+            task_name,
+            format!(
+                "runner linked-worktree state `{}` must remain outside the mounted workspace and common Git directory",
+                state_root.display()
+            ),
+        ));
+    }
+    let state_name = topology_identity
+        .strip_prefix("sha256:")
+        .filter(|value| {
+            !value.is_empty()
+                && value
+                    .bytes()
+                    .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
+        })
+        .ok_or_else(|| {
+            linked_worktree_git_metadata_unavailable(
+                task_name,
+                "linked-worktree topology identity is not a canonical SHA-256 token".to_string(),
+            )
+        })?;
+    let (state_dir, state_directory) = ensure_runner_owned_linked_worktree_directory_entry(
+        task_name,
+        &state_root_directory,
+        state_root.as_path(),
+        state_name,
+        "runner linked-worktree state directory",
+        RunnerOwnedLinkedWorktreeDirectoryProtection::Private,
+    )?;
+    Ok((state_dir, state_directory))
+}
+
+#[cfg(unix)]
+#[derive(Clone, Copy)]
+enum RunnerOwnedLinkedWorktreeDirectoryProtection {
+    Private,
+    UserOwnedNoExternalWrite,
+}
+
+#[cfg(unix)]
+fn runner_owned_linked_worktree_git_mount_runtime_root(
+    task_name: &str,
+) -> Result<(PathBuf, File), RunError> {
+    if let Some(runtime_dir) = env::var_os("XDG_RUNTIME_DIR") {
+        if let Some(root) = try_open_private_runner_owned_linked_worktree_directory(
+            task_name,
+            Path::new(&runtime_dir),
+            "XDG runtime directory",
+        ) {
+            return Ok(root);
+        }
+    }
+
+    if let Ok(temporary_root) = env::temp_dir().canonicalize() {
+        if let Some(root) = try_open_private_runner_owned_linked_worktree_directory(
+            task_name,
+            temporary_root.as_path(),
+            "runner temporary root",
+        ) {
+            return Ok(root);
+        }
+        if let Some(root) = try_open_private_runner_owned_linked_worktree_temporary_state_root(
+            task_name,
+            temporary_root.as_path(),
+        ) {
+            return Ok(root);
+        }
+    }
+
+    runner_owned_linked_worktree_git_mount_user_state_root(task_name)
+}
+
+#[cfg(unix)]
+fn try_open_private_runner_owned_linked_worktree_directory(
+    task_name: &str,
+    path: &Path,
+    label: &str,
+) -> Option<(PathBuf, File)> {
+    let canonical_path = path.canonicalize().ok()?;
+    let directory = open_runner_owned_linked_worktree_directory(
+        task_name,
+        canonical_path.as_path(),
+        label,
+        RunnerOwnedLinkedWorktreeDirectoryProtection::Private,
+    )
+    .ok()?;
+    Some((canonical_path, directory))
+}
+
+#[cfg(unix)]
+fn try_open_private_runner_owned_linked_worktree_temporary_state_root(
+    task_name: &str,
+    temporary_root: &Path,
+) -> Option<(PathBuf, File)> {
+    let canonical_path = temporary_root.canonicalize().ok()?;
+    let parent = open_sticky_runner_owned_linked_worktree_temporary_directory(
+        task_name,
+        canonical_path.as_path(),
+        "runner temporary parent",
+    )
+    .ok()?;
+    let name = format!(
+        "{OTA_RUNNER_LINKED_WORKTREE_GIT_TEMP_ROOT_PREFIX}-{}",
+        unsafe { libc::geteuid() }
+    );
+    let (state_root, state_directory) = ensure_runner_owned_linked_worktree_directory_entry(
+        task_name,
+        &parent,
+        canonical_path.as_path(),
+        name.as_str(),
+        "runner private temporary state root",
+        RunnerOwnedLinkedWorktreeDirectoryProtection::Private,
+    )
+    .ok()?;
+    Some((state_root, state_directory))
+}
+
+#[cfg(unix)]
+fn open_sticky_runner_owned_linked_worktree_temporary_directory(
+    task_name: &str,
+    path: &Path,
+    label: &str,
+) -> Result<File, RunError> {
+    verify_runner_owned_linked_worktree_temporary_directory_ancestry(task_name, path)?;
+    let mut options = fs::OpenOptions::new();
+    options
+        .read(true)
+        .custom_flags(libc::O_CLOEXEC | libc::O_DIRECTORY | libc::O_NOFOLLOW);
+    let directory = options.open(path).map_err(|error| {
+        linked_worktree_git_metadata_unavailable(
+            task_name,
+            format!(
+                "could not open {label} `{}` without following aliases: {error}",
+                path.display()
+            ),
+        )
+    })?;
+    let metadata = directory.metadata().map_err(|error| {
+        linked_worktree_git_metadata_unavailable(
+            task_name,
+            format!("could not inspect {label} `{}`: {error}", path.display()),
+        )
+    })?;
+    let expected_uid = unsafe { libc::geteuid() };
+    let mode = metadata.mode() & 0o7777;
+    if !metadata.is_dir()
+        || (metadata.uid() != 0 && metadata.uid() != expected_uid)
+        || mode & 0o1000 == 0
+    {
+        return Err(linked_worktree_git_metadata_unavailable(
+            task_name,
+            format!(
+                "{label} `{}` must be a root- or current-user-owned sticky directory",
+                path.display()
+            ),
+        ));
+    }
+    Ok(directory)
+}
+
+#[cfg(unix)]
+fn verify_runner_owned_linked_worktree_temporary_directory_ancestry(
+    task_name: &str,
+    path: &Path,
+) -> Result<(), RunError> {
+    if !path.is_absolute() {
+        return Err(linked_worktree_git_metadata_unavailable(
+            task_name,
+            format!(
+                "runner temporary parent `{}` must be an absolute canonical path",
+                path.display()
+            ),
+        ));
+    }
+    let components = path
+        .components()
+        .filter_map(|component| match component {
+            Component::Normal(component) => Some(component),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let root_path = Path::new("/");
+    let mut options = fs::OpenOptions::new();
+    options
+        .read(true)
+        .custom_flags(libc::O_CLOEXEC | libc::O_DIRECTORY | libc::O_NOFOLLOW);
+    let mut directory = options.open(root_path).map_err(|error| {
+        linked_worktree_git_metadata_unavailable(
+            task_name,
+            format!(
+                "could not open runner temporary parent ancestor `{}` without following aliases: {error}",
+                root_path.display()
+            ),
+        )
+    })?;
+    verify_runner_owned_linked_worktree_temporary_ancestor(task_name, &directory, root_path)?;
+    let mut display_path = PathBuf::from("/");
+    let ancestor_count = components.len().saturating_sub(1);
+    for component in components.into_iter().take(ancestor_count) {
+        let component_name = CString::new(component.as_bytes()).map_err(|_| {
+            linked_worktree_git_metadata_unavailable(
+                task_name,
+                format!(
+                    "runner temporary parent ancestor `{}` has an invalid path component",
+                    display_path.display()
+                ),
+            )
+        })?;
+        let descriptor = unsafe {
+            libc::openat(
+                directory.as_raw_fd(),
+                component_name.as_ptr(),
+                libc::O_RDONLY | libc::O_CLOEXEC | libc::O_DIRECTORY | libc::O_NOFOLLOW,
+            )
+        };
+        if descriptor < 0 {
+            return Err(linked_worktree_git_metadata_unavailable(
+                task_name,
+                format!(
+                    "could not open runner temporary parent ancestor below `{}` without following aliases: {}",
+                    display_path.display(),
+                    io::Error::last_os_error()
+                ),
+            ));
+        }
+        let child = unsafe { File::from_raw_fd(descriptor) };
+        display_path.push(component);
+        verify_runner_owned_linked_worktree_temporary_ancestor(
+            task_name,
+            &child,
+            display_path.as_path(),
+        )?;
+        directory = child;
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn verify_runner_owned_linked_worktree_temporary_ancestor(
+    task_name: &str,
+    directory: &File,
+    path: &Path,
+) -> Result<(), RunError> {
+    let metadata = directory.metadata().map_err(|error| {
+        linked_worktree_git_metadata_unavailable(
+            task_name,
+            format!(
+                "could not inspect runner temporary parent ancestor `{}`: {error}",
+                path.display()
+            ),
+        )
+    })?;
+    let expected_uid = unsafe { libc::geteuid() };
+    let no_external_write = metadata.mode() & 0o022 == 0;
+    let root_owned_sticky = metadata.uid() == 0 && metadata.mode() & 0o1000 != 0;
+    if !metadata.is_dir()
+        || (metadata.uid() != 0 && metadata.uid() != expected_uid)
+        || (!no_external_write && !root_owned_sticky)
+    {
+        return Err(linked_worktree_git_metadata_unavailable(
+            task_name,
+            format!(
+                "runner temporary parent ancestor `{}` must be root- or current-user-owned with no group or world write permission, or root-owned and sticky",
+                path.display()
+            ),
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn runner_owned_linked_worktree_git_mount_user_state_root(
+    task_name: &str,
+) -> Result<(PathBuf, File), RunError> {
+    let home = env::var_os("HOME").ok_or_else(|| {
+        linked_worktree_git_metadata_unavailable(
+            task_name,
+            "could not resolve HOME for runner-owned linked-worktree state".to_string(),
+        )
+    })?;
+    let home = PathBuf::from(home).canonicalize().map_err(|error| {
+        linked_worktree_git_metadata_unavailable(
+            task_name,
+            format!("could not canonicalize HOME for runner-owned linked-worktree state: {error}"),
+        )
+    })?;
+    let home_directory = open_runner_owned_linked_worktree_directory(
+        task_name,
+        home.as_path(),
+        "runner home directory",
+        RunnerOwnedLinkedWorktreeDirectoryProtection::UserOwnedNoExternalWrite,
+    )?;
+    let (local_dir, local_directory) = ensure_runner_owned_linked_worktree_directory_entry(
+        task_name,
+        &home_directory,
+        home.as_path(),
+        ".local",
+        "runner local state parent",
+        RunnerOwnedLinkedWorktreeDirectoryProtection::UserOwnedNoExternalWrite,
+    )?;
+    let (state_dir, state_directory) = ensure_runner_owned_linked_worktree_directory_entry(
+        task_name,
+        &local_directory,
+        local_dir.as_path(),
+        "state",
+        "runner state parent",
+        RunnerOwnedLinkedWorktreeDirectoryProtection::UserOwnedNoExternalWrite,
+    )?;
+    ensure_runner_owned_linked_worktree_directory_entry(
+        task_name,
+        &state_directory,
+        state_dir.as_path(),
+        "ota",
+        "runner Ota state root",
+        RunnerOwnedLinkedWorktreeDirectoryProtection::Private,
+    )
+}
+
+#[cfg(not(unix))]
+fn runner_owned_linked_worktree_git_mount_state_directory(
+    task_name: &str,
+    _topology_identity: &str,
+    _workspace_mount_source: &Path,
+    _common_git_dir: &Path,
+) -> Result<(PathBuf, File), RunError> {
+    Err(linked_worktree_git_metadata_unavailable(
+        task_name,
+        "container linked-worktree Git translation requires Unix no-follow runner-state support"
+            .to_string(),
+    ))
+}
+
+#[cfg(unix)]
+fn open_runner_owned_linked_worktree_directory(
+    task_name: &str,
+    path: &Path,
+    label: &str,
+    protection: RunnerOwnedLinkedWorktreeDirectoryProtection,
+) -> Result<File, RunError> {
+    let mut options = fs::OpenOptions::new();
+    options
+        .read(true)
+        .custom_flags(libc::O_CLOEXEC | libc::O_DIRECTORY | libc::O_NOFOLLOW);
+    let directory = options.open(path).map_err(|error| {
+        linked_worktree_git_metadata_unavailable(
+            task_name,
+            format!(
+                "could not open {label} `{}` without following aliases: {error}",
+                path.display()
+            ),
+        )
+    })?;
+    verify_runner_owned_linked_worktree_directory(task_name, &directory, path, label, protection)?;
+    Ok(directory)
+}
+
+#[cfg(unix)]
+fn ensure_runner_owned_linked_worktree_directory_entry(
+    task_name: &str,
+    parent: &File,
+    parent_path: &Path,
+    name: &str,
+    label: &str,
+    protection: RunnerOwnedLinkedWorktreeDirectoryProtection,
+) -> Result<(PathBuf, File), RunError> {
+    let name_c = CString::new(name).map_err(|_| {
+        linked_worktree_git_metadata_unavailable(
+            task_name,
+            format!("{label} entry name is not valid for secure creation"),
+        )
+    })?;
+    let created = unsafe { libc::mkdirat(parent.as_raw_fd(), name_c.as_ptr(), 0o700) };
+    if created != 0 && io::Error::last_os_error().kind() != io::ErrorKind::AlreadyExists {
+        return Err(linked_worktree_git_metadata_unavailable(
+            task_name,
+            format!(
+                "could not create {label} below `{}`: {}",
+                parent_path.display(),
+                io::Error::last_os_error()
+            ),
+        ));
+    }
+    let descriptor = unsafe {
+        libc::openat(
+            parent.as_raw_fd(),
+            name_c.as_ptr(),
+            libc::O_RDONLY | libc::O_CLOEXEC | libc::O_DIRECTORY | libc::O_NOFOLLOW,
+        )
+    };
+    if descriptor < 0 {
+        return Err(linked_worktree_git_metadata_unavailable(
+            task_name,
+            format!(
+                "could not open {label} below `{}` without following aliases: {}",
+                parent_path.display(),
+                io::Error::last_os_error()
+            ),
+        ));
+    }
+    let directory = unsafe { File::from_raw_fd(descriptor) };
+    let path = parent_path.join(name);
+    verify_runner_owned_linked_worktree_directory(
+        task_name,
+        &directory,
+        path.as_path(),
+        label,
+        protection,
+    )?;
+    Ok((path, directory))
+}
+
+#[cfg(unix)]
+fn verify_runner_owned_linked_worktree_directory(
+    task_name: &str,
+    directory: &File,
+    path: &Path,
+    label: &str,
+    protection: RunnerOwnedLinkedWorktreeDirectoryProtection,
+) -> Result<(), RunError> {
+    let metadata = directory.metadata().map_err(|error| {
+        linked_worktree_git_metadata_unavailable(
+            task_name,
+            format!("could not inspect {label} `{}`: {error}", path.display()),
+        )
+    })?;
+    let expected_uid = unsafe { libc::geteuid() };
+    let mode = metadata.mode() & 0o777;
+    let valid = metadata.is_dir()
+        && metadata.uid() == expected_uid
+        && match protection {
+            RunnerOwnedLinkedWorktreeDirectoryProtection::Private => mode == 0o700,
+            RunnerOwnedLinkedWorktreeDirectoryProtection::UserOwnedNoExternalWrite => {
+                mode & 0o022 == 0
+            }
+        };
+    if !valid {
+        let required_mode = match protection {
+            RunnerOwnedLinkedWorktreeDirectoryProtection::Private => "mode 0700",
+            RunnerOwnedLinkedWorktreeDirectoryProtection::UserOwnedNoExternalWrite => {
+                "no group or world write permission"
+            }
+        };
+        return Err(linked_worktree_git_metadata_unavailable(
+            task_name,
+            format!(
+                "{label} `{}` must be a current-user-owned directory with {required_mode}",
+                path.display()
+            ),
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn retain_runner_owned_linked_worktree_git_mount_state_file(
+    task_name: &str,
+    parent: &File,
+    parent_path: &Path,
+    name: &str,
+    contents: &[u8],
+) -> Result<(PathBuf, String), RunError> {
+    let name_c = CString::new(name).map_err(|_| {
+        linked_worktree_git_metadata_unavailable(
+            task_name,
+            "linked-worktree state file name is not valid for secure creation".to_string(),
+        )
+    })?;
+    let path = parent_path.join(name);
+    let descriptor = unsafe {
+        libc::openat(
+            parent.as_raw_fd(),
+            name_c.as_ptr(),
+            libc::O_RDWR | libc::O_CREAT | libc::O_EXCL | libc::O_CLOEXEC | libc::O_NOFOLLOW,
+            0o600,
+        )
+    };
+    if descriptor >= 0 {
+        let mut file = unsafe { File::from_raw_fd(descriptor) };
+        file.write_all(contents)
+            .and_then(|()| file.sync_all())
+            .map_err(|error| {
+                linked_worktree_git_metadata_unavailable(
+                    task_name,
+                    format!(
+                        "could not persist runner-owned linked-worktree state `{}`: {error}",
+                        path.display()
+                    ),
+                )
+            })?;
+        if unsafe { libc::fchmod(file.as_raw_fd(), 0o400) } != 0 {
+            return Err(linked_worktree_git_metadata_unavailable(
+                task_name,
+                format!(
+                    "could not protect runner-owned linked-worktree state `{}`: {}",
+                    path.display(),
+                    io::Error::last_os_error()
+                ),
+            ));
+        }
+        file.sync_all().map_err(|error| {
+            linked_worktree_git_metadata_unavailable(
+                task_name,
+                format!(
+                    "could not persist runner-owned linked-worktree state protection `{}`: {error}",
+                    path.display()
+                ),
+            )
+        })?;
+        let identity = verify_runner_owned_linked_worktree_state_file(
+            task_name,
+            &mut file,
+            path.as_path(),
+            contents,
+        )?;
+        parent.sync_all().map_err(|error| {
+            linked_worktree_git_metadata_unavailable(
+                task_name,
+                format!(
+                    "could not persist runner-owned linked-worktree state directory `{}`: {error}",
+                    parent_path.display()
+                ),
+            )
+        })?;
+        return Ok((path, identity));
+    }
+
+    let create_error = io::Error::last_os_error();
+    if create_error.kind() != io::ErrorKind::AlreadyExists {
+        return Err(linked_worktree_git_metadata_unavailable(
+            task_name,
+            format!(
+                "could not create runner-owned linked-worktree state `{}`: {create_error}",
+                path.display()
+            ),
+        ));
+    }
+    let descriptor = unsafe {
+        libc::openat(
+            parent.as_raw_fd(),
+            name_c.as_ptr(),
+            libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK,
+        )
+    };
+    if descriptor < 0 {
+        return Err(linked_worktree_git_metadata_unavailable(
+            task_name,
+            format!(
+                "could not retain runner-owned linked-worktree state `{}` without following aliases: {}",
+                path.display(),
+                io::Error::last_os_error()
+            ),
+        ));
+    }
+    let mut file = unsafe { File::from_raw_fd(descriptor) };
+    let identity = verify_runner_owned_linked_worktree_state_file(
+        task_name,
+        &mut file,
+        path.as_path(),
+        contents,
+    )?;
+    Ok((path, identity))
+}
+
+#[cfg(unix)]
+fn verify_runner_owned_linked_worktree_state_file(
+    task_name: &str,
+    file: &mut File,
+    path: &Path,
+    expected_contents: &[u8],
+) -> Result<String, RunError> {
+    let metadata = file.metadata().map_err(|error| {
+        linked_worktree_git_metadata_unavailable(
+            task_name,
+            format!(
+                "could not inspect runner-owned linked-worktree state `{}`: {error}",
+                path.display()
+            ),
+        )
+    })?;
+    let expected_uid = unsafe { libc::geteuid() };
+    if !metadata.is_file()
+        || metadata.nlink() != 1
+        || metadata.uid() != expected_uid
+        || metadata.mode() & 0o777 != 0o400
+        || metadata.len() != expected_contents.len() as u64
+    {
+        return Err(linked_worktree_git_metadata_unavailable(
+            task_name,
+            format!(
+                "runner-owned linked-worktree state `{}` must be a current-user-owned single-link mode 0400 file with the expected length",
+                path.display()
+            ),
+        ));
+    }
+    let mut contents = Vec::new();
+    file.rewind().map_err(|error| {
+        linked_worktree_git_metadata_unavailable(
+            task_name,
+            format!(
+                "could not rewind runner-owned linked-worktree state `{}`: {error}",
+                path.display()
+            ),
+        )
+    })?;
+    file.read_to_end(&mut contents).map_err(|error| {
+        linked_worktree_git_metadata_unavailable(
+            task_name,
+            format!(
+                "could not read runner-owned linked-worktree state `{}`: {error}",
+                path.display()
+            ),
+        )
+    })?;
+    if contents != expected_contents {
+        return Err(linked_worktree_git_metadata_unavailable(
+            task_name,
+            format!(
+                "runner-owned linked-worktree state `{}` does not match the selected topology",
+                path.display()
+            ),
+        ));
+    }
+    Ok(sha256_identity(
+        format!(
+            "linked-worktree-git-state-file-v1\0{}\0{}\0{}\0{}",
+            metadata.dev(),
+            metadata.ino(),
+            metadata.len(),
+            sha256_identity(expected_contents)
+        )
+        .as_bytes(),
+    ))
+}
+
+#[cfg(not(unix))]
+fn retain_runner_owned_linked_worktree_git_mount_state_file(
+    task_name: &str,
+    _parent: &File,
+    _parent_path: &Path,
+    _name: &str,
+    _contents: &[u8],
+) -> Result<(PathBuf, String), RunError> {
+    Err(linked_worktree_git_metadata_unavailable(
+        task_name,
+        "container linked-worktree Git translation requires Unix no-follow runner-state support"
+            .to_string(),
+    ))
+}
+
+fn container_bind_mount_arg(source: &Path, target: &str, read_only: bool) -> String {
+    let mut mount = format!(
+        "{}:{target}",
+        container_workspace_mount_source_display(source)
+    );
+    if read_only {
+        mount.push_str(":ro");
+    }
+    mount
+}
+
+fn append_container_linked_worktree_git_mount_args(
+    command: &mut Command,
+    plan: Option<&ContainerLinkedWorktreeGitMountPlan>,
+) {
+    let Some(plan) = plan else {
+        return;
+    };
+    command
+        .arg("-v")
+        .arg(container_bind_mount_arg(
+            plan.common_git_dir.as_path(),
+            CONTAINER_LINKED_WORKTREE_GIT_ROOT,
+            plan.read_only,
+        ))
+        .arg("-v")
+        .arg(container_bind_mount_arg(
+            plan.workspace_pointer_source.as_path(),
+            CONTAINER_WORKSPACE_GIT_POINTER,
+            true,
+        ))
+        .arg("-v")
+        .arg(container_bind_mount_arg(
+            plan.administrative_pointer_source.as_path(),
+            plan.administrative_gitdir_target.as_str(),
+            true,
+        ));
+}
+
+fn append_container_linked_worktree_git_mount_vec(
+    args: &mut Vec<String>,
+    plan: Option<&ContainerLinkedWorktreeGitMountPlan>,
+) {
+    let Some(plan) = plan else {
+        return;
+    };
+    for mount in [
+        container_bind_mount_arg(
+            plan.common_git_dir.as_path(),
+            CONTAINER_LINKED_WORKTREE_GIT_ROOT,
+            plan.read_only,
+        ),
+        container_bind_mount_arg(
+            plan.workspace_pointer_source.as_path(),
+            CONTAINER_WORKSPACE_GIT_POINTER,
+            true,
+        ),
+        container_bind_mount_arg(
+            plan.administrative_pointer_source.as_path(),
+            plan.administrative_gitdir_target.as_str(),
+            true,
+        ),
+    ] {
+        args.push(String::from("-v"));
+        args.push(mount);
+    }
+}
+
 #[cfg(not(windows))]
 pub(crate) fn container_workspace_mount_source_display(workspace_mount_source: &Path) -> String {
     workspace_mount_source.display().to_string()
@@ -37368,8 +38624,8 @@ mod tests {
     use crate::test_support::{cwd_mutex_lock, env_mutex_lock};
 
     use super::{
-        BackendFulfillmentStrategy, BackendRequirementGap, CapturedRunOutcome,
-        ContainerPortPublication, EXECUTION_BOUNDARY_TRACE_PATH_ENV,
+        BackendFulfillmentStrategy, BackendRequirementGap, CONTAINER_LINKED_WORKTREE_GIT_ROOT,
+        CapturedRunOutcome, ContainerPortPublication, EXECUTION_BOUNDARY_TRACE_PATH_ENV,
         EXECUTION_BOUNDARY_TRACE_TOKEN_ENV, EnvResolutionSource, ExecutedTaskStep,
         ExecutionOverrides, HttpReadinessRequest, LEGACY_EXECUTION_CONTEXT_NAME,
         PreparedTaskExecution, ProvisioningExecutionTarget, ResolvedExecutionBackend,
@@ -37429,6 +38685,42 @@ mod tests {
                 },
                 None => unsafe {
                     env::remove_var("PATH");
+                },
+            }
+        }
+    }
+
+    struct EnvVarGuard {
+        key: &'static str,
+        previous: Option<std::ffi::OsString>,
+    }
+
+    impl EnvVarGuard {
+        fn set(key: &'static str, value: impl AsRef<std::ffi::OsStr>) -> Self {
+            let previous = env::var_os(key);
+            unsafe {
+                env::set_var(key, value);
+            }
+            Self { key, previous }
+        }
+
+        fn remove(key: &'static str) -> Self {
+            let previous = env::var_os(key);
+            unsafe {
+                env::remove_var(key);
+            }
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            match self.previous.take() {
+                Some(value) => unsafe {
+                    env::set_var(self.key, value);
+                },
+                None => unsafe {
+                    env::remove_var(self.key);
                 },
             }
         }
@@ -60311,6 +61603,7 @@ tasks:
                 &[],
                 &[],
                 None,
+                None,
             )
         };
 
@@ -63004,6 +64297,670 @@ tasks:
                 .any(|line| line == format!("{}:/workspace", repo_dir.display())),
             "{mounts}"
         );
+    }
+
+    #[cfg(unix)]
+    fn linked_worktree_container_layout(
+        root: &Path,
+        lifecycle: &str,
+        engine: &str,
+    ) -> (PathBuf, PathBuf, PathBuf) {
+        let primary = root.join("primary");
+        let common_git_dir = primary.join(".git");
+        let workspace = root.join("worktree");
+        let administrative_dir = common_git_dir.join("worktrees/linked");
+        fs::create_dir_all(common_git_dir.join("objects/info")).unwrap();
+        fs::create_dir_all(&administrative_dir).unwrap();
+        fs::create_dir_all(&workspace).unwrap();
+        fs::write(
+            workspace.join(".git"),
+            format!("gitdir: {}\n", administrative_dir.display()),
+        )
+        .unwrap();
+        fs::write(administrative_dir.join("commondir"), "../..\n").unwrap();
+        fs::write(
+            administrative_dir.join("gitdir"),
+            format!("{}\n", workspace.join(".git").display()),
+        )
+        .unwrap();
+        let contract_path = workspace.join("ota.yaml");
+        fs::write(
+            &contract_path,
+            format!(
+                r#"
+version: 1
+project:
+  name: linked-worktree
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: {lifecycle}
+      container:
+        image: ghcr.io/ota/test:latest
+        engines:
+          - {engine}
+tasks:
+  build:
+    context: app
+    run: printf ready > prepared.txt
+"#
+            )
+            .trim_start(),
+        )
+        .unwrap();
+        (workspace, common_git_dir, contract_path)
+    }
+
+    #[cfg(unix)]
+    fn install_fake_named_container_engine_on_path(base_dir: &Path, engine: &str) -> PathEnvGuard {
+        let bin_dir = base_dir.join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let engine_path = bin_dir.join(engine);
+        install_fake_container_engine(&engine_path);
+        let mut permissions = fs::metadata(&engine_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&engine_path, permissions).unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        unsafe {
+            env::set_var("PATH", env::join_paths(path_entries).unwrap());
+        }
+        PathEnvGuard(original_path)
+    }
+
+    #[cfg(unix)]
+    fn assert_runner_owned_linked_worktree_git_mount_source(
+        source: &str,
+        workspace: &Path,
+        common_git_dir: &Path,
+    ) {
+        use std::os::unix::fs::MetadataExt as _;
+
+        let source = Path::new(source);
+        let workspace = workspace.canonicalize().unwrap();
+        let common_git_dir = common_git_dir.canonicalize().unwrap();
+        assert!(!source.starts_with(&workspace), "{source:?}");
+        assert!(!source.starts_with(&common_git_dir), "{source:?}");
+        let metadata = fs::metadata(source).unwrap();
+        assert_eq!(metadata.mode() & 0o777, 0o400);
+        assert_eq!(metadata.nlink(), 1);
+        let state_root = source
+            .ancestors()
+            .find(|path| {
+                path.file_name().is_some_and(|name| {
+                    name == std::ffi::OsStr::new(super::OTA_RUNNER_LINKED_WORKTREE_GIT_MOUNTS_DIR)
+                })
+            })
+            .expect("runner-owned pointer should remain below the protected state root");
+        let topology_directory = source
+            .parent()
+            .expect("runner-owned pointer should have a topology directory");
+        for directory in [state_root, topology_directory] {
+            let metadata = fs::metadata(directory).unwrap();
+            assert_eq!(metadata.uid(), unsafe { libc::geteuid() });
+            assert_eq!(metadata.mode() & 0o777, 0o700);
+        }
+    }
+
+    #[cfg(unix)]
+    fn assert_translated_linked_worktree_git_mounts(
+        workspace: &Path,
+        common_git_dir: &Path,
+        mounts: &str,
+    ) {
+        let common_git_dir = common_git_dir.canonicalize().unwrap();
+        assert!(
+            mounts.lines().any(|line| {
+                line == format!(
+                    "{}:{CONTAINER_LINKED_WORKTREE_GIT_ROOT}",
+                    common_git_dir.display()
+                )
+            }),
+            "{mounts}"
+        );
+        let workspace_pointer_mount = mounts
+            .lines()
+            .find(|line| line.ends_with(":/workspace/.git:ro"))
+            .expect("translated workspace Git pointer mount should exist");
+        let workspace_pointer_source = workspace_pointer_mount
+            .strip_suffix(":/workspace/.git:ro")
+            .expect("workspace pointer mount should retain its source");
+        assert_runner_owned_linked_worktree_git_mount_source(
+            workspace_pointer_source,
+            workspace,
+            common_git_dir.as_path(),
+        );
+        assert_eq!(
+            fs::read_to_string(workspace_pointer_source).unwrap(),
+            format!("gitdir: {CONTAINER_LINKED_WORKTREE_GIT_ROOT}/worktrees/linked\n")
+        );
+
+        let administrative_pointer_mount = mounts
+            .lines()
+            .find(|line| {
+                line.ends_with(&format!(
+                    ":{CONTAINER_LINKED_WORKTREE_GIT_ROOT}/worktrees/linked/gitdir:ro"
+                ))
+            })
+            .unwrap_or_else(|| {
+                panic!("translated administrative Git backlink mount should exist: {mounts}")
+            });
+        let administrative_pointer_source = administrative_pointer_mount
+            .strip_suffix(
+                format!(":{CONTAINER_LINKED_WORKTREE_GIT_ROOT}/worktrees/linked/gitdir:ro")
+                    .as_str(),
+            )
+            .expect("administrative pointer mount should retain its source");
+        assert_runner_owned_linked_worktree_git_mount_source(
+            administrative_pointer_source,
+            workspace,
+            common_git_dir.as_path(),
+        );
+        assert_eq!(
+            fs::read_to_string(administrative_pointer_source).unwrap(),
+            "/workspace/.git\n"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn linked_worktree_git_mount_plan_translates_both_pointers_and_refuses_alternates() {
+        let root = TempDir::new().unwrap();
+        let (workspace, common_git_dir, _) =
+            linked_worktree_container_layout(root.path(), "ephemeral", "docker");
+
+        let plan =
+            super::container_linked_worktree_git_mount_plan("build", workspace.as_path(), false)
+                .unwrap()
+                .expect("linked worktree should receive a translation plan");
+        assert_eq!(plan.common_git_dir, common_git_dir.canonicalize().unwrap());
+        assert!(!plan.read_only);
+        assert_eq!(
+            plan.container_administrative_git_dir,
+            format!("{CONTAINER_LINKED_WORKTREE_GIT_ROOT}/worktrees/linked")
+        );
+        assert_eq!(
+            plan.administrative_gitdir_target,
+            format!("{CONTAINER_LINKED_WORKTREE_GIT_ROOT}/worktrees/linked/gitdir")
+        );
+        assert_eq!(
+            fs::read_to_string(plan.workspace_pointer_source).unwrap(),
+            format!("gitdir: {CONTAINER_LINKED_WORKTREE_GIT_ROOT}/worktrees/linked\n")
+        );
+        assert_eq!(
+            fs::read_to_string(plan.administrative_pointer_source).unwrap(),
+            "/workspace/.git\n"
+        );
+
+        fs::write(
+            common_git_dir.join("objects/info/alternates"),
+            "/host-only/objects\n",
+        )
+        .unwrap();
+        let error =
+            super::container_linked_worktree_git_mount_plan("build", workspace.as_path(), false)
+                .expect_err("host-only Git object alternates must refuse translation");
+        assert!(matches!(
+            error,
+            RunError::LinkedWorktreeGitMetadataUnavailable { .. }
+        ));
+        assert!(error.to_string().contains("alternates"), "{error}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn linked_worktree_git_mount_plan_rejects_mismatched_administrative_backlink() {
+        let root = TempDir::new().unwrap();
+        let (workspace, common_git_dir, _) =
+            linked_worktree_container_layout(root.path(), "ephemeral", "docker");
+        let other_workspace = root.path().join("other");
+        fs::create_dir_all(&other_workspace).unwrap();
+        fs::write(other_workspace.join(".git"), "gitdir: /unrelated\n").unwrap();
+        fs::write(
+            common_git_dir.join("worktrees/linked/gitdir"),
+            format!("{}\n", other_workspace.join(".git").display()),
+        )
+        .unwrap();
+
+        let error =
+            super::container_linked_worktree_git_mount_plan("build", workspace.as_path(), false)
+                .expect_err("a backlink outside the selected workspace must refuse translation");
+        assert!(matches!(
+            error,
+            RunError::LinkedWorktreeGitMetadataUnavailable { .. }
+        ));
+        assert!(
+            error
+                .to_string()
+                .contains("does not resolve to workspace Git pointer"),
+            "{error}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn linked_worktree_git_mount_plan_refuses_malformed_regular_metadata() {
+        let root = TempDir::new().unwrap();
+        let workspace = root.path().join("workspace");
+        fs::create_dir_all(&workspace).unwrap();
+        fs::write(workspace.join(".git"), "not a linked-worktree pointer\n").unwrap();
+
+        let error =
+            super::container_linked_worktree_git_mount_plan("build", workspace.as_path(), false)
+                .expect_err("a regular .git file must be a supported linked-worktree pointer");
+        assert!(matches!(
+            error,
+            RunError::LinkedWorktreeGitMetadataUnavailable { .. }
+        ));
+        assert!(
+            error
+                .to_string()
+                .contains("not a supported linked-worktree pointer"),
+            "{error}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn linked_worktree_git_mount_plan_uses_private_user_state_when_temp_is_shared() {
+        let _guard = env_mutex_lock();
+        let root = TempDir::new().unwrap();
+        let shared_temp = root.path().join("shared-temp");
+        let home = root.path().join("home");
+        fs::create_dir_all(&shared_temp).unwrap();
+        fs::create_dir_all(&home).unwrap();
+        fs::set_permissions(&shared_temp, fs::Permissions::from_mode(0o777)).unwrap();
+        fs::set_permissions(&home, fs::Permissions::from_mode(0o700)).unwrap();
+        let _xdg_runtime_dir = EnvVarGuard::remove("XDG_RUNTIME_DIR");
+        let _temporary_dir = EnvVarGuard::set("TMPDIR", shared_temp.as_os_str());
+        let _home_dir = EnvVarGuard::set("HOME", home.as_os_str());
+        let (workspace, _, _) =
+            linked_worktree_container_layout(root.path(), "ephemeral", "docker");
+
+        let plan =
+            super::container_linked_worktree_git_mount_plan("build", workspace.as_path(), false)
+                .unwrap()
+                .expect("linked worktree should receive a translation plan");
+        let state_directory = plan
+            .workspace_pointer_source
+            .parent()
+            .expect("pointer source should have a state directory");
+        let expected_root = home
+            .canonicalize()
+            .unwrap()
+            .join(".local")
+            .join("state")
+            .join("ota")
+            .join(super::OTA_RUNNER_LINKED_WORKTREE_GIT_MOUNTS_DIR);
+        assert!(
+            state_directory.starts_with(&expected_root),
+            "{state_directory:?}"
+        );
+        let metadata = fs::metadata(state_directory).unwrap();
+        assert_eq!(metadata.uid(), unsafe { libc::geteuid() });
+        assert_eq!(metadata.mode() & 0o777, 0o700);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn linked_worktree_git_mount_plan_uses_private_user_state_when_temp_is_unavailable() {
+        let _guard = env_mutex_lock();
+        let root = TempDir::new().unwrap();
+        let unavailable_temp = root.path().join("unavailable-temp");
+        let home = root.path().join("home");
+        fs::create_dir_all(&home).unwrap();
+        fs::set_permissions(&home, fs::Permissions::from_mode(0o700)).unwrap();
+        let _xdg_runtime_dir = EnvVarGuard::remove("XDG_RUNTIME_DIR");
+        let _temporary_dir = EnvVarGuard::set("TMPDIR", unavailable_temp.as_os_str());
+        let _home_dir = EnvVarGuard::set("HOME", home.as_os_str());
+        let (workspace, _, _) =
+            linked_worktree_container_layout(root.path(), "ephemeral", "docker");
+
+        let plan =
+            super::container_linked_worktree_git_mount_plan("build", workspace.as_path(), false)
+                .unwrap()
+                .expect("linked worktree should receive a translation plan");
+        let state_directory = plan
+            .workspace_pointer_source
+            .parent()
+            .expect("pointer source should have a state directory");
+        let expected_root = home
+            .canonicalize()
+            .unwrap()
+            .join(".local")
+            .join("state")
+            .join("ota")
+            .join(super::OTA_RUNNER_LINKED_WORKTREE_GIT_MOUNTS_DIR);
+        assert!(
+            state_directory.starts_with(&expected_root),
+            "{state_directory:?}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn linked_worktree_git_mount_plan_uses_private_sticky_temp_state_when_home_is_shared() {
+        let _guard = env_mutex_lock();
+        let root = TempDir::new().unwrap();
+        let sticky_temp = root.path().join("sticky-temp");
+        let shared_home = root.path().join("shared-home");
+        fs::create_dir_all(&sticky_temp).unwrap();
+        fs::create_dir_all(&shared_home).unwrap();
+        fs::set_permissions(&sticky_temp, fs::Permissions::from_mode(0o1777)).unwrap();
+        fs::set_permissions(&shared_home, fs::Permissions::from_mode(0o777)).unwrap();
+        let _xdg_runtime_dir = EnvVarGuard::remove("XDG_RUNTIME_DIR");
+        let _temporary_dir = EnvVarGuard::set("TMPDIR", sticky_temp.as_os_str());
+        let _home_dir = EnvVarGuard::set("HOME", shared_home.as_os_str());
+        let (workspace, _, _) =
+            linked_worktree_container_layout(root.path(), "ephemeral", "docker");
+
+        let plan =
+            super::container_linked_worktree_git_mount_plan("build", workspace.as_path(), false)
+                .unwrap()
+                .expect("linked worktree should receive a translation plan");
+        let temporary_state_root = sticky_temp.canonicalize().unwrap().join(format!(
+            "{}-{}",
+            super::OTA_RUNNER_LINKED_WORKTREE_GIT_TEMP_ROOT_PREFIX,
+            unsafe { libc::geteuid() }
+        ));
+        let expected_root =
+            temporary_state_root.join(super::OTA_RUNNER_LINKED_WORKTREE_GIT_MOUNTS_DIR);
+        let state_directory = plan
+            .workspace_pointer_source
+            .parent()
+            .expect("pointer source should have a state directory");
+        assert!(
+            state_directory.starts_with(&expected_root),
+            "{state_directory:?}"
+        );
+        for directory in [
+            temporary_state_root.as_path(),
+            expected_root.as_path(),
+            state_directory,
+        ] {
+            let metadata = fs::metadata(directory).unwrap();
+            assert_eq!(metadata.uid(), unsafe { libc::geteuid() });
+            assert_eq!(metadata.mode() & 0o777, 0o700);
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn linked_worktree_git_mount_plan_refuses_sticky_temp_below_externally_writable_ancestor() {
+        let _guard = env_mutex_lock();
+        let root = TempDir::new().unwrap();
+        let unsafe_parent = root.path().join("externally-writable-parent");
+        let sticky_temp = unsafe_parent.join("sticky-temp");
+        let home = root.path().join("home");
+        fs::create_dir_all(&sticky_temp).unwrap();
+        fs::create_dir_all(&home).unwrap();
+        fs::set_permissions(&unsafe_parent, fs::Permissions::from_mode(0o777)).unwrap();
+        fs::set_permissions(&sticky_temp, fs::Permissions::from_mode(0o1777)).unwrap();
+        fs::set_permissions(&home, fs::Permissions::from_mode(0o700)).unwrap();
+        let _xdg_runtime_dir = EnvVarGuard::remove("XDG_RUNTIME_DIR");
+        let _temporary_dir = EnvVarGuard::set("TMPDIR", sticky_temp.as_os_str());
+        let _home_dir = EnvVarGuard::set("HOME", home.as_os_str());
+        let (workspace, _, _) =
+            linked_worktree_container_layout(root.path(), "ephemeral", "docker");
+
+        let plan =
+            super::container_linked_worktree_git_mount_plan("build", workspace.as_path(), false)
+                .unwrap()
+                .expect("linked worktree should receive a translation plan");
+        let expected_root = home
+            .canonicalize()
+            .unwrap()
+            .join(".local")
+            .join("state")
+            .join("ota")
+            .join(super::OTA_RUNNER_LINKED_WORKTREE_GIT_MOUNTS_DIR);
+        assert!(
+            plan.workspace_pointer_source.starts_with(expected_root),
+            "{:?}",
+            plan.workspace_pointer_source
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn linked_worktree_git_mount_plan_refuses_runner_state_file_aliases() {
+        use std::os::unix::fs::symlink;
+
+        let root = TempDir::new().unwrap();
+        let (workspace, _, _) =
+            linked_worktree_container_layout(root.path(), "ephemeral", "docker");
+        let plan =
+            super::container_linked_worktree_git_mount_plan("build", workspace.as_path(), false)
+                .unwrap()
+                .expect("linked worktree should receive a translation plan");
+        let expected_pointer = fs::read(plan.workspace_pointer_source.as_path()).unwrap();
+        let alias = root.path().join("adversarial-pointer");
+        fs::write(&alias, &expected_pointer).unwrap();
+        fs::set_permissions(&alias, fs::Permissions::from_mode(0o400)).unwrap();
+
+        fs::remove_file(plan.workspace_pointer_source.as_path()).unwrap();
+        symlink(&alias, plan.workspace_pointer_source.as_path()).unwrap();
+        let symlink_error =
+            super::container_linked_worktree_git_mount_plan("build", workspace.as_path(), false)
+                .expect_err("runner-owned pointer symlinks must refuse");
+        assert!(matches!(
+            symlink_error,
+            RunError::LinkedWorktreeGitMetadataUnavailable { .. }
+        ));
+
+        fs::remove_file(plan.workspace_pointer_source.as_path()).unwrap();
+        fs::hard_link(&alias, plan.workspace_pointer_source.as_path()).unwrap();
+        let hard_link_error =
+            super::container_linked_worktree_git_mount_plan("build", workspace.as_path(), false)
+                .expect_err("runner-owned pointer hard links must refuse");
+        assert!(matches!(
+            hard_link_error,
+            RunError::LinkedWorktreeGitMetadataUnavailable { .. }
+        ));
+        assert!(hard_link_error.to_string().contains("single-link"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn linked_worktree_git_mount_plan_refuses_runner_state_directory_aliases() {
+        use std::os::unix::fs::symlink;
+
+        let root = TempDir::new().unwrap();
+        let (workspace, _, _) =
+            linked_worktree_container_layout(root.path(), "ephemeral", "docker");
+        let plan =
+            super::container_linked_worktree_git_mount_plan("build", workspace.as_path(), false)
+                .unwrap()
+                .expect("linked worktree should receive a translation plan");
+        let state_directory = plan
+            .workspace_pointer_source
+            .parent()
+            .expect("pointer source should have a state directory")
+            .to_path_buf();
+        let alias = root.path().join("adversarial-state-directory");
+
+        fs::remove_file(plan.workspace_pointer_source.as_path()).unwrap();
+        fs::remove_file(plan.administrative_pointer_source.as_path()).unwrap();
+        fs::remove_dir(&state_directory).unwrap();
+        fs::create_dir(&alias).unwrap();
+        symlink(&alias, &state_directory).unwrap();
+
+        let error =
+            super::container_linked_worktree_git_mount_plan("build", workspace.as_path(), false)
+                .expect_err("runner-owned state directory symlinks must refuse");
+        assert!(matches!(
+            error,
+            RunError::LinkedWorktreeGitMetadataUnavailable { .. }
+        ));
+        assert!(error.to_string().contains("without following aliases"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn linked_worktree_git_mount_source_replacement_changes_persistent_shape() {
+        let root = TempDir::new().unwrap();
+        let (workspace, _, _) =
+            linked_worktree_container_layout(root.path(), "persistent", "podman");
+        let first =
+            super::container_linked_worktree_git_mount_plan("build", workspace.as_path(), false)
+                .unwrap()
+                .expect("linked worktree should receive a translation plan");
+        let first_shape = super::persistent_container_shape_token(
+            Some("app"),
+            None,
+            "ghcr.io/ota/test:latest",
+            None,
+            "podman",
+            &[],
+            &[],
+            &[],
+            None,
+            Some(first.identity.as_str()),
+        );
+
+        fs::remove_file(first.workspace_pointer_source.as_path()).unwrap();
+        let second =
+            super::container_linked_worktree_git_mount_plan("build", workspace.as_path(), false)
+                .unwrap()
+                .expect("missing runner-owned source should be recreated safely");
+        let second_shape = super::persistent_container_shape_token(
+            Some("app"),
+            None,
+            "ghcr.io/ota/test:latest",
+            None,
+            "podman",
+            &[],
+            &[],
+            &[],
+            None,
+            Some(second.identity.as_str()),
+        );
+
+        assert_ne!(first.identity, second.identity);
+        assert_ne!(first_shape, second_shape);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn oci_local_linked_worktree_git_mount_verifier_refuses_drift() {
+        let root = TempDir::new().unwrap();
+        let (workspace, _, _) =
+            linked_worktree_container_layout(root.path(), "ephemeral", "docker");
+        let plan =
+            super::container_linked_worktree_git_mount_plan("build", workspace.as_path(), true)
+                .unwrap()
+                .expect("linked worktree should receive a translation plan");
+        let mounts = vec![
+            serde_json::json!({
+                "Type": "bind",
+                "Source": plan.common_git_dir.display().to_string(),
+                "Destination": super::CONTAINER_LINKED_WORKTREE_GIT_ROOT,
+                "RW": false,
+            }),
+            serde_json::json!({
+                "Type": "bind",
+                "Source": plan.workspace_pointer_source.display().to_string(),
+                "Destination": super::CONTAINER_WORKSPACE_GIT_POINTER,
+                "RW": false,
+            }),
+            serde_json::json!({
+                "Type": "bind",
+                "Source": plan.administrative_pointer_source.display().to_string(),
+                "Destination": plan.administrative_gitdir_target,
+                "RW": false,
+            }),
+        ];
+        super::verify_oci_linked_worktree_git_mount_application("build", &mounts, &plan)
+            .expect("exact read-only translated mounts should verify");
+
+        let mut duplicate = mounts.clone();
+        duplicate.push(mounts[0].clone());
+        let duplicate_error =
+            super::verify_oci_linked_worktree_git_mount_application("build", &duplicate, &plan)
+                .expect_err("duplicate linked-worktree mounts must refuse");
+        assert!(duplicate_error.to_string().contains("exactly one"));
+
+        let mut writable = mounts.clone();
+        writable[1]["RW"] = serde_json::Value::Bool(true);
+        let writable_error =
+            super::verify_oci_linked_worktree_git_mount_application("build", &writable, &plan)
+                .expect_err("writable translated pointers must refuse");
+        assert!(writable_error.to_string().contains("read-only bind mount"));
+
+        let mut wrong_source = mounts;
+        wrong_source[0]["Source"] = serde_json::Value::String(root.path().display().to_string());
+        let source_error =
+            super::verify_oci_linked_worktree_git_mount_application("build", &wrong_source, &plan)
+                .expect_err("wrong linked-worktree source must refuse");
+        assert!(
+            source_error
+                .to_string()
+                .contains("does not match the planned canonical source")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn linked_worktree_git_mounts_are_translated_for_ephemeral_docker_execution() {
+        let _guard = env_mutex_lock();
+        let root = TempDir::new().unwrap();
+        let (workspace, common_git_dir, contract_path) =
+            linked_worktree_container_layout(root.path(), "ephemeral", "docker");
+        let _engine = install_fake_named_container_engine_on_path(root.path(), "docker");
+        let contract = load_contract(contract_path.as_path()).unwrap();
+
+        let outcome = run_task(&contract, contract_path.as_path(), "build").unwrap();
+        assert_eq!(outcome.exit_code, 0, "{outcome:?}");
+        assert!(workspace.join("prepared.txt").exists());
+        let mounts = fs::read_to_string(workspace.join("docker-mounts.txt")).unwrap();
+        assert_translated_linked_worktree_git_mounts(
+            workspace.as_path(),
+            common_git_dir.as_path(),
+            mounts.as_str(),
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn linked_worktree_git_mounts_are_translated_for_persistent_podman_execution() {
+        let _guard = env_mutex_lock();
+        let root = TempDir::new().unwrap();
+        let (workspace, common_git_dir, contract_path) =
+            linked_worktree_container_layout(root.path(), "persistent", "podman");
+        let _engine = install_fake_named_container_engine_on_path(root.path(), "podman");
+        let contract = load_contract(contract_path.as_path()).unwrap();
+
+        let first = run_task(&contract, contract_path.as_path(), "build").unwrap();
+        assert_eq!(first.exit_code, 0, "{first:?}");
+        assert!(workspace.join("prepared.txt").exists());
+        let mounts = fs::read_to_string(workspace.join("docker-mounts.txt")).unwrap();
+        assert_translated_linked_worktree_git_mounts(
+            workspace.as_path(),
+            common_git_dir.as_path(),
+            mounts.as_str(),
+        );
+
+        let first_plan =
+            super::container_linked_worktree_git_mount_plan("build", workspace.as_path(), false)
+                .unwrap()
+                .expect("persistent linked worktree should retain a translation plan");
+        fs::remove_file(first_plan.workspace_pointer_source.as_path()).unwrap();
+
+        let second = run_task(&contract, contract_path.as_path(), "build").unwrap();
+        assert_eq!(second.exit_code, 0, "{second:?}");
+        assert_eq!(
+            second.execution_note.as_deref(),
+            Some("persistent container recreated (execution shape changed)")
+        );
+        let log = fs::read_to_string(workspace.join("docker-log.txt")).unwrap();
+        assert_eq!(log.matches("run-persistent").count(), 2, "{log}");
+        assert_eq!(log.matches("rm").count(), 1, "{log}");
     }
 
     #[cfg(windows)]

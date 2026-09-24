@@ -43989,16 +43989,24 @@ fn prune_private_receipt_archives(
 
 #[cfg(unix)]
 fn private_archive_entry_names(directory: &File, prefix: &str) -> Result<Vec<String>, String> {
-    let duplicate = unsafe { libc::dup(directory.as_raw_fd()) };
-    if duplicate < 0 {
+    let current_directory = CString::new(".").expect("current directory is a valid C string");
+    // Reopen from the verified directory FD: dup shares its directory cursor on Linux.
+    let descriptor = unsafe {
+        libc::openat(
+            directory.as_raw_fd(),
+            current_directory.as_ptr(),
+            libc::O_RDONLY | libc::O_CLOEXEC | libc::O_DIRECTORY | libc::O_NOFOLLOW,
+        )
+    };
+    if descriptor < 0 {
         return Err(format!(
-            "failed to duplicate private receipt directory descriptor: {}",
+            "failed to reopen private receipt directory for enumeration: {}",
             io::Error::last_os_error()
         ));
     }
-    let stream = unsafe { libc::fdopendir(duplicate) };
+    let stream = unsafe { libc::fdopendir(descriptor) };
     if stream.is_null() {
-        unsafe { libc::close(duplicate) };
+        unsafe { libc::close(descriptor) };
         return Err(format!(
             "failed to enumerate private receipt directory: {}",
             io::Error::last_os_error()
@@ -65310,6 +65318,7 @@ secret_requirements:
     #[cfg(unix)]
     #[test]
     fn typed_effect_private_archives_refuse_aliases_and_publish_single_link_files() {
+        use std::os::fd::AsRawFd as _;
         use std::os::unix::fs::{MetadataExt as _, symlink};
 
         let root = tempfile::tempdir().expect("archive root");
@@ -65358,6 +65367,11 @@ secret_requirements:
             )
             .expect("private pruning fixture");
         }
+        assert_ne!(
+            unsafe { libc::lseek(directory.as_raw_fd(), 0, libc::SEEK_END) },
+            -1,
+            "test fixture should advance the original directory cursor"
+        );
         super::prune_private_receipt_archives(
             &directory,
             "repo-receipt",

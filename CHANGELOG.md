@@ -26,6 +26,15 @@
 
 ## Unreleased
 
+## 1.6.28
+
+- Support ordinary linked Git worktrees in Unix container execution by translating verified Git
+  pointer metadata through runner-owned, read-only mounts, with the common Git directory following
+  the selected workspace access posture. Ota now refuses malformed, aliased, or unsupported
+  linked-worktree metadata rather than running against host-only Git paths. The translation relies
+  on a protected per-user runner-state root and assumes no hostile concurrent process with the same
+  OS identity can replace a validated mount source before the container engine resolves it.
+
 - Keep optional nested .NET marker discovery resilient to permission-protected host subtrees.
   `ota doctor` and source-bound `ota detect` candidates now skip only descendant
   `PermissionDenied` directories during heuristic `.sln`/`.csproj` discovery, while unreadable
