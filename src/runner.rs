@@ -64471,6 +64471,7 @@ tasks:
     #[cfg(unix)]
     #[test]
     fn linked_worktree_git_mount_plan_translates_both_pointers_and_refuses_alternates() {
+        let _guard = env_mutex_lock();
         let root = TempDir::new().unwrap();
         let (workspace, common_git_dir, _) =
             linked_worktree_container_layout(root.path(), "ephemeral", "docker");
@@ -64516,6 +64517,7 @@ tasks:
     #[cfg(unix)]
     #[test]
     fn linked_worktree_git_mount_plan_rejects_mismatched_administrative_backlink() {
+        let _guard = env_mutex_lock();
         let root = TempDir::new().unwrap();
         let (workspace, common_git_dir, _) =
             linked_worktree_container_layout(root.path(), "ephemeral", "docker");
@@ -64546,6 +64548,7 @@ tasks:
     #[cfg(unix)]
     #[test]
     fn linked_worktree_git_mount_plan_refuses_malformed_regular_metadata() {
+        let _guard = env_mutex_lock();
         let root = TempDir::new().unwrap();
         let workspace = root.path().join("workspace");
         fs::create_dir_all(&workspace).unwrap();
@@ -64732,6 +64735,7 @@ tasks:
     fn linked_worktree_git_mount_plan_refuses_runner_state_file_aliases() {
         use std::os::unix::fs::symlink;
 
+        let _guard = env_mutex_lock();
         let root = TempDir::new().unwrap();
         let (workspace, _, _) =
             linked_worktree_container_layout(root.path(), "ephemeral", "docker");
@@ -64755,7 +64759,21 @@ tasks:
         ));
 
         fs::remove_file(plan.workspace_pointer_source.as_path()).unwrap();
-        fs::hard_link(&alias, plan.workspace_pointer_source.as_path()).unwrap();
+        // Hard links require source and target on the same filesystem. The
+        // adversarial alias above lives below `TempDir` while the runner-owned
+        // state can live below HOME/XDG_RUNTIME_DIR/TMPDIR, which are different
+        // devices on CI (EXDEV). Create the hard-link source as a sibling of the
+        // pointer so the link always stays on one filesystem.
+        let state_parent = plan
+            .workspace_pointer_source
+            .parent()
+            .expect("pointer source should have a state directory")
+            .to_path_buf();
+        let hardlink_alias = state_parent.join("adversarial-pointer-hardlink-src");
+        let _ = fs::remove_file(&hardlink_alias);
+        fs::write(&hardlink_alias, &expected_pointer).unwrap();
+        fs::set_permissions(&hardlink_alias, fs::Permissions::from_mode(0o400)).unwrap();
+        fs::hard_link(&hardlink_alias, plan.workspace_pointer_source.as_path()).unwrap();
         let hard_link_error =
             super::container_linked_worktree_git_mount_plan("build", workspace.as_path(), false)
                 .expect_err("runner-owned pointer hard links must refuse");
@@ -64771,6 +64789,7 @@ tasks:
     fn linked_worktree_git_mount_plan_refuses_runner_state_directory_aliases() {
         use std::os::unix::fs::symlink;
 
+        let _guard = env_mutex_lock();
         let root = TempDir::new().unwrap();
         let (workspace, _, _) =
             linked_worktree_container_layout(root.path(), "ephemeral", "docker");
@@ -64804,6 +64823,7 @@ tasks:
     #[cfg(unix)]
     #[test]
     fn linked_worktree_git_mount_source_replacement_changes_persistent_shape() {
+        let _guard = env_mutex_lock();
         let root = TempDir::new().unwrap();
         let (workspace, _, _) =
             linked_worktree_container_layout(root.path(), "persistent", "podman");
@@ -64849,6 +64869,7 @@ tasks:
     #[cfg(unix)]
     #[test]
     fn oci_local_linked_worktree_git_mount_verifier_refuses_drift() {
+        let _guard = env_mutex_lock();
         let root = TempDir::new().unwrap();
         let (workspace, _, _) =
             linked_worktree_container_layout(root.path(), "ephemeral", "docker");
