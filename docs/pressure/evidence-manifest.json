@@ -166,6 +166,54 @@
       "not_proved": ["MCP runtime loading", "credentialed CAEP", "GitHub merge", "communications", "Liminal lifecycle", "Pythia ALLOW as execution authority"],
       "engineering_note": {"status": "draft", "url": null},
       "core_note": "docs/pressure/pythialabs-discovery.md"
+    },
+    {
+      "id": "dbmask-disposable-postgresql-review",
+      "status": "pre_release_design_partner",
+      "repository": {"name": "dbmask", "type": "Python data-masking CLI", "url": "https://github.com/sealandseacat/dbmask", "revision": "1f29ce07fb751f92eaec88a45ffcf949de99a6e0"},
+      "ota": {"version": "v1.6.28", "core_revision": "aae1c6940e269f8d3020d28e3c46b1682cbaf12b"},
+      "evidence": [{"platforms": ["linux", "macos", "windows"], "run_url": "https://github.com/bobaikato/dbmask/actions/runs/36238957669"}],
+      "exercised_surfaces": ["contract-to-CI drift", "SQLite contributor suite", "disposable synthetic PostgreSQL 16 lane", "strict positive and controlled negative validation"],
+      "proven_facts": ["The selected SQLite contributor lanes and the non-blocking synthetic PostgreSQL lane passed at the fork revision.", "The PostgreSQL lane exercised seed, scan, dry run, apply, and strict validation on disposable data; its controlled sensitive-value restoration was rejected by strict validation."],
+      "not_proved": ["Production-data safety or arbitrary database state", "MySQL or release behavior", "the separate date-classification edge case", "repository-wide governance, maintainer merge, or adoption"],
+      "engineering_note": {"status": "draft", "url": null},
+      "core_note": "docs/pressure/design-partner-discovery-2026-09.md"
+    },
+    {
+      "id": "sem-local-index-revision-review",
+      "status": "pre_release_design_partner",
+      "repository": {"name": "sem", "type": "Rust code-intelligence CLI", "url": "https://github.com/Ataraxy-Labs/sem", "revision": "87f8d3c0268e35b966a8a10ac31edfc0688f1e62"},
+      "ota": {"version": "v1.6.28", "core_revision": "aae1c6940e269f8d3020d28e3c46b1682cbaf12b"},
+      "evidence": [{"platforms": ["linux"], "run_url": "https://github.com/bobaikato/sem/actions/runs/36239195385"}],
+      "exercised_surfaces": ["contract-to-CI drift", "Ubuntu native local index", "Linux container local index", "disposable two-revision graph and query fixture"],
+      "proven_facts": ["The native and container lanes passed their separately selected local-index freshness tasks at the fork revision.", "The selected fixture checked graph and query output after a later repository revision rather than accepting its warmed earlier index."],
+      "not_proved": ["Aggregate task selection in container mode", "cloud-index equivalence or universal parser correctness", "every MCP consumer or repository-wide governance", "maintainer merge or adoption"],
+      "engineering_note": {"status": "draft", "url": null},
+      "core_note": "docs/pressure/design-partner-discovery-2026-09.md"
+    },
+    {
+      "id": "atr-pint-format-execution-review",
+      "status": "pre_release_design_partner",
+      "repository": {"name": "Agent Threat Rules", "type": "TypeScript agent-threat rule corpus", "url": "https://github.com/Agent-Threat-Rule/agent-threat-rules", "revision": "3cf3cc6424bfa2482ac65027e85bcb7441f9d3e6"},
+      "ota": {"version": "v1.6.28", "core_revision": "aae1c6940e269f8d3020d28e3c46b1682cbaf12b"},
+      "evidence": [{"platforms": ["linux"], "run_url": "https://github.com/bobaikato/agent-threat-rules/actions/runs/36245015567"}],
+      "exercised_surfaces": ["contract-to-CI drift", "pinned PINT-format evaluation task", "repository-owned fresh-measurement verifier", "generated-data artifact retention"],
+      "proven_facts": ["The non-blocking execution lane passed at the fork revision with a fresh evaluation and repository-owned evidence checks.", "Generated measurement files were retained as workflow artifacts rather than committed under data/."],
+      "not_proved": ["Lakera's official PINT benchmark or certification", "all filesystem mutations or arbitrary runner integrity", "repository-wide evaluation correctness", "maintainer merge or adoption"],
+      "engineering_note": {"status": "draft", "url": null},
+      "core_note": "docs/pressure/design-partner-discovery-2026-09.md"
+    },
+    {
+      "id": "anodizer-disposable-determinism-review",
+      "status": "pre_release_design_partner",
+      "repository": {"name": "Anodizer", "type": "Rust release CLI", "url": "https://github.com/tj-smith47/anodizer", "revision": "3057d3e218d2ef89a6d8d2ea77812bf4b399c62b"},
+      "ota": {"version": "v1.6.28", "core_revision": "aae1c6940e269f8d3020d28e3c46b1682cbaf12b"},
+      "evidence": [{"platforms": ["linux"], "run_url": "https://github.com/bobaikato/anodizer/actions/runs/36245072733"}],
+      "exercised_surfaces": ["contract-to-CI drift", "disposable Rust fixture configuration preflight", "two-build byte comparison", "controlled archive-byte drift refusal"],
+      "proven_facts": ["The non-blocking Linux fixture passed its preflight, matching-build, and injected-drift checks at the fork revision.", "The controlled archive change was detected within the selected disposable fixture."],
+      "not_proved": ["Upstream release determinism matrix or package publishing", "cross-platform behavior, signing, or production artifact identity", "agent-safe execution", "maintainer merge or adoption"],
+      "engineering_note": {"status": "draft", "url": null},
+      "core_note": "docs/pressure/design-partner-discovery-2026-09.md"
     }
   ]
 }

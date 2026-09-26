@@ -33,7 +33,7 @@ durable agent workflow belongs in the canonical Ota skill.
 
 ## Active Work
 
-- branch: `bobai/v12.1-public-evidence-root`
+- branch: `1.6.29-implementation`
 - released baseline: `v1.6.28`
 - development package identity: `v1.6.28`; this branch contains unreleased post-release source
   changes and is not a new release or support claim.

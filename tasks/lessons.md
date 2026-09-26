@@ -472,3 +472,13 @@
 - Rule: Do not recommend an opportunity by benefits alone. If participation can narrow Ota's future
   options or move founder-controlled assets to another institution, call that out as the decisive
   gate and recommend against applying unless Bobai explicitly chooses that trade-off.
+
+## 2026-09-26
+
+- Pattern: Telling Bobai not to delay recording an Ota gap handed product-discovery ownership
+  back to him, and an older sem pressure note was initially mistaken for a current defect.
+- Correction: Record exact-revision pressure evidence and gap hypotheses in Ota-owned surfaces
+  during the work. Reproduce older findings against the current release path before calling them
+  active; a split partner workflow alone does not prove the platform still requires that split.
+- Rule: Own Ota's product-discovery bookkeeping. Separate current confirmed defects, historical
+  findings, and widening questions, each with an exact return trigger and `not_proved` boundary.

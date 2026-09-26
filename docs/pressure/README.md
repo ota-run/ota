@@ -10,7 +10,9 @@ endorsed, is governed repository-wide, or has proved behavior outside its declar
 ## Statuses
 
 - `immutable_pressure`: a retained hosted matrix binds the listed revision and controls.
-- `pre_release_design_partner`: bounded fork evidence before release and maintainer review.
+- `pre_release_design_partner`: bounded fork evidence awaiting maintainer review. The
+  historical status name is retained when a case is rerun against a released Ota pin;
+  it does not assert that the run itself predates that release.
 
 The Site renders a generated discovery projection of this manifest. The Core manifest remains the
 technical source of truth; the projection may summarize but must not add evidence claims.
