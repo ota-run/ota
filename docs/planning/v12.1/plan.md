@@ -1180,6 +1180,19 @@ job-produced bytes and their binding after capture, not independent semantic val
 or any provider, materialization, injection, selected-work, positive-evidence, Step 8, or V12.2
 claim.
 
+The later public-root path correction required its own paired-revision proof. Core
+[`36271452585`](https://github.com/ota-run/ota/actions/runs/36271452585), attempt `1`, at
+`f0668e9e6c3eae89176ba89695186823a22e2a9f` passed on the protected Linux/X64 runner with
+Launcher `aa55319fa88f14e96b47e3fa9d08a0940fae5456` and Protocol
+`e819f95890ea23ae2f336a59fb3ff62cfa858d8b`. The root-only retained success set passed its
+five checksums, and the new root-owned public record at
+`/var/lib/ota/authority-launcher-public/hosted-evidence-captures/36271452585-1.json` has identity
+`sha256:d4a06e4a9583b090ec18ef52e9b87eb2a79290ada5b71a6c2c1db8a09b925f89` and
+root-computed bundle digest `sha256:2cb4b4d2827a4ee1780b93ff4ffdc85867a8c695806de7fecd4e83462ef10a01`.
+Independent review found no P1/P2/P3 issue. This closes only provider-free custody for that exact
+pairing and attempt, not independent validation of job assertions or any provider or selected-work
+claim.
+
 ### GitHub OIDC Network-Call Checkpoint
 
 The separate proposed provider-contact and GitHub OIDC network-call amendment may contact only

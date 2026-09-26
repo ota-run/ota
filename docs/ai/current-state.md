@@ -1989,9 +1989,42 @@ queued and the runner remained stopped. Its pressure fixture builder admitted on
 produce a valid authority installation. The Toolkit probe passed, but this run proves no
 protected service path or fresh custody. A narrow fixture/runbook repair admits canonical
 `1.6.<patch>-implementation` refs from patch 28 onward and retains exact request/ref/SHA
-matching. The next gate is a new exact Core revision, a fresh queued run and request, and a fresh
-protected Linux/X64 installation; the cancelled attempt's partial authority state must not be
-reused. The runner remains stopped. No provider or selected-work authority is activated.
+matching. That cancelled attempt's partial authority state was not reused.
+
+The fresh gate ran as Core
+[`36271452585`](https://github.com/ota-run/ota/actions/runs/36271452585), attempt `1`, at
+`f0668e9e6c3eae89176ba89695186823a22e2a9f`; the protected job `108486101249` and Toolkit
+probe both passed. Before dispatch, the cancelled attempt's partial managed authority state was
+moved into root-only `/root/ota-cancelled-36268385879`, with the earlier evidence backup,
+runner registration, runner service/drop-in, and source checkouts preserved. The fresh root-owned
+mode-`0400` request bound run/attempt, repository and actor IDs, workflow ref/SHA, and Runner.Listener
+`2.337.0`. Provisioning installed exact Core `f0668e9e`, Launcher `aa55319f`, and Protocol
+`e819f958` while the runner was stopped. The org runner group's stale Core 1.6.28 workflow ref
+initially prevented job assignment; it was replaced by the exact 1.6.29 ref for this attempt and
+removed after completion, leaving its three existing Launcher entries.
+
+The one-off reset script is retained root-only in that archive (SHA-256
+`7c364e8710f3e225c5bdf3951884a152add0e9ff7d742858ca6c567df7a74ea5`). Its final
+`reset-failed` call reported the inactive runner unit as not loaded after `daemon-reload`; the
+script was not rerun. Subsequent inspection confirmed the runner's exact unit and hardening
+drop-in loaded, disabled, inactive/dead, and MainPID `0` before provisioning.
+
+The root capture service published one root-owned mode-`0644`, single-link `success_set` record at
+`/var/lib/ota/authority-launcher-public/hosted-evidence-captures/36271452585-1.json`, identity
+`sha256:d4a06e4a9583b090ec18ef52e9b87eb2a79290ada5b71a6c2c1db8a09b925f89`, binding
+request identity `sha256:84a30401cf2d8910052cc4a7d9077111f1d4c91d11fab9afef96e7a5199e4a5b`
+and root-computed bundle digest `sha256:2cb4b4d2827a4ee1780b93ff4ffdc85867a8c695806de7fecd4e83462ef10a01`.
+The five-file root-only evidence set passed its retained `SHA256SUMS`. The job verified exactly one
+snapshot-V2 and binding-V4 reconciliation, the expected provider-free refusal, and terminal
+child/scope/cgroup/active-slot cleanup. No selected-work marker exists. The runner was stopped
+after the job and remains disabled with no Listener or Worker; its intentional SIGTERM leaves the
+unit `failed`, to be addressed only in a separately reviewed fresh-run preparation. This is
+bounded job-produced evidence under root custody, not independent semantic validation by root.
+Provider contact remains `not_instrumented`; no real OIDC request, Google STS/WIF, Secret Manager,
+materialization, injection, selected-work execution, positive provider evidence, Step 8, or V12.2
+is proved or activated. MUSE independently rederived the public record identity and root bundle
+digest from the retained bytes, matched the Toolkit artifact, checked refusal, cleanup, and runner
+shutdown, and found no P1/P2/P3 issue with this bounded gate.
 
 Do not touch the unrelated untracked `docs/pressure/agent-authority-signals.md` unless the user
 explicitly asks.
