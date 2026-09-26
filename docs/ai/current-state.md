@@ -33,10 +33,10 @@ durable agent workflow belongs in the canonical Ota skill.
 
 ## Active Work
 
-- branch: `1.6.28-implementation`
-- released baseline: `v1.6.27`
-- development package identity: `v1.6.28`; this is an unreleased implementation build, not a
-  release or support claim.
+- branch: `bobai/v12.1-public-evidence-root`
+- released baseline: `v1.6.28`
+- development package identity: `v1.6.28`; this branch contains unreleased post-release source
+  changes and is not a new release or support claim.
 - active version: V12.1 secret-delivery governance. Activated on 2026-09-02 after the released V12
   closure and feasibility review of PythiaLabs' credentialed CAEP boundary. The named first adapter
   is `google_secret_manager_github_oidc_process_environment_v1`, initially limited to a
@@ -1976,6 +1976,10 @@ for this paired revision. No provider, OIDC, materialization, injection, or sele
 authority is added. Core docs and tests are affected; Examples, Skills, Site, Learn,
 FAQ, and Glossary are unchanged because this internal path correction introduces no
 public contract, command, or operator vocabulary.
+
+Launcher `aa55319fa88f14e96b47e3fa9d08a0940fae5456` passed ordinary CI, root-boundary proof,
+and both GitHub-hosted V3 pressure jobs in run `36203430810`. Those jobs do not replace the
+fresh protected Linux/X64 hosted custody proof for the paired Core and Launcher revisions.
 
 Do not touch the unrelated untracked `docs/pressure/agent-authority-signals.md` unless the user
 explicitly asks.
