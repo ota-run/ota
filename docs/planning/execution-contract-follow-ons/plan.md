@@ -24,9 +24,10 @@
 
 # Cross-Cutting Plan: Execution Contract Follow-Ons
 
-Status: mixed. Aggregate mode eligibility is active as a bounded V12.1 correctness dependency;
-the other registered follow-ons remain planned and inactive. This register does not otherwise
-change released behavior, delay the Eris adoption PR, or widen V12.1 secret-delivery scope.
+Status: mixed. Aggregate selected-graph correctness was completed and independently reviewed as a
+bounded V12.1 correctness dependency; the other registered follow-ons remain planned and inactive.
+This register does not otherwise change released behavior, delay the Eris adoption PR, or widen
+V12.1 secret-delivery scope.
 
 ## Purpose
 
@@ -51,9 +52,9 @@ Each sub-slice is independently activatable and closable. An active version plan
 sub-slice before implementation begins. Activating one does not activate the others.
 
 V12.1 remains the only active product version. A follow-on does not enter V12.1 merely because
-pressure exposed it. Aggregate mode eligibility is the sole exception recorded here because the
-Discord failure proved that V12.1 admission already consumes contradictory selected-graph truth;
-the repair is activated at a between-batch boundary without widening secret-delivery scope. Every
+pressure exposed it. Aggregate mode eligibility was the sole exception recorded here because the
+Discord failure proved that V12.1 admission consumed contradictory selected-graph truth;
+the repair was completed at a between-batch boundary without widening secret-delivery scope. Every
 other follow-on may be selected only at a later between-batch boundary or by a later version after
 the current V12.1 step is committed, reconciled, and pressure-ready.
 
@@ -106,10 +107,10 @@ retains current `cargo fetch` behavior. When true, Core must:
 
 ## B. Aggregate Mode Eligibility
 
-Status: active. Discord contract pressure proved that the current all-branch closure can reject a
-valid container aggregate because a native-only mode branch declares an unselected dependency.
-This is a correctness defect in the selected execution graph already consumed by V12.1 admission,
-not authorization for an independent feature surface.
+Status: completed and independently reviewed. Discord contract pressure proved that the former
+all-branch closure could reject a valid container aggregate because a native-only mode branch
+declared an unselected dependency. The selected-graph repair and its bounded pressure evidence are
+recorded in `docs/ai/current-state.md`; this is not an active future batch.
 
 ### Problem
 
@@ -316,8 +317,8 @@ listing is insufficient.
 This register does not impose one six-item release train. When future demand selects work, prefer:
 
 1. lock-strict Cargo hydration as the smallest contract-truth improvement;
-2. aggregate mode eligibility and mixed-mode preview selection as one reviewed execution-selection
-   batch;
+2. mixed-mode preview selection as a separate reviewed execution-selection batch, without
+   reopening completed aggregate selected-graph correctness;
 3. Doctor root-cause reconciliation as a presentation-plus-machine-grouping batch;
 4. opaque shell inventory only after a second materially different pressure case; and
 5. cleanup evidence only through an activated registered container adapter under conformance.
@@ -327,10 +328,10 @@ tests, propagation assessment, pressure evidence, and closure review.
 
 ## Current Product Boundary
 
-Until a sub-slice activates:
+Aggregate mode admission now follows the completed selected-graph repair. Until another sub-slice
+activates:
 
 - Cargo lock enforcement remains command-authored where required;
-- aggregates are callable only in modes supported by their complete selected closure;
 - mixed-mode callers should select the intended mode explicitly;
 - repeated Doctor advisories remain truthful even when verbose;
 - source-owned shell internals remain opaque; and
@@ -342,7 +343,7 @@ claims by the Site, Skills, Examples, Enterprise, or an agent.
 
 ## Propagation Posture
 
-This planning-only register introduces no shipped command, schema, vocabulary, or operator flow.
-Core implementation docs, Site, Skills, Examples, Learn, FAQ, and Glossary therefore remain
-unchanged until one sub-slice activates. Every activation must reassess those surfaces rather than
-using this inactive plan as public product documentation.
+The completed aggregate repair has its own reviewed Core, Site, Skills, and Examples propagation
+record in `docs/ai/current-state.md`; this register adds no new shipped command, schema,
+vocabulary, or operator flow. Each remaining activation must reassess Core, Site, Skills, Examples,
+Learn, FAQ, and Glossary rather than using this plan as public product documentation.

@@ -35,13 +35,17 @@ stopped. Create one closed request containing the exact queued run context:
   "event_name": "workflow_dispatch",
   "workflow_run_id": "<queued-run-id>",
   "workflow_run_attempt": "1",
-  "workflow_reference": "ota-run/ota/.github/workflows/secret-delivery-oidc-endpoint-evidence.yml@refs/heads/1.6.28-implementation",
+  "workflow_reference": "ota-run/ota/.github/workflows/secret-delivery-oidc-endpoint-evidence.yml@<queued-git-ref>",
   "runner_version": "<installed-runner-semver>",
   "workflow_sha": "<exact-core-commit>",
-  "git_ref": "refs/heads/1.6.28-implementation",
+  "git_ref": "<queued-git-ref>",
   "commit_sha": "<exact-core-commit>"
 }
 ```
+
+Replace `<queued-git-ref>` in both fields with the exact ref on the queued run (for example,
+`refs/heads/1.6.29-implementation`). Record a fresh request for every new run or attempt; do not
+reuse a prior request after a rerun.
 
 Install the tracked contract at `/srv/ota-v3-pressure/ota.yaml` and build both pressure artifacts
 from the exact Core revision with the non-default `secret-delivery-pressure` feature:

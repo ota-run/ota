@@ -24,154 +24,97 @@
 
 # Roadmap
 
-## Current state
+## Source Of Truth
 
-V1 is complete and frozen.
-V2 is complete and archived.
-V2.1 is complete and archived.
-V3 is complete.
-V4 is complete.
-V5 is complete.
-V6 is complete.
-V7 is complete and archived.
-V7.1 is complete and archived.
-V7.2 is complete and archived.
-V8 is complete and archived.
-V9 is complete and archived.
-V9.1 is complete and archived.
-V10 is complete and archived.
-V11 is planned.
-V11.1 is active.
-V11.2 is planned.
-V11.3 is planned.
-V11.4 is planned.
-V11.5 is planned.
-V11.6 is planned.
-V11.7 is planned.
-V11.8 is planned.
-V11.9 is active.
-V11.10 is planned.
-V11.11 is planned.
-V11.12 is planned.
+[`docs/ai/current-state.md`](docs/ai/current-state.md) is the live handoff for the active branch,
+verified proof, and next gate. The active version's detailed scope and activation records live in
+[`docs/planning/v12.1/plan.md`](docs/planning/v12.1/plan.md). This roadmap ranks work; it does not
+activate a planned slice or turn a successful narrow pressure run into a support claim.
 
-## V1 archive
+## Current State
 
-- [V1 phases](docs/planning/v1/phases.md)
-- [V1 next plan](docs/planning/v1/next-plan.md)
-- [V1 release gate](docs/planning/v1/release-gate.md)
-- [V2 plan](docs/planning/v2/plan.md)
+- `v1.6.28` is the released baseline. Earlier completed slices retain their exact closure evidence
+  in their version plans and the live handoff.
+- V12.1 Step 7 is the sole active implementation slice. Its earlier provider-free hosted-evidence
+  custody gate is closed only for the recorded Core, Launcher, Protocol, and runner revisions.
+- The later public-evidence-root correction needs a fresh protected Linux/X64 run for its paired
+  Core and Launcher revisions. GitHub-hosted Launcher jobs do not replace that proof.
+- Real GitHub OIDC contact, Google STS/WIF, Secret Manager access, materialization, injection,
+  selected-work execution, and positive provider evidence remain unproved. V12.1 Steps 8-10 and
+  V12.2 or later versions remain inactive.
+- `1.6.29-implementation` is a working branch and candidate patch-release train, not an activation
+  record or a promise that V12.1 will be complete before the patch release.
 
-## Current focus
+## Current Focus
 
-- keep the V1 release gate green
-- keep public docs aligned with shipped behavior
-- keep `ota agents` visible as a first-class derived adoption surface
-- keep the premium UX review loop green when text/help surfaces change
-- hold enterprise-facing scope behind the adoption readiness gate
-- keep the V11.1 execution-governance visibility and proof slice narrow and reviewable
-- keep the canonical roadmap aligned with the spec repo versioning
+1. Reconcile the exact Core, Launcher, and Protocol revisions and complete the fresh protected
+   Linux/X64 public-root proof. Preserve the prior custody record as historical evidence; do not
+   treat it as proof for a changed installation path.
+2. Continue the separately activated Step 7 provider-contact sequence only through its reviewed
+   proof gates. A provider-free refusal must not be described as provider delivery.
+3. Keep design-partner pressure and narrow product fixes moving without promoting draft PRs or
+   green fork matrices into upstream adoption or repository-wide governance.
+4. Decide the final 1.6.29 contents from completed, independently reviewed behavior and explicit
+   proof limits. Do not hold a bounded patch release hostage to unfinished V12.1 Step 8-10 work.
 
-## V2 archive
+## Active Version
 
-- [V2 plan](docs/planning/v2/plan.md)
-- [V2.1 plan](docs/planning/v2.1/plan.md)
+- [V12.1 secret-delivery governance](docs/planning/v12.1/plan.md): Step 7 only.
 
-## V6 archive
+## Planned, Inactive Work
 
-- [V6 plan](docs/planning/v6/plan.md)
+- [V12.2 contract-authored crossing requirements](docs/planning/v12.2/plan.md) and later versions
+  retain their own activation gates; V12.1 progress does not activate them.
+- [Execution-contract follow-ons](docs/planning/execution-contract-follow-ons/plan.md) retain the
+  lock-strict Cargo, mixed-mode selection, Doctor grouping, opaque-shell, and container-cleanup
+  questions. Aggregate selected-graph correctness has already been handled inside V12.1; do not
+  reopen it merely because an older pressure workflow still splits its tasks.
+- [Design-partner discovery](docs/pressure/design-partner-discovery-2026-09.md) separates current
+  evidence from hypotheses such as run-to-measurement binding and tool-version probing. Reproduce
+  each candidate before assigning release scope.
 
-## V7 archive
+Each new sub-slice needs one owner, exact pressure target, compatibility decision, tests,
+connected-surface assessment, and independent review. A follow-on may be selected only at a
+reviewed between-batch boundary of the active version; this roadmap does not activate a second
+version. Prefer at most one or two high-value, reproduced fixes in 1.6.29 and otherwise defer them.
 
-- [V7 plan](docs/planning/v7/plan.md)
-- [V7.1 plan](docs/planning/v7.1/plan.md)
-- [V7.2 plan](docs/planning/v7.2/plan.md)
-- [V8 plan](docs/planning/v8/plan.md)
-- [V9 plan](docs/planning/v9/plan.md)
+## 1.6.29 Release Decision
 
-## Active version
+The patch release contains only changes that pass their own implementation, compatibility,
+pressure, and first-party propagation gates. Its candidate order is:
 
-- [V11.1 plan](docs/planning/v11.1/plan.md)
+1. Finish and independently review the paired Core/Launcher public-root correction, including
+   fresh protected Linux/X64 proof against exact pinned revisions.
+2. Assess separately reviewed Step 7 provider-contact work against its own protected proof bar.
+   If incomplete, retain it as gated development work, not released provider capability.
+3. Select no more than two independently activated, reproducible adoption fixes from the
+   follow-on register. Lock-strict Cargo hydration and mixed-mode preview clarity are candidates,
+   not commitments; opaque-shell substep assurance and container cleanup retain their stronger
+   prerequisite gates.
+4. Freeze exact Core, Launcher, Protocol, Action, Setup, Skills, Examples, and Site revisions;
+   reconcile every affected consumer and the changelog; run the selected native, container,
+   cross-platform, protected, and release gates; then cut an immutable tag only for what passed.
 
-## Next planned version
+Before calling the release ready, verify that no post-tag merge is described as part of that tag,
+no source SHA is mistaken for installed authority, and public copy distinguishes a narrow
+provider-free refusal from provider contact or delivery. The [live handoff](docs/ai/current-state.md)
+records the current gate and exact proof links; this roadmap does not replace it.
 
-- [V11 plan](docs/planning/v11/plan.md)
-- [V11.2 plan](docs/planning/v11.2/plan.md)
-- [V11.3 plan](docs/planning/v11.3/plan.md)
-- [V11.4 plan](docs/planning/v11.4/plan.md)
-- [V11.5 plan](docs/planning/v11.5/plan.md)
-- [V11.6 plan](docs/planning/v11.6/plan.md)
-- [V11.7 plan](docs/planning/v11.7/plan.md)
-- [V11.8 plan](docs/planning/v11.8/plan.md)
-- [V11.9 plan](docs/planning/v11.9/plan.md)
-- [V11.10 plan](docs/planning/v11.10/plan.md)
-- [V11.11 plan](docs/planning/v11.11/plan.md)
-- [V11.12 plan](docs/planning/v11.12/plan.md)
+## Product Direction
 
-## Implemented foundation
+Keep the execution contract useful before full adoption: Doctor first, contract second.
+Preserve one selected execution graph for humans, CI, and agents; retain explicit proof limits
+and the separation between repository truth, protected authority, and observed outcomes.
+Future provider, adapter, enterprise, and cross-platform claims activate only through their
+own plans and pressure gates.
 
-- repo contract validation and execution
-- repo diagnosis and onboarding
-- conservative detection and init
-- workspace validation, diagnosis, bootstrap, and git-based acquisition
+## Historical Plans
 
-## Near-term next steps
-
-- preserve the shipped V10 semantic snapshot and correlation foundation
-- preserve the shipped repo/workspace trust baseline
-- keep docs and active planning aligned with the canonical spec repo
-- keep extension and editor surfaces contract-bound
-- avoid widening into generic plugin-runtime scope
-- stage V11 completion truth, reviewer evidence, and local/CI/agent convergence on top of the
-  shipped semantic snapshot foundation
-- make V11.1 execution governance visibility and proof the active `1.6.23` slice
-- make V11.2 source convergence and detection governance the next disciplined widening slice after
-  V11.1
-- use V11.2 as the repo-truth convergence foundation before later execution-surface widening such
-  as container-backed hydration and deterministic bootstrap materialization
-- make V11.3 agent-scoped execution enforcement the next runner slice after V11.2 so safe-task
-  and workflow-closure truth become real runtime boundaries instead of review-only governance
-- make V11.4 the machine-readable governance output slice after V11.3 so CI, bots, and future
-  control points can consume one canonical governance verdict instead of scraping runner output
-- make V11.5 the CI and merge-gate projection slice after V11.4 so contract-owned completion truth
-  becomes enforceable at mandatory merge chokepoints
-- make V11.6 the harness and sandbox capability integration slice after V11.5 so external runners
-  can enforce Ota’s callable boundary without re-deriving repo semantics
-- make V11.7 the audited execution boundary-crossing slice after V11.6 so allowed-but-heavier
-  execution becomes explicit OSS evidence before enterprise approvals and waivers build on top
-- make V11.8 the sandbox policy compilation slice after V11.7 so contract-owned writable
-  boundaries and egress posture can compile into real runtime enforcement targets instead of
-  stopping at harness export
-- make V11.9 the governance truth reconciliation slice after V11.8 so emitted machine-readable
-  governance stays faithful to the decision path that produced it
-- make V11.10 the replay-verified baseline trust slice after V11.9 so "last known good" becomes
-  a stronger claim than one historical green witness
-- make V11.11 the machine-readable proof-boundary slice after V11.10 so honest narrow proof can
-  publish what it covered and what it explicitly did not prove
-- make V11.12 the typed hydration input provenance slice after V11.11 so structured dependency
-  hydration can name source/feed posture when that boundary materially changes trust
-
-## Archived V2 shape
-
-Shipped V2 work so far is still intentionally narrow:
-
-- better real-repo detect coverage for common Node and Python repo shapes
-- conservative existing-contract comparison and additive merge for `ota detect`
-- stronger real-fixture coverage for mixed, legacy, and conflicting repo shapes
-- agent guidance surfaced on existing machine-readable and human-readable command paths
-
-## Archived V2.1 shape
-
-The repo-first bridge work beyond that foundation focused on:
-
-- narrow interoperability framing without broad exports
-- stronger machine-facing guidance and JSON clarity
-- tighter workspace/team leverage boundaries without a second bootstrap engine
-
-## Product direction
-
-V7 themes build on the shipped repo/workspace foundation with:
-
-- editor/IDE integration contract stabilization
-- remote runner metadata standard finalization
-- hosted validation workflow shape
-- stronger machine-facing operational summaries
+Completed foundations and exact closure records remain in the [V1 phases](docs/planning/v1/phases.md),
+[V2](docs/planning/v2/plan.md), [V2.1](docs/planning/v2.1/plan.md),
+[V6](docs/planning/v6/plan.md), [V7](docs/planning/v7/plan.md),
+[V7.1](docs/planning/v7.1/plan.md), [V7.2](docs/planning/v7.2/plan.md),
+[V8](docs/planning/v8/plan.md), [V9](docs/planning/v9/plan.md),
+[V11](docs/planning/v11/plan.md), and [V12](docs/planning/v12/plan.md) plans.
+The [V1 release gate](docs/planning/v1/release-gate.md) is historical, not a substitute for the
+current release contract and first-party matrix.
