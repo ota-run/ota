@@ -51,10 +51,10 @@ const EXPECTED_CAPABILITY_CLASS: &str = "systemd_protected_launcher_v4";
 #[cfg(target_os = "linux")]
 const LAUNCHER_SOCKET: &str = "/run/ota/authority-launcher.sock";
 const VERIFIER_PATH: &str =
-    "/usr/share/ota/authority-launcher/capability-projection-verifier-v1.json";
+    "/var/lib/ota/authority-launcher-public/capability-projection-verifier-v1.json";
 #[cfg(target_os = "linux")]
 const INSTALLATION_EVIDENCE_PATH: &str =
-    "/usr/share/ota/authority-launcher/installation-evidence.json";
+    "/var/lib/ota/authority-launcher-public/installation-evidence.json";
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub(crate) enum ProtectedCapabilityObservationError {
@@ -666,6 +666,21 @@ mod tests {
     const WORKFLOW: &str = "ota-run/ota/.github/workflows/secret-delivery-oidc-endpoint-evidence.yml@refs/heads/1.6.28-implementation";
     const LAUNCHER_REQUEST_IDENTITY: &str =
         "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn protected_public_evidence_paths_use_the_launcher_public_sibling() {
+        assert_eq!(
+            super::VERIFIER_PATH,
+            "/var/lib/ota/authority-launcher-public/capability-projection-verifier-v1.json"
+        );
+        assert_eq!(
+            super::INSTALLATION_EVIDENCE_PATH,
+            "/var/lib/ota/authority-launcher-public/installation-evidence.json"
+        );
+        assert!(!super::VERIFIER_PATH.starts_with("/var/lib/ota/authority-launcher/"));
+        assert!(!super::INSTALLATION_EVIDENCE_PATH.starts_with("/var/lib/ota/authority-launcher/"));
+    }
 
     fn verifier(signing_key: &SigningKey) -> ProtectedLauncherCapabilityProjectionVerifierV1 {
         let public_key = URL_SAFE_NO_PAD.encode(signing_key.verifying_key().to_bytes());

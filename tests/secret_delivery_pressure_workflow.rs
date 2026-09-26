@@ -71,9 +71,20 @@ fn protected_service_path_remains_provider_free_and_task_refusing() {
     assert!(WORKFLOW.contains("PRESSURE_REPOSITORY: /srv/ota-v3-pressure"));
     assert!(
         WORKFLOW.contains(
-            "EXPECTED_LAUNCHER_SOURCE_REVISION: eee7dc636b0cc3a89d33ce6b1b82d5dfa4c56032"
+            "EXPECTED_LAUNCHER_SOURCE_REVISION: aa55319fa88f14e96b47e3fa9d08a0940fae5456"
         )
     );
+    for path in [
+        "/var/lib/ota/authority-launcher-public/installation-evidence.json",
+        "/var/lib/ota/authority-launcher-public/secret-delivery-pressure-installation.json",
+        "/var/lib/ota/authority-launcher-public/hosted-evidence-captures",
+    ] {
+        assert!(
+            WORKFLOW.contains(path),
+            "missing protected public path: {path}"
+        );
+    }
+    assert!(!WORKFLOW.contains("/usr/share/ota/authority-launcher"));
     assert!(
         WORKFLOW.contains(
             "EXPECTED_PROTOCOL_SOURCE_REVISION: e819f95890ea23ae2f336a59fb3ff62cfa858d8b"

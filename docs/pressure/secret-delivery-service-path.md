@@ -69,7 +69,7 @@ exact public run context required by the selected Ota child. The historical `ota
 directory name does not identify the transaction version.
 
 Provisioning also writes a root-owned mode `0644` public record at
-`/usr/share/ota/authority-launcher/secret-delivery-pressure-installation.json`. It binds the exact
+`/var/lib/ota/authority-launcher-public/secret-delivery-pressure-installation.json`. It binds the exact
 builder artifact, canonical public request, Core revision, bounded provider-free installation
 posture, and four selected-process environment values. It contains no private authority payload or
 store identity, provider locator, protected capability identity, signing key, bearer, or secret

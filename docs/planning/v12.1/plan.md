@@ -594,7 +594,7 @@ nor evidence of provider contact, delivery, execution approval, or cleanup beyon
 launcher result.
 
 Core obtains the projection verifier only from the administrator-installed fixed path
-`/usr/share/ota/authority-launcher/capability-projection-verifier-v1.json`. This closed, versioned,
+`/var/lib/ota/authority-launcher-public/capability-projection-verifier-v1.json`. This closed, versioned,
 root-owned regular record has a protected ownership chain, no symlink or writable ancestor, and
 contains exactly `schema_version: 1`; record kind `protected_launcher_capability_projection_verifier`;
 its domain-separated record identity; one approved Ed25519 public key; that key's identity; key usage

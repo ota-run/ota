@@ -26,6 +26,13 @@
 
 ## Unreleased
 
+- Move Core's protected-launcher public verifier and installation-evidence readers, hosted custody
+  workflow records, and pressure runbook to Launcher `aa55319fa88f14e96b47e3fa9d08a0940fae5456`'s
+  root-created `/var/lib/ota/authority-launcher-public` sibling. This requires a fresh provision
+  and regenerated public installation identities; Core neither reads nor falls back to the former
+  `/usr/share` location. It does not add provider, OIDC, materialization, injection, or selected-work
+  authority.
+
 ## 1.6.28
 
 - Support ordinary linked Git worktrees in Unix container execution by translating verified Git

@@ -1963,6 +1963,20 @@ base. It does not prove a real GitHub OIDC request, provider contact, Google STS
 Manager activity, materialization, injection, selected-work execution, positive provider evidence,
 Step 8, or V12.2. This custody completion alone authorizes no additional provider-contact work.
 
+The later Launcher V3 release-companion run `36194756777` stopped at public-root preflight:
+the GitHub Linux host's `/usr/share` was root-owned but mode `0777`, so the protected
+path check correctly refused it before authority or provider activity. Launcher
+`aa55319fa88f14e96b47e3fa9d08a0940fae5456` and Core branch
+`bobai/v12.1-public-evidence-root` move future public verifier, installation, capture,
+and recovery evidence to the root-created
+`/var/lib/ota/authority-launcher-public` sibling. The historical `/usr/share` record
+above remains evidence for its completed attempt; it is not a fallback or migration
+input. A fresh provision, regenerated identities, and new hosted proof are required
+for this paired revision. No provider, OIDC, materialization, injection, or selected-work
+authority is added. Core docs and tests are affected; Examples, Skills, Site, Learn,
+FAQ, and Glossary are unchanged because this internal path correction introduces no
+public contract, command, or operator vocabulary.
+
 Do not touch the unrelated untracked `docs/pressure/agent-authority-signals.md` unless the user
 explicitly asks.
 
