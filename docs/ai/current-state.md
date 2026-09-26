@@ -2026,6 +2026,14 @@ is proved or activated. MUSE independently rederived the public record identity 
 digest from the retained bytes, matched the Toolkit artifact, checked refusal, cleanup, and runner
 shutdown, and found no P1/P2/P3 issue with this bounded gate.
 
+The independently reviewed GitHub Actions OIDC network-call activation amendment is committed with
+this handoff in the V12.1 plan. It corrects the prospective dispatch route to the current signed
+authority-snapshot V2/transaction-binding V4 pair; the historical V3 compatibility proof and
+network-disabled V2 preparation cannot substitute. It authorizes only implementation of one bounded
+GitHub OIDC request-service call, not Google provider contact. A later implementation review and
+fresh exact protected Linux/X64 run are separate gates. Until then provider contact remains
+`not_instrumented`, and the protected runner stays stopped.
+
 Do not touch the unrelated untracked `docs/pressure/agent-authority-signals.md` unless the user
 explicitly asks.
 

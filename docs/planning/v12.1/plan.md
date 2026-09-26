@@ -901,9 +901,10 @@ dynamic claims before any Google request. Repository YAML, caller input, inherit
 environment, or a provider response cannot widen either authority source.
 
 The provider transaction may begin only after Core has reconstructed the Step 1-6 candidate,
-reconciled the same-child prelude and protected snapshot, received the exact additive V3 response
-with its transport-dependency record identity, and atomically consumed its one-use guard. The
-earlier V2 proof and wire records remain immutable historical evidence; V2 does not satisfy this
+reconciled the same-child prelude and signed protected authority-snapshot V2, received the exact
+additive transaction-binding V4 response with its transport-dependency record identity, and
+atomically consumed its one-use guard. The earlier transaction-binding V2/V3 proof and wire
+records remain immutable historical evidence; neither binding version satisfies this
 provider-contact gate. Consumption occurs immediately before Ota reads the two
 GitHub OIDC capability values or constructs the first network client. Failure, cancellation,
 timeout, or interruption after consumption cannot retry, replay, or transfer the transaction to a
@@ -978,7 +979,7 @@ substituted responses; expiry; replay; duplicate response; provider denial; part
 materialization failure; pre-start cancellation; child-start failure; child failure; timeout; and
 termination during execution. Every terminal path must reap the selected child, remove its scope and
 active slot, leave the cgroup empty or absent, close retained descriptors, and prevent reuse of the
-consumed V3 transaction. Provider-issued bearer expiry and external audit logs remain provider-owned;
+consumed V4 transaction. Provider-issued bearer expiry and external audit logs remain provider-owned;
 Ota must not claim immediate token revocation or deletion of provider-side audit state.
 
 The first pressure workflow is manual and dedicated, with `contents: read` and `id-token: write`, no
@@ -995,8 +996,10 @@ response models with network contact disabled. Network enablement, live pressure
 and injection advance as separately reviewed commits so no structural test can silently authorize a
 real provider call.
 
-The following transport-preparation checkpoint records its completed V2 boundary. It must be
-reconciled to the additive V3 gate before any provider request is enabled.
+The following transport-preparation checkpoint records its completed, network-disabled V2
+boundary. The provider-free V3 compatibility gate was subsequently superseded for future
+dispatch by the signed authority-snapshot V2 and transaction-binding V4 route; the V2
+preparation checkpoint cannot itself enable a provider request.
 
 The first network-disabled model was independently reviewed and committed at
 `77329526e6ec07449c889bac6c3172294620ec4e`. Before any request can be sent, a second
@@ -1045,8 +1048,9 @@ owner, endpoint and operation reconciliation, and fixed network-disabled `ureq =
 authorized above. It exposes no request send/call, socket, connector, provider response,
 materialization, delivery, execution, or public-output route.
 
-The prospective V3 gate must additionally substitute the V3 binding and its
-transport-dependency record identity before it can replace this V2 transport-preparation boundary.
+The future dispatch gate must consume the signed authority-snapshot V2 and transaction-binding
+V4 capability, including its transport-dependency record identity, before it can replace this
+network-disabled V2 transport-preparation boundary. The historical V3 binding is not a fallback.
 
 ### Complete Transport-Dependency Snapshot Amendment
 
@@ -1195,10 +1199,44 @@ claim.
 
 ### GitHub OIDC Network-Call Checkpoint
 
-The separate proposed provider-contact and GitHub OIDC network-call amendment may contact only
-GitHub's Actions OIDC request service. It remains inactive until that separate amendment is
-independently reviewed and committed. Committing the hosted-evidence custody correction does not
-activate it. It does not authorize JWT
+#### Activation Amendment (Active 2026-09-26)
+
+The exact Core `f0668e9e6c3eae89176ba89695186823a22e2a9f`, Launcher
+`aa55319fa88f14e96b47e3fa9d08a0940fae5456`, and Protocol
+`e819f95890ea23ae2f336a59fb3ff62cfa858d8b` pairing passed the fresh
+protected Linux/X64 hosted-evidence custody gate in Core run `36271452585`,
+attempt `1`. Its root-owned record and checked bundle establish custody of
+bounded job-produced provider-free evidence and a provider-free refusal, not
+independent validation of the job assertions or permission to contact a provider.
+
+This amendment was independently reviewed without a P1/P2/P3 finding. Its commit activates only
+implementation of the one-shot GitHub Actions OIDC request-service call described below. The active
+same-child route for that slice is the complete signed
+authority-snapshot **V2** payload and transaction-binding **V4** response, not
+the historical V1 snapshot/V3 binding or the network-disabled V2 preparation
+checkpoint. Core must reconstruct and independently compare the complete
+administrator-signed transport graph and record, consume the exact V2/V4
+capability once, and refuse missing, mismatched, substituted, or replayed
+carriers before constructing the request. Earlier versions cannot supply
+fallback authority for this slice. The earlier V3 descriptions below remain
+historical record-format and compatibility requirements; where they describe
+the future dispatch route, V2 snapshot/V4 binding supersedes them.
+
+The first live test requires a separately reviewed exact-revision manual
+workflow, a fresh stopped-runner request and provisioned state, the protected
+Linux/X64 service path, and `id-token: write` only on the bounded job. It may
+make one direct request to GitHub's Actions OIDC service, retain the returned
+JWT only as an opaque, structurally checked and **unadmitted** private value,
+and record only the closed non-secret Core dispatch outcome. No JWT-claim or
+signature admission, Google STS/WIF, IAM Credentials, Secret Manager, delivery,
+injection, startup release, selected work, positive provider evidence, Step 8,
+or V12.2 is authorized. The provider-contact implementation must receive its
+own independent review before commit and exact hosted proof; this planning
+amendment and the custody run alone do not prove a network call.
+
+This bounded implementation slice may contact only GitHub's Actions OIDC request service. The
+hosted-evidence custody correction did not activate it; this independently reviewed amendment does.
+The amendment itself implements no network call. It does not authorize JWT
 claim admission, Google STS, IAM Credentials, Secret Manager, materialization, injection, release
 of the startup continuation, beginning the selected workload/recipient command, positive evidence,
 Step 8, or V12.2.
@@ -1263,7 +1301,8 @@ The checkpoint may add only:
   `SecretDeliveryTransportDependencyRecordV1`, and the same record identity; an identity-only
   protected expectation is insufficient. The same exact identity must be retained through the
   invocation binding/realization, authority snapshot, reconstructed candidate, additive same-child
-  V3 transaction, consumed provider capability, and prepared transport. Before installation, the
+  V3 compatibility transaction, and V4 transaction. Future dispatch must retain it through the
+  consumed V4 provider capability and prepared transport. Before installation, the
   administrator independently derives the graph and record from the exact reviewed source tree,
   lock bytes, target, and feature selection rather than copying the artifact's embedded claim,
   reconciles them with the artifact-embedded graph and record, and retains the expected closed
@@ -1338,7 +1377,7 @@ Immediately before constructing the Agent and again before dispatch, Core must r
 transport configuration and exact request against the consumed preparation truth. It must refuse
 any changed method, scheme, host, port, path, existing query, duplicate or missing audience,
 userinfo, fragment, bearer owner, operation identity, endpoint observation, runner version,
-candidate, V3 binding, V3 transport-dependency record identity, transport feature graph, or
+candidate, V4 binding, V4 transport-dependency record identity, transport feature graph, or
 lockfile identity. A failure before dispatch
 records zero Core dispatch invocations. There is no Core retry, redirect, origin fallback,
 connection-pool reuse, or second dispatch. The fresh Agent and request are dropped after that one
@@ -1360,10 +1399,11 @@ Tests must lock consumption and non-reuse of the prepared transport, exact reque
 single-dispatch behavior, dependency-record and implementation-subject reconciliation, response
 bounds, status and media-type refusal, protected-buffer cleanup, redaction, zero durable output,
 and unchanged fixed posture under poisoned proxy, custom-CA, netrc, client-certificate, and generic
-HTTP inputs. The exact protected Linux/X64 workflow must run under the retained additive same-child V3
-service path with `id-token: write`. The selected Core child therefore already exists in its
-blocked startup/session state; the gate must never release its startup continuation or begin the
-selected workload/recipient command. Every pre-dispatch substitution must retain zero Core
+HTTP inputs. The exact protected Linux/X64 workflow must run under the signed authority-snapshot
+V2 and transaction-binding V4 same-child service path with `id-token: write`. The selected Core
+child therefore already exists in its blocked startup/session state; the gate must never release its
+startup continuation or begin the selected workload/recipient command. Every pre-dispatch
+substitution must retain zero Core
 dispatch invocations, while success invokes the dispatch owner exactly once and receives one
 successful GitHub response. The public pressure posture may retain only the closed non-secret Core
 counter/outcome and must state that provider and lower-layer cardinality are not proved. Every
