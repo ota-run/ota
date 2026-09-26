@@ -1981,6 +1981,18 @@ Launcher `aa55319fa88f14e96b47e3fa9d08a0940fae5456` passed ordinary CI, root-bou
 and both GitHub-hosted V3 pressure jobs in run `36203430810`. Those jobs do not replace the
 fresh protected Linux/X64 hosted custody proof for the paired Core and Launcher revisions.
 
+The first 1.6.29 protected attempt, Core run
+[`36268385879`](https://github.com/ota-run/ota/actions/runs/36268385879) at
+`43844d718eb248e2b70e420ae0fb8e867b3afa96`, was cancelled while the protected job was
+queued and the runner remained stopped. Its pressure fixture builder admitted only the older
+`1.6.28-implementation` ref, so the root-owned request for `1.6.29-implementation` could not
+produce a valid authority installation. The Toolkit probe passed, but this run proves no
+protected service path or fresh custody. A narrow fixture/runbook repair admits canonical
+`1.6.<patch>-implementation` refs from patch 28 onward and retains exact request/ref/SHA
+matching. The next gate is a new exact Core revision, a fresh queued run and request, and a fresh
+protected Linux/X64 installation; the cancelled attempt's partial authority state must not be
+reused. The runner remains stopped. No provider or selected-work authority is activated.
+
 Do not touch the unrelated untracked `docs/pressure/agent-authority-signals.md` unless the user
 explicitly asks.
 

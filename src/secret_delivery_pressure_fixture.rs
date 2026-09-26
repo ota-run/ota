@@ -346,7 +346,7 @@ fn validate_request(
         || !is_git_revision(&request.commit_sha)
         || request.workflow_sha != request.commit_sha
         || !is_canonical_version(&request.runner_version)
-        || request.git_ref != "refs/heads/1.6.28-implementation"
+        || !is_pressure_implementation_ref(&request.git_ref)
         || request.workflow_reference
             != format!(
                 "{}/.github/workflows/secret-delivery-oidc-endpoint-evidence.yml@{}",
@@ -362,6 +362,14 @@ fn is_positive_decimal(value: &str) -> bool {
     value
         .parse::<u64>()
         .is_ok_and(|parsed| parsed > 0 && parsed.to_string() == value)
+}
+
+fn is_pressure_implementation_ref(value: &str) -> bool {
+    value
+        .strip_prefix("refs/heads/1.6.")
+        .and_then(|value| value.strip_suffix("-implementation"))
+        .and_then(|patch| patch.parse::<u32>().ok().map(|number| (patch, number)))
+        .is_some_and(|(patch, number)| number >= 28 && number.to_string() == patch)
 }
 
 fn is_git_revision(value: &str) -> bool {
@@ -440,12 +448,32 @@ secret_requirements:
             "event_name": "workflow_dispatch",
             "workflow_run_id": "1004",
             "workflow_run_attempt": "1",
-            "workflow_reference": "ota-run/ota/.github/workflows/secret-delivery-oidc-endpoint-evidence.yml@refs/heads/1.6.28-implementation",
+            "workflow_reference": "ota-run/ota/.github/workflows/secret-delivery-oidc-endpoint-evidence.yml@refs/heads/1.6.29-implementation",
             "runner_version": "2.337.0",
             "workflow_sha": "b".repeat(40),
-            "git_ref": "refs/heads/1.6.28-implementation",
+            "git_ref": "refs/heads/1.6.29-implementation",
             "commit_sha": "b".repeat(40),
         })
+    }
+
+    #[test]
+    fn accepts_only_canonical_pressure_implementation_refs() {
+        for git_ref in [
+            "refs/heads/1.6.28-implementation",
+            "refs/heads/1.6.29-implementation",
+            "refs/heads/1.6.30-implementation",
+        ] {
+            assert!(is_pressure_implementation_ref(git_ref), "{git_ref}");
+        }
+        for git_ref in [
+            "refs/heads/1.6.27-implementation",
+            "refs/heads/1.6.029-implementation",
+            "refs/heads/1.6.29-implementation/other",
+            "refs/heads/main",
+            "refs/tags/v1.6.29",
+        ] {
+            assert!(!is_pressure_implementation_ref(git_ref), "{git_ref}");
+        }
     }
 
     #[test]
@@ -538,7 +566,7 @@ secret_requirements:
                 "workflow",
                 Box::new(|value: &mut serde_json::Value| {
                     value["workflow_reference"] = serde_json::Value::String(
-                        "ota-run/ota/.github/workflows/other.yml@refs/heads/1.6.28-implementation"
+                        "ota-run/ota/.github/workflows/other.yml@refs/heads/1.6.29-implementation"
                             .into(),
                     );
                 }),

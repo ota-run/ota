@@ -44,8 +44,10 @@ stopped. Create one closed request containing the exact queued run context:
 ```
 
 Replace `<queued-git-ref>` in both fields with the exact ref on the queued run (for example,
-`refs/heads/1.6.29-implementation`). Record a fresh request for every new run or attempt; do not
-reuse a prior request after a rerun.
+`refs/heads/1.6.29-implementation`). The pressure builder admits canonical
+`refs/heads/1.6.<patch>-implementation` refs from patch 28 onward, not tags, `main`, or aliased
+refs. Record a fresh request for every new run or attempt; do not reuse a prior request after a
+rerun.
 
 Install the tracked contract at `/srv/ota-v3-pressure/ota.yaml` and build both pressure artifacts
 from the exact Core revision with the non-default `secret-delivery-pressure` feature:
