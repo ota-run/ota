@@ -32,6 +32,11 @@ use crate::secret_delivery_transaction::{
 };
 use crate::secret_delivery_transaction_binding::{
     SecretDeliveryTransactionBindingError, VerifiedSecretDeliveryTransactionBindingV2,
+    VerifiedSecretDeliveryTransactionBindingV4,
+};
+use crate::secret_delivery_transport_dependencies::{
+    SecretDeliveryTransportDependencyFeatureGraphV1, SecretDeliveryTransportDependencyRecordV1,
+    embedded_transport_dependency_expectation_v1,
 };
 use crate::secret_provider_profile::{
     GithubOidcClaimValue, SecretDeliveryArchitecture, SecretDeliveryExecutionMode,
@@ -274,8 +279,22 @@ impl fmt::Debug for ConsumedSecretDeliveryProviderCapabilityV1 {
     }
 }
 
-/// The acquired GitHub request capability is retained only after V2 consumption. It has no
-/// accessor until a later explicitly authorized network-call slice owns request dispatch.
+pub(crate) struct ConsumedSecretDeliveryProviderCapabilityV4 {
+    binding: ota_authority_protocol::ProtectedLauncherSecretDeliveryTransactionBindingV4,
+    plan: SecretDeliveryProviderClientPlanV1,
+    transport_dependency_record_identity: String,
+    transport_dependency_feature_graph: SecretDeliveryTransportDependencyFeatureGraphV1,
+    transport_dependency_record: SecretDeliveryTransportDependencyRecordV1,
+}
+
+impl fmt::Debug for ConsumedSecretDeliveryProviderCapabilityV4 {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("ConsumedSecretDeliveryProviderCapabilityV4([PROTECTED])")
+    }
+}
+
+/// The acquired GitHub request capability is retained only after verified transaction
+/// consumption. It has no accessor until a later network-call slice owns request dispatch.
 struct RetainedGithubOidcRequestCapabilityV1 {
     endpoint_profile: GithubActionsOidcRequestEndpointProfileV1,
     endpoint_input: GithubActionsOidcEndpointObservationInputV1,
@@ -306,6 +325,69 @@ impl fmt::Debug for PreparedSecretDeliveryProviderTransportV1 {
     }
 }
 
+pub(crate) struct PreparedSecretDeliveryProviderTransportV4 {
+    capability: ConsumedSecretDeliveryProviderCapabilityV4,
+    oidc: RetainedGithubOidcRequestCapabilityV1,
+    transport_dependency_record_identity: String,
+    configuration: UreqConfig,
+    maximum_response_body_bytes: usize,
+}
+
+impl fmt::Debug for PreparedSecretDeliveryProviderTransportV4 {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("PreparedSecretDeliveryProviderTransportV4([PROTECTED])")
+    }
+}
+
+impl PreparedSecretDeliveryProviderTransportV4 {
+    fn verify_signed_transport_expectation(&self) -> Result<(), SecretDeliveryProviderClientError> {
+        let (expected_graph, expected_record) = embedded_transport_dependency_expectation_v1()
+            .map_err(|_| {
+                error(
+                    "secret_delivery_provider_transport_dependencies_invalid",
+                    "embedded transport dependency expectation is invalid",
+                )
+            })?;
+        if self.capability.transport_dependency_feature_graph != expected_graph
+            || self.capability.transport_dependency_record != expected_record
+            || self.capability.transport_dependency_record_identity
+                != expected_record.record_identity
+            || self.transport_dependency_record_identity != expected_record.record_identity
+            || self.capability.binding.transport_dependency_record_identity
+                != expected_record.record_identity
+            || self.capability.plan.operations.len() != 1
+            || self.capability.plan.operations[0].transport_dependency_record_identity
+                != expected_record.record_identity
+        {
+            return Err(error(
+                "secret_delivery_provider_transport_dependencies_mismatch",
+                "prepared transport does not retain the complete signed dependency expectation",
+            ));
+        }
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn signed_transport_expectation_for_test(
+        &self,
+    ) -> (
+        &SecretDeliveryTransportDependencyFeatureGraphV1,
+        &SecretDeliveryTransportDependencyRecordV1,
+    ) {
+        (
+            &self.capability.transport_dependency_feature_graph,
+            &self.capability.transport_dependency_record,
+        )
+    }
+}
+
+struct PreparedOidcContextV1 {
+    plan: SecretDeliveryProviderClientPlanV1,
+    oidc: RetainedGithubOidcRequestCapabilityV1,
+    transport_dependency_record_identity: String,
+    configuration: UreqConfig,
+}
+
 /// Consumes the exact V2 transaction before retaining a GitHub OIDC request capability. This
 /// checkpoint intentionally stops before constructing an HTTP client or dispatching a request.
 pub(crate) fn prepare_secret_delivery_provider_transport_v1(
@@ -321,6 +403,60 @@ pub(crate) fn prepare_secret_delivery_provider_transport_v1(
     let runner_version = transaction.observed_runner_version().to_owned();
     prepare_after_v2_consumption_v1(
         binding,
+        &runner_version,
+        candidate,
+        endpoint_profile,
+        endpoint_input,
+        endpoint_observation,
+    )
+}
+
+pub(crate) fn prepare_secret_delivery_provider_transport_v4(
+    transaction: &mut VerifiedSecretDeliveryTransactionBindingV4,
+    candidate: &SemanticallyVerifiedSecretDeliveryTransactionCandidate,
+    endpoint_profile: &GithubActionsOidcRequestEndpointProfileV1,
+    endpoint_input: GithubActionsOidcEndpointObservationInputV1,
+    endpoint_observation: ResolvedGithubActionsOidcEndpointObservationV1,
+) -> Result<PreparedSecretDeliveryProviderTransportV4, SecretDeliveryProviderClientError> {
+    let signed_expectation = transaction
+        .signed_transport_expectation()
+        .map_err(provider_transport_binding_error)?;
+    let binding = transaction
+        .consume_before_provider_request()
+        .map_err(provider_transport_binding_error)?;
+    let runner_version = transaction.observed_runner_version().to_owned();
+    prepare_after_v4_consumption_v1(
+        binding,
+        signed_expectation,
+        &runner_version,
+        candidate,
+        endpoint_profile,
+        endpoint_input,
+        endpoint_observation,
+    )
+}
+
+#[cfg(test)]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn prepare_secret_delivery_provider_transport_at_v4(
+    transaction: &mut VerifiedSecretDeliveryTransactionBindingV4,
+    verifier: &crate::protected_capability_observation::RetainedCapabilityProjectionVerifierV1,
+    observed_at_unix_seconds: u64,
+    candidate: &SemanticallyVerifiedSecretDeliveryTransactionCandidate,
+    endpoint_profile: &GithubActionsOidcRequestEndpointProfileV1,
+    endpoint_input: GithubActionsOidcEndpointObservationInputV1,
+    endpoint_observation: ResolvedGithubActionsOidcEndpointObservationV1,
+) -> Result<PreparedSecretDeliveryProviderTransportV4, SecretDeliveryProviderClientError> {
+    let signed_expectation = transaction
+        .signed_transport_expectation()
+        .map_err(provider_transport_binding_error)?;
+    let binding = transaction
+        .consume_at(verifier, observed_at_unix_seconds)
+        .map_err(provider_transport_binding_error)?;
+    let runner_version = transaction.observed_runner_version().to_owned();
+    prepare_after_v4_consumption_v1(
+        binding,
+        signed_expectation,
         &runner_version,
         candidate,
         endpoint_profile,
@@ -362,20 +498,103 @@ fn prepare_after_v2_consumption_v1(
     endpoint_input: GithubActionsOidcEndpointObservationInputV1,
     endpoint_observation: ResolvedGithubActionsOidcEndpointObservationV1,
 ) -> Result<PreparedSecretDeliveryProviderTransportV1, SecretDeliveryProviderClientError> {
-    let plan = derive_secret_delivery_provider_client_plan_v1(candidate)?;
-    if plan.transaction_candidate_identity != binding.secret_transaction_candidate_identity {
+    let context = prepare_oidc_context_v1(
+        &binding.secret_transaction_candidate_identity,
+        &binding.projection_identity,
+        retained_runner_version,
+        candidate,
+        endpoint_profile,
+        endpoint_input,
+        endpoint_observation,
+    )?;
+    let capability = ConsumedSecretDeliveryProviderCapabilityV1 {
+        binding,
+        plan: context.plan,
+        transport_dependency_record_identity: context.transport_dependency_record_identity.clone(),
+    };
+    Ok(PreparedSecretDeliveryProviderTransportV1 {
+        capability,
+        oidc: context.oidc,
+        transport_dependency_record_identity: context.transport_dependency_record_identity,
+        configuration: context.configuration,
+        maximum_response_body_bytes: MAX_SECRET_RESPONSE_BYTES,
+    })
+}
+
+fn prepare_after_v4_consumption_v1(
+    binding: ota_authority_protocol::ProtectedLauncherSecretDeliveryTransactionBindingV4,
+    signed_expectation: (
+        SecretDeliveryTransportDependencyFeatureGraphV1,
+        SecretDeliveryTransportDependencyRecordV1,
+    ),
+    retained_runner_version: &str,
+    candidate: &SemanticallyVerifiedSecretDeliveryTransactionCandidate,
+    endpoint_profile: &GithubActionsOidcRequestEndpointProfileV1,
+    endpoint_input: GithubActionsOidcEndpointObservationInputV1,
+    endpoint_observation: ResolvedGithubActionsOidcEndpointObservationV1,
+) -> Result<PreparedSecretDeliveryProviderTransportV4, SecretDeliveryProviderClientError> {
+    let (transport_dependency_feature_graph, transport_dependency_record) = signed_expectation;
+    if binding.transport_dependency_record_identity
+        != candidate.candidate().transport_dependency_record_identity
+        || binding.transport_dependency_record_identity
+            != transport_dependency_record.record_identity
+    {
         return Err(error(
-            "secret_delivery_provider_transport_candidate_mismatch",
-            "consumed V2 binding does not match the provider operation plan",
+            "secret_delivery_provider_transport_dependencies_mismatch",
+            "V4 binding does not match the retained transaction dependency record",
         ));
     }
-    if binding.projection_identity
+    let context = prepare_oidc_context_v1(
+        &binding.secret_transaction_candidate_identity,
+        &binding.projection_identity,
+        retained_runner_version,
+        candidate,
+        endpoint_profile,
+        endpoint_input,
+        endpoint_observation,
+    )?;
+    let capability = ConsumedSecretDeliveryProviderCapabilityV4 {
+        binding,
+        plan: context.plan,
+        transport_dependency_record_identity: context.transport_dependency_record_identity.clone(),
+        transport_dependency_feature_graph,
+        transport_dependency_record,
+    };
+    let prepared = PreparedSecretDeliveryProviderTransportV4 {
+        capability,
+        oidc: context.oidc,
+        transport_dependency_record_identity: context.transport_dependency_record_identity,
+        configuration: context.configuration,
+        maximum_response_body_bytes: MAX_SECRET_RESPONSE_BYTES,
+    };
+    prepared.verify_signed_transport_expectation()?;
+    Ok(prepared)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn prepare_oidc_context_v1(
+    binding_candidate_identity: &str,
+    binding_projection_identity: &str,
+    retained_runner_version: &str,
+    candidate: &SemanticallyVerifiedSecretDeliveryTransactionCandidate,
+    endpoint_profile: &GithubActionsOidcRequestEndpointProfileV1,
+    endpoint_input: GithubActionsOidcEndpointObservationInputV1,
+    endpoint_observation: ResolvedGithubActionsOidcEndpointObservationV1,
+) -> Result<PreparedOidcContextV1, SecretDeliveryProviderClientError> {
+    let plan = derive_secret_delivery_provider_client_plan_v1(candidate)?;
+    if plan.transaction_candidate_identity != binding_candidate_identity {
+        return Err(error(
+            "secret_delivery_provider_transport_candidate_mismatch",
+            "consumed binding does not match the provider operation plan",
+        ));
+    }
+    if binding_projection_identity
         != endpoint_input.protected_launcher_capability_projection_identity
         || retained_runner_version != endpoint_input.runner_version
     {
         return Err(error(
             "secret_delivery_provider_transport_observation_mismatch",
-            "OIDC endpoint observation does not match the consumed V2 transaction",
+            "OIDC endpoint observation does not match the consumed transaction",
         ));
     }
     if plan.operations.len() != 1 {
@@ -410,24 +629,18 @@ fn prepare_after_v2_consumption_v1(
 
     let configuration = fixed_transport_configuration_v1();
     verify_fixed_transport_configuration_v1(&configuration, MAX_SECRET_RESPONSE_BYTES)?;
-    let capability = ConsumedSecretDeliveryProviderCapabilityV1 {
-        binding,
-        plan,
-        transport_dependency_record_identity: transport_dependency_record_identity.clone(),
-    };
     let oidc = RetainedGithubOidcRequestCapabilityV1 {
         endpoint_profile: endpoint_profile.clone(),
         endpoint_input,
         endpoint_observation,
-        operation: capability.plan.operations[0].clone(),
+        operation: plan.operations[0].clone(),
         bearer,
     };
-    Ok(PreparedSecretDeliveryProviderTransportV1 {
-        capability,
+    Ok(PreparedOidcContextV1 {
+        plan,
         oidc,
         transport_dependency_record_identity,
         configuration,
-        maximum_response_body_bytes: MAX_SECRET_RESPONSE_BYTES,
     })
 }
 
@@ -451,7 +664,7 @@ fn take_github_oidc_bearer_v1(
         .ok_or_else(|| {
             error(
                 "secret_delivery_provider_transport_oidc_input_missing",
-                "GitHub OIDC request URL is unavailable after V2 consumption",
+                "GitHub OIDC request URL is unavailable after transaction consumption",
             )
         })?
         .into_string()
@@ -465,7 +678,7 @@ fn take_github_oidc_bearer_v1(
         .ok_or_else(|| {
             error(
                 "secret_delivery_provider_transport_oidc_input_missing",
-                "GitHub OIDC bearer is unavailable after V2 consumption",
+                "GitHub OIDC bearer is unavailable after transaction consumption",
             )
         })?
         .into_string()
@@ -500,7 +713,7 @@ fn provider_transport_binding_error(
 ) -> SecretDeliveryProviderClientError {
     error(
         "secret_delivery_provider_transport_binding_invalid",
-        "V2 transaction consumption refused before provider transport preparation",
+        "transaction consumption refused before provider transport preparation",
     )
 }
 

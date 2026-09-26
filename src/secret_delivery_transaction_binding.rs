@@ -860,6 +860,48 @@ impl VerifiedSecretDeliveryTransactionBindingV4 {
         &self.response.binding
     }
 
+    pub(crate) fn observed_runner_version(&self) -> &str {
+        self.prelude.observation().request().runner_version.as_str()
+    }
+
+    pub(crate) fn signed_transport_expectation(
+        &self,
+    ) -> Result<
+        (
+            crate::secret_delivery_transport_dependencies::SecretDeliveryTransportDependencyFeatureGraphV1,
+            crate::secret_delivery_transport_dependencies::SecretDeliveryTransportDependencyRecordV1,
+        ),
+        SecretDeliveryTransactionBindingError,
+    >{
+        let verified = self
+            .snapshot
+            .parse_verified_authority_payload()
+            .map_err(|_| SecretDeliveryTransactionBindingError::ResponseInvalid)?;
+        Ok((
+            verified.payload.transport_dependency_feature_graph,
+            verified.payload.transport_dependency_record,
+        ))
+    }
+
+    pub(crate) fn consume_before_provider_request(
+        &mut self,
+    ) -> Result<
+        ota_authority_protocol::ProtectedLauncherSecretDeliveryTransactionBindingV4,
+        SecretDeliveryTransactionBindingError,
+    > {
+        #[cfg(target_os = "linux")]
+        {
+            let verifier = crate::protected_capability_observation::load_retained_verifier()?;
+            let now = u64::try_from(OffsetDateTime::now_utc().unix_timestamp())
+                .map_err(|_| SecretDeliveryTransactionBindingError::Expired)?;
+            return self.consume_at(&verifier, now);
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            Err(SecretDeliveryTransactionBindingError::ResponseInvalid)
+        }
+    }
+
     pub(crate) fn consume_at(
         &mut self,
         verifier: &RetainedCapabilityProjectionVerifierV1,

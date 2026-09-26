@@ -2034,6 +2034,17 @@ GitHub OIDC request-service call, not Google provider contact. A later implement
 fresh exact protected Linux/X64 run are separate gates. Until then provider contact remains
 `not_instrumented`, and the protected runner stays stopped.
 
+The next Core checkpoint is committed with this handoff: a distinct, network-disabled
+V4 provider-transport preparation consumes only the signed authority-snapshot V2 / transaction-binding
+V4 path, retains the complete signed transport graph and record inside the opaque consumed capability
+owned by the prepared transport, and rechecks them against the embedded build expectation, binding,
+operation plan, and candidate. Historical V2 preparation remains distinct. Focused V4 positive,
+record/projection substitution, replay, and V2-regression tests passed locally; MUSE found no
+P1/P2/P3 blocker after repair. No HTTP Agent, request dispatch, CLI route, workflow, hosted proof,
+GitHub OIDC request, Google contact, materialization, injection, or selected-work execution is
+implemented by this checkpoint. This internal non-public change needs no Site, Skills, Examples,
+Learn, FAQ, Glossary, schema, public JSON, or command-reference propagation.
+
 Do not touch the unrelated untracked `docs/pressure/agent-authority-signals.md` unless the user
 explicitly asks.
 

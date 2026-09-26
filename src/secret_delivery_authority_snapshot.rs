@@ -1381,13 +1381,14 @@ pub(crate) mod tests {
     };
     use crate::secret_delivery_provider_client::{
         prepare_secret_delivery_provider_transport_at_v1,
+        prepare_secret_delivery_provider_transport_at_v4,
         reset_github_oidc_capability_owner_for_test,
     };
     use crate::secret_delivery_transaction_binding::{
         SecretDeliveryTransactionBindingError, VerifiedSameChildCapabilityPreludeV1,
-        VerifiedSecretDeliveryTransactionBindingV2, issue_secret_delivery_transaction_binding_v2,
-        issue_secret_delivery_transaction_binding_v3, issue_secret_delivery_transaction_binding_v4,
-        reconcile_same_child_capability_prelude_v1,
+        VerifiedSecretDeliveryTransactionBindingV2, VerifiedSecretDeliveryTransactionBindingV4,
+        issue_secret_delivery_transaction_binding_v2, issue_secret_delivery_transaction_binding_v3,
+        issue_secret_delivery_transaction_binding_v4, reconcile_same_child_capability_prelude_v1,
     };
     use crate::secret_provider_bindings::{
         SecretProviderBindingClass, SecretProviderBindingDisclosureClass,
@@ -3547,8 +3548,17 @@ secret_requirements:
         );
     }
 
-    #[test]
-    fn snapshot_v2_candidate_reaches_v4_binding_and_rejects_discriminator_substitution() {
+    fn verified_v4_for_provider_transport(
+        substitute_record: bool,
+    ) -> Result<
+        (
+            VerifiedSecretDeliveryTransactionBindingV4,
+            RetainedCapabilityProjectionVerifierV1,
+            SnapshotBoundSecretDeliveryTransactionCandidateV1,
+            u64,
+        ),
+        SecretDeliveryTransactionBindingError,
+    > {
         let startup = startup();
         let contract = candidate_contract();
         let run_plan = plan_task_execution_structure_for_target_os(
@@ -3589,6 +3599,7 @@ secret_requirements:
                 run_plan: &run_plan,
             })
             .expect("V2 candidate");
+        let candidate_for_prepare = candidate.clone();
         let projection = prelude.observation().projection().clone();
         let capability_identity = prelude.prelude().protected_capability_identity.clone();
         let pending = issue_secret_delivery_transaction_binding_v4(candidate, snapshot, prelude)
@@ -3643,18 +3654,121 @@ secret_requirements:
             &substituted.binding,
         )
         .is_err());
-        let mut verified = pending
+        let mut response = response;
+        if substitute_record {
+            response.binding.transport_dependency_record_identity = identity('f');
+            response.binding.identity =
+                protected_launcher_secret_delivery_transaction_binding_v4_identity(
+                    &response.binding,
+                )
+                .expect("recomputed V4 binding identity");
+        }
+        pending
             .reconcile(response, &verifier, issued_at)
-            .expect("verified V4 binding");
+            .map(|verified| (verified, verifier, candidate_for_prepare, issued_at))
+    }
+
+    #[test]
+    fn snapshot_v2_candidate_reaches_v4_binding_and_rejects_discriminator_substitution() {
+        let _environment = crate::test_support::env_mutex_lock();
+        reset_github_oidc_capability_owner_for_test();
+        let (mut verified, verifier, candidate_for_prepare, issued_at) =
+            verified_v4_for_provider_transport(false).expect("verified V4 binding");
         assert_eq!(verified.binding().protected_snapshot_schema_version, 2);
-        let consumed = verified
-            .consume_at(&verifier, issued_at)
-            .expect("one V4 consumption");
-        assert_eq!(consumed.identity, verified.binding().identity);
+        let profile = github_actions_oidc_request_endpoint_profile_v1().expect("endpoint profile");
+        let endpoint_input = GithubActionsOidcEndpointObservationInputV1 {
+            schema_version: 1,
+            request_url: "https://run-actions-1-azure-eastus.actions.githubusercontent.com/1//idtoken/123e4567-e89b-12d3-a456-426614174000/123e4567-e89b-12d3-a456-426614174001?api-version=2.0".into(),
+            runner_environment: "self-hosted".into(),
+            runner_os: "linux".into(),
+            runner_architecture: "x64".into(),
+            runner_version: "2.337.0".into(),
+            protected_launcher_capability_projection_identity: verified.binding().projection_identity.clone(),
+        };
+        let endpoint =
+            resolve_github_actions_oidc_endpoint_observation_v1(&profile, &endpoint_input)
+                .expect("endpoint observation");
+        let _oidc_environment = OidcEnvironmentGuard::install(&endpoint_input.request_url);
+        let prepared = prepare_secret_delivery_provider_transport_at_v4(
+            &mut verified,
+            &verifier,
+            issued_at,
+            candidate_for_prepare.candidate(),
+            &profile,
+            endpoint_input,
+            endpoint,
+        )
+        .expect("V4-only transport preparation");
+        let (expected_graph, expected_record) =
+            crate::secret_delivery_transport_dependencies::embedded_transport_dependency_expectation_v1()
+                .expect("embedded transport expectation");
+        let (retained_graph, retained_record) = prepared.signed_transport_expectation_for_test();
+        assert_eq!(retained_graph, &expected_graph);
+        assert_eq!(retained_record, &expected_record);
+        assert!(!format!("{prepared:?}").contains("runner-bearer"));
         assert!(matches!(
             verified.consume_at(&verifier, issued_at),
             Err(SecretDeliveryTransactionBindingError::AlreadyConsumed)
         ));
+        reset_github_oidc_capability_owner_for_test();
+    }
+
+    #[test]
+    fn v4_transport_refuses_record_and_projection_substitution_before_oidc_ownership() {
+        let _environment = crate::test_support::env_mutex_lock();
+        reset_github_oidc_capability_owner_for_test();
+        assert!(verified_v4_for_provider_transport(true).is_err());
+
+        let (mut verified, verifier, candidate, issued_at) =
+            verified_v4_for_provider_transport(false).expect("verified V4 binding");
+        let profile = github_actions_oidc_request_endpoint_profile_v1().expect("endpoint profile");
+        let request_url = "https://run-actions-1-azure-eastus.actions.githubusercontent.com/1//idtoken/123e4567-e89b-12d3-a456-426614174000/123e4567-e89b-12d3-a456-426614174001?api-version=2.0";
+        let mut endpoint_input = GithubActionsOidcEndpointObservationInputV1 {
+            schema_version: 1,
+            request_url: request_url.into(),
+            runner_environment: "self-hosted".into(),
+            runner_os: "linux".into(),
+            runner_architecture: "x64".into(),
+            runner_version: "2.337.0".into(),
+            protected_launcher_capability_projection_identity: identity('f'),
+        };
+        let endpoint =
+            resolve_github_actions_oidc_endpoint_observation_v1(&profile, &endpoint_input)
+                .expect("substituted endpoint observation");
+        let _oidc_environment = OidcEnvironmentGuard::install(request_url);
+        let error = prepare_secret_delivery_provider_transport_at_v4(
+            &mut verified,
+            &verifier,
+            issued_at,
+            candidate.candidate(),
+            &profile,
+            endpoint_input.clone(),
+            endpoint,
+        )
+        .expect_err("projection substitution must refuse");
+        assert_eq!(
+            error.code,
+            "secret_delivery_provider_transport_observation_mismatch"
+        );
+
+        let (mut fresh_verified, fresh_verifier, fresh_candidate, fresh_now) =
+            verified_v4_for_provider_transport(false).expect("fresh V4 binding");
+        endpoint_input.protected_launcher_capability_projection_identity =
+            fresh_verified.binding().projection_identity.clone();
+        let fresh_endpoint =
+            resolve_github_actions_oidc_endpoint_observation_v1(&profile, &endpoint_input)
+                .expect("fresh endpoint observation");
+        prepare_secret_delivery_provider_transport_at_v4(
+            &mut fresh_verified,
+            &fresh_verifier,
+            fresh_now,
+            fresh_candidate.candidate(),
+            &profile,
+            endpoint_input,
+            fresh_endpoint,
+        )
+        .expect("pre-bearer refusal must leave the one-use capability available");
+        reset_github_oidc_capability_owner_for_test();
     }
 
     #[test]
