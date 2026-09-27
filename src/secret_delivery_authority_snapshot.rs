@@ -1379,6 +1379,8 @@ pub(crate) mod tests {
         github_actions_oidc_request_endpoint_profile_v1,
         resolve_github_actions_oidc_endpoint_observation_v1,
     };
+    #[cfg(feature = "secret-delivery-pressure")]
+    use crate::secret_delivery_provider_client::dispatch_github_oidc_v4;
     use crate::secret_delivery_provider_client::{
         prepare_secret_delivery_provider_transport_at_v1,
         prepare_secret_delivery_provider_transport_at_v4,
@@ -3710,6 +3712,12 @@ secret_requirements:
             verified.consume_at(&verifier, issued_at),
             Err(SecretDeliveryTransactionBindingError::AlreadyConsumed)
         ));
+        #[cfg(feature = "secret-delivery-pressure")]
+        {
+            let mut prepared = prepared;
+            prepared.invalidate_binding_for_test();
+            assert!(dispatch_github_oidc_v4(prepared).refused_without_invocation_for_test());
+        }
         reset_github_oidc_capability_owner_for_test();
     }
 

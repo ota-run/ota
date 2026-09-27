@@ -2045,6 +2045,20 @@ GitHub OIDC request, Google contact, materialization, injection, or selected-wor
 implemented by this checkpoint. This internal non-public change needs no Site, Skills, Examples,
 Learn, FAQ, Glossary, schema, public JSON, or command-reference propagation.
 
+The active follow-on is a feature-gated, crate-private GitHub OIDC one-shot dispatch owner.
+Its implementation-only checkpoint is committed with this handoff on
+`1.6.29-implementation`. MUSE's independent review found no remaining P1/P2 blocker after the
+allocation-free JWT validation and bearer-substitution regression repairs. The initial synthetic
+fixture accidentally reached the dispatch path before the test was corrected to invalidate its
+V4 binding; the corrected fixture proves zero Core invocations on that pre-dispatch refusal only.
+No successful provider contact is established, and no CLI or hosted workflow route is enabled.
+Historical V1 preparation remains network-disabled. The next gates are a separately reviewed
+manual workflow pinned to this exact revision, fresh stopped-runner provisioning, and protected
+Linux/X64 proof. Post-invocation terminal outcome and one real GitHub response remain unproved.
+No Google STS/WIF, Secret Manager, materialization, injection, selected work, Step 8, or V12.2
+is activated. This internal change needs no Site, Skills, Examples, Learn, FAQ, Glossary, schema,
+public JSON, or command-reference propagation.
+
 Do not touch the unrelated untracked `docs/pressure/agent-authority-signals.md` unless the user
 explicitly asks.
 

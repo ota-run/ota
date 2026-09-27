@@ -1,18 +1,20 @@
-//! Network-disabled provider request and response models for secret delivery.
+//! Provider request and response models for secret delivery.
 //!
 //! This module derives exact Google operation targets from semantically verified Core truth. It
-//! can consume a semantically reverified V2 transaction only to retain a network-disabled transport
-//! posture and then take the one-use GitHub request capability. It cannot open a socket, contact a
-//! provider, materialize a recipient environment, or publish evidence.
+//! retains the historical network-disabled V2 preparation path. Only the feature-gated V4
+//! dispatch owner can make one GitHub Actions OIDC request. No route here contacts Google,
+//! materializes a recipient environment, or publishes evidence.
 
 #![allow(dead_code)]
 
 use std::fmt;
+#[cfg(feature = "secret-delivery-pressure")]
+use std::io::Read;
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
 use base64::Engine;
-use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
+use base64::engine::general_purpose::STANDARD;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use time::OffsetDateTime;
@@ -177,6 +179,26 @@ impl Drop for ProtectedProviderValue {
     }
 }
 
+#[cfg(feature = "secret-delivery-pressure")]
+struct ProtectedResponseBuffer(Vec<u8>);
+
+#[cfg(feature = "secret-delivery-pressure")]
+impl Drop for ProtectedResponseBuffer {
+    fn drop(&mut self) {
+        self.0.fill(0);
+    }
+}
+
+#[cfg(feature = "secret-delivery-pressure")]
+pub(crate) struct RetainedUnadmittedGithubOidcJwtV1(ProtectedProviderValue);
+
+#[cfg(feature = "secret-delivery-pressure")]
+impl fmt::Debug for RetainedUnadmittedGithubOidcJwtV1 {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("RetainedUnadmittedGithubOidcJwtV1([REDACTED])")
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ProviderHttpMethod {
     Get,
@@ -281,6 +303,8 @@ impl fmt::Debug for ConsumedSecretDeliveryProviderCapabilityV1 {
 
 pub(crate) struct ConsumedSecretDeliveryProviderCapabilityV4 {
     binding: ota_authority_protocol::ProtectedLauncherSecretDeliveryTransactionBindingV4,
+    runner_version: String,
+    candidate: SemanticallyVerifiedSecretDeliveryTransactionCandidate,
     plan: SecretDeliveryProviderClientPlanV1,
     transport_dependency_record_identity: String,
     transport_dependency_feature_graph: SecretDeliveryTransportDependencyFeatureGraphV1,
@@ -294,7 +318,7 @@ impl fmt::Debug for ConsumedSecretDeliveryProviderCapabilityV4 {
 }
 
 /// The acquired GitHub request capability is retained only after verified transaction
-/// consumption. It has no accessor until a later network-call slice owns request dispatch.
+/// consumption; only the feature-gated V4 owner can dispatch it.
 struct RetainedGithubOidcRequestCapabilityV1 {
     endpoint_profile: GithubActionsOidcRequestEndpointProfileV1,
     endpoint_input: GithubActionsOidcEndpointObservationInputV1,
@@ -358,12 +382,35 @@ impl PreparedSecretDeliveryProviderTransportV4 {
             || self.capability.plan.operations.len() != 1
             || self.capability.plan.operations[0].transport_dependency_record_identity
                 != expected_record.record_identity
+            || self
+                .capability
+                .candidate
+                .candidate()
+                .transport_dependency_record_identity
+                != expected_record.record_identity
+            || self
+                .capability
+                .binding
+                .secret_transaction_candidate_identity
+                != self.capability.candidate.candidate().identity
+            || self.capability.binding.projection_identity
+                != self
+                    .oidc
+                    .endpoint_input
+                    .protected_launcher_capability_projection_identity
+            || self.capability.runner_version != self.oidc.endpoint_input.runner_version
+            || self.capability.binding.schema_version != 4
+            || self.capability.binding.protected_snapshot_schema_version != 2
         {
             return Err(error(
                 "secret_delivery_provider_transport_dependencies_mismatch",
                 "prepared transport does not retain the complete signed dependency expectation",
             ));
         }
+        verify_secret_delivery_provider_client_plan_v1(
+            &self.capability.plan,
+            &self.capability.candidate,
+        )?;
         Ok(())
     }
 
@@ -379,6 +426,253 @@ impl PreparedSecretDeliveryProviderTransportV4 {
             &self.capability.transport_dependency_record,
         )
     }
+
+    #[cfg(all(test, feature = "secret-delivery-pressure"))]
+    pub(crate) fn invalidate_binding_for_test(&mut self) {
+        self.capability.binding.transport_dependency_record_identity = "invalid".into();
+    }
+}
+
+#[cfg(feature = "secret-delivery-pressure")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GithubOidcDispatchOutcomeV1 {
+    NotAttempted,
+    ResponseReceived,
+    TransportRefused,
+}
+
+#[cfg(feature = "secret-delivery-pressure")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct GithubOidcDispatchAttemptStateV1 {
+    core_invocations: u8,
+    outcome: GithubOidcDispatchOutcomeV1,
+}
+
+#[cfg(feature = "secret-delivery-pressure")]
+pub(crate) struct GithubOidcDispatchTerminalV1 {
+    attempt: GithubOidcDispatchAttemptStateV1,
+    result: Result<RetainedUnadmittedGithubOidcJwtV1, SecretDeliveryProviderClientError>,
+}
+
+#[cfg(feature = "secret-delivery-pressure")]
+impl fmt::Debug for GithubOidcDispatchTerminalV1 {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("GithubOidcDispatchTerminalV1")
+            .field("attempt", &self.attempt)
+            .field("result", &self.result.as_ref().map(|_| "[REDACTED]"))
+            .finish()
+    }
+}
+
+#[cfg(all(test, feature = "secret-delivery-pressure"))]
+impl GithubOidcDispatchTerminalV1 {
+    pub(crate) fn refused_without_invocation_for_test(&self) -> bool {
+        self.attempt.core_invocations == 0
+            && self.attempt.outcome == GithubOidcDispatchOutcomeV1::NotAttempted
+            && self.result.is_err()
+    }
+}
+
+#[cfg(feature = "secret-delivery-pressure")]
+impl GithubOidcDispatchAttemptStateV1 {
+    fn new() -> Self {
+        Self {
+            core_invocations: 0,
+            outcome: GithubOidcDispatchOutcomeV1::NotAttempted,
+        }
+    }
+
+    fn invoke_once(&mut self) -> Result<(), SecretDeliveryProviderClientError> {
+        if self.core_invocations != 0 {
+            return Err(oidc_dispatch_refused());
+        }
+        self.core_invocations = 1;
+        self.outcome = GithubOidcDispatchOutcomeV1::TransportRefused;
+        Ok(())
+    }
+}
+
+#[cfg(feature = "secret-delivery-pressure")]
+fn oidc_dispatch_refused() -> SecretDeliveryProviderClientError {
+    error(
+        "secret_delivery_github_oidc_dispatch_refused",
+        "GitHub OIDC dispatch refused without retaining transport details",
+    )
+}
+
+#[cfg(feature = "secret-delivery-pressure")]
+fn verify_oidc_dispatch_preflight(
+    prepared: &PreparedSecretDeliveryProviderTransportV4,
+) -> Result<(), SecretDeliveryProviderClientError> {
+    prepared.verify_signed_transport_expectation()?;
+    ota_authority_protocol::validate_protected_launcher_secret_delivery_transaction_binding_v4(
+        &prepared.capability.binding,
+    )
+    .map_err(|_| oidc_dispatch_refused())?;
+    verify_fixed_transport_configuration_v1(
+        &prepared.configuration,
+        prepared.maximum_response_body_bytes,
+    )?;
+    verify_github_actions_oidc_endpoint_observation_v1(
+        &prepared.oidc.endpoint_profile,
+        &prepared.oidc.endpoint_input,
+        &prepared.oidc.endpoint_observation,
+    )
+    .map_err(|_| oidc_dispatch_refused())?;
+    if prepared.oidc.operation != prepared.capability.plan.operations[0]
+        || prepared.capability.binding.expires_at_unix_seconds
+            <= u64::try_from(OffsetDateTime::now_utc().unix_timestamp())
+                .map_err(|_| oidc_dispatch_refused())?
+    {
+        return Err(oidc_dispatch_refused());
+    }
+    Ok(())
+}
+
+#[cfg(feature = "secret-delivery-pressure")]
+fn verify_exact_oidc_request(
+    request: &ProtectedProviderRequestV1,
+    endpoint_input: &GithubActionsOidcEndpointObservationInputV1,
+    operation: &SecretDeliveryProviderOperationPlanV1,
+    bearer: &ProtectedProviderValue,
+) -> Result<(), SecretDeliveryProviderClientError> {
+    let expected_url = format!(
+        "{}&audience={}",
+        endpoint_input.request_url,
+        percent_encode(operation.oidc_audience.as_bytes())
+    );
+    let authorization = request
+        .authorization
+        .as_ref()
+        .ok_or_else(oidc_dispatch_refused)?;
+    let authorization = authorization
+        .as_utf8()
+        .map_err(|_| oidc_dispatch_refused())?;
+    if request.method != ProviderHttpMethod::Get
+        || request.url != expected_url
+        || request.media_type.is_some()
+        || !request.body.is_empty()
+        || !authorization.starts_with("Bearer ")
+        || authorization[7..].is_empty()
+        || authorization.as_bytes()[7..] != bearer.0
+        || authorization[7..]
+            .bytes()
+            .any(|byte| byte.is_ascii_whitespace() || byte.is_ascii_control())
+    {
+        return Err(oidc_dispatch_refused());
+    }
+    Ok(())
+}
+
+#[cfg(feature = "secret-delivery-pressure")]
+fn is_oidc_json_content_type(value: &str) -> bool {
+    let mut parts = value.split(';');
+    if !parts
+        .next()
+        .is_some_and(|essence| essence.trim().eq_ignore_ascii_case(JSON_MEDIA_TYPE))
+    {
+        return false;
+    }
+    let charset = parts.next();
+    if parts.next().is_some() {
+        return false;
+    }
+    charset.is_none_or(|value| value.trim().eq_ignore_ascii_case("charset=utf-8"))
+}
+
+#[cfg(feature = "secret-delivery-pressure")]
+fn verify_oidc_response_head(
+    status: ureq::http::StatusCode,
+    headers: &ureq::http::HeaderMap,
+) -> Result<(), SecretDeliveryProviderClientError> {
+    if status != ureq::http::StatusCode::OK
+        || headers
+            .get_all(ureq::http::header::CONTENT_TYPE)
+            .iter()
+            .count()
+            != 1
+        || !headers
+            .get(ureq::http::header::CONTENT_TYPE)
+            .and_then(|header| header.to_str().ok())
+            .is_some_and(is_oidc_json_content_type)
+    {
+        return Err(oidc_dispatch_refused());
+    }
+    Ok(())
+}
+
+/// V4-only one-shot owner. No CLI or protected-workflow route calls it until the separate gate.
+#[cfg(feature = "secret-delivery-pressure")]
+pub(crate) fn dispatch_github_oidc_v4(
+    prepared: PreparedSecretDeliveryProviderTransportV4,
+) -> GithubOidcDispatchTerminalV1 {
+    let mut attempt = GithubOidcDispatchAttemptStateV1::new();
+    let result = dispatch_github_oidc_v4_inner(prepared, &mut attempt);
+    GithubOidcDispatchTerminalV1 { attempt, result }
+}
+
+#[cfg(feature = "secret-delivery-pressure")]
+fn dispatch_github_oidc_v4_inner(
+    prepared: PreparedSecretDeliveryProviderTransportV4,
+    attempt: &mut GithubOidcDispatchAttemptStateV1,
+) -> Result<RetainedUnadmittedGithubOidcJwtV1, SecretDeliveryProviderClientError> {
+    verify_oidc_dispatch_preflight(&prepared)?;
+    let agent = ureq::Agent::new_with_config(prepared.configuration.clone());
+    let request = build_github_oidc_request_v1(
+        &prepared.oidc.endpoint_profile,
+        &prepared.oidc.endpoint_input,
+        &prepared.oidc.endpoint_observation,
+        &prepared.oidc.bearer,
+        &prepared.oidc.operation,
+    )?;
+    let authorization = request
+        .authorization
+        .as_ref()
+        .ok_or_else(oidc_dispatch_refused)?
+        .as_utf8()
+        .map_err(|_| oidc_dispatch_refused())?;
+    let http_request = ureq::http::Request::get(request.url.as_str())
+        .header(ureq::http::header::AUTHORIZATION, authorization)
+        .body(())
+        .map_err(|_| oidc_dispatch_refused())?;
+    if http_request.method() != ureq::http::Method::GET
+        || http_request.uri().to_string() != request.url
+        || http_request.headers().len() != 1
+        || http_request
+            .headers()
+            .get(ureq::http::header::AUTHORIZATION)
+            .and_then(|value| value.to_str().ok())
+            != Some(authorization)
+    {
+        return Err(oidc_dispatch_refused());
+    }
+    verify_oidc_dispatch_preflight(&prepared)?;
+    verify_exact_oidc_request(
+        &request,
+        &prepared.oidc.endpoint_input,
+        &prepared.oidc.operation,
+        &prepared.oidc.bearer,
+    )?;
+    attempt.invoke_once()?;
+    let mut response = agent
+        .run(http_request)
+        .map_err(|_| oidc_dispatch_refused())?;
+    verify_oidc_response_head(response.status(), response.headers())?;
+    let mut body = ProtectedResponseBuffer(Vec::new());
+    response
+        .body_mut()
+        .with_config()
+        .limit((MAX_OIDC_RESPONSE_BYTES + 1) as u64)
+        .reader()
+        .read_to_end(&mut body.0)
+        .map_err(|_| oidc_dispatch_refused())?;
+    if body.0.len() > MAX_OIDC_RESPONSE_BYTES {
+        return Err(oidc_dispatch_refused());
+    }
+    let jwt = parse_github_oidc_response_v1(&body.0)?;
+    attempt.outcome = GithubOidcDispatchOutcomeV1::ResponseReceived;
+    Ok(RetainedUnadmittedGithubOidcJwtV1(jwt))
 }
 
 struct PreparedOidcContextV1 {
@@ -555,6 +849,8 @@ fn prepare_after_v4_consumption_v1(
     )?;
     let capability = ConsumedSecretDeliveryProviderCapabilityV4 {
         binding,
+        runner_version: retained_runner_version.to_owned(),
+        candidate: candidate.clone(),
         plan: context.plan,
         transport_dependency_record_identity: context.transport_dependency_record_identity.clone(),
         transport_dependency_feature_graph,
@@ -937,7 +1233,7 @@ pub(crate) fn build_github_oidc_request_v1(
     profile: &GithubActionsOidcRequestEndpointProfileV1,
     retained_input: &GithubActionsOidcEndpointObservationInputV1,
     observation: &ResolvedGithubActionsOidcEndpointObservationV1,
-    bearer: ProtectedProviderValue,
+    bearer: &ProtectedProviderValue,
     operation: &SecretDeliveryProviderOperationPlanV1,
 ) -> Result<ProtectedProviderRequestV1, SecretDeliveryProviderClientError> {
     verify_github_actions_oidc_endpoint_observation_v1(profile, retained_input, observation)
@@ -955,7 +1251,7 @@ pub(crate) fn build_github_oidc_request_v1(
             percent_encode(operation.oidc_audience.as_bytes())
         ),
         media_type: None,
-        authorization: Some(bearer_authorization(bearer)?),
+        authorization: Some(bearer_authorization_borrowed(bearer)?),
         body: Vec::new(),
     })
 }
@@ -965,12 +1261,12 @@ pub(crate) fn parse_github_oidc_response_v1(
 ) -> Result<ProtectedProviderValue, SecretDeliveryProviderClientError> {
     #[derive(Deserialize)]
     #[serde(deny_unknown_fields)]
-    struct Response {
-        value: String,
+    struct Response<'a> {
+        value: &'a str,
     }
-    let response: Response = parse_bounded_json(bytes, MAX_OIDC_RESPONSE_BYTES)?;
-    validate_compact_jwt(&response.value)?;
-    ProtectedProviderValue::new(response.value.into_bytes())
+    let response: Response<'_> = parse_bounded_json(bytes, MAX_OIDC_RESPONSE_BYTES)?;
+    validate_compact_jwt(response.value)?;
+    ProtectedProviderValue::new(response.value.as_bytes().to_vec())
 }
 
 pub(crate) fn build_google_sts_request_v1(
@@ -1212,12 +1508,9 @@ fn validate_compact_jwt(value: &str) -> Result<(), SecretDeliveryProviderClientE
     if value.len() > MAX_OIDC_RESPONSE_BYTES
         || value.bytes().any(|byte| byte.is_ascii_whitespace())
         || value.split('.').count() != 3
-        || value.split('.').any(|segment| {
-            let Ok(decoded) = URL_SAFE_NO_PAD.decode(segment) else {
-                return true;
-            };
-            decoded.is_empty() || URL_SAFE_NO_PAD.encode(decoded) != segment
-        })
+        || value
+            .split('.')
+            .any(|segment| !canonical_base64url_segment(segment))
     {
         return Err(error(
             "secret_delivery_provider_oidc_response_invalid",
@@ -1227,10 +1520,42 @@ fn validate_compact_jwt(value: &str) -> Result<(), SecretDeliveryProviderClientE
     Ok(())
 }
 
+fn canonical_base64url_segment(segment: &str) -> bool {
+    let bytes = segment.as_bytes();
+    if bytes.len() < 2 || bytes.len() % 4 == 1 {
+        return false;
+    }
+    let mut last = 0;
+    for &byte in bytes {
+        last = match byte {
+            b'A'..=b'Z' => byte - b'A',
+            b'a'..=b'z' => byte - b'a' + 26,
+            b'0'..=b'9' => byte - b'0' + 52,
+            b'-' => 62,
+            b'_' => 63,
+            _ => return false,
+        };
+    }
+    match bytes.len() % 4 {
+        2 => last & 0b1111 == 0,
+        3 => last & 0b11 == 0,
+        _ => true,
+    }
+}
+
 fn bearer_authorization(
     token: ProtectedProviderValue,
 ) -> Result<ProtectedProviderValue, SecretDeliveryProviderClientError> {
     validate_bearer(&token)?;
+    let mut header = b"Bearer ".to_vec();
+    header.extend_from_slice(&token.0);
+    ProtectedProviderValue::new(header)
+}
+
+fn bearer_authorization_borrowed(
+    token: &ProtectedProviderValue,
+) -> Result<ProtectedProviderValue, SecretDeliveryProviderClientError> {
+    validate_bearer(token)?;
     let mut header = b"Bearer ".to_vec();
     header.extend_from_slice(&token.0);
     ProtectedProviderValue::new(header)
@@ -1427,14 +1752,18 @@ mod tests {
         };
         let endpoint =
             resolve_github_actions_oidc_endpoint_observation_v1(&profile, &endpoint_input).unwrap();
-        let oidc = build_github_oidc_request_v1(
-            &profile,
-            &endpoint_input,
-            &endpoint,
-            ProtectedProviderValue::new(b"runner-bearer".to_vec()).unwrap(),
-            operation,
-        )
-        .unwrap();
+        let bearer = ProtectedProviderValue::new(b"runner-bearer".to_vec()).unwrap();
+        let oidc =
+            build_github_oidc_request_v1(&profile, &endpoint_input, &endpoint, &bearer, operation)
+                .unwrap();
+        #[cfg(feature = "secret-delivery-pressure")]
+        {
+            verify_exact_oidc_request(&oidc, &endpoint_input, operation, &bearer).unwrap();
+            let substituted = ProtectedProviderValue::new(b"other-bearer".to_vec()).unwrap();
+            assert!(
+                verify_exact_oidc_request(&oidc, &endpoint_input, operation, &substituted).is_err()
+            );
+        }
         assert!(oidc.url.ends_with("audience=https%3A%2F%2Fiam.googleapis.com%2Fprojects%2F123%2Flocations%2Fglobal%2FworkloadIdentityPools%2Fota-pool%2Fproviders%2Fgithub"));
         assert_eq!(
             oidc.authorization_for_test(),
@@ -1693,5 +2022,73 @@ mod tests {
             }
         }
         reset_github_oidc_capability_owner_for_test();
+    }
+
+    #[cfg(feature = "secret-delivery-pressure")]
+    #[test]
+    fn oidc_dispatch_state_and_media_type_are_closed() {
+        let mut state = GithubOidcDispatchAttemptStateV1::new();
+        assert_eq!(state.core_invocations, 0);
+        assert_eq!(state.outcome, GithubOidcDispatchOutcomeV1::NotAttempted);
+        state.invoke_once().unwrap();
+        assert_eq!(state.core_invocations, 1);
+        assert_eq!(state.outcome, GithubOidcDispatchOutcomeV1::TransportRefused);
+        assert!(state.invoke_once().is_err());
+        assert_eq!(state.core_invocations, 1);
+
+        for accepted in ["application/json", "Application/JSON; charset=UTF-8"] {
+            assert!(is_oidc_json_content_type(accepted));
+        }
+        for refused in [
+            "text/json",
+            "application/json; charset=latin1",
+            "application/json; charset=utf-8; boundary=x",
+            "application/json;",
+            "",
+        ] {
+            assert!(!is_oidc_json_content_type(refused));
+        }
+
+        let mut headers = ureq::http::HeaderMap::new();
+        headers.insert(
+            ureq::http::header::CONTENT_TYPE,
+            ureq::http::HeaderValue::from_static("application/json"),
+        );
+        assert!(verify_oidc_response_head(ureq::http::StatusCode::OK, &headers).is_ok());
+        assert!(verify_oidc_response_head(ureq::http::StatusCode::FOUND, &headers).is_err());
+        headers.append(
+            ureq::http::header::CONTENT_TYPE,
+            ureq::http::HeaderValue::from_static("text/plain"),
+        );
+        assert!(verify_oidc_response_head(ureq::http::StatusCode::OK, &headers).is_err());
+
+        let terminal = GithubOidcDispatchTerminalV1 {
+            attempt: state,
+            result: Err(oidc_dispatch_refused()),
+        };
+        assert_eq!(terminal.attempt.core_invocations, 1);
+        assert_eq!(
+            terminal.attempt.outcome,
+            GithubOidcDispatchOutcomeV1::TransportRefused
+        );
+        assert!(!format!("{terminal:?}").contains("Bearer"));
+    }
+
+    #[cfg(feature = "secret-delivery-pressure")]
+    #[test]
+    fn oidc_response_owner_refuses_oversize_and_unprotected_json_shapes() {
+        let valid = br#"{"value":"eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ4In0.c2ln"}"#;
+        let retained =
+            RetainedUnadmittedGithubOidcJwtV1(parse_github_oidc_response_v1(valid).unwrap());
+        assert!(!format!("{retained:?}").contains("eyJ"));
+        assert!(parse_github_oidc_response_v1(&vec![b'a'; MAX_OIDC_RESPONSE_BYTES + 1]).is_err());
+        assert!(parse_github_oidc_response_v1(br#"{"value":"a.b.c","extra":1}"#).is_err());
+        assert!(parse_github_oidc_response_v1(br#"{"value":"a\\u002eb.c"}"#).is_err());
+        assert!(canonical_base64url_segment("AA"));
+        assert!(canonical_base64url_segment("AAA"));
+        assert!(canonical_base64url_segment("AAAA"));
+        for noncanonical in ["", "A", "AB", "AAB", "AAAAA", "AA=", "AA+", "AA/"] {
+            assert!(!canonical_base64url_segment(noncanonical));
+        }
     }
 }

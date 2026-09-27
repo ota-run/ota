@@ -1348,7 +1348,8 @@ The checkpoint may add only:
   before transport construction. V3 creates no provider authority and cannot authorize dispatch by
   itself;
 - one crate-private, non-default-feature dispatch owner that consumes
-  `PreparedSecretDeliveryProviderTransportV1` by value. It must have no constructor from a plain
+  `PreparedSecretDeliveryProviderTransportV4` by value. Historical V1 preparation remains
+  network-disabled and cannot serve as fallback. The owner must have no constructor from a plain
   URL, bearer, request, configuration, candidate, or binding record and must expose no reusable
   transport, credential, or response accessor;
 - one fresh `ureq = 3.4.2` Agent constructed from the retained verified configuration immediately
