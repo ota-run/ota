@@ -2060,8 +2060,8 @@ No Google STS/WIF, Secret Manager, materialization, injection, selected work, St
 is activated. This internal change needs no Site, Skills, Examples, Learn, FAQ, Glossary, schema,
 public JSON, or command-reference propagation.
 
-The private runner-capability relay design is now implemented across the three internal owners but
-is not activated by a workflow. Protocol `e5fe1c83e562e02f60e27026c7148918bd016155` owns the closed
+The private runner-capability relay design is now implemented across the three internal owners.
+Protocol `e5fe1c83e562e02f60e27026c7148918bd016155` owns the closed
 non-secret request/challenge/acknowledgement records and bounded zeroizing private binary frame.
 Launcher `bafbf1717f102c9d9765c5af382ad06c4ea7eb66` spends one exact V4 reservation before challenging
 the already authenticated job peer, forwards at most one correlated frame to the retained same-child
@@ -2089,11 +2089,16 @@ also reached the unrelated pre-existing
 whose background HTTP server was reaped while its readiness loop has no retry bound; the run was
 stopped after the test continued probing indefinitely. No changed relay file owns that runner test.
 
-No live workflow exists yet, no hosted job has exercised this route, and no successful provider
-contact is established. The historical provider-free workflow, released V2/V4 records, and custody
-evidence remain unchanged; the protected runner remains stopped. The Core implementation review is
-closed at the current boundary. Next: separately add and review a manual live workflow pinned to
-exact Core/Launcher/Protocol revisions before any fresh stopped-runner provisioning or dispatch.
+The separately reviewed manual live workflow is committed and pushed at Core
+`2a430b926aab231ae61490bea8ceac76a586ca1d`. It accepts only an explicit matching Core SHA, pins
+Launcher `bafbf1717f102c9d9765c5af382ad06c4ea7eb66` and Protocol
+`e5fe1c83e562e02f60e27026c7148918bd016155`, grants only `id-token: write`, runs no third-party
+action, and emits only the closed non-secret Core dispatch count and outcome. It has not been
+dispatched, no hosted job has exercised this route, and no successful provider contact is
+established. The historical provider-free workflow, released V2/V4 records, and custody evidence
+remain unchanged; the protected runner remains stopped. Next: verify the stopped host state, then
+create one fresh run-bound request and provisioned state for this exact Core/Launcher/Protocol
+pairing before starting the runner for that attempt only.
 No JWT admission, Google STS/WIF, Secret Manager, materialization, injection, selected work, Step 8,
 or V12.2 is authorized. This internal feature-gated route adds no
 public command, schema, JSON, or operator-facing concept, so no Examples, Skills, Site, Learn, FAQ,
