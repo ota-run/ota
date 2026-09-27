@@ -1274,7 +1274,7 @@ hand. No provider-contact claim is available until that exact hosted proof
 passes. The relay establishes bounded job-principal supply, not independent
 GitHub provenance of the URL or bearer.
 
-#### Private Runner-Capability Relay Contract (Locally Implemented, Not Activated)
+#### Private Runner-Capability Relay Contract (Implemented, Workflow Staged, Not Dispatched)
 
 The protected job client is the sole source of the per-job GitHub URL and
 bearer. It must read them only after a Launcher challenge on the already
@@ -1398,6 +1398,17 @@ error path, and absence of URL/bearer in installed evidence, logs, JSON,
 receipts, and retained job artifacts. MUSE's independent read-only design
 review found no P1/P2 wire or one-use ownership defect; implementation and
 cross-repository pinning require their own review and proof.
+
+The separate manual workflow is staged at
+`.github/workflows/secret-delivery-github-oidc-live.yml`. It requires the operator to name the exact
+Core revision and independently reconciles that value to the run SHA, installed Core, Launcher
+`bafbf1717f102c9d9765c5af382ad06c4ea7eb66`, Protocol
+`e5fe1c83e562e02f60e27026c7148918bd016155`, root-owned pressure request, workflow, run, attempt,
+runner version, branch, and protected Linux/X64 posture before the private relay can begin. The job
+has only `id-token: write`, invokes no third-party action, retains no URL, bearer, or JWT, and emits
+only the closed non-secret Core invocation count and outcome with explicit `not_proved` provider and
+lower-layer cardinality. The workflow has not been dispatched and proves no network or provider
+behavior.
 
 The later bounded hosted slice may contact only GitHub's Actions OIDC request service.
 Neither the hosted-evidence custody correction nor this planning amendment activates that route;

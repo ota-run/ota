@@ -30,7 +30,9 @@
   exact live workflow and task must consume a verified V4 transaction before the same-child session
   can receive bounded URL and bearer bytes; historical and provider-free routes refuse. This does
   not activate a workflow or prove provider contact, JWT admission, Google access, secret delivery,
-  or selected-work execution.
+  or selected-work execution. Add the separate manual exact-revision hosted gate with only
+  `id-token: write`, closed non-secret Core dispatch posture, and no third-party action in the
+  capability-bearing job; it remains undispatched.
 
 - Move Core's protected-launcher public verifier and installation-evidence readers, hosted custody
   workflow records, and pressure runbook to Launcher `aa55319fa88f14e96b47e3fa9d08a0940fae5456`'s
