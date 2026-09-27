@@ -2066,10 +2066,11 @@ non-secret request/challenge/acknowledgement records and bounded zeroizing priva
 Launcher `bafbf1717f102c9d9765c5af382ad06c4ea7eb66` spends one exact V4 reservation before challenging
 the already authenticated job peer, forwards at most one correlated frame to the retained same-child
 Core session, and requires Core's exact acknowledgement. Both revisions are committed and pushed.
-Core is pinned to the reviewed Protocol revision and locally implements the remaining ownership
-boundary: it accepts only the exact live workflow/task route, consumes V4 before requesting the
-relay, validates the challenge and private frame on the same session, constructs the fixed endpoint
-observation without process-environment credentials, and dispatches at most one GitHub OIDC request.
+Core `5eb78412c9ac142542e5255c5bfdc36d1fce30bf` is committed and pushed, pins the reviewed
+Protocol revision, and implements the remaining ownership boundary: it accepts only the exact live
+workflow/task route, consumes V4 before requesting the relay, validates the challenge and private
+frame on the same session, constructs the fixed endpoint observation without process-environment
+credentials, and dispatches at most one GitHub OIDC request.
 Focused tests prove exact-route preparation and zero-dispatch refusal for the historical release
 workflow, provider-free workflow, wrong task, stale nonce, truncated frame, and queued duplicate
 bytes. They also prove timeout restoration and coalesced challenge/private-frame delivery without
@@ -2091,11 +2092,10 @@ stopped after the test continued probing indefinitely. No changed relay file own
 No live workflow exists yet, no hosted job has exercised this route, and no successful provider
 contact is established. The historical provider-free workflow, released V2/V4 records, and custody
 evidence remain unchanged; the protected runner remains stopped. The Core implementation review is
-closed at the current boundary. Next: commit the exact Core revision, then separately add and review
-a manual live workflow pinned to exact Core/Launcher/Protocol revisions before any fresh
-stopped-runner provisioning or dispatch. No JWT admission, Google STS/WIF, Secret Manager,
-materialization,
-injection, selected work, Step 8, or V12.2 is authorized. This internal feature-gated route adds no
+closed at the current boundary. Next: separately add and review a manual live workflow pinned to
+exact Core/Launcher/Protocol revisions before any fresh stopped-runner provisioning or dispatch.
+No JWT admission, Google STS/WIF, Secret Manager, materialization, injection, selected work, Step 8,
+or V12.2 is authorized. This internal feature-gated route adds no
 public command, schema, JSON, or operator-facing concept, so no Examples, Skills, Site, Learn, FAQ,
 Glossary, or command-reference propagation is required.
 
