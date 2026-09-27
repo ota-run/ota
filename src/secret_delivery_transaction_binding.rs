@@ -160,7 +160,7 @@ pub(crate) struct VerifiedSecretDeliveryTransactionBindingV4 {
     consumed: bool,
 }
 
-const LIVE_GITHUB_OIDC_WORKFLOW_REFERENCE_V1: &str = "ota-run/ota/.github/workflows/secret-delivery-github-oidc-live.yml@refs/heads/1.6.29-implementation";
+pub(crate) const LIVE_GITHUB_OIDC_WORKFLOW_REFERENCE_V1: &str = "ota-run/ota/.github/workflows/secret-delivery-github-oidc-live.yml@refs/heads/1.6.29-implementation";
 const LIVE_GITHUB_OIDC_TASK_V1: &str = "governed";
 
 /// One irreversibly consumed V4 authority retained through the private OIDC relay. It is neither

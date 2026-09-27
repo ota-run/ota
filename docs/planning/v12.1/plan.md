@@ -1274,7 +1274,7 @@ hand. No provider-contact claim is available until that exact hosted proof
 passes. The relay establishes bounded job-principal supply, not independent
 GitHub provenance of the URL or bearer.
 
-#### Private Runner-Capability Relay Contract (Implemented, Workflow Staged, Not Dispatched)
+#### Private Runner-Capability Relay Contract (Implemented, First Hosted Attempt Cancelled Before Runner)
 
 The protected job client is the sole source of the per-job GitHub URL and
 bearer. It must read them only after a Launcher challenge on the already
@@ -1407,8 +1407,13 @@ Core revision and independently reconciles that value to the run SHA, installed 
 runner version, branch, and protected Linux/X64 posture before the private relay can begin. The job
 has only `id-token: write`, invokes no third-party action, retains no URL, bearer, or JWT, and emits
 only the closed non-secret Core invocation count and outcome with explicit `not_proved` provider and
-lower-layer cardinality. The workflow has not been dispatched and proves no network or provider
-behavior.
+lower-layer cardinality. The first dispatch, run `36350170156` at Core
+`4a8549104b3abf24cec9e88deead9d7bad5bad57`, was cancelled while queued with no runner assigned.
+Pre-provision review found that Core's pressure builder still admitted only the historical
+provider-free workflow reference. The builder correction admits the exact live reference only on
+`refs/heads/1.6.29-implementation`, retains the historical path, and refuses other workflow or
+branch substitutions. A fresh Core build, run-bound root request, provisioned state, and hosted
+run are required. No network or provider behavior was exercised by the cancelled attempt.
 
 The later bounded hosted slice may contact only GitHub's Actions OIDC request service.
 Neither the hosted-evidence custody correction nor this planning amendment activates that route;

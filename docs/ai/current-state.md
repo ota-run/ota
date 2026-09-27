@@ -2093,12 +2093,18 @@ The separately reviewed manual live workflow is committed and pushed at Core
 `2a430b926aab231ae61490bea8ceac76a586ca1d`. It accepts only an explicit matching Core SHA, pins
 Launcher `bafbf1717f102c9d9765c5af382ad06c4ea7eb66` and Protocol
 `e5fe1c83e562e02f60e27026c7148918bd016155`, grants only `id-token: write`, runs no third-party
-action, and emits only the closed non-secret Core dispatch count and outcome. It has not been
-dispatched, no hosted job has exercised this route, and no successful provider contact is
-established. The historical provider-free workflow, released V2/V4 records, and custody evidence
-remain unchanged; the protected runner remains stopped. Next: verify the stopped host state, then
-create one fresh run-bound request and provisioned state for this exact Core/Launcher/Protocol
-pairing before starting the runner for that attempt only.
+action, and emits only the closed non-secret Core dispatch count and outcome. No hosted job has
+exercised this route, and no successful provider contact is established. The first manual dispatch,
+run `36350170156` at Core `4a8549104b3abf24cec9e88deead9d7bad5bad57`, was cancelled while
+queued with no runner assigned. Pre-provision review found that Core's pressure builder admitted
+only the historical provider-free workflow reference. The reviewed correction admits
+the exact live workflow only on `refs/heads/1.6.29-implementation`, reuses the live route's
+canonical reference, and tests V2 authority payload rendering plus branch/workflow substitution
+refusal. All five pressure fixture tests pass; MUSE found no P1/P2 trust-boundary blocker. The
+protected runner remains stopped. Next: commit the correction, build its exact Core revision on Linux/X64,
+dispatch a fresh run, create its root-owned request and provisioned state, then start the runner
+for that attempt only. The historical provider-free workflow, released V2/V4 records, and custody
+evidence remain unchanged.
 No JWT admission, Google STS/WIF, Secret Manager, materialization, injection, selected work, Step 8,
 or V12.2 is authorized. This internal feature-gated route adds no
 public command, schema, JSON, or operator-facing concept, so no Examples, Skills, Site, Learn, FAQ,

@@ -347,11 +347,14 @@ fn validate_request(
         || request.workflow_sha != request.commit_sha
         || !is_canonical_version(&request.runner_version)
         || !is_pressure_implementation_ref(&request.git_ref)
-        || request.workflow_reference
+        || (request.workflow_reference
             != format!(
                 "{}/.github/workflows/secret-delivery-oidc-endpoint-evidence.yml@{}",
                 request.repository, request.git_ref
             )
+            && !(request.git_ref == "refs/heads/1.6.29-implementation"
+                && request.workflow_reference
+                    == crate::secret_delivery_transaction_binding::LIVE_GITHUB_OIDC_WORKFLOW_REFERENCE_V1))
     {
         return Err("pressure authority request is outside the closed fixture boundary".into());
     }
@@ -547,6 +550,79 @@ secret_requirements:
             parsed["request_identity"]
                 .as_str()
                 .is_some_and(|identity| identity.starts_with("sha256:"))
+        );
+    }
+
+    #[test]
+    fn live_github_oidc_request_requires_its_exact_workflow_and_branch() {
+        let directory = tempfile::tempdir().expect("directory");
+        let contract_path = directory.path().join("ota.yaml");
+        fs::write(&contract_path, contract()).expect("contract");
+        let mut live_request = request(&contract_path);
+        live_request["workflow_reference"] = serde_json::Value::String(
+            crate::secret_delivery_transaction_binding::LIVE_GITHUB_OIDC_WORKFLOW_REFERENCE_V1
+                .into(),
+        );
+        let request_path = directory.path().join("live-request.json");
+        fs::write(
+            &request_path,
+            serde_json::to_vec(&live_request).expect("request"),
+        )
+        .expect("request file");
+
+        let render = || {
+            render_authority_payload_for_contract(
+                &request_path,
+                &format!("sha256:{}", "4".repeat(64)),
+                &format!("sha256:{}", "5".repeat(64)),
+                &"b".repeat(40),
+                &format!("sha256:{}", "2".repeat(64)),
+                &format!("sha256:{}", "3".repeat(64)),
+                &contract_path,
+            )
+        };
+        let payload = render().expect("live pressure payload");
+        let installation: serde_json::Value =
+            serde_json::from_slice(&payload).expect("installation");
+        let authority: ProtectedSecretDeliveryAuthorityPayloadV2 =
+            serde_json::from_value(installation["authority_payload"].clone())
+                .expect("closed authority payload");
+        assert_eq!(
+            authority.invocation_bindings[0]
+                .oidc_claims
+                .iter()
+                .find(|claim| claim.claim == GithubOidcClaim::WorkflowRef)
+                .map(|claim| claim.expected_value.as_str()),
+            Some(
+                crate::secret_delivery_transaction_binding::LIVE_GITHUB_OIDC_WORKFLOW_REFERENCE_V1
+            )
+        );
+
+        live_request["git_ref"] =
+            serde_json::Value::String("refs/heads/1.6.30-implementation".into());
+        fs::write(
+            &request_path,
+            serde_json::to_vec(&live_request).expect("request"),
+        )
+        .expect("request file");
+        assert!(
+            render().is_err(),
+            "another branch must not reuse the live workflow"
+        );
+
+        live_request["git_ref"] =
+            serde_json::Value::String("refs/heads/1.6.29-implementation".into());
+        live_request["workflow_reference"] = serde_json::Value::String(
+            "ota-run/ota/.github/workflows/other.yml@refs/heads/1.6.29-implementation".into(),
+        );
+        fs::write(
+            &request_path,
+            serde_json::to_vec(&live_request).expect("request"),
+        )
+        .expect("request file");
+        assert!(
+            render().is_err(),
+            "another workflow must not enter the live route"
         );
     }
 
