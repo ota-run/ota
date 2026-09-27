@@ -2097,14 +2097,24 @@ action, and emits only the closed non-secret Core dispatch count and outcome. No
 exercised this route, and no successful provider contact is established. The first manual dispatch,
 run `36350170156` at Core `4a8549104b3abf24cec9e88deead9d7bad5bad57`, was cancelled while
 queued with no runner assigned. Pre-provision review found that Core's pressure builder admitted
-only the historical provider-free workflow reference. The reviewed correction admits
-the exact live workflow only on `refs/heads/1.6.29-implementation`, reuses the live route's
-canonical reference, and tests V2 authority payload rendering plus branch/workflow substitution
-refusal. All five pressure fixture tests pass; MUSE found no P1/P2 trust-boundary blocker. The
-protected runner remains stopped. Next: commit the correction, build its exact Core revision on Linux/X64,
-dispatch a fresh run, create its root-owned request and provisioned state, then start the runner
-for that attempt only. The historical provider-free workflow, released V2/V4 records, and custody
-evidence remain unchanged.
+only the historical provider-free workflow reference. Core correction
+`758b877d14ab07008497d271dacc7beb00c5be65` is committed and pushed: it admits the exact live
+workflow only on `refs/heads/1.6.29-implementation`, reuses the live route's canonical reference,
+and tests V2 authority payload rendering plus branch/workflow substitution refusal. All five
+pressure fixture tests pass; MUSE found no P1/P2 trust-boundary blocker. After all required
+registration-branch release checks passed, only the inert workflow registration stub was
+fast-forwarded to `main` at `a7fe38be7bbbdd31e499c35c5d0775814c781944`; GitHub registered
+the workflow path. No implementation or version bump moved to `main`.
+
+The VPS Core checkout was switched cleanly to `758b877d` and a Linux/X64 release build began, but
+the SSH session closed before Cargo reported success. SSH then timed out repeatedly and GitHub
+reported protected runner `ota-authority-aws-16-171-42-182` offline. No newly built Core binary
+was installed or verified, no root request was written, and no fresh run was dispatched. The last
+observed runner state before the connection loss was disabled, inactive, PID 0; its current host
+state is unverified. Next: restore VPS access, inspect boot/service state and build artifacts,
+complete the exact Core build and root-owned installation, then dispatch a fresh run and provision
+only its run-bound request before starting the runner. The historical provider-free workflow,
+released V2/V4 records, and custody evidence remain unchanged.
 No JWT admission, Google STS/WIF, Secret Manager, materialization, injection, selected work, Step 8,
 or V12.2 is authorized. This internal feature-gated route adds no
 public command, schema, JSON, or operator-facing concept, so no Examples, Skills, Site, Learn, FAQ,
