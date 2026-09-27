@@ -2052,12 +2052,52 @@ allocation-free JWT validation and bearer-substitution regression repairs. The i
 fixture accidentally reached the dispatch path before the test was corrected to invalidate its
 V4 binding; the corrected fixture proves zero Core invocations on that pre-dispatch refusal only.
 No successful provider contact is established, and no CLI or hosted workflow route is enabled.
-Historical V1 preparation remains network-disabled. The next gates are a separately reviewed
-manual workflow pinned to this exact revision, fresh stopped-runner provisioning, and protected
-Linux/X64 proof. Post-invocation terminal outcome and one real GitHub response remain unproved.
+Historical V1 preparation remains network-disabled. After the private relay and Core route are
+implemented and independently reviewed, the later gates are a distinct manual workflow pinned
+to its exact revision, fresh stopped-runner provisioning, and protected Linux/X64 proof.
+Post-invocation terminal outcome and one real GitHub response remain unproved.
 No Google STS/WIF, Secret Manager, materialization, injection, selected work, Step 8, or V12.2
 is activated. This internal change needs no Site, Skills, Examples, Learn, FAQ, Glossary, schema,
 public JSON, or command-reference propagation.
+
+The private runner-capability relay design is now implemented across the three internal owners but
+is not activated by a workflow. Protocol `e5fe1c83e562e02f60e27026c7148918bd016155` owns the closed
+non-secret request/challenge/acknowledgement records and bounded zeroizing private binary frame.
+Launcher `bafbf1717f102c9d9765c5af382ad06c4ea7eb66` spends one exact V4 reservation before challenging
+the already authenticated job peer, forwards at most one correlated frame to the retained same-child
+Core session, and requires Core's exact acknowledgement. Both revisions are committed and pushed.
+Core is pinned to the reviewed Protocol revision and locally implements the remaining ownership
+boundary: it accepts only the exact live workflow/task route, consumes V4 before requesting the
+relay, validates the challenge and private frame on the same session, constructs the fixed endpoint
+observation without process-environment credentials, and dispatches at most one GitHub OIDC request.
+Focused tests prove exact-route preparation and zero-dispatch refusal for the historical release
+workflow, provider-free workflow, wrong task, stale nonce, truncated frame, and queued duplicate
+bytes. They also prove timeout restoration and coalesced challenge/private-frame delivery without
+prefetching credentials into the generic JSON buffer. Every Ota-owned URL copy is zeroized and
+protected input/debug output does not expose the URL or bearer; the third-party HTTP request owns a
+transient URI only for the bounded invocation. Linux/arm64 all-target/all-feature compilation
+passes. Focused Core tests pass for all five private-frame relay cases, exact live-route V4
+consumption and refusal substitution, endpoint redaction, and the closed dispatch-attempt state.
+MUSE's first review identified two P2 blockers: Ota-owned full-URL copies that were not zeroized and
+generic challenge framing that could prefetch private bytes. Both are repaired and regression-tested;
+SCOOBY's stabilized-diff review found no remaining P1/P2. A requested final MUSE recheck did not
+return a verdict because that thread was occupied by unrelated user work. The small VM could not
+link the full all-feature test binary and killed `rustc` for memory. Canonical host `ota run ci`
+also reached the unrelated pre-existing
+`runner::tests::ensure_ready_activation_starts_and_cleans_up_shared_remote_internal_target` test,
+whose background HTTP server was reaped while its readiness loop has no retry bound; the run was
+stopped after the test continued probing indefinitely. No changed relay file owns that runner test.
+
+No live workflow exists yet, no hosted job has exercised this route, and no successful provider
+contact is established. The historical provider-free workflow, released V2/V4 records, and custody
+evidence remain unchanged; the protected runner remains stopped. The Core implementation review is
+closed at the current boundary. Next: commit the exact Core revision, then separately add and review
+a manual live workflow pinned to exact Core/Launcher/Protocol revisions before any fresh
+stopped-runner provisioning or dispatch. No JWT admission, Google STS/WIF, Secret Manager,
+materialization,
+injection, selected work, Step 8, or V12.2 is authorized. This internal feature-gated route adds no
+public command, schema, JSON, or operator-facing concept, so no Examples, Skills, Site, Learn, FAQ,
+Glossary, or command-reference propagation is required.
 
 Do not touch the unrelated untracked `docs/pressure/agent-authority-signals.md` unless the user
 explicitly asks.

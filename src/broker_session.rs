@@ -55,21 +55,24 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 #[cfg(unix)]
 use ota_authority_protocol::OtaProcessPostureV1;
+#[cfg(any(test, all(unix, target_os = "linux")))]
+use ota_authority_protocol::ProtectedGithubOidcCapabilityRelayChallengeV1;
 use ota_authority_protocol::{
     AUTHORIZATION_DECISION_ADMISSION, AuthorizationDecision, AuthorizationDecisionAdmissionV1,
     AuthorizationDecisionPayload, AuthorizationDecisionRelayEvidenceV1, AuthorizationRequest,
-    BrokerChallenge, LAUNCHER_EXECUTION_COMPLETION, LEASE_CONSUMPTION_ADMISSION,
-    LEASE_CONSUMPTION_INTENT_PERSISTENCE, LEASE_CONSUMPTION_PERSISTENCE,
-    LauncherExecutionCompletionPersistenceV1, LauncherExecutionCompletionV1,
-    LauncherExecutionOutcomeV1, LauncherFinalizationArchiveSidecarV1, LeaseConsumptionAdmissionV1,
+    BrokerChallenge, CorrelatedProtectedGithubOidcPrivateFrameV1, LAUNCHER_EXECUTION_COMPLETION,
+    LEASE_CONSUMPTION_ADMISSION, LEASE_CONSUMPTION_INTENT_PERSISTENCE,
+    LEASE_CONSUMPTION_PERSISTENCE, LauncherExecutionCompletionPersistenceV1,
+    LauncherExecutionCompletionV1, LauncherExecutionOutcomeV1,
+    LauncherFinalizationArchiveSidecarV1, LeaseConsumptionAdmissionV1,
     LeaseConsumptionIntentPersistenceV1, LeaseConsumptionIntentRelayEvidenceV1,
     LeaseConsumptionPersistenceV1, MAX_FRAME_BYTES, PreparedLeasePayload,
-    RUNTIME_BOUNDARY_ATTESTATION_PROTOCOL_V2, RUNTIME_BOUNDARY_SCHEMA_VERSION_V1,
-    RuntimeBoundaryObservationState, RuntimeBoundarySemanticIdentityPosture,
-    SYSTEMD_JOB_PRINCIPAL_PROFILE_ID_V2, SYSTEMD_LAUNCHER_PROFILE_ID_V3,
-    SYSTEMD_LAUNCHER_PROFILE_ID_V4, SYSTEMD_PROTECTED_LAUNCHER_ADAPTER_V1,
-    SYSTEMD_PROTECTED_LAUNCHER_ATTESTATION_PROTOCOL_V3, SignedLauncherAttestation,
-    SignedLauncherAttestationV2, SignedLauncherAttestationV3,
+    ProtectedGithubOidcPrivateReceiveBufferV1, RUNTIME_BOUNDARY_ATTESTATION_PROTOCOL_V2,
+    RUNTIME_BOUNDARY_SCHEMA_VERSION_V1, RuntimeBoundaryObservationState,
+    RuntimeBoundarySemanticIdentityPosture, SYSTEMD_JOB_PRINCIPAL_PROFILE_ID_V2,
+    SYSTEMD_LAUNCHER_PROFILE_ID_V3, SYSTEMD_LAUNCHER_PROFILE_ID_V4,
+    SYSTEMD_PROTECTED_LAUNCHER_ADAPTER_V1, SYSTEMD_PROTECTED_LAUNCHER_ATTESTATION_PROTOCOL_V3,
+    SignedLauncherAttestation, SignedLauncherAttestationV2, SignedLauncherAttestationV3,
     authorization_decision_admission_v1_identity,
     authorization_decision_relay_evidence_v1_identity,
     derive_work_unit_identity as protocol_work_unit_identity, domain_separated,
@@ -90,12 +93,12 @@ use ota_authority_protocol::{
 #[cfg(test)]
 use ota_authority_protocol::{
     LauncherAttestationPayload, LauncherAttestationPayloadV2, LauncherAttestationPayloadV3,
-    LauncherExecutionFinalizationV1, LauncherPrincipalMappingV1, RuntimeBoundaryAttestation,
-    RuntimeBoundaryObservation, SignedLauncherExecutionFinalizationV1,
+    LauncherExecutionFinalizationV1, LauncherPrincipalMappingV1, ProtectedGithubOidcSecretInputV1,
+    RuntimeBoundaryAttestation, RuntimeBoundaryObservation, SignedLauncherExecutionFinalizationV1,
     SignedLauncherFinalizationArchiveV1, SystemdJobPrincipalObservation,
     SystemdLauncherObservation, SystemdProtectedLauncherInstanceEvidenceV1,
     SystemdProtectedLauncherInstanceEvidenceV2, UnixPrincipalIdentity,
-    launcher_execution_finalization_v1_identity,
+    build_protected_github_oidc_private_frame_v1, launcher_execution_finalization_v1_identity,
     signed_launcher_execution_finalization_v1_identity,
     signed_launcher_finalization_archive_v1_identity,
 };
@@ -106,6 +109,12 @@ use ota_authority_protocol::{
 pub(crate) use ota_authority_protocol::{
     LeaseConsumeRequest, LeaseConsumeResponsePayload, LeaseConsumeState, LeaseConsumptionQuery,
     LeaseConsumptionStatus, LeaseConsumptionStatusPayload, SignedBrokerMessage,
+};
+#[cfg(all(unix, target_os = "linux"))]
+use ota_authority_protocol::{
+    PROTECTED_GITHUB_OIDC_CAPABILITY_RELAY_ACKNOWLEDGEMENT_V1,
+    ProtectedGithubOidcCapabilityRelayAcknowledgementV1,
+    validate_protected_github_oidc_capability_relay_challenge_v1,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1034,6 +1043,47 @@ impl SystemdExecutionCompletion {
                     .map_err(|error| error.to_string())
             },
         )
+    }
+
+    #[cfg(target_os = "linux")]
+    pub(crate) fn relay_private_github_oidc_capability(
+        &mut self,
+        authority: crate::secret_delivery_transaction_binding::ConsumedSecretDeliveryTransactionBindingV4,
+    ) -> Result<
+        (
+            crate::secret_delivery_transaction_binding::ConsumedSecretDeliveryTransactionBindingV4,
+            CorrelatedProtectedGithubOidcPrivateFrameV1,
+        ),
+        String,
+    > {
+        let request = authority.relay_request();
+        self.session.send_json(request)?;
+        let challenge: ProtectedGithubOidcCapabilityRelayChallengeV1 =
+            self.session.receive_json_exact()?;
+        validate_protected_github_oidc_capability_relay_challenge_v1(&challenge)
+            .map_err(|_| String::from("private GitHub OIDC relay challenge is invalid"))?;
+        if challenge.request_identity != request.identity
+            || challenge.workflow_run_id != request.workflow_run_id
+            || challenge.workflow_run_attempt != request.workflow_run_attempt
+        {
+            return Err(String::from(
+                "private GitHub OIDC relay challenge does not match consumed authority",
+            ));
+        }
+        let private_frame = self
+            .session
+            .receive_private_github_oidc_frame(request.identity.as_str(), &challenge.nonce)?;
+        self.session.refuse_queued_private_relay_bytes()?;
+        let acknowledgement = ProtectedGithubOidcCapabilityRelayAcknowledgementV1 {
+            schema_version: 1,
+            message_kind: PROTECTED_GITHUB_OIDC_CAPABILITY_RELAY_ACKNOWLEDGEMENT_V1.into(),
+            request_identity: request.identity.clone(),
+            nonce: challenge.nonce,
+            session_identity: request.session_identity.clone(),
+            v4_binding_identity: request.v4_binding_identity.clone(),
+        };
+        self.session.send_json(&acknowledgement)?;
+        Ok((authority, private_frame))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -3976,6 +4026,124 @@ impl LauncherSession {
         let frame = self.receive_frame()?;
         serde_json::from_slice(&frame)
             .map_err(|error| format!("launcher session returned malformed message: {error}"))
+    }
+
+    fn receive_json_exact<T: for<'de> Deserialize<'de>>(&mut self) -> Result<T, String> {
+        if !self.read_buffer.is_empty() {
+            return Err(String::from(
+                "launcher session exact frame began with unexpected buffered bytes",
+            ));
+        }
+        let mut length = [0_u8; 4];
+        self.stream
+            .read_exact(&mut length)
+            .map_err(|_| String::from("launcher session exact frame length read failed"))?;
+        let length = u32::from_be_bytes(length) as usize;
+        if length > MAX_FRAME_BYTES {
+            return Err(String::from(
+                "launcher session exact frame exceeds the bounded protocol limit",
+            ));
+        }
+        let mut frame = vec![0_u8; length];
+        self.stream
+            .read_exact(&mut frame)
+            .map_err(|_| String::from("launcher session exact frame payload read failed"))?;
+        serde_json::from_slice(&frame)
+            .map_err(|_| String::from("launcher session returned malformed exact message"))
+    }
+
+    fn receive_private_github_oidc_frame(
+        &mut self,
+        request_identity: &str,
+        nonce: &str,
+    ) -> Result<CorrelatedProtectedGithubOidcPrivateFrameV1, String> {
+        self.receive_private_github_oidc_frame_with_timeout(
+            request_identity,
+            nonce,
+            std::time::Duration::from_secs(5),
+        )
+    }
+
+    fn receive_private_github_oidc_frame_with_timeout(
+        &mut self,
+        request_identity: &str,
+        nonce: &str,
+        timeout: std::time::Duration,
+    ) -> Result<CorrelatedProtectedGithubOidcPrivateFrameV1, String> {
+        if !self.read_buffer.is_empty() {
+            return Err(String::from(
+                "private GitHub OIDC relay began with unexpected buffered bytes",
+            ));
+        }
+        let prior_timeout = self
+            .stream
+            .read_timeout()
+            .map_err(|_| String::from("private GitHub OIDC relay timeout is unavailable"))?;
+        let deadline = std::time::Instant::now() + timeout;
+        let received = (|| {
+            let mut receive = ProtectedGithubOidcPrivateReceiveBufferV1::new();
+            while !receive.unfilled_mut().is_empty() {
+                let remaining = deadline
+                    .checked_duration_since(std::time::Instant::now())
+                    .filter(|remaining| !remaining.is_zero())
+                    .ok_or_else(|| String::from("private GitHub OIDC relay timed out"))?;
+                self.stream
+                    .set_read_timeout(Some(remaining))
+                    .map_err(|_| String::from("private GitHub OIDC relay timeout failed"))?;
+                let count = self
+                    .stream
+                    .read(receive.unfilled_mut())
+                    .map_err(|_| String::from("private GitHub OIDC relay read failed"))?;
+                receive
+                    .record_read(count)
+                    .map_err(|_| String::from("private GitHub OIDC relay frame is invalid"))?;
+            }
+            receive
+                .finish()
+                .and_then(|frame| frame.correlate(request_identity, nonce))
+                .map_err(|_| String::from("private GitHub OIDC relay frame is invalid"))
+        })();
+        self.stream
+            .set_read_timeout(prior_timeout)
+            .map_err(|_| String::from("private GitHub OIDC relay timeout restoration failed"))?;
+        received
+    }
+
+    fn refuse_queued_private_relay_bytes(&self) -> Result<(), String> {
+        let mut queued_bytes: libc::c_int = 0;
+        if unsafe { libc::ioctl(self.stream.as_raw_fd(), libc::FIONREAD, &mut queued_bytes) } != 0
+            || queued_bytes != 0
+        {
+            return Err(String::from(
+                "private GitHub OIDC relay returned duplicate bytes",
+            ));
+        }
+        let mut observed = 0_u8;
+        let result = unsafe {
+            libc::recv(
+                self.stream.as_raw_fd(),
+                (&mut observed as *mut u8).cast(),
+                1,
+                libc::MSG_PEEK | libc::MSG_DONTWAIT,
+            )
+        };
+        if result == 0 {
+            return Err(String::from(
+                "private GitHub OIDC relay closed before acknowledgement",
+            ));
+        }
+        if result > 0 {
+            return Err(String::from(
+                "private GitHub OIDC relay returned duplicate bytes",
+            ));
+        }
+        let error = std::io::Error::last_os_error();
+        if !matches!(error.kind(), ErrorKind::WouldBlock) {
+            return Err(String::from(
+                "private GitHub OIDC relay socket state is invalid",
+            ));
+        }
+        Ok(())
     }
 
     fn receive_json_with_cancellation<T, F>(
@@ -8613,5 +8781,160 @@ pub(crate) mod tests {
             crate::crossing_authority::TestBrokerTrustStoreGuard::install(trust_store);
         verify_broker_archive_evidence(root.path(), &decoded)
             .expect("legacy broker archive remains readable");
+    }
+
+    fn private_github_oidc_relay_fixture(
+        nonce: &str,
+    ) -> (String, CorrelatedProtectedGithubOidcPrivateFrameV1) {
+        let request_identity = format!("sha256:{}", "ab".repeat(32));
+        let frame = build_protected_github_oidc_private_frame_v1(
+            &request_identity,
+            nonce,
+            ProtectedGithubOidcSecretInputV1::new(
+                b"https://token.actions.githubusercontent.com/id-token".to_vec(),
+            ),
+            ProtectedGithubOidcSecretInputV1::new(b"private-bearer".to_vec()),
+        )
+        .expect("private relay fixture");
+        (request_identity, frame)
+    }
+
+    fn private_github_oidc_relay_session() -> (LauncherSession, UnixStream) {
+        let (peer, ota) = UnixStream::pair().expect("private relay session pair");
+        let session = LauncherSession::from_inherited_descriptor(ota.into_raw_fd())
+            .expect("private relay launcher session");
+        (session, peer)
+    }
+
+    #[test]
+    fn private_github_oidc_relay_receives_one_correlated_frame_and_restores_timeout() {
+        let nonce = "cd".repeat(32);
+        let (request_identity, expected) = private_github_oidc_relay_fixture(&nonce);
+        let (mut session, mut peer) = private_github_oidc_relay_session();
+        let prior_timeout = session.stream.read_timeout().expect("read timeout");
+        peer.write_all(expected.as_wire_bytes())
+            .expect("write private relay frame");
+
+        let received = session
+            .receive_private_github_oidc_frame(&request_identity, &nonce)
+            .expect("receive correlated private relay frame");
+
+        assert_eq!(received.url_bytes(), expected.url_bytes());
+        assert_eq!(received.bearer_bytes(), expected.bearer_bytes());
+        assert_eq!(
+            session.stream.read_timeout().expect("restored timeout"),
+            prior_timeout
+        );
+        session
+            .refuse_queued_private_relay_bytes()
+            .expect("one frame leaves no duplicate bytes");
+    }
+
+    #[test]
+    fn private_github_oidc_relay_does_not_prefetch_coalesced_frame_into_json_buffer() {
+        let nonce = "cd".repeat(32);
+        let (request_identity, private_frame) = private_github_oidc_relay_fixture(&nonce);
+        let challenge = ProtectedGithubOidcCapabilityRelayChallengeV1 {
+            schema_version: 1,
+            message_kind:
+                ota_authority_protocol::PROTECTED_GITHUB_OIDC_CAPABILITY_RELAY_CHALLENGE_V1.into(),
+            request_identity: request_identity.clone(),
+            workflow_run_id: "1004".into(),
+            workflow_run_attempt: "1".into(),
+            nonce: nonce.clone(),
+            max_url_bytes: ota_authority_protocol::MAX_PRIVATE_OIDC_RELAY_URL_BYTES_V1 as u32,
+            max_bearer_bytes: ota_authority_protocol::MAX_PRIVATE_OIDC_RELAY_BEARER_BYTES_V1 as u32,
+        };
+        let challenge_bytes = serde_json::to_vec(&challenge).expect("challenge JSON");
+        let mut coalesced =
+            Vec::with_capacity(4 + challenge_bytes.len() + private_frame.as_wire_bytes().len());
+        coalesced.extend_from_slice(&(challenge_bytes.len() as u32).to_be_bytes());
+        coalesced.extend_from_slice(&challenge_bytes);
+        coalesced.extend_from_slice(private_frame.as_wire_bytes());
+        let (mut session, mut peer) = private_github_oidc_relay_session();
+        peer.write_all(&coalesced)
+            .expect("write coalesced challenge and private frame");
+
+        let received_challenge: ProtectedGithubOidcCapabilityRelayChallengeV1 = session
+            .receive_json_exact()
+            .expect("receive exact challenge without private prefetch");
+        assert_eq!(received_challenge, challenge);
+        assert!(session.read_buffer.is_empty());
+        let received = session
+            .receive_private_github_oidc_frame(&request_identity, &nonce)
+            .expect("receive private frame after exact challenge");
+        assert_eq!(received.url_bytes(), private_frame.url_bytes());
+        assert_eq!(received.bearer_bytes(), private_frame.bearer_bytes());
+    }
+
+    #[test]
+    fn private_github_oidc_relay_refuses_stale_nonce_and_truncated_frame() {
+        let nonce = "cd".repeat(32);
+        let (request_identity, frame) = private_github_oidc_relay_fixture(&nonce);
+        let (mut stale_session, mut stale_peer) = private_github_oidc_relay_session();
+        stale_peer
+            .write_all(frame.as_wire_bytes())
+            .expect("write stale private relay frame");
+        assert!(
+            stale_session
+                .receive_private_github_oidc_frame(&request_identity, &"ce".repeat(32))
+                .is_err(),
+            "a frame for a stale nonce must be refused"
+        );
+
+        let (mut truncated_session, mut truncated_peer) = private_github_oidc_relay_session();
+        truncated_peer
+            .write_all(&frame.as_wire_bytes()[..12])
+            .expect("write truncated private relay frame");
+        truncated_peer
+            .shutdown(std::net::Shutdown::Write)
+            .expect("close truncated private relay frame");
+        assert!(
+            truncated_session
+                .receive_private_github_oidc_frame(&request_identity, &nonce)
+                .is_err(),
+            "a truncated private relay frame must be refused"
+        );
+    }
+
+    #[test]
+    fn private_github_oidc_relay_refuses_timeout_and_restores_session_timeout() {
+        let nonce = "cd".repeat(32);
+        let (request_identity, _frame) = private_github_oidc_relay_fixture(&nonce);
+        let (mut session, _peer) = private_github_oidc_relay_session();
+        let prior_timeout = session.stream.read_timeout().expect("read timeout");
+
+        assert!(
+            session
+                .receive_private_github_oidc_frame_with_timeout(
+                    &request_identity,
+                    &nonce,
+                    std::time::Duration::from_millis(10),
+                )
+                .is_err(),
+            "an absent private relay frame must time out and refuse"
+        );
+        assert_eq!(
+            session.stream.read_timeout().expect("restored timeout"),
+            prior_timeout
+        );
+    }
+
+    #[test]
+    fn private_github_oidc_relay_refuses_queued_duplicate_bytes() {
+        let nonce = "cd".repeat(32);
+        let (request_identity, frame) = private_github_oidc_relay_fixture(&nonce);
+        let (mut session, mut peer) = private_github_oidc_relay_session();
+        peer.write_all(frame.as_wire_bytes())
+            .and_then(|_| peer.write_all(b"duplicate"))
+            .expect("write duplicate private relay bytes");
+
+        session
+            .receive_private_github_oidc_frame(&request_identity, &nonce)
+            .expect("receive first private relay frame");
+        assert!(
+            session.refuse_queued_private_relay_bytes().is_err(),
+            "queued private relay bytes must be refused before acknowledgement"
+        );
     }
 }

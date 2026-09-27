@@ -11,7 +11,7 @@ use ota_authority_protocol::{
     PROTECTED_LAUNCHER_SECRET_DELIVERY_TRANSACTION_BINDING_REQUEST_V2,
     PROTECTED_LAUNCHER_SECRET_DELIVERY_TRANSACTION_BINDING_REQUEST_V3,
     PROTECTED_LAUNCHER_SECRET_DELIVERY_TRANSACTION_BINDING_REQUEST_V4,
-    ProtectedLauncherCapabilityObservationResponseV1,
+    ProtectedGithubOidcCapabilityRelayRequestV1, ProtectedLauncherCapabilityObservationResponseV1,
     ProtectedLauncherSecretDeliveryTransactionBindingRequestV1,
     ProtectedLauncherSecretDeliveryTransactionBindingRequestV2,
     ProtectedLauncherSecretDeliveryTransactionBindingRequestV3,
@@ -35,6 +35,11 @@ use ota_authority_protocol::{
     reconcile_protected_launcher_secret_delivery_transaction_binding_response_v4,
     validate_protected_launcher_capability_observation_challenge_v1,
     validate_protected_same_child_capability_prelude_v1,
+};
+#[cfg(any(target_os = "linux", test))]
+use ota_authority_protocol::{
+    PROTECTED_GITHUB_OIDC_CAPABILITY_RELAY_REQUEST_V1,
+    protected_github_oidc_capability_relay_request_v1_identity,
 };
 #[cfg(any(test, feature = "secret-delivery-pressure"))]
 use ota_authority_protocol::{
@@ -153,6 +158,53 @@ pub(crate) struct VerifiedSecretDeliveryTransactionBindingV4 {
     request: ProtectedLauncherSecretDeliveryTransactionBindingRequestV4,
     response: ProtectedLauncherSecretDeliveryTransactionBindingResponseV4,
     consumed: bool,
+}
+
+const LIVE_GITHUB_OIDC_WORKFLOW_REFERENCE_V1: &str = "ota-run/ota/.github/workflows/secret-delivery-github-oidc-live.yml@refs/heads/1.6.29-implementation";
+const LIVE_GITHUB_OIDC_TASK_V1: &str = "governed";
+
+/// One irreversibly consumed V4 authority retained through the private OIDC relay. It is neither
+/// cloneable nor serializable, and no plain binding record can reconstruct it.
+pub(crate) struct ConsumedSecretDeliveryTransactionBindingV4 {
+    binding: ota_authority_protocol::ProtectedLauncherSecretDeliveryTransactionBindingV4,
+    runner_version: String,
+    candidate: SemanticallyVerifiedSecretDeliveryTransactionCandidate,
+    signed_transport_expectation: (
+        crate::secret_delivery_transport_dependencies::SecretDeliveryTransportDependencyFeatureGraphV1,
+        crate::secret_delivery_transport_dependencies::SecretDeliveryTransportDependencyRecordV1,
+    ),
+    relay_request: ProtectedGithubOidcCapabilityRelayRequestV1,
+}
+
+impl std::fmt::Debug for ConsumedSecretDeliveryTransactionBindingV4 {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("ConsumedSecretDeliveryTransactionBindingV4([PROTECTED])")
+    }
+}
+
+impl ConsumedSecretDeliveryTransactionBindingV4 {
+    pub(crate) fn relay_request(&self) -> &ProtectedGithubOidcCapabilityRelayRequestV1 {
+        &self.relay_request
+    }
+
+    pub(crate) fn into_provider_parts(
+        self,
+    ) -> (
+        ota_authority_protocol::ProtectedLauncherSecretDeliveryTransactionBindingV4,
+        String,
+        SemanticallyVerifiedSecretDeliveryTransactionCandidate,
+        (
+            crate::secret_delivery_transport_dependencies::SecretDeliveryTransportDependencyFeatureGraphV1,
+            crate::secret_delivery_transport_dependencies::SecretDeliveryTransportDependencyRecordV1,
+        ),
+    ){
+        (
+            self.binding,
+            self.runner_version,
+            self.candidate,
+            self.signed_transport_expectation,
+        )
+    }
 }
 
 /// Core-retained proof that the public observation response and private prelude came from the
@@ -900,6 +952,82 @@ impl VerifiedSecretDeliveryTransactionBindingV4 {
         {
             Err(SecretDeliveryTransactionBindingError::ResponseInvalid)
         }
+    }
+
+    #[cfg(target_os = "linux")]
+    pub(crate) fn consume_for_private_github_oidc_relay(
+        self,
+    ) -> Result<ConsumedSecretDeliveryTransactionBindingV4, SecretDeliveryTransactionBindingError>
+    {
+        let verifier = crate::protected_capability_observation::load_retained_verifier()?;
+        let observed_at_unix_seconds = u64::try_from(OffsetDateTime::now_utc().unix_timestamp())
+            .map_err(|_| SecretDeliveryTransactionBindingError::Expired)?;
+        self.consume_for_private_github_oidc_relay_at(&verifier, observed_at_unix_seconds)
+    }
+
+    #[cfg(any(target_os = "linux", test))]
+    pub(crate) fn consume_for_private_github_oidc_relay_at(
+        mut self,
+        verifier: &RetainedCapabilityProjectionVerifierV1,
+        observed_at_unix_seconds: u64,
+    ) -> Result<ConsumedSecretDeliveryTransactionBindingV4, SecretDeliveryTransactionBindingError>
+    {
+        let (workflow_reference, workflow_run_id, workflow_run_attempt) = {
+            let invocation = self.snapshot.invocation_context();
+            if invocation.workflow_reference() != LIVE_GITHUB_OIDC_WORKFLOW_REFERENCE_V1
+                || invocation.lane_kind() != "task"
+                || invocation.lane_name() != LIVE_GITHUB_OIDC_TASK_V1
+            {
+                return Err(SecretDeliveryTransactionBindingError::ResponseInvalid);
+            }
+            (
+                invocation.workflow_reference().to_owned(),
+                invocation.workflow_run_id().to_owned(),
+                invocation.workflow_run_attempt().to_owned(),
+            )
+        };
+        if workflow_reference.is_empty()
+            || workflow_run_id.is_empty()
+            || workflow_run_attempt.is_empty()
+        {
+            return Err(SecretDeliveryTransactionBindingError::ResponseInvalid);
+        }
+        let signed_transport_expectation = self.signed_transport_expectation()?;
+        let binding = self.consume_at(verifier, observed_at_unix_seconds)?;
+        let runner_version = self.observed_runner_version().to_owned();
+        let candidate = self.candidate.candidate().clone();
+        let mut relay_request = ProtectedGithubOidcCapabilityRelayRequestV1 {
+            schema_version: 1,
+            message_kind: PROTECTED_GITHUB_OIDC_CAPABILITY_RELAY_REQUEST_V1.into(),
+            identity: String::new(),
+            launcher_request_identity: self.request.launcher_request_identity.clone(),
+            startup_continuation_identity: self.request.startup_continuation_identity.clone(),
+            session_identity: self.request.session_identity.clone(),
+            protected_snapshot_identity: self.request.protected_snapshot_identity.clone(),
+            v4_binding_identity: binding.identity.clone(),
+            observation_request_identity: self.request.observation.identity.clone(),
+            transaction_candidate_identity: self
+                .request
+                .secret_transaction_candidate_identity
+                .clone(),
+            transport_dependency_record_identity: self
+                .request
+                .transport_dependency_record_identity
+                .clone(),
+            workflow_reference,
+            workflow_run_id,
+            workflow_run_attempt,
+        };
+        relay_request.identity =
+            protected_github_oidc_capability_relay_request_v1_identity(&relay_request)
+                .map_err(|_| SecretDeliveryTransactionBindingError::RequestInvalid)?;
+        Ok(ConsumedSecretDeliveryTransactionBindingV4 {
+            binding,
+            runner_version,
+            candidate,
+            signed_transport_expectation,
+            relay_request,
+        })
     }
 
     pub(crate) fn consume_at(

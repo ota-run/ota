@@ -26,6 +26,12 @@
 
 ## Unreleased
 
+- Add the feature-gated Core side of a private, one-use GitHub Actions OIDC capability relay. The
+  exact live workflow and task must consume a verified V4 transaction before the same-child session
+  can receive bounded URL and bearer bytes; historical and provider-free routes refuse. This does
+  not activate a workflow or prove provider contact, JWT admission, Google access, secret delivery,
+  or selected-work execution.
+
 - Move Core's protected-launcher public verifier and installation-evidence readers, hosted custody
   workflow records, and pressure runbook to Launcher `aa55319fa88f14e96b47e3fa9d08a0940fae5456`'s
   root-created `/var/lib/ota/authority-launcher-public` sibling. This requires a fresh provision

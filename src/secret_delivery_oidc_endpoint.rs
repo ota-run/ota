@@ -65,15 +65,103 @@ pub(crate) struct GithubActionsOidcRequestEndpointProfileV1 {
     pub alternate_origins_allowed: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(PartialEq, Eq)]
 pub(crate) struct GithubActionsOidcEndpointObservationInputV1 {
     pub schema_version: u32,
-    pub request_url: String,
+    pub request_url: ProtectedGithubOidcRequestUrlV1,
     pub runner_environment: String,
     pub runner_os: String,
     pub runner_architecture: String,
     pub runner_version: String,
     pub protected_launcher_capability_projection_identity: String,
+}
+
+/// Private full request URL owner. Only derived non-secret endpoint shape enters observations.
+#[derive(PartialEq, Eq)]
+pub(crate) struct ProtectedGithubOidcRequestUrlV1(Vec<u8>);
+
+impl ProtectedGithubOidcRequestUrlV1 {
+    pub(crate) fn new(bytes: Vec<u8>) -> Result<Self, GithubOidcEndpointError> {
+        let protected = Self(bytes);
+        std::str::from_utf8(&protected.0).map_err(|_| invalid_endpoint())?;
+        Ok(protected)
+    }
+
+    pub(crate) fn as_str(&self) -> Result<&str, GithubOidcEndpointError> {
+        std::str::from_utf8(&self.0).map_err(|_| invalid_endpoint())
+    }
+
+    pub(crate) fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl std::fmt::Debug for ProtectedGithubOidcRequestUrlV1 {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("ProtectedGithubOidcRequestUrlV1([REDACTED])")
+    }
+}
+
+impl std::fmt::Debug for GithubActionsOidcEndpointObservationInputV1 {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("GithubActionsOidcEndpointObservationInputV1")
+            .field("schema_version", &self.schema_version)
+            .field("request_url", &"[REDACTED]")
+            .field("runner_environment", &self.runner_environment)
+            .field("runner_os", &self.runner_os)
+            .field("runner_architecture", &self.runner_architecture)
+            .field("runner_version", &self.runner_version)
+            .field(
+                "protected_launcher_capability_projection_identity",
+                &self.protected_launcher_capability_projection_identity,
+            )
+            .finish()
+    }
+}
+
+#[cfg(test)]
+impl Clone for ProtectedGithubOidcRequestUrlV1 {
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
+
+#[cfg(test)]
+impl Clone for GithubActionsOidcEndpointObservationInputV1 {
+    fn clone(&self) -> Self {
+        Self {
+            schema_version: self.schema_version,
+            request_url: self.request_url.clone(),
+            runner_environment: self.runner_environment.clone(),
+            runner_os: self.runner_os.clone(),
+            runner_architecture: self.runner_architecture.clone(),
+            runner_version: self.runner_version.clone(),
+            protected_launcher_capability_projection_identity: self
+                .protected_launcher_capability_projection_identity
+                .clone(),
+        }
+    }
+}
+
+#[cfg(test)]
+impl From<&str> for ProtectedGithubOidcRequestUrlV1 {
+    fn from(value: &str) -> Self {
+        Self(value.as_bytes().to_vec())
+    }
+}
+
+#[cfg(test)]
+impl From<String> for ProtectedGithubOidcRequestUrlV1 {
+    fn from(value: String) -> Self {
+        Self(value.into_bytes())
+    }
+}
+
+impl Drop for ProtectedGithubOidcRequestUrlV1 {
+    fn drop(&mut self) {
+        self.0.fill(0);
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -173,7 +261,7 @@ pub(crate) fn resolve_github_actions_oidc_endpoint_observation_v1(
         ));
     }
     validate_sha256_identity(&input.protected_launcher_capability_projection_identity)?;
-    let request_host = validate_request_url(profile, &input.request_url)?;
+    let request_host = validate_request_url(profile, input.request_url.as_str()?)?;
 
     let mut resolved = ResolvedGithubActionsOidcEndpointObservationV1 {
         schema_version: 1,
@@ -418,6 +506,8 @@ mod tests {
         assert_eq!(resolved.request_host, REQUEST_HOST);
         assert_eq!(resolved.request_path_shape, PATH_SHAPE);
         assert_eq!(resolved.request_query_shape, QUERY_SHAPE);
+        assert!(!format!("{retained:?}").contains("123e4567"));
+        assert!(!format!("{:?}", retained.request_url).contains("123e4567"));
         assert!(!format!("{resolved:?}").contains("123e4567"));
         verify_github_actions_oidc_endpoint_observation_v1(&profile, &retained, &resolved)
             .expect("semantic re-verification");
@@ -427,7 +517,7 @@ mod tests {
     fn canonical_service_shard_rotation_resolves_and_binds_the_observed_host() {
         let profile = github_actions_oidc_request_endpoint_profile_v1().expect("profile");
         let mut retained = input();
-        retained.request_url = URL.replacen("run-actions-1-", "run-actions-3-", 1);
+        retained.request_url = URL.replacen("run-actions-1-", "run-actions-3-", 1).into();
         let resolved = resolve_github_actions_oidc_endpoint_observation_v1(&profile, &retained)
             .expect("canonical service shard");
         assert_eq!(
@@ -471,7 +561,7 @@ mod tests {
         ];
         for request_url in substitutions {
             let mut changed = input();
-            changed.request_url = request_url;
+            changed.request_url = request_url.into();
             assert_eq!(
                 resolve_github_actions_oidc_endpoint_observation_v1(&profile, &changed)
                     .expect_err("substitution must refuse")

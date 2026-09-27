@@ -27,11 +27,18 @@ use crate::secret_delivery_oidc_endpoint::{
     ResolvedGithubActionsOidcEndpointObservationV1,
     verify_github_actions_oidc_endpoint_observation_v1,
 };
+#[cfg(feature = "secret-delivery-pressure")]
+use crate::secret_delivery_oidc_endpoint::{
+    ProtectedGithubOidcRequestUrlV1, github_actions_oidc_request_endpoint_profile_v1,
+    resolve_github_actions_oidc_endpoint_observation_v1,
+};
 use crate::secret_delivery_transaction::{
     SecretDeliveryTransactionCandidateRealization,
     SemanticallyVerifiedSecretDeliveryTransactionCandidate,
     secret_delivery_transaction_candidate_identity,
 };
+#[cfg(feature = "secret-delivery-pressure")]
+use crate::secret_delivery_transaction_binding::ConsumedSecretDeliveryTransactionBindingV4;
 use crate::secret_delivery_transaction_binding::{
     SecretDeliveryTransactionBindingError, VerifiedSecretDeliveryTransactionBindingV2,
     VerifiedSecretDeliveryTransactionBindingV4,
@@ -142,14 +149,14 @@ impl ProtectedProviderValue {
     pub(crate) fn new(
         value: impl Into<Vec<u8>>,
     ) -> Result<Self, SecretDeliveryProviderClientError> {
-        let value = value.into();
-        if value.is_empty() {
+        let protected = Self(value.into());
+        if protected.0.is_empty() {
             return Err(error(
                 "secret_delivery_provider_value_empty",
                 "protected provider values cannot be empty",
             ));
         }
-        Ok(Self(value))
+        Ok(protected)
     }
 
     fn as_utf8(&self) -> Result<&str, SecretDeliveryProviderClientError> {
@@ -232,6 +239,8 @@ impl fmt::Debug for ProtectedProviderRequestV1 {
 
 impl Drop for ProtectedProviderRequestV1 {
     fn drop(&mut self) {
+        // Zero is valid UTF-8, so the String invariant remains intact until deallocation.
+        unsafe { self.url.as_bytes_mut() }.fill(0);
         self.body.fill(0);
     }
 }
@@ -465,6 +474,18 @@ impl fmt::Debug for GithubOidcDispatchTerminalV1 {
     }
 }
 
+#[cfg(feature = "secret-delivery-pressure")]
+impl GithubOidcDispatchTerminalV1 {
+    pub(crate) fn public_posture(&self) -> (u8, &'static str) {
+        let outcome = match self.attempt.outcome {
+            GithubOidcDispatchOutcomeV1::NotAttempted => "not_attempted",
+            GithubOidcDispatchOutcomeV1::ResponseReceived => "response_received",
+            GithubOidcDispatchOutcomeV1::TransportRefused => "transport_refused",
+        };
+        (self.attempt.core_invocations, outcome)
+    }
+}
+
 #[cfg(all(test, feature = "secret-delivery-pressure"))]
 impl GithubOidcDispatchTerminalV1 {
     pub(crate) fn refused_without_invocation_for_test(&self) -> bool {
@@ -537,11 +558,18 @@ fn verify_exact_oidc_request(
     operation: &SecretDeliveryProviderOperationPlanV1,
     bearer: &ProtectedProviderValue,
 ) -> Result<(), SecretDeliveryProviderClientError> {
-    let expected_url = format!(
-        "{}&audience={}",
-        endpoint_input.request_url,
-        percent_encode(operation.oidc_audience.as_bytes())
-    );
+    let expected_url = ProtectedGithubOidcRequestUrlV1::new(
+        format!(
+            "{}&audience={}",
+            endpoint_input
+                .request_url
+                .as_str()
+                .map_err(|_| oidc_dispatch_refused())?,
+            percent_encode(operation.oidc_audience.as_bytes())
+        )
+        .into_bytes(),
+    )
+    .map_err(|_| oidc_dispatch_refused())?;
     let authorization = request
         .authorization
         .as_ref()
@@ -550,7 +578,7 @@ fn verify_exact_oidc_request(
         .as_utf8()
         .map_err(|_| oidc_dispatch_refused())?;
     if request.method != ProviderHttpMethod::Get
-        || request.url != expected_url
+        || request.url.as_bytes() != expected_url.as_bytes()
         || request.media_type.is_some()
         || !request.body.is_empty()
         || !authorization.starts_with("Bearer ")
@@ -636,8 +664,11 @@ fn dispatch_github_oidc_v4_inner(
         .header(ureq::http::header::AUTHORIZATION, authorization)
         .body(())
         .map_err(|_| oidc_dispatch_refused())?;
+    let built_uri =
+        ProtectedGithubOidcRequestUrlV1::new(http_request.uri().to_string().into_bytes())
+            .map_err(|_| oidc_dispatch_refused())?;
     if http_request.method() != ureq::http::Method::GET
-        || http_request.uri().to_string() != request.url
+        || built_uri.as_bytes() != request.url.as_bytes()
         || http_request.headers().len() != 1
         || http_request
             .headers()
@@ -727,6 +758,57 @@ pub(crate) fn prepare_secret_delivery_provider_transport_v4(
         endpoint_profile,
         endpoint_input,
         endpoint_observation,
+    )
+}
+
+#[cfg(feature = "secret-delivery-pressure")]
+pub(crate) fn prepare_secret_delivery_provider_transport_from_private_relay_v4(
+    authority: ConsumedSecretDeliveryTransactionBindingV4,
+    frame: ota_authority_protocol::CorrelatedProtectedGithubOidcPrivateFrameV1,
+) -> Result<PreparedSecretDeliveryProviderTransportV4, SecretDeliveryProviderClientError> {
+    let (binding, runner_version, candidate, signed_expectation) = authority.into_provider_parts();
+    let request_url =
+        ProtectedGithubOidcRequestUrlV1::new(frame.url_bytes().to_vec()).map_err(|_| {
+            error(
+                "secret_delivery_provider_transport_oidc_input_invalid",
+                "relayed GitHub OIDC request URL is invalid",
+            )
+        })?;
+    let bearer = ProtectedProviderValue::new(frame.bearer_bytes().to_vec())?;
+    drop(frame);
+    validate_bearer(&bearer)?;
+    let endpoint_profile = github_actions_oidc_request_endpoint_profile_v1().map_err(|_| {
+        error(
+            "secret_delivery_provider_transport_endpoint_invalid",
+            "canonical GitHub OIDC endpoint profile is invalid",
+        )
+    })?;
+    let endpoint_input = GithubActionsOidcEndpointObservationInputV1 {
+        schema_version: 1,
+        request_url,
+        runner_environment: "self-hosted".into(),
+        runner_os: "linux".into(),
+        runner_architecture: "x64".into(),
+        runner_version: runner_version.clone(),
+        protected_launcher_capability_projection_identity: binding.projection_identity.clone(),
+    };
+    let endpoint_observation =
+        resolve_github_actions_oidc_endpoint_observation_v1(&endpoint_profile, &endpoint_input)
+            .map_err(|_| {
+                error(
+                    "secret_delivery_provider_transport_endpoint_invalid",
+                    "relayed GitHub OIDC endpoint is outside the retained profile",
+                )
+            })?;
+    prepare_after_v4_consumption_with_bearer_v1(
+        binding,
+        signed_expectation,
+        &runner_version,
+        &candidate,
+        &endpoint_profile,
+        endpoint_input,
+        endpoint_observation,
+        bearer,
     )
 }
 
@@ -827,6 +909,33 @@ fn prepare_after_v4_consumption_v1(
     endpoint_input: GithubActionsOidcEndpointObservationInputV1,
     endpoint_observation: ResolvedGithubActionsOidcEndpointObservationV1,
 ) -> Result<PreparedSecretDeliveryProviderTransportV4, SecretDeliveryProviderClientError> {
+    let bearer = take_github_oidc_bearer_v1(endpoint_input.request_url.as_bytes())?;
+    prepare_after_v4_consumption_with_bearer_v1(
+        binding,
+        signed_expectation,
+        retained_runner_version,
+        candidate,
+        endpoint_profile,
+        endpoint_input,
+        endpoint_observation,
+        bearer,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn prepare_after_v4_consumption_with_bearer_v1(
+    binding: ota_authority_protocol::ProtectedLauncherSecretDeliveryTransactionBindingV4,
+    signed_expectation: (
+        SecretDeliveryTransportDependencyFeatureGraphV1,
+        SecretDeliveryTransportDependencyRecordV1,
+    ),
+    retained_runner_version: &str,
+    candidate: &SemanticallyVerifiedSecretDeliveryTransactionCandidate,
+    endpoint_profile: &GithubActionsOidcRequestEndpointProfileV1,
+    endpoint_input: GithubActionsOidcEndpointObservationInputV1,
+    endpoint_observation: ResolvedGithubActionsOidcEndpointObservationV1,
+    bearer: ProtectedProviderValue,
+) -> Result<PreparedSecretDeliveryProviderTransportV4, SecretDeliveryProviderClientError> {
     let (transport_dependency_feature_graph, transport_dependency_record) = signed_expectation;
     if binding.transport_dependency_record_identity
         != candidate.candidate().transport_dependency_record_identity
@@ -838,7 +947,7 @@ fn prepare_after_v4_consumption_v1(
             "V4 binding does not match the retained transaction dependency record",
         ));
     }
-    let context = prepare_oidc_context_v1(
+    let context = prepare_oidc_context_with_bearer_v1(
         &binding.secret_transaction_candidate_identity,
         &binding.projection_identity,
         retained_runner_version,
@@ -846,6 +955,7 @@ fn prepare_after_v4_consumption_v1(
         endpoint_profile,
         endpoint_input,
         endpoint_observation,
+        bearer,
     )?;
     let capability = ConsumedSecretDeliveryProviderCapabilityV4 {
         binding,
@@ -876,6 +986,30 @@ fn prepare_oidc_context_v1(
     endpoint_profile: &GithubActionsOidcRequestEndpointProfileV1,
     endpoint_input: GithubActionsOidcEndpointObservationInputV1,
     endpoint_observation: ResolvedGithubActionsOidcEndpointObservationV1,
+) -> Result<PreparedOidcContextV1, SecretDeliveryProviderClientError> {
+    let bearer = take_github_oidc_bearer_v1(endpoint_input.request_url.as_bytes())?;
+    prepare_oidc_context_with_bearer_v1(
+        binding_candidate_identity,
+        binding_projection_identity,
+        retained_runner_version,
+        candidate,
+        endpoint_profile,
+        endpoint_input,
+        endpoint_observation,
+        bearer,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn prepare_oidc_context_with_bearer_v1(
+    binding_candidate_identity: &str,
+    binding_projection_identity: &str,
+    retained_runner_version: &str,
+    candidate: &SemanticallyVerifiedSecretDeliveryTransactionCandidate,
+    endpoint_profile: &GithubActionsOidcRequestEndpointProfileV1,
+    endpoint_input: GithubActionsOidcEndpointObservationInputV1,
+    endpoint_observation: ResolvedGithubActionsOidcEndpointObservationV1,
+    bearer: ProtectedProviderValue,
 ) -> Result<PreparedOidcContextV1, SecretDeliveryProviderClientError> {
     let plan = derive_secret_delivery_provider_client_plan_v1(candidate)?;
     if plan.transaction_candidate_identity != binding_candidate_identity {
@@ -921,8 +1055,6 @@ fn prepare_oidc_context_v1(
             "OIDC request capability is outside the retained endpoint profile",
         )
     })?;
-    let bearer = take_github_oidc_bearer_v1(&endpoint_input.request_url)?;
-
     let configuration = fixed_transport_configuration_v1();
     verify_fixed_transport_configuration_v1(&configuration, MAX_SECRET_RESPONSE_BYTES)?;
     let oidc = RetainedGithubOidcRequestCapabilityV1 {
@@ -941,7 +1073,7 @@ fn prepare_oidc_context_v1(
 }
 
 fn take_github_oidc_bearer_v1(
-    expected_request_url: &str,
+    expected_request_url: &[u8],
 ) -> Result<ProtectedProviderValue, SecretDeliveryProviderClientError> {
     let owner = GITHUB_OIDC_CAPABILITY_OWNER.get_or_init(|| Mutex::new(false));
     let mut consumed = owner
@@ -984,7 +1116,7 @@ fn take_github_oidc_bearer_v1(
                 "GitHub OIDC bearer is not valid UTF-8",
             )
         })?;
-    if request_url.is_empty() || request_url != expected_request_url {
+    if request_url.is_empty() || request_url.as_bytes() != expected_request_url {
         return Err(error(
             "secret_delivery_provider_transport_oidc_input_mismatch",
             "GitHub OIDC request URL does not match the retained endpoint observation",
@@ -1247,7 +1379,12 @@ pub(crate) fn build_github_oidc_request_v1(
         method: ProviderHttpMethod::Get,
         url: format!(
             "{}&audience={}",
-            retained_input.request_url,
+            retained_input.request_url.as_str().map_err(|_| {
+                error(
+                    "secret_delivery_provider_oidc_request_invalid",
+                    "OIDC request URL is invalid",
+                )
+            })?,
             percent_encode(operation.oidc_audience.as_bytes())
         ),
         media_type: None,
@@ -1999,17 +2136,17 @@ mod tests {
             std::env::set_var(ACTIONS_ID_TOKEN_REQUEST_TOKEN, "runner-bearer");
         }
 
-        let bearer = take_github_oidc_bearer_v1("https://runner.invalid/id-token").unwrap();
+        let bearer = take_github_oidc_bearer_v1(b"https://runner.invalid/id-token").unwrap();
         assert!(!format!("{bearer:?}").contains("runner-bearer"));
-        assert!(take_github_oidc_bearer_v1("https://runner.invalid/id-token").is_err());
+        assert!(take_github_oidc_bearer_v1(b"https://runner.invalid/id-token").is_err());
 
         reset_github_oidc_capability_owner_for_test();
         unsafe {
             std::env::set_var(ACTIONS_ID_TOKEN_REQUEST_URL, "https://runner.invalid/other");
             std::env::set_var(ACTIONS_ID_TOKEN_REQUEST_TOKEN, "runner-bearer");
         }
-        assert!(take_github_oidc_bearer_v1("https://runner.invalid/id-token").is_err());
-        assert!(take_github_oidc_bearer_v1("https://runner.invalid/id-token").is_err());
+        assert!(take_github_oidc_bearer_v1(b"https://runner.invalid/id-token").is_err());
+        assert!(take_github_oidc_bearer_v1(b"https://runner.invalid/id-token").is_err());
 
         unsafe {
             match previous_url {

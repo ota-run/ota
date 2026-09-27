@@ -1234,9 +1234,175 @@ or V12.2 is authorized. The provider-contact implementation must receive its
 own independent review before commit and exact hosted proof; this planning
 amendment and the custody run alone do not prove a network call.
 
-This bounded implementation slice may contact only GitHub's Actions OIDC request service. The
-hosted-evidence custody correction did not activate it; this independently reviewed amendment does.
-The amendment itself implements no network call. It does not authorize JWT
+Before wiring that workflow or Core dispatch, the GitHub runner's per-job OIDC
+request URL and bearer require a protected one-use transport into the selected
+Core child. The current Launcher pressure installation constructs the child's
+environment from an exact root-owned allowlist; its installation evidence also
+publishes that allowlist. The job's `ACTIONS_ID_TOKEN_REQUEST_URL` and
+`ACTIONS_ID_TOKEN_REQUEST_TOKEN` therefore do not reach the child, and adding
+the bearer to the installed environment would disclose it. A Core-only read of
+those variables is not a working hosted route. The dispatch owner and V4
+preparation remain unreachable from the protected command until this boundary
+is closed.
+
+The current implementation gate is an additive, independently reviewed
+Protocol/Launcher/Core one-use in-memory relay over the existing authenticated
+job-to-Launcher and Launcher-to-exact-same-child channels. The Launcher must
+obtain the inputs from its already authenticated job peer only after the
+same-child V2/V4 reconciliation; released V4 records and the generic initial
+JSON request must not be extended with credential bytes. A new private bounded
+message turn needs exact session/binding/nonce correlation, one-use ownership,
+and non-secret diagnostics. It must bind the
+runner-supplied URL and bearer to the root-owned exact workflow/run/attempt,
+verified V2 snapshot and V4 transaction before Core can consume them; a
+workflow-controlled value is input, never authority. Missing, duplicate,
+substituted, expired, replayed, cross-child, or provider-free-workflow delivery
+must refuse; failures before HTTP invocation retain zero Core dispatches,
+while failures after it begins retain one and can never authorize a second.
+The bearer and full URL must
+not enter the root-owned public installation evidence, child environment,
+arguments, durable files, logs, diagnostics, public JSON, or receipts; retained
+Ota-owned private buffers must be bounded and zeroized. The HTTP implementation necessarily owns
+a transient URI only for the bounded dispatch lifetime; Ota must not log, persist, or expose it and
+must zeroize every application-owned URL copy on refusal or completion. The exact additive message shape,
+ownership and failure cleanup are specified below and require independent
+implementation review before commit. The existing provider-free workflow and its refusal are
+unchanged. No live workflow dispatch or provider-contact claim is available
+until the relay and route pass independent review; the first reviewed live
+workflow dispatch is then the hosted proof attempt, not evidence already in
+hand. No provider-contact claim is available until that exact hosted proof
+passes. The relay establishes bounded job-principal supply, not independent
+GitHub provenance of the URL or bearer.
+
+#### Private Runner-Capability Relay Contract (Locally Implemented, Not Activated)
+
+The protected job client is the sole source of the per-job GitHub URL and
+bearer. It must read them only after a Launcher challenge on the already
+authenticated invocation socket. The challenge may be issued only after the
+selected child has independently reconciled the complete signed V2 snapshot,
+rechecked its graph and record, and consumed its verified V4 transaction once.
+Core retains that consumed authority in a non-cloneable private owner so a
+failed relay cannot leave a verified-but-unconsumed retry path; V4 preparation
+for the live route must accept that owner rather than consume V4 a second time.
+Only that owner can issue a relay request on the existing same-child session.
+The request carries the exact launcher request, startup continuation, session,
+snapshot, V4 binding, observation request, signed workflow reference, run ID,
+run attempt, transaction-candidate, and transport-dependency record identities.
+Launcher compares the fields it owns to the retained selected-child session,
+root-owned installation, V4 response, and opaque snapshot identity. Core owns
+the signed payload, candidate, single selected operation, and transport
+semantics comparisons; Launcher does not reinterpret those Core-owned records.
+A V1/V2/V3 carrier, provider-free workflow, wrong task, or independently
+supplied workflow flag cannot request this turn.
+
+Protocol must add a distinct versioned private message turn; it must not add
+credential fields to released snapshot or binding records, the generic
+`LauncherInvocationRequestV1`, or the existing JSON completion/output frames.
+Launcher mints a fresh nonce only after validating the child request and
+irreversibly reserving the one relay turn. Its challenge exposes to the
+lower-trust job client only the request identity, exact run/attempt, nonce,
+and length limits, not snapshot or operation internals. The client `read_session`
+loop accepts this new non-secret framed kind alongside output, finalization,
+and terminal frames, and returns exactly one private response. The response
+echoes the request identity and nonce; the Launcher-to-child delivery also
+binds the retained session and V4 identifiers. Core checks that non-secret
+header against its consumed owner before accepting credential bytes. The
+challenge uses an exact non-prefetching framed read before Core switches to the
+private binary decoder, so a coalesced private frame cannot enter the generic JSON buffer. The
+non-secret acknowledgement follows successful private delivery. The job
+response and Launcher-to-child delivery use bounded private
+binary frames, parsed directly into non-cloneable, non-serializable,
+non-printable zeroizing owners, not `serde_json::Value`, ordinary `String`, or
+the generic framed-JSON reader. Cap the URL at 4096 bytes, bearer at 8192
+bytes, and the complete private frame below 16 KiB; reject zero lengths,
+non-UTF-8 URL, malformed bearer bytes, trailing data, overlong lengths, or a
+second response observed while the turn remains pending. Do not wait for
+stream EOF or claim to detect a duplicate that arrives after dispatch; the
+state machine must ensure no later bytes can authorize a second delivery or
+dispatch. The URL is independently validated
+against the existing fixed GitHub endpoint profile after delivery. No token or
+URL digest becomes a public identity or retained artifact.
+
+The additive non-secret Core request is
+`ProtectedGithubOidcCapabilityRelayRequestV1` with exactly `schema_version: 1`,
+fixed `message_kind`, `identity`, `launcher_request_identity`,
+`startup_continuation_identity`, `session_identity`,
+`protected_snapshot_identity`, `v4_binding_identity`,
+`observation_request_identity`, `transaction_candidate_identity`,
+`transport_dependency_record_identity`, `workflow_reference`,
+`workflow_run_id`, and `workflow_run_attempt`. Its identity is SHA-256 over
+`ota.protected-github-oidc-capability-relay-request.v1\0` followed by JCS of
+every field except `identity`. Launcher replies to the authenticated job client
+with `ProtectedGithubOidcCapabilityRelayChallengeV1` containing exactly
+`schema_version: 1`, fixed `message_kind`, `request_identity`, the exact run ID
+and attempt, a fresh 32-byte OS-random nonce encoded as 64 lowercase hex
+characters, and fixed maximum URL/bearer lengths. The challenge carries no
+snapshot, candidate, binding, bearer, or full URL. Core's non-secret
+`ProtectedGithubOidcCapabilityRelayAcknowledgementV1` contains exactly
+`schema_version: 1`, fixed `message_kind`, `request_identity`, the same nonce,
+`session_identity`, and `v4_binding_identity`; Launcher accepts it only on the
+retained same-child session after one private delivery. No message in this
+turn signs, grants, or replaces V2/V4 authority.
+
+The private response and delivery each use an independent length-prefixed
+binary frame with exactly: 4-byte big-endian payload length; 8 ASCII bytes
+`OTAOIDC1`; 32 raw bytes of the request's SHA-256 identity; 32 raw nonce bytes;
+2-byte big-endian URL length; 2-byte big-endian bearer length; then exactly
+those URL and bearer bytes. The payload length must equal the remaining frame
+length and be at most 16,384 bytes; the URL length must be 1–4,096 and bearer
+length 1–8,192. There is no padding, extension field, trailing byte, alternate
+encoding, or generic JSON fallback. A decoder owns its entire bounded input
+buffer from the first read so every incomplete or rejected frame can be
+best-effort zeroized; no Ota-owned `encode_frame` copy or generic
+`Vec<u8>`/`String` intermediate may retain credential bytes after refusal.
+The third-party HTTP request may retain its transient URI only through the one bounded invocation.
+The header is checked
+before the credential range is exposed to Core. Protocol owns this exact wire
+shape and structural validation only; Launcher owns peer/session and replay
+state; Core owns signed semantic comparison, endpoint/bearer validation, V4
+consumption, and dispatch.
+
+Launcher must challenge the same `SO_PEERCRED`-authenticated job connection
+that initiated the selected invocation, never an arbitrary reconnect. Its
+challenge write must serialize with concurrent output-frame writes on that
+socket; the response read must have a short bounded deadline. The private
+response must match the outstanding nonce, exact request identity, and one
+selected child/session. Launcher marks the reservation spent before its first
+challenge write, then forwards at most once over the already retained
+same-child Unix stream. Partial write, timeout, missing acknowledgement, or
+other failure cannot reopen or replace the spent turn. Core acknowledges only
+after receiving the protected owner and reconciling the request/session/V4
+identifiers. Every socket close, timeout, duplicate, wrong-peer, wrong-child,
+wrong-version, mismatch, cancellation, or failure to acknowledge invalidates
+the turn, zeroizes retained application bytes, and follows existing
+child/cgroup/scope/active-slot cleanup. Failure before the Core HTTP invocation
+records `core_invocations=0`; failure after it begins retains
+`core_invocations=1` with the appropriate closed terminal outcome. The command's terminal
+failure output is the non-secret hosted-job record for this internal gate and must carry both
+fields on every route; no secret value or transport error detail may substitute. A late
+duplicate, if observed, must be refused but cannot authorize another dispatch.
+No fallback
+to process environment, argv, a durable file, a new unauthenticated socket,
+or the historical provider-free route is permitted.
+
+After successful relay, Core must use the consumed V4 authority owner and one
+protected input owner for endpoint observation, preparation, and at most one
+dispatch; the current environment-reading
+`take_github_oidc_bearer_v1` path is not a live-route substitute. Neither the
+relay nor a positive acknowledgement admits JWT claims or proves GitHub
+provenance, provider-side receipt, or lower-layer request cardinality. The
+implementation must test exact same-peer/same-child transfer, output-frame
+interleaving, absent/duplicate/oversized/truncated responses, stale nonce,
+replay after reconnect, refusal on the old workflow, zeroization on every
+error path, and absence of URL/bearer in installed evidence, logs, JSON,
+receipts, and retained job artifacts. MUSE's independent read-only design
+review found no P1/P2 wire or one-use ownership defect; implementation and
+cross-repository pinning require their own review and proof.
+
+The later bounded hosted slice may contact only GitHub's Actions OIDC request service.
+Neither the hosted-evidence custody correction nor this planning amendment activates that route;
+the private relay and live route require independent implementation review and exact hosted proof.
+This amendment itself implements no network call. It does not authorize JWT
 claim admission, Google STS, IAM Credentials, Secret Manager, materialization, injection, release
 of the startup continuation, beginning the selected workload/recipient command, positive evidence,
 Step 8, or V12.2.

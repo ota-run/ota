@@ -112791,15 +112791,19 @@ fn enforce_secret_delivery_protected_transaction_boundary(
         return Ok(());
     }
 
-    #[cfg(all(unix, target_os = "linux"))]
+    #[cfg(all(
+        unix,
+        target_os = "linux",
+        feature = "secret-delivery-pressure"
+    ))]
     let protected_result = ACTIVE_SYSTEMD_EXECUTION_COMPLETION.with(|active| {
         let completion = active.borrow().as_ref().cloned()?;
         let workflow_run_id = std::env::var("GITHUB_RUN_ID").ok()?;
         let workflow_run_attempt = std::env::var("GITHUB_RUN_ATTEMPT").ok()?;
         let workflow_reference = std::env::var("GITHUB_WORKFLOW_REF").ok()?;
         let runner_version = std::env::var("OTA_CAPABILITY_OBSERVATION_RUNNER_VERSION").ok()?;
-        Some(
-            completion
+        Some((|| {
+            let binding = completion
                 .borrow_mut()
                 .request_snapshot_bound_secret_delivery_transaction_binding_v4(
                     contract,
@@ -112810,27 +112814,38 @@ fn enforce_secret_delivery_protected_transaction_boundary(
                     &workflow_run_attempt,
                     &workflow_reference,
                     &runner_version,
-                ),
-        )
+                )?;
+            let authority = binding
+                .consume_for_private_github_oidc_relay()
+                .map_err(|error| error.to_string())?;
+            let (authority, frame) = completion
+                .borrow_mut()
+                .relay_private_github_oidc_capability(authority)?;
+            let prepared = crate::secret_delivery_provider_client::prepare_secret_delivery_provider_transport_from_private_relay_v4(
+                authority,
+                frame,
+            )
+            .map_err(|error| error.to_string())?;
+            let terminal =
+                crate::secret_delivery_provider_client::dispatch_github_oidc_v4(prepared);
+            Ok::<_, String>(terminal.public_posture())
+        })()
+        .unwrap_or((0, "not_attempted")))
     });
 
-    #[cfg(not(all(unix, target_os = "linux")))]
-    let protected_result: Option<
-        Result<
-            crate::secret_delivery_transaction_binding::VerifiedSecretDeliveryTransactionBindingV4,
-            String,
-        >,
-    > = {
+    #[cfg(not(all(unix, target_os = "linux", feature = "secret-delivery-pressure")))]
+    let protected_result: Option<(u8, &'static str)> = {
         let _ = (contract, task_name, run_plan);
         None
     };
 
-    let message = match protected_result {
-        Some(Ok(_binding)) => String::from(
-            "selected secret requirements reached the verified same-child snapshot-bound transaction boundary, but provider contact remains unavailable in this V12.1 Step 7 slice; refusing before provider contact or task execution",
+    let (core_invocations, outcome) = protected_result.unwrap_or((0, "not_attempted"));
+    let message = match (core_invocations, outcome) {
+        (1, "response_received") => String::from(
+            "selected secret requirements completed one bounded GitHub OIDC request and retained one structurally valid unadmitted response (core_invocations=1, outcome=response_received); refusing before claim admission, Google contact, or task execution",
         ),
-        Some(Err(_)) | None => String::from(
-            "selected secret requirements require protected provider-binding truth through one verified same-child transaction, but that transaction is unavailable; refusing before provider contact or task execution",
+        _ => format!(
+            "selected secret requirements terminally refused the bounded GitHub OIDC request path (core_invocations={core_invocations}, outcome={outcome}); refusing before claim admission, Google contact, or task execution"
         ),
     };
     Err(RunCommandFailure {

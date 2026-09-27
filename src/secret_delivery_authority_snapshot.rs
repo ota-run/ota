@@ -274,6 +274,14 @@ impl ProtectedSecretDeliveryInvocationContextV1 {
     pub(crate) fn workflow_reference(&self) -> &str {
         self.workflow_reference.as_str()
     }
+
+    pub(crate) fn lane_kind(&self) -> &str {
+        self.lane_kind.as_str()
+    }
+
+    pub(crate) fn lane_name(&self) -> &str {
+        self.lane_name.as_str()
+    }
 }
 
 #[derive(serde::Serialize)]
@@ -1380,7 +1388,9 @@ pub(crate) mod tests {
         resolve_github_actions_oidc_endpoint_observation_v1,
     };
     #[cfg(feature = "secret-delivery-pressure")]
-    use crate::secret_delivery_provider_client::dispatch_github_oidc_v4;
+    use crate::secret_delivery_provider_client::{
+        dispatch_github_oidc_v4, prepare_secret_delivery_provider_transport_from_private_relay_v4,
+    };
     use crate::secret_delivery_provider_client::{
         prepare_secret_delivery_provider_transport_at_v1,
         prepare_secret_delivery_provider_transport_at_v4,
@@ -1637,6 +1647,16 @@ secret_requirements:
     fn candidate_authority_payload(
         contract: &Contract,
     ) -> ProtectedSecretDeliveryAuthorityPayloadV1 {
+        candidate_authority_payload_for_workflow(
+            contract,
+            "ota-run/ota/.github/workflows/release-gate.yml@refs/heads/main",
+        )
+    }
+
+    fn candidate_authority_payload_for_workflow(
+        contract: &Contract,
+        workflow_reference: &str,
+    ) -> ProtectedSecretDeliveryAuthorityPayloadV1 {
         let catalog = resolve_secret_requirement_catalog(contract).expect("requirements");
         let requirement = catalog.requirements.values().next().expect("requirement");
         let profile = crate::secret_provider_profile::google_secret_delivery_profile_input();
@@ -1717,10 +1737,7 @@ secret_requirements:
             ),
             (GithubOidcClaim::RepositoryId, "1001".into()),
             (GithubOidcClaim::RepositoryOwnerId, "1002".into()),
-            (
-                GithubOidcClaim::WorkflowRef,
-                "ota-run/ota/.github/workflows/release-gate.yml@refs/heads/main".into(),
-            ),
+            (GithubOidcClaim::WorkflowRef, workflow_reference.into()),
             (GithubOidcClaim::WorkflowSha, "a".repeat(40)),
             (GithubOidcClaim::Ref, "refs/heads/main".into()),
             (GithubOidcClaim::Sha, "b".repeat(40)),
@@ -2158,12 +2175,28 @@ secret_requirements:
         RetainedCapabilityProjectionVerifierV1,
         SigningKey,
     ) {
+        reconciled_same_child_prelude_for_workflow(
+            startup,
+            workflow_run_id,
+            "ota-run/ota/.github/workflows/release-gate.yml@refs/heads/main",
+        )
+    }
+
+    fn reconciled_same_child_prelude_for_workflow(
+        startup: &LauncherStartupContinuationV1,
+        workflow_run_id: &str,
+        workflow_reference: &str,
+    ) -> (
+        VerifiedSameChildCapabilityPreludeV1,
+        RetainedCapabilityProjectionVerifierV1,
+        SigningKey,
+    ) {
         let signing_key = SigningKey::from_bytes(&[9; 32]);
         let verifier = projection_verifier(&signing_key);
         let pending = issue_protected_capability_observation_v1(
             workflow_run_id,
             "1",
-            "ota-run/ota/.github/workflows/release-gate.yml@refs/heads/main",
+            workflow_reference,
             "2.337.0",
             &startup.launcher_request_identity,
         )
@@ -3561,30 +3594,54 @@ secret_requirements:
         ),
         SecretDeliveryTransactionBindingError,
     > {
-        let startup = startup();
         let contract = candidate_contract();
+        verified_v4_for_provider_transport_route(
+            substitute_record,
+            contract,
+            "publish",
+            "ota-run/ota/.github/workflows/release-gate.yml@refs/heads/main",
+        )
+    }
+
+    fn verified_v4_for_provider_transport_route(
+        substitute_record: bool,
+        contract: Contract,
+        task_name: &str,
+        workflow_reference: &str,
+    ) -> Result<
+        (
+            VerifiedSecretDeliveryTransactionBindingV4,
+            RetainedCapabilityProjectionVerifierV1,
+            SnapshotBoundSecretDeliveryTransactionCandidateV1,
+            u64,
+        ),
+        SecretDeliveryTransactionBindingError,
+    > {
+        let startup = startup();
         let run_plan = plan_task_execution_structure_for_target_os(
             &contract,
-            "publish",
+            task_name,
             ExecutionOverrides::default(),
             "linux",
         )
         .expect("selected graph");
-        let (prelude, verifier, _) = reconciled_same_child_prelude(&startup, "1004");
+        let (prelude, verifier, _) =
+            reconciled_same_child_prelude_for_workflow(&startup, "1004", workflow_reference);
         let context = retain_protected_secret_delivery_invocation_context_v1(
             prelude.observation(),
             &startup,
             &contract,
             "task",
-            "publish",
+            task_name,
             &run_plan,
         )
         .expect("invocation context");
         let pending_snapshot =
             issue_secret_delivery_authority_snapshot_v2(&startup, &context).expect("V2 request");
         let issued_at = pending_snapshot.request().challenge.issued_at_unix_seconds;
-        let authority_payload =
-            authority_payload_v2_from_v1(candidate_authority_payload(&contract));
+        let authority_payload = authority_payload_v2_from_v1(
+            candidate_authority_payload_for_workflow(&contract, workflow_reference),
+        );
         let snapshot_response = response_for_v2_with_authority_payload_at(
             pending_snapshot.request(),
             &authority_payload,
@@ -3597,7 +3654,7 @@ secret_requirements:
             .reconstruct_transaction_candidate(SecretDeliveryCandidateReconstructionInput {
                 contract: &contract,
                 lane_kind: "task",
-                lane_name: "publish",
+                lane_name: task_name,
                 run_plan: &run_plan,
             })
             .expect("V2 candidate");
@@ -3670,6 +3727,86 @@ secret_requirements:
             .map(|verified| (verified, verifier, candidate_for_prepare, issued_at))
     }
 
+    #[cfg(feature = "secret-delivery-pressure")]
+    #[test]
+    fn private_relay_consumes_only_the_exact_live_v4_route_and_prepares_without_environment() {
+        const LIVE_WORKFLOW: &str = "ota-run/ota/.github/workflows/secret-delivery-github-oidc-live.yml@refs/heads/1.6.29-implementation";
+        const REQUEST_URL: &[u8] = b"https://run-actions-1-azure-eastus.actions.githubusercontent.com/1//idtoken/123e4567-e89b-12d3-a456-426614174000/123e4567-e89b-12d3-a456-426614174001?api-version=2.0";
+        let contract = parse_contract_str(
+            Path::new("docs/pressure/fixtures/secret-delivery-service-path/ota.yaml"),
+            include_str!("../docs/pressure/fixtures/secret-delivery-service-path/ota.yaml"),
+        )
+        .expect("live pressure contract");
+        let (verified, verifier, _, issued_at) =
+            verified_v4_for_provider_transport_route(false, contract, "governed", LIVE_WORKFLOW)
+                .expect("live V4 binding");
+        let authority = verified
+            .consume_for_private_github_oidc_relay_at(&verifier, issued_at)
+            .expect("one consumed live relay authority");
+        let relay_request = authority.relay_request().clone();
+        assert_eq!(relay_request.workflow_reference, LIVE_WORKFLOW);
+        assert_eq!(relay_request.workflow_run_id, "1004");
+        assert_eq!(relay_request.workflow_run_attempt, "1");
+        let frame = ota_authority_protocol::build_protected_github_oidc_private_frame_v1(
+            &relay_request.identity,
+            &"ab".repeat(32),
+            ota_authority_protocol::ProtectedGithubOidcSecretInputV1::new(REQUEST_URL.to_vec()),
+            ota_authority_protocol::ProtectedGithubOidcSecretInputV1::new(
+                b"private-runner-bearer".to_vec(),
+            ),
+        )
+        .expect("correlated private frame");
+        let mut prepared =
+            prepare_secret_delivery_provider_transport_from_private_relay_v4(authority, frame)
+                .expect("relay-backed V4 preparation");
+        let rendered = format!("{prepared:?}");
+        assert!(!rendered.contains("private-runner-bearer"));
+        assert!(!rendered.contains("run-actions-1"));
+        prepared.invalidate_binding_for_test();
+        assert!(dispatch_github_oidc_v4(prepared).refused_without_invocation_for_test());
+
+        let (wrong_route, wrong_route_verifier, _, wrong_route_now) =
+            verified_v4_for_provider_transport(false).expect("historical V4 binding");
+        assert!(matches!(
+            wrong_route
+                .consume_for_private_github_oidc_relay_at(&wrong_route_verifier, wrong_route_now),
+            Err(SecretDeliveryTransactionBindingError::ResponseInvalid)
+        ));
+        let contract = parse_contract_str(
+            Path::new("docs/pressure/fixtures/secret-delivery-service-path/ota.yaml"),
+            include_str!("../docs/pressure/fixtures/secret-delivery-service-path/ota.yaml"),
+        )
+        .expect("live pressure contract");
+        let (provider_free, provider_free_verifier, _, provider_free_now) =
+            verified_v4_for_provider_transport_route(
+                false,
+                contract,
+                "governed",
+                "ota-run/ota/.github/workflows/secret-delivery-oidc-endpoint-evidence.yml@refs/heads/1.6.29-implementation",
+            )
+            .expect("provider-free V4 binding");
+        assert!(matches!(
+            provider_free.consume_for_private_github_oidc_relay_at(
+                &provider_free_verifier,
+                provider_free_now,
+            ),
+            Err(SecretDeliveryTransactionBindingError::ResponseInvalid)
+        ));
+        let (wrong_task, wrong_task_verifier, _, wrong_task_now) =
+            verified_v4_for_provider_transport_route(
+                false,
+                candidate_contract(),
+                "publish",
+                LIVE_WORKFLOW,
+            )
+            .expect("wrong-task V4 binding");
+        assert!(matches!(
+            wrong_task
+                .consume_for_private_github_oidc_relay_at(&wrong_task_verifier, wrong_task_now,),
+            Err(SecretDeliveryTransactionBindingError::ResponseInvalid)
+        ));
+    }
+
     #[test]
     fn snapshot_v2_candidate_reaches_v4_binding_and_rejects_discriminator_substitution() {
         let _environment = crate::test_support::env_mutex_lock();
@@ -3690,7 +3827,9 @@ secret_requirements:
         let endpoint =
             resolve_github_actions_oidc_endpoint_observation_v1(&profile, &endpoint_input)
                 .expect("endpoint observation");
-        let _oidc_environment = OidcEnvironmentGuard::install(&endpoint_input.request_url);
+        let _oidc_environment = OidcEnvironmentGuard::install(
+            endpoint_input.request_url.as_str().expect("request URL"),
+        );
         let prepared = prepare_secret_delivery_provider_transport_at_v4(
             &mut verified,
             &verifier,
@@ -3798,7 +3937,9 @@ secret_requirements:
         let endpoint =
             resolve_github_actions_oidc_endpoint_observation_v1(&profile, &endpoint_input)
                 .expect("endpoint observation");
-        let _oidc_environment = OidcEnvironmentGuard::install(&endpoint_input.request_url);
+        let _oidc_environment = OidcEnvironmentGuard::install(
+            endpoint_input.request_url.as_str().expect("request URL"),
+        );
         assert!(
             prepare_secret_delivery_provider_transport_at_v1(
                 &mut verified,
