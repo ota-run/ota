@@ -2147,8 +2147,8 @@ remaining P3 is an explicitly open proof limit for distinct-child/session replay
 cleanup. Default no-feature compilation and focused pressure tests passed.
 
 The active next Step 7 gate is a fresh protected Linux/X64 hosted reconciliation run pinned to
-that Core revision, Launcher `bafbf1717f102c9d9765c5af382ad06c4ea7eb66`, and Protocol
-`e5fe1c83e562e02f60e27026c7148918bd016155`. It requires a fresh administrator-owned request,
+its exact final Core dispatch revision, Launcher `bafbf1717f102c9d9765c5af382ad06c4ea7eb66`,
+and Protocol `e5fe1c83e562e02f60e27026c7148918bd016155`. It requires a fresh administrator-owned request,
 stopped-runner provisioning, exact workflow/run/ref/SHA binding, and retained non-secret outcome.
 It may prove only one structurally valid JWT response was locally reconciled or refused. It does
 not authorize Google STS/WIF, Secret Manager, materialization, injection, selected work, Step 8,
