@@ -1245,7 +1245,7 @@ those variables is not a working hosted route. The dispatch owner and V4
 preparation remain unreachable from the protected command until this boundary
 is closed.
 
-The current implementation gate is an additive, independently reviewed
+The implementation gate at activation was an additive, independently reviewed
 Protocol/Launcher/Core one-use in-memory relay over the existing authenticated
 job-to-Launcher and Launcher-to-exact-same-child channels. The Launcher must
 obtain the inputs from its already authenticated job peer only after the
@@ -1267,14 +1267,12 @@ a transient URI only for the bounded dispatch lifetime; Ota must not log, persis
 must zeroize every application-owned URL copy on refusal or completion. The exact additive message shape,
 ownership and failure cleanup are specified below and require independent
 implementation review before commit. The existing provider-free workflow and its refusal are
-unchanged. No live workflow dispatch or provider-contact claim is available
-until the relay and route pass independent review; the first reviewed live
-workflow dispatch is then the hosted proof attempt, not evidence already in
-hand. No provider-contact claim is available until that exact hosted proof
-passes. The relay establishes bounded job-principal supply, not independent
-GitHub provenance of the URL or bearer.
+unchanged. A live workflow dispatch and narrow GitHub OIDC request-service claim required
+independent relay and route review followed by exact hosted proof; neither this amendment nor
+the first queued-but-cancelled dispatch supplied that evidence. The relay establishes bounded
+job-principal supply, not independent GitHub provenance of the URL or bearer.
 
-#### Private Runner-Capability Relay Contract (Implemented, First Hosted Attempt Cancelled Before Runner)
+#### Private Runner-Capability Relay Contract (Implemented; Live Hosted Gate Passed 2026-09-28)
 
 The protected job client is the sole source of the per-job GitHub URL and
 bearer. It must read them only after a Launcher challenge on the already
@@ -1413,7 +1411,8 @@ Pre-provision review found that Core's pressure builder still admitted only the 
 provider-free workflow reference. The builder correction admits the exact live reference only on
 `refs/heads/1.6.29-implementation`, retains the historical path, and refuses other workflow or
 branch substitutions. A fresh Core build, run-bound root request, provisioned state, and hosted
-run are required. No network or provider behavior was exercised by the cancelled attempt.
+run were required after that cancellation. No network or provider behavior was exercised by the
+cancelled attempt.
 
 The later bounded hosted slice may contact only GitHub's Actions OIDC request service.
 Neither the hosted-evidence custody correction nor this planning amendment activates that route;
@@ -1422,6 +1421,21 @@ This amendment itself implements no network call. It does not authorize JWT
 claim admission, Google STS, IAM Credentials, Secret Manager, materialization, injection, release
 of the startup continuation, beginning the selected workload/recipient command, positive evidence,
 Step 8, or V12.2.
+
+The later exact [live run `36472855700`](https://github.com/ota-run/ota/actions/runs/36472855700),
+attempt `1`, job `109099182428`, satisfied that narrow hosted gate on a fresh protected Linux/X64
+runner. Root provisioning bound the queued run and attempt before runner start. The job reconciled
+Core `8906804faf77b1f2873db9d1f680840bee16e4c5`, Launcher
+`bafbf1717f102c9d9765c5af382ad06c4ea7eb66`, and Protocol
+`e5fe1c83e562e02f60e27026c7148918bd016155`. It reported one Core GitHub OIDC request-service
+invocation with `outcome=response_received`, followed by the expected refusal before JWT admission
+or selected work. MUSE independently found no P1/P2 blocker for this bounded claim. The retained
+public logs and installation records are indexed in [current state](../../ai/current-state.md).
+This live job output is not a root-custodied semantic attestation. Provider-side and lower-layer
+request cardinality remain `not_proved`; no JWT issuer, signature, or claim admission, Google STS/WIF,
+Secret Manager, materialization, injection, selected work, Step 8, or V12.2 follows from this run.
+The prospective conditions above remain the historical activation boundary, not a claim that
+broader provider authority is now available.
 
 The checkpoint may add only:
 

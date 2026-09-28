@@ -630,7 +630,7 @@ fn verify_oidc_response_head(
     Ok(())
 }
 
-/// V4-only one-shot owner. No CLI or protected-workflow route calls it until the separate gate.
+/// V4-only one-shot owner for the feature-gated protected GitHub OIDC workflow route.
 #[cfg(feature = "secret-delivery-pressure")]
 pub(crate) fn dispatch_github_oidc_v4(
     prepared: PreparedSecretDeliveryProviderTransportV4,

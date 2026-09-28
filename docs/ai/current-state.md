@@ -2093,8 +2093,8 @@ The separately reviewed manual live workflow is committed and pushed at Core
 `2a430b926aab231ae61490bea8ceac76a586ca1d`. It accepts only an explicit matching Core SHA, pins
 Launcher `bafbf1717f102c9d9765c5af382ad06c4ea7eb66` and Protocol
 `e5fe1c83e562e02f60e27026c7148918bd016155`, grants only `id-token: write`, runs no third-party
-action, and emits only the closed non-secret Core dispatch count and outcome. No hosted job has
-exercised this route, and no successful provider contact is established. The first manual dispatch,
+action, and emits only the closed non-secret Core dispatch count and outcome. At that checkpoint,
+no hosted job had exercised this route. The first manual dispatch,
 run `36350170156` at Core `4a8549104b3abf24cec9e88deead9d7bad5bad57`, was cancelled while
 queued with no runner assigned. Pre-provision review found that Core's pressure builder admitted
 only the historical provider-free workflow reference. Core correction
@@ -2106,19 +2106,37 @@ registration-branch release checks passed, only the inert workflow registration 
 fast-forwarded to `main` at `a7fe38be7bbbdd31e499c35c5d0775814c781944`; GitHub registered
 the workflow path. No implementation or version bump moved to `main`.
 
-The VPS Core checkout was switched cleanly to `758b877d` and a Linux/X64 release build began, but
-the SSH session closed before Cargo reported success. SSH then timed out repeatedly and GitHub
-reported protected runner `ota-authority-aws-16-171-42-182` offline. No newly built Core binary
-was installed or verified, no root request was written, and no fresh run was dispatched. The last
-observed runner state before the connection loss was disabled, inactive, PID 0; its current host
-state is unverified. Next: restore VPS access, inspect boot/service state and build artifacts,
-complete the exact Core build and root-owned installation, then dispatch a fresh run and provision
-only its run-bound request before starting the runner. The historical provider-free workflow,
-released V2/V4 records, and custody evidence remain unchanged.
-No JWT admission, Google STS/WIF, Secret Manager, materialization, injection, selected work, Step 8,
-or V12.2 is authorized. This internal feature-gated route adds no
-public command, schema, JSON, or operator-facing concept, so no Examples, Skills, Site, Learn, FAQ,
-Glossary, or command-reference propagation is required.
+The old VPS became unreachable before its replacement Core build was installed; no fresh run used
+that host. The exact live gate subsequently ran on a fresh Ubuntu 24.04 Linux/X64 Google Cloud VM
+as Core [run `36472855700`](https://github.com/ota-run/ota/actions/runs/36472855700), attempt `1`,
+job `109099182428`, at Core `8906804faf77b1f2873db9d1f680840bee16e4c5`, Launcher
+`bafbf1717f102c9d9765c5af382ad06c4ea7eb66`, Protocol
+`e5fe1c83e562e02f60e27026c7148918bd016155`, and Runner.Listener `2.337.0`. The new
+`ota-authority-independent` runner `1377` remained offline while the exact job queued. A root-owned
+mode-`0400` request bound run/attempt, repository and actor IDs, branch/ref/SHA, and runner version;
+fresh provisioning installed the source-built binaries and published root-owned public installation
+records before the runner started. The exact job passed on that runner. Its public posture recorded
+`core_invocations=1`, `outcome=response_received`, and `selected_work_executed=false`, after the
+client deliberately refused before claim admission. The workflow checked the exact installation,
+request identity, source revisions, refusal text, terminal cleanup, absence of selected work, and
+absence of OIDC input or JWT bytes in command output. The host also had no selected-work marker.
+The runner was stopped immediately; its repository access and registration were removed. The VM,
+auto-deleting boot disk, dedicated subnet, firewall, and VPC were deleted, with no VM or disk left
+in the project. The retained public run logs and two public installation records are in
+[`secret-delivery-github-oidc-live-36472855700.zip`](../pressure/retained-artifacts/secret-delivery-github-oidc-live-36472855700.zip)
+(SHA-256 `0475120b487cfeb13e2f895aa78e97c393c081e6baba7a30665f270b7dedb82d`). MUSE's
+independent read-only review found no P1/P2 blocker for this narrow hosted gate; its stale
+source-comment P3 is corrected in this batch. MUSE's closure review found no remaining P1/P2/P3.
+
+This proves one bounded Core GitHub OIDC request-service invocation received a structurally valid
+unadmitted response under the exact protected route. The public live posture is job-derived, not
+independent root-custodied semantic attestation; the separate earlier provider-free custody proof
+does not substitute for it. Provider-side and lower-layer request cardinality remain `not_proved`.
+No JWT issuer, signature, or claim admission, Google STS/WIF, Secret Manager, materialization,
+injection, selected work, Step 8, or V12.2 is proved or authorized. Any broader provider-contact
+or admission slice requires its own separately reviewed plan and proof gate. This internal
+feature-gated route adds no public command, schema, JSON, or operator-facing concept, so no
+Examples, Skills, Site, Learn, FAQ, Glossary, or command-reference propagation is required.
 
 Do not touch the unrelated untracked `docs/pressure/agent-authority-signals.md` unless the user
 explicitly asks.
