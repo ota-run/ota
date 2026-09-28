@@ -1390,6 +1390,7 @@ pub(crate) mod tests {
     #[cfg(feature = "secret-delivery-pressure")]
     use crate::secret_delivery_provider_client::{
         dispatch_github_oidc_v4, prepare_secret_delivery_provider_transport_from_private_relay_v4,
+        reconcile_github_oidc_response_v4_for_test,
     };
     use crate::secret_delivery_provider_client::{
         prepare_secret_delivery_provider_transport_at_v1,
@@ -1416,6 +1417,54 @@ pub(crate) mod tests {
 
     fn identity(byte: char) -> String {
         format!("sha256:{}", byte.to_string().repeat(64))
+    }
+
+    #[cfg(feature = "secret-delivery-pressure")]
+    fn github_oidc_response_body_for_candidate(
+        candidate: &SnapshotBoundSecretDeliveryTransactionCandidateV1,
+        substitute: Option<(&str, serde_json::Value)>,
+    ) -> Vec<u8> {
+        let [realization] = candidate.candidate().candidate().realizations.as_slice() else {
+            panic!("one realization");
+        };
+        let claim = |name| {
+            realization
+                .oidc_claims
+                .get(&name)
+                .expect("bound OIDC claim")
+                .clone()
+        };
+        let workflow_ref = claim(GithubOidcClaim::WorkflowRef);
+        let mut workflow_parts = workflow_ref.split('/');
+        let owner = workflow_parts.next().expect("workflow owner");
+        let repository = workflow_parts.next().expect("workflow repository");
+        let mut payload = serde_json::json!({
+            "iss": realization.oidc_issuer,
+            "aud": realization.oidc_audience,
+            "sub": claim(GithubOidcClaim::Subject),
+            "repository": format!("{owner}/{repository}"),
+            "repository_owner": owner,
+            "repository_id": claim(GithubOidcClaim::RepositoryId),
+            "repository_owner_id": claim(GithubOidcClaim::RepositoryOwnerId),
+            "workflow_ref": workflow_ref,
+            "workflow_sha": claim(GithubOidcClaim::WorkflowSha),
+            "ref": claim(GithubOidcClaim::Ref),
+            "sha": claim(GithubOidcClaim::Sha),
+            "actor_id": claim(GithubOidcClaim::ActorId),
+            "event_name": claim(GithubOidcClaim::EventName),
+            "run_id": claim(GithubOidcClaim::RunId),
+            "run_attempt": claim(GithubOidcClaim::RunAttempt),
+            "runner_environment": "self-hosted",
+            "nbf": 900_u64,
+            "iat": 950_u64,
+            "exp": 1100_u64,
+        });
+        if let Some((name, value)) = substitute {
+            payload[name] = value;
+        }
+        let header = URL_SAFE_NO_PAD.encode(br#"{"alg":"RS256","typ":"JWT"}"#);
+        let payload = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&payload).expect("JWT payload"));
+        format!(r#"{{"value":"{header}.{payload}.c2ln"}}"#).into_bytes()
     }
 
     fn startup() -> LauncherStartupContinuationV1 {
@@ -1657,6 +1706,12 @@ secret_requirements:
         contract: &Contract,
         workflow_reference: &str,
     ) -> ProtectedSecretDeliveryAuthorityPayloadV1 {
+        let reference = workflow_reference
+            .rsplit_once('@')
+            .map(|(_, reference)| reference)
+            .filter(|reference| reference.starts_with("refs/"))
+            .expect("workflow reference ref");
+        let workload_identity = format!("repo:ota-run/ota:ref:{reference}");
         let catalog = resolve_secret_requirement_catalog(contract).expect("requirements");
         let requirement = catalog.requirements.values().next().expect("requirement");
         let profile = crate::secret_provider_profile::google_secret_delivery_profile_input();
@@ -1709,7 +1764,7 @@ secret_requirements:
                 provider: "google_secret_manager".into(),
                 adapter_identity: resolved_subject.implementation_subject_identity.clone(),
                 authority_scope,
-                workload_identity: "repo:ota-run/ota:ref:refs/heads/main".into(),
+                workload_identity: workload_identity.clone(),
                 provider_reference: SecretProviderReferenceInput {
                     binding_class: SecretProviderBindingClass::VersionedSecret,
                     private_locator: "projects/ota-pressure/secrets/CAEP_API-Key_1/versions/7"
@@ -1731,15 +1786,12 @@ secret_requirements:
         let binding = resolved.bindings.values().next().expect("binding");
         let source = resolved.sources.values().next().expect("source");
         let claims = [
-            (
-                GithubOidcClaim::Subject,
-                "repo:ota-run/ota:ref:refs/heads/main".into(),
-            ),
+            (GithubOidcClaim::Subject, workload_identity),
             (GithubOidcClaim::RepositoryId, "1001".into()),
             (GithubOidcClaim::RepositoryOwnerId, "1002".into()),
             (GithubOidcClaim::WorkflowRef, workflow_reference.into()),
             (GithubOidcClaim::WorkflowSha, "a".repeat(40)),
-            (GithubOidcClaim::Ref, "refs/heads/main".into()),
+            (GithubOidcClaim::Ref, reference.into()),
             (GithubOidcClaim::Sha, "b".repeat(40)),
             (GithubOidcClaim::ActorId, "1003".into()),
             (GithubOidcClaim::EventName, "workflow_dispatch".into()),
@@ -3737,7 +3789,7 @@ secret_requirements:
             include_str!("../docs/pressure/fixtures/secret-delivery-service-path/ota.yaml"),
         )
         .expect("live pressure contract");
-        let (verified, verifier, _, issued_at) =
+        let (verified, verifier, candidate_for_prepare, issued_at) =
             verified_v4_for_provider_transport_route(false, contract, "governed", LIVE_WORKFLOW)
                 .expect("live V4 binding");
         let authority = verified
@@ -3762,6 +3814,27 @@ secret_requirements:
         let rendered = format!("{prepared:?}");
         assert!(!rendered.contains("private-runner-bearer"));
         assert!(!rendered.contains("run-actions-1"));
+        let exact = reconcile_github_oidc_response_v4_for_test(
+            &prepared,
+            &github_oidc_response_body_for_candidate(&candidate_for_prepare, None),
+            1_000,
+        );
+        assert_eq!(
+            exact.public_posture(),
+            (1, "response_received"),
+            "{exact:?}"
+        );
+        assert!(!format!("{exact:?}").contains("ota-run"));
+        let substituted = reconcile_github_oidc_response_v4_for_test(
+            &prepared,
+            &github_oidc_response_body_for_candidate(
+                &candidate_for_prepare,
+                Some(("repository_id", serde_json::json!("substituted"))),
+            ),
+            1_000,
+        );
+        assert_eq!(substituted.public_posture(), (1, "claims_refused"));
+        assert!(!format!("{substituted:?}").contains("substituted"));
         prepared.invalidate_binding_for_test();
         assert!(dispatch_github_oidc_v4(prepared).refused_without_invocation_for_test());
 

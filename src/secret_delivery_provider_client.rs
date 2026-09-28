@@ -15,6 +15,10 @@ use std::time::Duration;
 
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
+#[cfg(feature = "secret-delivery-pressure")]
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+#[cfg(feature = "secret-delivery-pressure")]
+use serde::de::{self, MapAccess, Visitor};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use time::OffsetDateTime;
@@ -47,6 +51,8 @@ use crate::secret_delivery_transport_dependencies::{
     SecretDeliveryTransportDependencyFeatureGraphV1, SecretDeliveryTransportDependencyRecordV1,
     embedded_transport_dependency_expectation_v1,
 };
+#[cfg(feature = "secret-delivery-pressure")]
+use crate::secret_provider_profile::GithubOidcClaim;
 use crate::secret_provider_profile::{
     GithubOidcClaimValue, SecretDeliveryArchitecture, SecretDeliveryExecutionMode,
     SecretDeliveryInvocationBindingInput, SecretDeliveryOperatingSystem,
@@ -447,6 +453,7 @@ impl PreparedSecretDeliveryProviderTransportV4 {
 enum GithubOidcDispatchOutcomeV1 {
     NotAttempted,
     ResponseReceived,
+    ClaimsRefused,
     TransportRefused,
 }
 
@@ -480,6 +487,7 @@ impl GithubOidcDispatchTerminalV1 {
         let outcome = match self.attempt.outcome {
             GithubOidcDispatchOutcomeV1::NotAttempted => "not_attempted",
             GithubOidcDispatchOutcomeV1::ResponseReceived => "response_received",
+            GithubOidcDispatchOutcomeV1::ClaimsRefused => "claims_refused",
             GithubOidcDispatchOutcomeV1::TransportRefused => "transport_refused",
         };
         (self.attempt.core_invocations, outcome)
@@ -511,6 +519,10 @@ impl GithubOidcDispatchAttemptStateV1 {
         self.core_invocations = 1;
         self.outcome = GithubOidcDispatchOutcomeV1::TransportRefused;
         Ok(())
+    }
+
+    fn claims_refused(&mut self) {
+        self.outcome = GithubOidcDispatchOutcomeV1::ClaimsRefused;
     }
 }
 
@@ -702,8 +714,49 @@ fn dispatch_github_oidc_v4_inner(
         return Err(oidc_dispatch_refused());
     }
     let jwt = parse_github_oidc_response_v1(&body.0)?;
+    retain_reconciled_github_oidc_jwt_v4(jwt, &prepared, attempt)
+}
+
+#[cfg(feature = "secret-delivery-pressure")]
+fn retain_reconciled_github_oidc_jwt_v4(
+    jwt: ProtectedProviderValue,
+    prepared: &PreparedSecretDeliveryProviderTransportV4,
+    attempt: &mut GithubOidcDispatchAttemptStateV1,
+) -> Result<RetainedUnadmittedGithubOidcJwtV1, SecretDeliveryProviderClientError> {
+    let now = OffsetDateTime::now_utc()
+        .unix_timestamp()
+        .try_into()
+        .map_err(|_| oidc_dispatch_refused())?;
+    retain_reconciled_github_oidc_jwt_v4_at(jwt, prepared, attempt, now)
+}
+
+#[cfg(feature = "secret-delivery-pressure")]
+fn retain_reconciled_github_oidc_jwt_v4_at(
+    jwt: ProtectedProviderValue,
+    prepared: &PreparedSecretDeliveryProviderTransportV4,
+    attempt: &mut GithubOidcDispatchAttemptStateV1,
+    now: u64,
+) -> Result<RetainedUnadmittedGithubOidcJwtV1, SecretDeliveryProviderClientError> {
+    // A response arrived; any remaining refusal is local claim reconciliation, not transport.
+    attempt.claims_refused();
+    reconcile_github_oidc_jwt_claims_v4_at(&jwt, prepared, now)?;
     attempt.outcome = GithubOidcDispatchOutcomeV1::ResponseReceived;
     Ok(RetainedUnadmittedGithubOidcJwtV1(jwt))
+}
+
+#[cfg(all(test, feature = "secret-delivery-pressure"))]
+pub(crate) fn reconcile_github_oidc_response_v4_for_test(
+    prepared: &PreparedSecretDeliveryProviderTransportV4,
+    body: &[u8],
+    now: u64,
+) -> GithubOidcDispatchTerminalV1 {
+    let mut attempt = GithubOidcDispatchAttemptStateV1::new();
+    let result = (|| {
+        attempt.invoke_once()?;
+        let jwt = parse_github_oidc_response_v1(body)?;
+        retain_reconciled_github_oidc_jwt_v4_at(jwt, prepared, &mut attempt, now)
+    })();
+    GithubOidcDispatchTerminalV1 { attempt, result }
 }
 
 struct PreparedOidcContextV1 {
@@ -1657,6 +1710,326 @@ fn validate_compact_jwt(value: &str) -> Result<(), SecretDeliveryProviderClientE
     Ok(())
 }
 
+#[cfg(feature = "secret-delivery-pressure")]
+fn reconcile_github_oidc_jwt_claims_v4_at(
+    jwt: &ProtectedProviderValue,
+    prepared: &PreparedSecretDeliveryProviderTransportV4,
+    now: u64,
+) -> Result<(), SecretDeliveryProviderClientError> {
+    prepared.verify_signed_transport_expectation()?;
+    let operation = prepared
+        .capability
+        .plan
+        .operations
+        .first()
+        .ok_or_else(oidc_dispatch_refused)?;
+    let realizations: Vec<_> = prepared
+        .capability
+        .candidate
+        .candidate()
+        .realizations
+        .iter()
+        .filter(|realization| {
+            realization.realization_identity == operation.realization_identity
+                && realization.invocation_binding_identity == operation.invocation_binding_identity
+        })
+        .collect();
+    let [realization] = realizations.as_slice() else {
+        return Err(oidc_dispatch_refused());
+    };
+    reconcile_github_oidc_jwt_claims_at_v1(
+        jwt,
+        operation,
+        realization,
+        &prepared.oidc.endpoint_input.runner_environment,
+        now,
+    )
+}
+
+#[cfg(feature = "secret-delivery-pressure")]
+fn reconcile_github_oidc_jwt_claims_at_v1(
+    jwt: &ProtectedProviderValue,
+    operation: &SecretDeliveryProviderOperationPlanV1,
+    realization: &SecretDeliveryTransactionCandidateRealization,
+    expected_runner_environment: &str,
+    now_unix_seconds: u64,
+) -> Result<(), SecretDeliveryProviderClientError> {
+    if operation.oidc_issuer != realization.oidc_issuer
+        || operation.oidc_audience != realization.oidc_audience
+        || expected_runner_environment != "self-hosted"
+    {
+        return Err(oidc_dispatch_refused());
+    }
+
+    let payload = decode_compact_jwt_payload(jwt.as_utf8()?)?;
+    let claims = parse_unique_jwt_claims(&payload.0)?;
+    require_string_claim(claims.iss, &operation.oidc_issuer)?;
+    require_string_claim(claims.aud, &operation.oidc_audience)?;
+    require_string_claim(claims.runner_environment, expected_runner_environment)?;
+
+    for claim in [
+        GithubOidcClaim::Subject,
+        GithubOidcClaim::RepositoryId,
+        GithubOidcClaim::RepositoryOwnerId,
+        GithubOidcClaim::WorkflowRef,
+        GithubOidcClaim::WorkflowSha,
+        GithubOidcClaim::Ref,
+        GithubOidcClaim::Sha,
+        GithubOidcClaim::ActorId,
+        GithubOidcClaim::EventName,
+        GithubOidcClaim::RunId,
+        GithubOidcClaim::RunAttempt,
+    ] {
+        let expected = realization
+            .oidc_claims
+            .get(&claim)
+            .ok_or_else(oidc_dispatch_refused)?;
+        require_string_claim(claims.github_claim(claim), expected)?;
+    }
+
+    let workflow_ref = realization
+        .oidc_claims
+        .get(&GithubOidcClaim::WorkflowRef)
+        .ok_or_else(oidc_dispatch_refused)?;
+    let reference = realization
+        .oidc_claims
+        .get(&GithubOidcClaim::Ref)
+        .ok_or_else(oidc_dispatch_refused)?;
+    let (owner, repository) = parse_bound_workflow_repository(workflow_ref, reference)?;
+    let repository_identity = format!("{owner}/{repository}");
+    require_string_claim(claims.repository, &repository_identity)?;
+    require_string_claim(claims.repository_owner, owner)?;
+    validate_jwt_freshness(&claims, now_unix_seconds)
+}
+
+#[cfg(feature = "secret-delivery-pressure")]
+fn decode_compact_jwt_payload(
+    jwt: &str,
+) -> Result<ProtectedProviderValue, SecretDeliveryProviderClientError> {
+    validate_compact_jwt(jwt)?;
+    let payload = jwt.split('.').nth(1).ok_or_else(oidc_dispatch_refused)?;
+    let decoded = ProtectedProviderValue::new(
+        URL_SAFE_NO_PAD
+            .decode(payload)
+            .map_err(|_| oidc_dispatch_refused())?,
+    )?;
+    let canonical = ProtectedProviderValue::new(URL_SAFE_NO_PAD.encode(&decoded.0).into_bytes())?;
+    if canonical.0.as_slice() != payload.as_bytes() {
+        return Err(oidc_dispatch_refused());
+    }
+    Ok(decoded)
+}
+
+#[cfg(feature = "secret-delivery-pressure")]
+struct UniqueJwtClaims<'a> {
+    iss: Option<&'a str>,
+    aud: Option<&'a str>,
+    runner_environment: Option<&'a str>,
+    subject: Option<&'a str>,
+    repository: Option<&'a str>,
+    repository_owner: Option<&'a str>,
+    repository_id: Option<&'a str>,
+    repository_owner_id: Option<&'a str>,
+    workflow_ref: Option<&'a str>,
+    workflow_sha: Option<&'a str>,
+    reference: Option<&'a str>,
+    sha: Option<&'a str>,
+    actor_id: Option<&'a str>,
+    event_name: Option<&'a str>,
+    run_id: Option<&'a str>,
+    run_attempt: Option<&'a str>,
+    nbf: Option<u64>,
+    issued_at: Option<u64>,
+    expires_at: Option<u64>,
+}
+
+#[cfg(feature = "secret-delivery-pressure")]
+impl UniqueJwtClaims<'_> {
+    fn github_claim(&self, claim: GithubOidcClaim) -> Option<&str> {
+        match claim {
+            GithubOidcClaim::Subject => self.subject,
+            GithubOidcClaim::RepositoryId => self.repository_id,
+            GithubOidcClaim::RepositoryOwnerId => self.repository_owner_id,
+            GithubOidcClaim::WorkflowRef => self.workflow_ref,
+            GithubOidcClaim::WorkflowSha => self.workflow_sha,
+            GithubOidcClaim::Ref => self.reference,
+            GithubOidcClaim::Sha => self.sha,
+            GithubOidcClaim::ActorId => self.actor_id,
+            GithubOidcClaim::EventName => self.event_name,
+            GithubOidcClaim::RunId => self.run_id,
+            GithubOidcClaim::RunAttempt => self.run_attempt,
+        }
+    }
+}
+
+#[cfg(feature = "secret-delivery-pressure")]
+impl<'de> Deserialize<'de> for UniqueJwtClaims<'de> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct ObjectVisitor;
+
+        impl<'de> Visitor<'de> for ObjectVisitor {
+            type Value = UniqueJwtClaims<'de>;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("a JSON object with unique member names")
+            }
+
+            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+            where
+                A: MapAccess<'de>,
+            {
+                let mut claims = UniqueJwtClaims {
+                    iss: None,
+                    aud: None,
+                    runner_environment: None,
+                    subject: None,
+                    repository: None,
+                    repository_owner: None,
+                    repository_id: None,
+                    repository_owner_id: None,
+                    workflow_ref: None,
+                    workflow_sha: None,
+                    reference: None,
+                    sha: None,
+                    actor_id: None,
+                    event_name: None,
+                    run_id: None,
+                    run_attempt: None,
+                    nbf: None,
+                    issued_at: None,
+                    expires_at: None,
+                };
+                let mut seen = Vec::new();
+                while let Some(key) = map.next_key::<&'de str>()? {
+                    if seen.contains(&key) {
+                        return Err(de::Error::custom("duplicate JSON member"));
+                    }
+                    seen.push(key);
+                    match key {
+                        "iss" => claims.iss = Some(map.next_value()?),
+                        "aud" => claims.aud = Some(map.next_value()?),
+                        "runner_environment" => claims.runner_environment = Some(map.next_value()?),
+                        "sub" => claims.subject = Some(map.next_value()?),
+                        "repository" => claims.repository = Some(map.next_value()?),
+                        "repository_owner" => claims.repository_owner = Some(map.next_value()?),
+                        "repository_id" => claims.repository_id = Some(map.next_value()?),
+                        "repository_owner_id" => {
+                            claims.repository_owner_id = Some(map.next_value()?)
+                        }
+                        "workflow_ref" => claims.workflow_ref = Some(map.next_value()?),
+                        "workflow_sha" => claims.workflow_sha = Some(map.next_value()?),
+                        "ref" => claims.reference = Some(map.next_value()?),
+                        "sha" => claims.sha = Some(map.next_value()?),
+                        "actor_id" => claims.actor_id = Some(map.next_value()?),
+                        "event_name" => claims.event_name = Some(map.next_value()?),
+                        "run_id" => claims.run_id = Some(map.next_value()?),
+                        "run_attempt" => claims.run_attempt = Some(map.next_value()?),
+                        "nbf" => claims.nbf = Some(map.next_value()?),
+                        "iat" => claims.issued_at = Some(map.next_value()?),
+                        "exp" => claims.expires_at = Some(map.next_value()?),
+                        _ => {
+                            let _: de::IgnoredAny = map.next_value()?;
+                        }
+                    }
+                }
+                Ok(claims)
+            }
+        }
+
+        deserializer.deserialize_map(ObjectVisitor)
+    }
+}
+
+#[cfg(feature = "secret-delivery-pressure")]
+fn parse_unique_jwt_claims(
+    payload: &[u8],
+) -> Result<UniqueJwtClaims<'_>, SecretDeliveryProviderClientError> {
+    serde_json::from_slice::<UniqueJwtClaims<'_>>(payload).map_err(|_| oidc_dispatch_refused())
+}
+
+#[cfg(feature = "secret-delivery-pressure")]
+fn require_string_claim<'a>(
+    value: Option<&'a str>,
+    expected: &str,
+) -> Result<&'a str, SecretDeliveryProviderClientError> {
+    let value = value.ok_or_else(oidc_dispatch_refused)?;
+    if value != expected {
+        return Err(oidc_dispatch_refused());
+    }
+    Ok(value)
+}
+
+#[cfg(feature = "secret-delivery-pressure")]
+fn parse_bound_workflow_repository<'a>(
+    workflow_ref: &'a str,
+    reference: &str,
+) -> Result<(&'a str, &'a str), SecretDeliveryProviderClientError> {
+    let suffix = format!("@{reference}");
+    let prefix = workflow_ref
+        .strip_suffix(&suffix)
+        .ok_or_else(oidc_dispatch_refused)?;
+    let mut parts = prefix.split('/');
+    let (Some(owner), Some(repository), Some(github), Some(workflows), Some(file), None) = (
+        parts.next(),
+        parts.next(),
+        parts.next(),
+        parts.next(),
+        parts.next(),
+        parts.next(),
+    ) else {
+        return Err(oidc_dispatch_refused());
+    };
+    if owner.is_empty()
+        || repository.is_empty()
+        || file.is_empty()
+        || github != ".github"
+        || workflows != "workflows"
+        || owner.contains('%')
+        || repository.contains('%')
+        || file.contains('%')
+    {
+        return Err(oidc_dispatch_refused());
+    }
+    let workflow_path = format!("{owner}/{repository}/.github/workflows/{file}");
+    if workflow_path != prefix {
+        return Err(oidc_dispatch_refused());
+    }
+    Ok((owner, repository))
+}
+
+#[cfg(feature = "secret-delivery-pressure")]
+fn validate_jwt_freshness(
+    claims: &UniqueJwtClaims<'_>,
+    now_unix_seconds: u64,
+) -> Result<(), SecretDeliveryProviderClientError> {
+    let nbf = claims.nbf.ok_or_else(oidc_dispatch_refused)?;
+    let issued_at = claims.issued_at.ok_or_else(oidc_dispatch_refused)?;
+    let expires_at = claims.expires_at.ok_or_else(oidc_dispatch_refused)?;
+    let latest_issued_at = now_unix_seconds
+        .checked_add(60)
+        .ok_or_else(oidc_dispatch_refused)?;
+    if nbf > now_unix_seconds
+        || expires_at <= now_unix_seconds
+        || issued_at > latest_issued_at
+        || issued_at >= expires_at
+        || nbf >= expires_at
+        || expires_at
+            .checked_sub(issued_at)
+            .ok_or_else(oidc_dispatch_refused)?
+            > 900
+        || expires_at
+            .checked_sub(nbf)
+            .ok_or_else(oidc_dispatch_refused)?
+            > 900
+    {
+        return Err(oidc_dispatch_refused());
+    }
+    Ok(())
+}
+
 fn canonical_base64url_segment(segment: &str) -> bool {
     let bytes = segment.as_bytes();
     if bytes.len() < 2 || bytes.len() % 4 == 1 {
@@ -1794,7 +2167,7 @@ mod tests {
         secret_delivery_transaction_candidate_identity,
     };
     use crate::secret_delivery_transaction_binding::tests::verified_candidate;
-    use crate::secret_provider_profile::SecretDeliveryTargetPosture;
+    use crate::secret_provider_profile::{GithubOidcClaim, SecretDeliveryTargetPosture};
 
     fn identity(byte: char) -> String {
         format!("sha256:{}", byte.to_string().repeat(64))
@@ -1821,7 +2194,27 @@ mod tests {
             },
             oidc_issuer: "https://token.actions.githubusercontent.com".into(),
             oidc_audience: "https://iam.googleapis.com/projects/123/locations/global/workloadIdentityPools/ota-pool/providers/github".into(),
-            oidc_claims: Default::default(),
+            oidc_claims: [
+                (
+                    GithubOidcClaim::Subject,
+                    "repo:ota-run/ota:ref:refs/heads/1.6.29-implementation".into(),
+                ),
+                (GithubOidcClaim::RepositoryId, "1001".into()),
+                (GithubOidcClaim::RepositoryOwnerId, "1000".into()),
+                (
+                    GithubOidcClaim::WorkflowRef,
+                    "ota-run/ota/.github/workflows/secret-delivery-oidc-endpoint-evidence.yml@refs/heads/1.6.29-implementation".into(),
+                ),
+                (GithubOidcClaim::WorkflowSha, "b".repeat(40)),
+                (GithubOidcClaim::Ref, "refs/heads/1.6.29-implementation".into()),
+                (GithubOidcClaim::Sha, "b".repeat(40)),
+                (GithubOidcClaim::ActorId, "1002".into()),
+                (GithubOidcClaim::EventName, "workflow_dispatch".into()),
+                (GithubOidcClaim::RunId, "1003".into()),
+                (GithubOidcClaim::RunAttempt, "1".into()),
+            ]
+            .into_iter()
+            .collect(),
             workload_identity_pool:
                 "projects/123/locations/global/workloadIdentityPools/ota-pool".into(),
             workload_identity_provider:
@@ -1859,6 +2252,161 @@ mod tests {
 
     fn jwt() -> ProtectedProviderValue {
         ProtectedProviderValue::new(b"eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ4In0.c2ln".to_vec()).unwrap()
+    }
+
+    #[cfg(feature = "secret-delivery-pressure")]
+    fn claim_jwt(payload: serde_json::Value) -> ProtectedProviderValue {
+        let header = URL_SAFE_NO_PAD.encode(br#"{"alg":"RS256","typ":"JWT"}"#);
+        let payload = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&payload).unwrap());
+        ProtectedProviderValue::new(format!("{header}.{payload}.c2ln").into_bytes()).unwrap()
+    }
+
+    #[cfg(feature = "secret-delivery-pressure")]
+    fn expected_claim_payload() -> serde_json::Value {
+        serde_json::json!({
+            "iss": "https://token.actions.githubusercontent.com",
+            "aud": "https://iam.googleapis.com/projects/123/locations/global/workloadIdentityPools/ota-pool/providers/github",
+            "sub": "repo:ota-run/ota:ref:refs/heads/1.6.29-implementation",
+            "repository": "ota-run/ota",
+            "repository_owner": "ota-run",
+            "repository_id": "1001",
+            "repository_owner_id": "1000",
+            "workflow_ref": "ota-run/ota/.github/workflows/secret-delivery-oidc-endpoint-evidence.yml@refs/heads/1.6.29-implementation",
+            "workflow_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "ref": "refs/heads/1.6.29-implementation",
+            "sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "actor_id": "1002",
+            "event_name": "workflow_dispatch",
+            "run_id": "1003",
+            "run_attempt": "1",
+            "runner_environment": "self-hosted",
+            "nbf": 900,
+            "iat": 950,
+            "exp": 1100
+        })
+    }
+
+    #[cfg(feature = "secret-delivery-pressure")]
+    fn reconcile_test_jwt(
+        jwt: &ProtectedProviderValue,
+        now: u64,
+    ) -> Result<(), SecretDeliveryProviderClientError> {
+        let candidate = candidate();
+        let operation = derive_secret_delivery_provider_client_plan_v1(&candidate)
+            .unwrap()
+            .operations
+            .remove(0);
+        reconcile_github_oidc_jwt_claims_at_v1(
+            jwt,
+            &operation,
+            &candidate.candidate().realizations[0],
+            "self-hosted",
+            now,
+        )
+    }
+
+    #[cfg(feature = "secret-delivery-pressure")]
+    #[test]
+    fn github_oidc_claim_reconciliation_accepts_only_the_exact_unadmitted_context() {
+        let jwt = claim_jwt(expected_claim_payload());
+        assert!(reconcile_test_jwt(&jwt, 1_000).is_ok());
+        assert!(!format!("{jwt:?}").contains("ota-run"));
+
+        for (claim, value) in [
+            ("iss", serde_json::json!("https://other.example")),
+            ("aud", serde_json::json!("https://other.example/audience")),
+            (
+                "sub",
+                serde_json::json!("repo:other/repository:ref:refs/heads/main"),
+            ),
+            ("repository", serde_json::json!("other/repository")),
+            ("repository_owner", serde_json::json!("other")),
+            ("repository_id", serde_json::json!("0")),
+            ("repository_owner_id", serde_json::json!("0")),
+            (
+                "workflow_ref",
+                serde_json::json!("other/repository/.github/workflows/x.yml@refs/heads/main"),
+            ),
+            ("workflow_sha", serde_json::json!("a".repeat(40))),
+            ("ref", serde_json::json!("refs/heads/main")),
+            ("sha", serde_json::json!("a".repeat(40))),
+            ("actor_id", serde_json::json!("0")),
+            ("event_name", serde_json::json!("push")),
+            ("run_id", serde_json::json!("0")),
+            ("run_attempt", serde_json::json!("2")),
+            ("runner_environment", serde_json::json!("github-hosted")),
+        ] {
+            let mut payload = expected_claim_payload();
+            payload[claim] = value;
+            assert!(
+                reconcile_test_jwt(&claim_jwt(payload), 1_000).is_err(),
+                "{claim}"
+            );
+        }
+    }
+
+    #[cfg(feature = "secret-delivery-pressure")]
+    #[test]
+    fn github_oidc_claim_reconciliation_refuses_malformed_duplicate_and_invalid_time_claims() {
+        let mut missing = expected_claim_payload();
+        missing.as_object_mut().unwrap().remove("repository_id");
+        assert!(reconcile_test_jwt(&claim_jwt(missing), 1_000).is_err());
+
+        let mut wrong_type = expected_claim_payload();
+        wrong_type["repository_id"] = serde_json::json!(1001);
+        assert!(reconcile_test_jwt(&claim_jwt(wrong_type), 1_000).is_err());
+
+        let mut audience_array = expected_claim_payload();
+        audience_array["aud"] = serde_json::json!([
+            "https://iam.googleapis.com/projects/123/locations/global/workloadIdentityPools/ota-pool/providers/github"
+        ]);
+        assert!(reconcile_test_jwt(&claim_jwt(audience_array), 1_000).is_err());
+
+        let canonical_payload = serde_json::to_string(&expected_claim_payload()).unwrap();
+        let duplicate_payload = format!(
+            r#"{},"iss":"https://token.actions.githubusercontent.com"}}"#,
+            canonical_payload.strip_suffix('}').unwrap()
+        );
+        let header = URL_SAFE_NO_PAD.encode(br#"{"alg":"RS256","typ":"JWT"}"#);
+        let duplicate = ProtectedProviderValue::new(
+            format!(
+                "{header}.{}.c2ln",
+                URL_SAFE_NO_PAD.encode(duplicate_payload)
+            )
+            .into_bytes(),
+        )
+        .unwrap();
+        assert!(reconcile_test_jwt(&duplicate, 1_000).is_err());
+
+        for (name, value) in [("nbf", 1_001), ("iat", 1_061), ("exp", 1_000)] {
+            let mut payload = expected_claim_payload();
+            payload[name] = serde_json::json!(value);
+            assert!(
+                reconcile_test_jwt(&claim_jwt(payload), 1_000).is_err(),
+                "{name}"
+            );
+        }
+
+        let mut overlong = expected_claim_payload();
+        overlong["exp"] = serde_json::json!(1_851);
+        assert!(reconcile_test_jwt(&claim_jwt(overlong), 1_000).is_err());
+
+        let mut nbf_window_overlong = expected_claim_payload();
+        nbf_window_overlong["nbf"] = serde_json::json!(199);
+        assert!(reconcile_test_jwt(&claim_jwt(nbf_window_overlong), 1_000).is_err());
+
+        let mut impossible_order = expected_claim_payload();
+        impossible_order["iat"] = serde_json::json!(1_100);
+        impossible_order["exp"] = serde_json::json!(1_100);
+        assert!(reconcile_test_jwt(&claim_jwt(impossible_order), 1_000).is_err());
+
+        assert!(reconcile_test_jwt(&claim_jwt(expected_claim_payload()), u64::MAX).is_err());
+
+        let mut nbf_before_iat = expected_claim_payload();
+        nbf_before_iat["nbf"] = serde_json::json!(900);
+        nbf_before_iat["iat"] = serde_json::json!(950);
+        nbf_before_iat["exp"] = serde_json::json!(1_100);
+        assert!(reconcile_test_jwt(&claim_jwt(nbf_before_iat), 1_000).is_ok());
     }
 
     #[test]
@@ -2172,6 +2720,8 @@ mod tests {
         assert_eq!(state.outcome, GithubOidcDispatchOutcomeV1::TransportRefused);
         assert!(state.invoke_once().is_err());
         assert_eq!(state.core_invocations, 1);
+        state.claims_refused();
+        assert_eq!(state.outcome, GithubOidcDispatchOutcomeV1::ClaimsRefused);
 
         for accepted in ["application/json", "Application/JSON; charset=UTF-8"] {
             assert!(is_oidc_json_content_type(accepted));
@@ -2206,8 +2756,9 @@ mod tests {
         assert_eq!(terminal.attempt.core_invocations, 1);
         assert_eq!(
             terminal.attempt.outcome,
-            GithubOidcDispatchOutcomeV1::TransportRefused
+            GithubOidcDispatchOutcomeV1::ClaimsRefused
         );
+        assert_eq!(terminal.public_posture(), (1, "claims_refused"));
         assert!(!format!("{terminal:?}").contains("Bearer"));
     }
 

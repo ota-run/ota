@@ -1565,7 +1565,9 @@ The checkpoint may add only:
   and
 - one internal `GithubOidcDispatchAttemptStateV1` owned solely by the dispatch function. Its closed
   terminal state records Core dispatch invocations with cardinality `0` or `1` and outcome
-  `not_attempted`, `response_received`, or `transport_refused`. Any pressure projection is a
+  `not_attempted`, `response_received`, `claims_refused`, or `transport_refused`.
+  `claims_refused` means a structurally valid response arrived but local matching refused it;
+  it is not signature verification or provider admission. Any pressure projection is a
   separately derived non-secret Core-observed posture carrying only that cardinality and outcome;
   it is not provider-attested request evidence and provider-side or lower-layer request cardinality
   remains `not_proved`.
@@ -1732,6 +1734,72 @@ step authorizes and ships the operator surface.
 Planned follow-on: [V12.2 Contract-Authored Crossing Requirements](../v12.2/plan.md) remains
 inactive and may be activated only after V12.1 completes or is formally deferred. This sequencing
 link does not authorize implementation.
+
+### Local GitHub OIDC JWT Claim Reconciliation Checkpoint (Active 2026-09-28)
+
+The exact protected Linux/X64 GitHub request-service checkpoint above is closed, but its JWT was
+only structurally valid and unadmitted. This activated Step 7 slice authorizes only the
+local Core implementation and synthetic tests specified below. It does not authorize a hosted
+gate, dispatch beyond the already proved request-service call, or token use at a provider. The existing V1 profile, binding,
+authority records, released V2/V4 wire meanings, and provider-free routes remain immutable.
+
+Core alone would parse the retained JWT payload under its existing bounded, one-use protected
+value owner. The payload is untrusted input, even when received from the exact request-service
+route: parsing and equality checks do not verify GitHub's signature, issuer, or control of the
+request service. The expected values must come from the independently reconstructed, signed
+protected authority snapshot and consumed V4 invocation, not the JWT, repository YAML, workflow
+input, inherited environment, or a caller-supplied claim map. Core must reconcile the exact
+protected audience and subject; issuer must be the literal
+`https://token.actions.githubusercontent.com`. It must require exact equality for the existing
+eleven bound claims (`repository_id`, `repository_owner_id`, `workflow_ref`, `workflow_sha`,
+`ref`, `sha`, `actor_id`, `event_name`, `run_id`, `run_attempt`, and `sub`), plus `repository` and
+`repository_owner` derived only from the signed invocation binding's `workflow_ref` claim and
+`runner_environment` equal to `self-hosted`. Require that bound `workflow_ref` exactly ends in
+`@` followed by the separately signed `ref` claim. Parse the remaining prefix as exactly
+`OWNER/REPO/.github/workflows/FILE`, with single nonempty owner, repo, and filename components,
+no extra path component or encoded separator, and exact byte equality with the independently
+reconciled same-child workflow reference. Compare the token's `repository` to `OWNER/REPO` and
+its `repository_owner` to `OWNER`, with no case folding or token-derived fallback; retain the
+separate signed numeric repository and owner ID comparisons. The protected workflow-commit value
+must still equal the reviewed Core implementation revision; the token cannot supply or revise it.
+These three additional checks are additive admission constraints, not a silent rewrite of the
+existing eleven-claim V1 profile or its signed identity. A versioned successor is required if
+they become part of a signed profile or binding.
+
+One strictly bounded base64url/UTF-8/JSON decode path must reject duplicate JSON members before
+mapping, including duplicates of required names; missing, null, array, numeric, or otherwise
+non-string identity claims; an audience array or alternate audience; invalid time types; and
+malformed, oversized, noncanonical, or substituted token segments. Unused GitHub claims may be
+present but confer no authority and must not be copied into retained evidence. `iat`, `nbf`, and
+`exp` must be integral NumericDate values; reject arithmetic overflow and require
+`nbf <= now < exp`, `iat <= now + 60 seconds`, `iat < exp`, `nbf < exp`,
+`exp - iat <= 900 seconds`, and `exp - nbf <= 900 seconds`, all with checked arithmetic.
+Do not require `iat <= nbf`: GitHub's documented example places `nbf` before `iat`.
+Read a trusted local clock at reconciliation; recheck freshness at any later provider-contact
+boundary rather than treating this result as a reusable admission. If the signed workflow
+reference cannot supply an exact owner/repository spelling, or the installed GitHub subject
+format differs from the bound subject, refuse and review a new versioned binding; do not infer
+an expectation from the token or relax matching.
+
+Successful local reconciliation may produce only a private, single-use, still-unadmitted result
+for the same child/session/consumed V4 transaction. It must not release startup, start selected
+work, call Google STS/WIF or Secret Manager, materialize or inject a secret, emit a positive
+receipt, or expose JWT bytes or parsed claims in logs, public JSON, archives, artifacts, or
+diagnostics. Every refusal remains terminal and reaps the existing child and cgroup. Neither
+this local check nor the prior GitHub response proves signature validity, provider acceptance,
+provider-side request cardinality, or execution authority.
+
+After activation and before hosted proof, add focused production-path tests with synthetic JWTs:
+one exact protected match; independent substitution of issuer, audience, each bound identity claim, repository,
+owner, and runner environment; missing/duplicate/wrong-type fields; malformed or oversized
+encoding; stale, future, boundary, overflow, and inconsistently ordered times, including the
+documented `nbf < iat < exp` shape; protected snapshot or V4 mismatch;
+and replay into a second child/session. Lock no JWT disclosure, no second Core dispatch, no
+Google request, no selected child start, and terminal cleanup. The hosted proof gate then needs
+its own exact Core/Launcher/Protocol revisions, fresh administrator-owned request, stopped-runner
+provisioning, and protected Linux/X64 run. Retain only a closed non-secret local outcome; a green
+hosted job must still label the JWT unadmitted and Google/provider acceptance `not_proved`.
+Google contact remains a separate later amendment and proof gate.
 
 ## Product Boundary
 

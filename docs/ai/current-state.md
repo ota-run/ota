@@ -2138,6 +2138,15 @@ or admission slice requires its own separately reviewed plan and proof gate. Thi
 feature-gated route adds no public command, schema, JSON, or operator-facing concept, so no
 Examples, Skills, Site, Learn, FAQ, Glossary, or command-reference propagation is required.
 
+The active next Step 7 slice is the
+[local GitHub OIDC JWT claim reconciliation checkpoint](../planning/v12.1/plan.md#local-github-oidc-jwt-claim-reconciliation-checkpoint-active-2026-09-28).
+It specifies protected expectation ownership, exact local claim/freshness checks, refusal tests,
+and a separate hosted proof gate. Its initial independent review found two specification
+ambiguities; both were repaired and the narrow independent recheck found no remaining P1/P2.
+It authorizes only Core-local claim reconciliation and synthetic tests. It does not authorize a
+new provider request, selected work, or public surface; the prior unadmitted hosted result and
+all limits above remain current.
+
 Do not touch the unrelated untracked `docs/pressure/agent-authority-signals.md` unless the user
 explicitly asks.
 
