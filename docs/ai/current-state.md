@@ -2138,14 +2138,21 @@ or admission slice requires its own separately reviewed plan and proof gate. Thi
 feature-gated route adds no public command, schema, JSON, or operator-facing concept, so no
 Examples, Skills, Site, Learn, FAQ, Glossary, or command-reference propagation is required.
 
-The active next Step 7 slice is the
-[local GitHub OIDC JWT claim reconciliation checkpoint](../planning/v12.1/plan.md#local-github-oidc-jwt-claim-reconciliation-checkpoint-active-2026-09-28).
-It specifies protected expectation ownership, exact local claim/freshness checks, refusal tests,
-and a separate hosted proof gate. Its initial independent review found two specification
-ambiguities; both were repaired and the narrow independent recheck found no remaining P1/P2.
-It authorizes only Core-local claim reconciliation and synthetic tests. It does not authorize a
-new provider request, selected work, or public surface; the prior unadmitted hosted result and
-all limits above remain current.
+The local [GitHub OIDC JWT claim reconciliation checkpoint](../planning/v12.1/plan.md#local-github-oidc-jwt-claim-reconciliation-checkpoint-active-2026-09-28)
+is committed and pushed as Core `f0ae68f89bbc84923096868cc9df2d9264931144`. It adds protected,
+duplicate-safe local matching of the retained unadmitted JWT against the signed V4 candidate,
+distinguishes `claims_refused` from transport refusal, and proves exact and substituted synthetic
+responses through the snapshot-bound V4 fixture. MUSE's frozen-diff review found no P1/P2; the
+remaining P3 is an explicitly open proof limit for distinct-child/session replay and child/cgroup
+cleanup. Default no-feature compilation and focused pressure tests passed.
+
+The active next Step 7 gate is a fresh protected Linux/X64 hosted reconciliation run pinned to
+that Core revision, Launcher `bafbf1717f102c9d9765c5af382ad06c4ea7eb66`, and Protocol
+`e5fe1c83e562e02f60e27026c7148918bd016155`. It requires a fresh administrator-owned request,
+stopped-runner provisioning, exact workflow/run/ref/SHA binding, and retained non-secret outcome.
+It may prove only one structurally valid JWT response was locally reconciled or refused. It does
+not authorize Google STS/WIF, Secret Manager, materialization, injection, selected work, Step 8,
+V12.2, signature verification, or provider acceptance.
 
 Do not touch the unrelated untracked `docs/pressure/agent-authority-signals.md` unless the user
 explicitly asks.
