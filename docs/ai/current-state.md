@@ -2194,13 +2194,49 @@ frozen code diffs (Core
 `1e656797fb0ab3f4c137cc056141c62d7133296cb6fbe46f5b75dbd512a34707`) and found no
 P1/P2; its remaining P3 is this retained proof limit.
 
-V12.1 Step 7 remains active, and the planned hosted reconciliation proof gate remains open because
-run `36548056015` predates these prerequisites. The smallest next action is to publish the
-paired Core/Launcher revisions, then execute a fresh exact-revision protected Linux/X64 hosted run
-before claiming the planned gate is closed. No next provider-contact or admission gate is activated;
-broader provider use needs a separately scoped amendment. These internal feature-gated tests and
+Run `36548056015` predates these replay and cleanup prerequisites, so it could not close the
+planned hosted reconciliation proof gate. These internal feature-gated tests and
 cleanup refactor change no public command, schema, JSON, or operator-facing concept, so no Examples,
 Skills, Site, Learn, FAQ, Glossary, command-reference, or public JSON propagation is required.
+
+The paired revisions are published: Core `c39e0bc5376fc9c77a45b8f0d4c31a29748d8625` pins
+Launcher `7d81d93d309fe360968dd48543671d13958adadc`, with Protocol
+`e5fe1c83e562e02f60e27026c7148918bd016155`. The first fresh hosted attempt,
+[run `36576329741`](https://github.com/ota-run/ota/actions/runs/36576329741), job
+`109432798394`, failed before authorization. Its host accounts had `/bin/bash` instead of the
+configured `/usr/sbin/nologin`; the ephemeral runner also could not remove its credentials under
+the read-only service profile after the failed job. No selected-work marker appeared. The runner
+was stopped, its registration disappeared, and that VM was deleted. This failed attempt is not
+hosted proof and its request and provisioned state were not reused.
+
+The fresh protected Linux/X64 gate then passed in Core
+[run `36580942380`](https://github.com/ota-run/ota/actions/runs/36580942380), attempt `1`, job
+`109448647893`, on a new Ubuntu 24.04 Google Cloud VM at the exact Core, Launcher, and Protocol
+revisions above and Runner.Listener `2.337.0`. Operator-side checks recorded that the
+non-ephemeral runner stayed offline while the job queued and that a new root-owned mode-`0400`
+request bound the run and attempt, repository and actor IDs, workflow/ref/SHA, and runner version
+before fresh provisioning and runner start. The retained public installation records reconcile
+the exact source revisions and request identity, but do not independently prove the request file's
+mode or the pre-start ordering. Both workflow steps passed.
+The job-derived public posture reports `core_invocations=1`, `outcome=response_received`,
+`jwt_claim_reconciliation=matched_unadmitted`, `jwt_admission=not_established`,
+`jwt_signature_verification=not_attempted`, `google_contact=not_attempted`, and
+`selected_work_executed=false`. The host had no selected-work marker. Public run logs and the two
+public installation records are retained in
+[`secret-delivery-github-oidc-live-36580942380.zip`](../pressure/retained-artifacts/secret-delivery-github-oidc-live-36580942380.zip)
+(SHA-256 `0d1240d44872212ac21c7367c6d76684b55c1ce215c419c8329812cf9a729110`).
+Operator-side checks confirmed the runner was stopped and deregistered and both short-lived VMs,
+their auto-deleting disks, the dedicated firewall, subnet, and VPC were removed; these cleanup
+facts are not proved by the retained job archive.
+
+This closes the planned exact-revision hosted reconciliation gate together with the separately
+reviewed local replay-refusal and selected-failure cleanup tests. It does not turn those tests
+into an end-to-end hosted replay-to-terminal demonstration or the job-derived posture into an
+independent root-custodied semantic attestation. Provider-side and lower-layer cardinality remain
+`not_proved`; JWT signature/issuer authority, admission, Google STS/WIF, Secret Manager,
+materialization, injection, selected work, Step 8, and V12.2 remain unproved or inactive.
+V12.1 Step 7 is still active. The next provider-contact or admission slice requires its own
+explicit scope, independent review, and proof gate; none is activated by this run.
 
 Do not touch the unrelated `docs/pressure/agent-authority-signals.md` unless the user
 explicitly asks.

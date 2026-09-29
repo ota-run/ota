@@ -1840,8 +1840,26 @@ request/session, and Launcher exercises the exact selected-failure cleanup helpe
 root/systemd child, scope/cgroup, and active slot on Linux/arm64. The Launcher test does not send a
 terminal client frame or inject a real relay mismatch, and `/bin/true` may exit immediately after
 resume; it proves connected cleanup behavior, not a full end-to-end replay-to-terminal path. This
-historical run remains a bounded single-attempt observation. Require a fresh exact-revision
-protected Linux/X64 run before declaring the planned gate closed.
+historical run remains a bounded single-attempt observation. At that point a fresh exact-revision
+protected Linux/X64 run was still required before the planned gate could close.
+
+The fresh gate passed in Core
+[run `36580942380`](https://github.com/ota-run/ota/actions/runs/36580942380), attempt `1`, job
+`109448647893`, at Core `c39e0bc5376fc9c77a45b8f0d4c31a29748d8625`, Launcher
+`7d81d93d309fe360968dd48543671d13958adadc`, Protocol
+`e5fe1c83e562e02f60e27026c7148918bd016155`, and Runner.Listener `2.337.0`. Operator-side
+checks recorded that a fresh root-owned mode-`0400` request and provisioned state bound the queued
+run before the protected runner started. The retained public records reconcile the request identity,
+but do not independently prove the request file's mode or pre-start ordering. Both workflow steps
+passed; the job-derived non-secret posture records one Core
+request-service invocation, a structurally valid locally matched but unadmitted response, and
+refusal before selected work. The public logs and installation records are retained in
+[`secret-delivery-github-oidc-live-36580942380.zip`](../../pressure/retained-artifacts/secret-delivery-github-oidc-live-36580942380.zip)
+(SHA-256 `0d1240d44872212ac21c7367c6d76684b55c1ce215c419c8329812cf9a729110`).
+This closes the exact-revision hosted reconciliation gate, not end-to-end replay-to-terminal
+proof, independent root-custodied semantic attestation, JWT signature or issuer authority,
+provider-side cardinality, Google acceptance, or any later delivery or selected-work gate.
+V12.1 Step 7 remains active; no next provider-contact or admission slice is activated here.
 
 ## Product Boundary
 
