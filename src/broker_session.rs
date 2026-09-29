@@ -6652,6 +6652,68 @@ pub(crate) mod tests {
         launcher_thread.join().expect("launcher thread");
     }
 
+    #[cfg(all(target_os = "linux", feature = "secret-delivery-pressure"))]
+    #[test]
+    #[ignore = "child fixture invoked only by Launcher's network-isolated root cleanup test"]
+    fn google_sts_refusal_scoped_child_completion() {
+        let mut session = LauncherSession::from_inherited_descriptor(3)
+            .expect("actual scoped child's retained launcher session");
+        let (startup, admission, fault): (
+            LauncherStartupContinuationV1,
+            ota_authority_protocol::LeaseConsumptionAdmissionV1,
+            crate::secret_delivery_provider_client::GoogleStsFaultForTestV1,
+        ) = session.receive_json().expect("scoped fixture inputs");
+        assert_eq!(startup.child_process_identity.len(), 71);
+        let sts_matched =
+            crate::secret_delivery_authority_snapshot::tests::fake_sts_refusal_for_scoped_child(
+                &startup, fault,
+            );
+        let identity = |value: char| format!("sha256:{}", value.to_string().repeat(64));
+        let mut completion = SystemdExecutionCompletion {
+            session,
+            invocation_id: startup.invocation_id.clone(),
+            startup_continuation: startup,
+            lease_consumption_admission_identity: admission.identity,
+            work_unit_identity: admission.work_unit_identity,
+            pending_crossing_transaction_identity: admission.crossing_transaction_identity,
+            persisted: None,
+        };
+        let transaction = crate::crossing_transaction::CrossingTransactionEvidence {
+            schema_version: crate::crossing_transaction::CROSSING_TRANSACTION_SCHEMA_VERSION,
+            identity: identity('3'),
+            authentication_posture: "launcher_active_slot_content_addressed".into(),
+            transaction_id: admission.crossing_transaction_id,
+            authority_carrier: Some("authority_broker".into()),
+            authority_id: "release".into(),
+            admission_identity: identity('4'),
+            grant_identity: None,
+            authorization_identity: Some(identity('5')),
+            scope_identity: identity('6'),
+            contract_identity: identity('7'),
+            broker_consumption_intent: None,
+            broker_consumption: None,
+            broker_consumption_recovery: None,
+            state: "failed".into(),
+            created_at: "2026-09-29T00:00:00Z".into(),
+            finalized_at: Some("2026-09-29T00:00:01Z".into()),
+            receipt_status: Some("not_created".into()),
+        };
+        let persisted = completion
+            .persist_terminal_completion(
+                &transaction,
+                None,
+                sts_matched,
+                false,
+                Some(1),
+                "not_created",
+            )
+            .expect("real Launcher durable acknowledgement of STS refusal");
+        assert_eq!(persisted.outcome, LauncherExecutionOutcomeV1::Failed);
+        assert!(persisted.receipt_archive_identity.is_none());
+        // The relay must observe the refused child's real exit, not the test harness's success.
+        std::process::exit(1);
+    }
+
     #[test]
     fn systemd_completion_requests_secret_binding_on_retained_session_before_loading_authority() {
         let identity = |value: char| format!("sha256:{}", value.to_string().repeat(64));

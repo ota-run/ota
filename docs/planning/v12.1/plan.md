@@ -1886,6 +1886,14 @@ fields, no ambient credential or proxy fallback, bounded response parsing, redac
 and terminal child/cgroup cleanup on every refusal. This batch must not open a Google connection
 or produce an admitted token.
 
+The first batch's local ownership/cleanup checkpoint is complete: Core provider tests passed
+12/12, snapshot tests passed 22/22, and the network-isolated Linux/arm64 root fixture passed
+all 11 STS refusal cases through the actual scoped Core child, retained completion session,
+Launcher production relay, durable acknowledgement, observed exit, and terminal cleanup.
+MUSE's frozen five-file source review found no remaining P1/P2/P3 issue. This closes only
+the synthetic local batch, not installed authority admission, hosted Linux/X64 proof, or
+Google networking; the next gate below remains inactive.
+
 Network enablement requires a separate frozen-diff review and explicit authorization. A later
 manual protected Linux/X64 proof requires exact pinned Core/Launcher/Protocol revisions, a fresh
 administrator-owned request, the stopped-runner sequence, and an out-of-band administrator check

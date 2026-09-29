@@ -1389,7 +1389,9 @@ pub(crate) mod tests {
     };
     #[cfg(feature = "secret-delivery-pressure")]
     use crate::secret_delivery_provider_client::{
-        dispatch_github_oidc_v4, prepare_secret_delivery_provider_transport_from_private_relay_v4,
+        GoogleStsFaultForTestV1, PreparedSecretDeliveryProviderTransportV4,
+        dispatch_github_oidc_v4, exchange_google_sts_from_oidc_response_v4_for_test,
+        prepare_secret_delivery_provider_transport_from_private_relay_v4,
         reconcile_github_oidc_response_v4_for_test,
     };
     use crate::secret_delivery_provider_client::{
@@ -1424,6 +1426,15 @@ pub(crate) mod tests {
         candidate: &SnapshotBoundSecretDeliveryTransactionCandidateV1,
         substitute: Option<(&str, serde_json::Value)>,
     ) -> Vec<u8> {
+        github_oidc_response_body_for_candidate_at(candidate, substitute, 1_000)
+    }
+
+    #[cfg(feature = "secret-delivery-pressure")]
+    fn github_oidc_response_body_for_candidate_at(
+        candidate: &SnapshotBoundSecretDeliveryTransactionCandidateV1,
+        substitute: Option<(&str, serde_json::Value)>,
+        now: u64,
+    ) -> Vec<u8> {
         let [realization] = candidate.candidate().candidate().realizations.as_slice() else {
             panic!("one realization");
         };
@@ -1455,9 +1466,9 @@ pub(crate) mod tests {
             "run_id": claim(GithubOidcClaim::RunId),
             "run_attempt": claim(GithubOidcClaim::RunAttempt),
             "runner_environment": "self-hosted",
-            "nbf": 900_u64,
-            "iat": 950_u64,
-            "exp": 1100_u64,
+            "nbf": now - 100,
+            "iat": now - 50,
+            "exp": now + 100,
         });
         if let Some((name, value)) = substitute {
             payload[name] = value;
@@ -3804,8 +3815,22 @@ secret_requirements:
     }
 
     #[cfg(feature = "secret-delivery-pressure")]
-    #[test]
-    fn private_relay_consumes_only_the_exact_live_v4_route_and_prepares_without_environment() {
+    fn prepared_live_private_v4_for_test() -> (
+        PreparedSecretDeliveryProviderTransportV4,
+        SnapshotBoundSecretDeliveryTransactionCandidateV1,
+        u64,
+    ) {
+        prepared_live_private_v4_from_startup_for_test(&startup())
+    }
+
+    #[cfg(feature = "secret-delivery-pressure")]
+    fn prepared_live_private_v4_from_startup_for_test(
+        startup: &LauncherStartupContinuationV1,
+    ) -> (
+        PreparedSecretDeliveryProviderTransportV4,
+        SnapshotBoundSecretDeliveryTransactionCandidateV1,
+        u64,
+    ) {
         const LIVE_WORKFLOW: &str = "ota-run/ota/.github/workflows/secret-delivery-github-oidc-live.yml@refs/heads/1.6.29-implementation";
         const REQUEST_URL: &[u8] = b"https://run-actions-1-azure-eastus.actions.githubusercontent.com/1//idtoken/123e4567-e89b-12d3-a456-426614174000/123e4567-e89b-12d3-a456-426614174001?api-version=2.0";
         let contract = parse_contract_str(
@@ -3814,8 +3839,14 @@ secret_requirements:
         )
         .expect("live pressure contract");
         let (verified, verifier, candidate_for_prepare, issued_at) =
-            verified_v4_for_provider_transport_route(false, contract, "governed", LIVE_WORKFLOW)
-                .expect("live V4 binding");
+            verified_v4_for_provider_transport_route_from_startup(
+                startup,
+                false,
+                contract,
+                "governed",
+                LIVE_WORKFLOW,
+            )
+            .expect("live V4 binding");
         let authority = verified
             .consume_for_private_github_oidc_relay_at(&verifier, issued_at)
             .expect("one consumed live relay authority");
@@ -3832,14 +3863,49 @@ secret_requirements:
             ),
         )
         .expect("correlated private frame");
-        let mut prepared =
+        let prepared =
             prepare_secret_delivery_provider_transport_from_private_relay_v4(authority, frame)
                 .expect("relay-backed V4 preparation");
+        (prepared, candidate_for_prepare, issued_at)
+    }
+
+    #[cfg(all(target_os = "linux", feature = "secret-delivery-pressure"))]
+    pub(crate) fn fake_sts_refusal_for_scoped_child(
+        startup: &LauncherStartupContinuationV1,
+        fault: GoogleStsFaultForTestV1,
+    ) -> bool {
+        assert!(!matches!(fault, GoogleStsFaultForTestV1::None));
+        let (prepared, candidate, now) = prepared_live_private_v4_from_startup_for_test(startup);
+        let body = github_oidc_response_body_for_candidate_at(&candidate, None, now);
+        let (invocations, matched, fake_calls, rendered) =
+            exchange_google_sts_from_oidc_response_v4_for_test(prepared, &body, now, fault);
+        assert!(!matched, "{rendered}");
+        assert_eq!(invocations, fake_calls);
+        assert_eq!(
+            fake_calls,
+            u8::from(matches!(
+                fault,
+                GoogleStsFaultForTestV1::TransportFailure
+                    | GoogleStsFaultForTestV1::Redirect
+                    | GoogleStsFaultForTestV1::DuplicateContentType
+                    | GoogleStsFaultForTestV1::OversizedResponse
+                    | GoogleStsFaultForTestV1::MalformedResponse
+                    | GoogleStsFaultForTestV1::InvalidTokenType
+            ))
+        );
+        matched
+    }
+
+    #[cfg(feature = "secret-delivery-pressure")]
+    #[test]
+    fn private_relay_consumes_only_the_exact_live_v4_route_and_prepares_without_environment() {
+        const LIVE_WORKFLOW: &str = "ota-run/ota/.github/workflows/secret-delivery-github-oidc-live.yml@refs/heads/1.6.29-implementation";
+        let (prepared, candidate_for_prepare, _) = prepared_live_private_v4_for_test();
         let rendered = format!("{prepared:?}");
         assert!(!rendered.contains("private-runner-bearer"));
         assert!(!rendered.contains("run-actions-1"));
         let exact = reconcile_github_oidc_response_v4_for_test(
-            &prepared,
+            prepared,
             &github_oidc_response_body_for_candidate(&candidate_for_prepare, None),
             1_000,
         );
@@ -3849,8 +3915,9 @@ secret_requirements:
             "{exact:?}"
         );
         assert!(!format!("{exact:?}").contains("ota-run"));
+        let (prepared, candidate_for_prepare, _) = prepared_live_private_v4_for_test();
         let substituted = reconcile_github_oidc_response_v4_for_test(
-            &prepared,
+            prepared,
             &github_oidc_response_body_for_candidate(
                 &candidate_for_prepare,
                 Some(("repository_id", serde_json::json!("substituted"))),
@@ -3859,6 +3926,7 @@ secret_requirements:
         );
         assert_eq!(substituted.public_posture(), (1, "claims_refused"));
         assert!(!format!("{substituted:?}").contains("substituted"));
+        let (mut prepared, _, _) = prepared_live_private_v4_for_test();
         prepared.invalidate_binding_for_test();
         assert!(dispatch_github_oidc_v4(prepared).refused_without_invocation_for_test());
 
@@ -3902,6 +3970,34 @@ secret_requirements:
                 .consume_for_private_github_oidc_relay_at(&wrong_task_verifier, wrong_task_now,),
             Err(SecretDeliveryTransactionBindingError::ResponseInvalid)
         ));
+    }
+
+    #[cfg(feature = "secret-delivery-pressure")]
+    #[test]
+    fn google_sts_v4_owner_rechecks_authority_and_jwt_before_one_fake_dispatch() {
+        use GoogleStsFaultForTestV1::*;
+        for (fault, expected_calls, expected_match) in [
+            (None, 1, true),
+            (ExpiredBinding, 0, false),
+            (ExpiredJwt, 0, false),
+            (SubstitutedOperation, 0, false),
+            (SubstitutedTransportRecord, 0, false),
+            (SubstitutedJwt, 0, false),
+            (TransportFailure, 1, false),
+            (Redirect, 1, false),
+            (DuplicateContentType, 1, false),
+            (OversizedResponse, 1, false),
+            (MalformedResponse, 1, false),
+            (InvalidTokenType, 1, false),
+        ] {
+            let (prepared, candidate, now) = prepared_live_private_v4_for_test();
+            let body = github_oidc_response_body_for_candidate_at(&candidate, Option::None, now);
+            let (invocations, matched, fake_calls, rendered) =
+                exchange_google_sts_from_oidc_response_v4_for_test(prepared, &body, now, fault);
+            assert_eq!(invocations, expected_calls, "{rendered}");
+            assert_eq!(fake_calls, expected_calls, "{rendered}");
+            assert_eq!(matched, expected_match, "{rendered}");
+        }
     }
 
     #[cfg(feature = "secret-delivery-pressure")]
@@ -4045,7 +4141,7 @@ secret_requirements:
     }
 
     #[test]
-    fn v4_transport_refuses_record_and_projection_substitution_before_oidc_ownership() {
+    fn v4_transport_refuses_substitution_and_keeps_consumed_oidc_capability_terminal() {
         let _environment = crate::test_support::env_mutex_lock();
         reset_github_oidc_capability_owner_for_test();
         assert!(verified_v4_for_provider_transport(true).is_err());
@@ -4089,7 +4185,7 @@ secret_requirements:
         let fresh_endpoint =
             resolve_github_actions_oidc_endpoint_observation_v1(&profile, &endpoint_input)
                 .expect("fresh endpoint observation");
-        prepare_secret_delivery_provider_transport_at_v4(
+        let retry_error = prepare_secret_delivery_provider_transport_at_v4(
             &mut fresh_verified,
             &fresh_verifier,
             fresh_now,
@@ -4098,7 +4194,11 @@ secret_requirements:
             endpoint_input,
             fresh_endpoint,
         )
-        .expect("pre-bearer refusal must leave the one-use capability available");
+        .expect_err("a refused consumed V4 exchange cannot reacquire the OIDC capability");
+        assert_eq!(
+            retry_error.code,
+            "secret_delivery_provider_transport_oidc_input_consumed"
+        );
         reset_github_oidc_capability_owner_for_test();
     }
 

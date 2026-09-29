@@ -2247,6 +2247,46 @@ materialization, injection, selected work, Step 8, and V12.2 remain inactive. Th
 checkpoint changes no public command, schema, JSON, or authoring/operator concept, so Site,
 Skills, Examples, Learn, FAQ, Glossary, and command-reference propagation are not required.
 
+The working first-batch implementation now couples the consumed V4 transport and locally
+reconciled JWT in one non-cloneable private owner. Its fake STS path rechecks signed full
+graph/record expectations, the rederived operation, binding expiry, and JWT claims/time before
+one dispatch; it refuses substitution, redirects, ambiguous headers, oversized/malformed
+responses, and invalid token types without exposing transport details or admitting a token.
+The six STS form fields are independently decoded and asserted against protocol literals.
+
+Local validation passed Core provider tests (12/12), snapshot tests (22/22), no-feature and
+`secret-delivery-pressure` compilation, formatting/diff checks, and first-party sync for this
+batch's explicit changed-file scope. Whole-worktree first-party sync remains blocked by the
+unrelated staged pressure-document changes; those files are excluded from this batch.
+The paired Launcher root
+fixture `root_systemd_core_sts_refusals_reap_exact_child_cgroup_and_active_slot` passed 1/1
+on Ubuntu 24.04 Linux/arm64 with Rust 1.98.1, exercising all 11 refusal cases. It launches the
+Core test executable as the actual stopped/scoped child, binds its synthetic signed V2/consumed
+V4 authority to that child's startup, and passes the real STS refusal result through
+`SystemdExecutionCompletion::persist_terminal_completion` on the retained child session.
+Launcher's production relay reconciles and durably records the completion and actual exit;
+`execute_selected_boundary` takes its real missing-archive failure path. Each case confirms
+child absence after reaping, exact scope removal/cgroup emptiness, active-slot removal, and
+absence of the declared `selected-work-executed` marker. The existing root cleanup and V2
+reservation-refusal regressions also passed 1/1 each.
+
+Run this connected fixture only with the paired Core library test executable (compiled with
+`secret-delivery-pressure`) and Launcher binary test executable (with `protected-attestor`):
+`unshare --net env OTA_CORE_STS_TEST_BINARY=<core-test-executable> <launcher-test-executable> --exact systemd_service::tests::root_systemd_core_sts_refusals_reap_exact_child_cgroup_and_active_slot --ignored --nocapture --test-threads=1`.
+The test requires a network namespace distinct from PID 1; this run used a fresh namespace
+with only a down loopback interface. Build artifacts were preserved on the local VM's disk
+after RAM-backed `/tmp` caused compilation-only memory failures. No cloud VM was created.
+
+MUSE's final frozen five-file source review found no remaining P1/P2/P3 issue and confirmed
+that the earlier connected-cleanup and independent-form-assertion findings are resolved.
+The Google-network-disabled ownership/cleanup batch is locally complete. These are
+synthetic local ownership/cleanup fixtures, not installed authority admission, hosted Linux/X64
+proof, real Google transport, WIF acceptance, provider-side cardinality, or token-memory
+erasure proof. Launcher fixture commit `dd667c3d6b63d8d26d9e2a40f831e9d08a7a6864` is test-only;
+no runtime compatibility pin or Protocol change is required. Google network enablement remains
+inactive and requires a separately reviewed
+and explicitly authorized checkpoint. V12.1 Step 7 remains active.
+
 Do not touch the unrelated `docs/pressure/agent-authority-signals.md` unless the user
 explicitly asks.
 
