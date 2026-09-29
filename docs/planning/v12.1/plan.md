@@ -1861,6 +1861,42 @@ proof, independent root-custodied semantic attestation, JWT signature or issuer 
 provider-side cardinality, Google acceptance, or any later delivery or selected-work gate.
 V12.1 Step 7 remains active; no next provider-contact or admission slice is activated here.
 
+### Google STS Exchange Checkpoint (First Batch Active 2026-09-29)
+
+The hosted GitHub OIDC reconciliation gate above demonstrated one structurally valid, locally
+matched but unadmitted runtime JWT; it retained no token for reuse. The next possible Step 7 gate
+under the provider-contact amendment is one Google STS token exchange, not Secret Manager delivery.
+MUSE independently reviewed this checkpoint and its ownership/test-scope repairs with no remaining
+P1/P2/P3 finding. The operator activated only the first Google-network-disabled implementation
+batch below on 2026-09-29. Google network enablement and hosted dispatch require the later gates.
+
+The first implementation batch remains Google-network-disabled; the existing GitHub OIDC
+request-service call is not a Google connection. Successful GitHub dispatch must move its exact
+consumed `PreparedSecretDeliveryProviderTransportV4` and locally reconciled JWT together into one
+non-cloneable, one-shot private owner, rather than returning a standalone token that can be rebound
+to caller-reconstructed context. Immediately before a prospective STS exchange, that owner must
+re-derive and compare the exact operation from its retained candidate against the signed protected
+V2/V4 truth, reject an expired consumed binding, and recheck JWT claims against protected
+expectations and the `nbf`/`iat`/`exp` window against a fresh trusted clock. The STS audience and
+request derive only from that exact rederived operation plan, which is bound to signed V2/V4
+authority but is not itself signed. V1, V2, V3, caller-supplied, inherited, or repository values
+cannot substitute for V4 authority. Tests must exercise the production one-shot STS request/response
+owner through an injected fake Google transport, proving zero or one dispatch, fixed URL and form
+fields, no ambient credential or proxy fallback, bounded response parsing, redaction, non-reuse,
+and terminal child/cgroup cleanup on every refusal. This batch must not open a Google connection
+or produce an admitted token.
+
+Network enablement requires a separate frozen-diff review and explicit authorization. A later
+manual protected Linux/X64 proof requires exact pinned Core/Launcher/Protocol revisions, a fresh
+administrator-owned request, the stopped-runner sequence, and an out-of-band administrator check
+that the installed WIF provider condition binds the reviewed workflow commit. Retain only closed
+non-secret status and independently distinguish job observation from provider acknowledgement.
+A successful STS response would show Google accepted the submitted JWT under that installed WIF
+configuration and returned a federated token; it would not prove independent Ota signature
+verification, every claim's provider-side enforcement, provider-side request cardinality, or
+authority to run selected work. IAM Credentials, Secret Manager, materialization, injection,
+positive delivery evidence, Step 8, and V12.2 remain outside this checkpoint.
+
 ## Product Boundary
 
 Ota does not store, rotate, mint, encrypt, export, or centrally manage secret values. It governs

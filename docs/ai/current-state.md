@@ -2238,6 +2238,15 @@ materialization, injection, selected work, Step 8, and V12.2 remain unproved or 
 V12.1 Step 7 is still active. The next provider-contact or admission slice requires its own
 explicit scope, independent review, and proof gate; none is activated by this run.
 
+The operator subsequently activated only the first implementation batch of the independently
+reviewed [Google STS exchange checkpoint](../planning/v12.1/plan.md#google-sts-exchange-checkpoint-first-batch-active-2026-09-29)
+on 2026-09-29. It retains the exact consumed V4 transport and reconciled JWT in one private,
+non-cloneable owner and exercises the production STS ownership path through a fake Google
+transport. Google network enablement, hosted STS proof, IAM Credentials, Secret Manager,
+materialization, injection, selected work, Step 8, and V12.2 remain inactive. This internal
+checkpoint changes no public command, schema, JSON, or authoring/operator concept, so Site,
+Skills, Examples, Learn, FAQ, Glossary, and command-reference propagation are not required.
+
 Do not touch the unrelated `docs/pressure/agent-authority-signals.md` unless the user
 explicitly asks.
 
