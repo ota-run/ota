@@ -112842,10 +112842,10 @@ fn enforce_secret_delivery_protected_transaction_boundary(
     let (core_invocations, outcome) = protected_result.unwrap_or((0, "not_attempted"));
     let message = match (core_invocations, outcome) {
         (1, "response_received") => String::from(
-            "selected secret requirements completed one bounded GitHub OIDC request and retained one structurally valid unadmitted response (core_invocations=1, outcome=response_received); refusing before claim admission, Google contact, or task execution",
+            "selected secret requirements completed one bounded GitHub OIDC request and locally reconciled claims in one still-unadmitted response (core_invocations=1, outcome=response_received); refusing before signature verification, Google contact, or task execution",
         ),
         _ => format!(
-            "selected secret requirements terminally refused the bounded GitHub OIDC request path (core_invocations={core_invocations}, outcome={outcome}); refusing before claim admission, Google contact, or task execution"
+            "selected secret requirements terminally refused the bounded GitHub OIDC request path (core_invocations={core_invocations}, outcome={outcome}); refusing before signature verification, Google contact, or task execution"
         ),
     };
     Err(RunCommandFailure {

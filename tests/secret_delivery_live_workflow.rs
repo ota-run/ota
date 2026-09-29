@@ -74,7 +74,7 @@ fn live_oidc_workflow_is_manual_exact_revision_and_bounded() {
     assert!(job.contains("test \"$client_status\" -eq 1"));
     assert!(job.contains("core_invocations=1"));
     assert!(job.contains("outcome=response_received"));
-    assert!(job.contains("refusing before claim admission, Google contact, or \""));
+    assert!(job.contains("refusing before signature verification, Google contact, or \""));
     assert!(job.contains("\"task execution\""));
     assert_eq!(
         job.matches("test ! -e \"$PRESSURE_REPOSITORY/selected-work-executed\"")
@@ -121,18 +121,22 @@ fn live_oidc_log_contains_only_closed_non_secret_posture() {
             "workflow_run_attempt",
             "core_invocations",
             "outcome",
+            "jwt_claim_reconciliation",
             "provider_cardinality",
             "lower_layer_cardinality",
             "jwt_admission",
+            "jwt_signature_verification",
             "google_contact",
             "selected_work_executed",
         ]
     );
     assert!(posture.contains("\"core_invocations\": 1"));
     assert!(posture.contains("\"outcome\": \"response_received\""));
+    assert!(posture.contains("\"jwt_claim_reconciliation\": \"matched_unadmitted\""));
     assert!(posture.contains("\"provider_cardinality\": \"not_proved\""));
     assert!(posture.contains("\"lower_layer_cardinality\": \"not_proved\""));
-    assert!(posture.contains("\"jwt_admission\": \"not_attempted\""));
+    assert!(posture.contains("\"jwt_admission\": \"not_established\""));
+    assert!(posture.contains("\"jwt_signature_verification\": \"not_attempted\""));
     assert!(posture.contains("\"google_contact\": \"not_attempted\""));
     assert!(posture.contains("\"selected_work_executed\": False"));
 
