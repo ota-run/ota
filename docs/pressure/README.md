@@ -13,6 +13,9 @@ endorsed, is governed repository-wide, or has proved behavior outside its declar
 - `pre_release_design_partner`: bounded fork evidence awaiting maintainer review. The
   historical status name is retained when a case is rerun against a released Ota pin;
   it does not assert that the run itself predates that release.
+- `merged_design_partner`: an upstream maintainer merged the bounded integration after review.
+  This confirms the listed change entered that repository; it does not assert repository-wide
+  governance, ongoing use, endorsement, or behavior beyond the retained selected lanes.
 
 The Site renders a generated discovery projection of this manifest. The Core manifest remains the
 technical source of truth; the projection may summarize but must not add evidence claims.

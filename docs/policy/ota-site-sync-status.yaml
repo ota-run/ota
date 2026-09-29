@@ -24,7 +24,7 @@
 
 version: 1
 repository: ota-run/ota-site
-mode: waived
-consumer_commit: 0ee140feea1e63cf79a33944f5cd512e555f161c
-reviewed_ota_commit: 7ef8af1a552ffcc97cbff9550aee47016f4faf38
-waiver_reason: "Core 7ef8af1a changes an internal provider-free pressure workflow and administrator runbook only; no Site operator surface or public capability changes."
+mode: synced
+consumer_commit: 7d37cc9fe628243174e81f9855194ca121d79296
+reviewed_ota_commit: 3422c8b7a57d299c97c2ae6d0db5c65c7127edda
+waiver_reason: ""

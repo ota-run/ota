@@ -2256,8 +2256,8 @@ The six STS form fields are independently decoded and asserted against protocol 
 
 Local validation passed Core provider tests (12/12), snapshot tests (22/22), no-feature and
 `secret-delivery-pressure` compilation, formatting/diff checks, and first-party sync for this
-batch's explicit changed-file scope. Whole-worktree first-party sync remains blocked by the
-unrelated staged pressure-document changes; those files are excluded from this batch.
+batch's explicit changed-file scope. The staged pressure-document changes were excluded from
+that implementation batch; their subsequent reconciliation is recorded below.
 The paired Launcher root
 fixture `root_systemd_core_sts_refusals_reap_exact_child_cgroup_and_active_slot` passed 1/1
 on Ubuntu 24.04 Linux/arm64 with Rust 1.98.1, exercising all 11 refusal cases. It launches the
@@ -2287,8 +2287,17 @@ no runtime compatibility pin or Protocol change is required. Google network enab
 inactive and requires a separately reviewed
 and explicitly authorized checkpoint. V12.1 Step 7 remains active.
 
-Do not touch the unrelated `docs/pressure/agent-authority-signals.md` unless the user
-explicitly asks.
+The user-requested pressure-document review retained the bounded research signals without
+activating implementation or declaring a reproduced Ota defect. It reconciled dbmask's merged
+PR #37 with tested head `9f75a339e09fa3d762094ffee2ef612f93065e41`, exact-head fork/upstream
+matrices `36409528942`/`36409530097`, and the published engineering note. The merge commit is
+recorded separately from the tested head; maintainer acceptance does not imply ongoing use,
+endorsement, or repository-wide governance. Site projection and reading guidance are synced at
+`7d37cc9fe628243174e81f9855194ca121d79296`. Projection parity, generated pressure-page data,
+content generation, whole-worktree first-party sync, and diff checks passed. This documentation
+reconciliation changes no product command, schema, public JSON shape, or authoring concept;
+Skills, Examples, Learn, FAQ, Glossary, and command-reference propagation are not required.
+V12.1 Step 7 remains active; Google network enablement remains inactive.
 
 ## Working Rules
 

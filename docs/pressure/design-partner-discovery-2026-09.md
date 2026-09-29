@@ -1,9 +1,11 @@
 # September 2026 Design-Partner Pressure Discovery
 
 The canonical evidence and exact fork revisions are in
-[`evidence-manifest.json`](evidence-manifest.json). These are four unmerged draft PRs,
-not maintainer adoption or endorsement. Their green fork runs prove only the
-selected lanes. Engineering notes remain drafts pending upstream review.
+[`evidence-manifest.json`](evidence-manifest.json). dbmask PR #37 is merged; the remaining
+three design-partner tracks are draft PRs. A merge records acceptance of one bounded integration,
+not repository-wide adoption or endorsement. Their retained matrices prove only the selected
+lanes. The [dbmask engineering note](https://ota.run/blog/pressure-testing-ota-on-dbmask-postgresql-5m9q)
+is published; the other engineering notes remain drafts pending upstream review.
 
 ## Historical Gap Recheck
 
@@ -42,12 +44,12 @@ selected lanes. Engineering notes remain drafts pending upstream review.
 
 | Case | Contract-owned and proved | Bounded / `not_proved` | Repo-owned outside selected scope | Ota gap or candidate |
 | --- | --- | --- | --- | --- |
-| dbmask | Selected SQLite lanes and synthetic PostgreSQL sequence | Real data, MySQL, release, and repository-wide safety | SQL fixture assertions and date-classification fix | No confirmed Core gap in this lane |
+| dbmask | Selected SQLite lanes and synthetic PostgreSQL sequence; merged upstream in PR #37 | Real data, MySQL, release, and repository-wide safety | SQL fixture assertions and date-classification fix | No confirmed Core gap in this lane |
 | sem | Selected native and container local-index tasks | Cloud index, MCP consumers, hosted aggregate container selection, and release | Fixture shell commands and parser semantics | Historical aggregate finding needs a released hosted recheck; opaque-step modeling question |
 | Agent Threat Rules | Selected Ota evaluation task and non-blocking lane | Official benchmark, certification, arbitrary runner integrity, and repository-wide rule quality | 850-sample corpus, regression gate, and measurement verifier | Test whether Core can bind run-to-measurement provenance |
 | Anodizer | Selected disposable Linux preflight, matching builds, and drift refusal | Cross-platform release, signing, publication, and agent safety | Determinism fixture and release pipeline | Reproduce suspected nfpm version-probe issue separately |
 
 No provider, external authority, production-data, or deployment conclusion is
-drawn from these four runs. Keep upstream PRs narrow and keep these internal
+drawn from these four selected cases. Keep upstream PRs narrow and keep these internal
 product questions out of maintainer-facing evidence unless a concrete Ota fix
 changes the selected lane.

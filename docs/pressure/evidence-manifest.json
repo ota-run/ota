@@ -169,14 +169,14 @@
     },
     {
       "id": "dbmask-disposable-postgresql-review",
-      "status": "pre_release_design_partner",
-      "repository": {"name": "dbmask", "type": "Python data-masking CLI", "url": "https://github.com/sealandseacat/dbmask", "revision": "1f29ce07fb751f92eaec88a45ffcf949de99a6e0"},
+      "status": "merged_design_partner",
+      "repository": {"name": "dbmask", "type": "Python data-masking CLI", "url": "https://github.com/sealandseacat/dbmask", "revision": "9f75a339e09fa3d762094ffee2ef612f93065e41"},
       "ota": {"version": "v1.6.28", "core_revision": "aae1c6940e269f8d3020d28e3c46b1682cbaf12b"},
-      "evidence": [{"platforms": ["linux", "macos", "windows"], "run_url": "https://github.com/bobaikato/dbmask/actions/runs/36238957669"}],
+      "evidence": [{"platforms": ["linux", "macos", "windows"], "run_url": "https://github.com/bobaikato/dbmask/actions/runs/36409528942"}, {"platforms": ["linux", "macos", "windows"], "run_url": "https://github.com/sealandseacat/dbmask/actions/runs/36409530097"}],
       "exercised_surfaces": ["contract-to-CI drift", "SQLite contributor suite", "disposable synthetic PostgreSQL 16 lane", "strict positive and controlled negative validation"],
-      "proven_facts": ["The selected SQLite contributor lanes and the non-blocking synthetic PostgreSQL lane passed at the fork revision.", "The PostgreSQL lane exercised seed, scan, dry run, apply, and strict validation on disposable data; its controlled sensitive-value restoration was rejected by strict validation."],
-      "not_proved": ["Production-data safety or arbitrary database state", "MySQL or release behavior", "the separate date-classification edge case", "repository-wide governance, maintainer merge, or adoption"],
-      "engineering_note": {"status": "draft", "url": null},
+      "proven_facts": ["The selected SQLite contributor lanes and the non-blocking synthetic PostgreSQL lane passed at the reviewed PR head and its upstream check matrix.", "The PostgreSQL lane exercised seed, scan, dry run, apply, and strict validation on disposable data; its controlled sensitive-value restoration was rejected by strict validation.", "Upstream merged the bounded integration in PR #37 as commit 7d8789ef4883a423ddba2f8934b95997d1aaf099 after review."],
+      "not_proved": ["Production-data safety or arbitrary database state", "MySQL or release behavior", "the separate date-classification edge case", "repository-wide governance, ongoing adoption, endorsement, or behavior beyond the merged selected lanes"],
+      "engineering_note": {"status": "published", "url": "https://ota.run/blog/pressure-testing-ota-on-dbmask-postgresql-5m9q"},
       "core_note": "docs/pressure/design-partner-discovery-2026-09.md"
     },
     {

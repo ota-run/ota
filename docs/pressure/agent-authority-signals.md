@@ -188,6 +188,71 @@ repository enrollment and caller-independent admission as its required repositor
 **Not proved:** Hermes behavior, universal terminal-effect analysis, prevention of all exfiltration,
 whole-session agent governance, or current Ota enforcement of an arbitrary actor's shell.
 
+## Daily Signal Review: 2026-09-29 Reports
+
+These upstream and practitioner reports are product-pressure inputs, not independently reproduced
+Ota evidence.
+They do not activate implementation, establish an Ota defect, or justify a public capability claim.
+
+### [Hermes #126183](https://github.com/NousResearch/hermes-agent/issues/126183): dependency readiness at the worker boundary
+
+**Priority:** first repository-execution pressure candidate to attempt to reproduce from this review.
+
+**Reported failure mode:** a cron worker launches with a different effective Python environment
+from its parent; parent-only dependency activation is not preserved after sanitization, and the
+worker fails to import `ruamel` before it can acknowledge ownership. The issue already identifies
+a Hermes-owned fix.
+
+**Ota boundary:** Doctor diagnoses declared requirements on a selected task path, and Ota receipts
+record selected execution. Neither proves the environment of an application-owned worker spawned
+inside that task. Until that worker is modeled as a selected Ota invocation or supported executor,
+its internal dependency setup remains repository-owned behavior outside Ota's declared scope.
+
+**Pressure question:** can a disposable fixture make the parent import succeed while the actual
+worker import fails, then show whether an Ota-selected worker path reports that failure instead of
+promoting parent readiness into worker readiness? Retain the exact repository revision, selected
+task, parent and worker executable/environment identities, exit statuses, and receipt boundary.
+Only a reproduced misleading Ota verdict would establish an Ota platform gap.
+
+**Not proved:** Ota currently governs Hermes cron workers, that this Hermes report reproduces,
+or that Ota can infer every child process's effective environment.
+
+### [Rashomon practitioner report](https://www.reddit.com/r/aiagents/comments/1wshwi1/claude_code_told_me_a_task_was_done_and/): agent summary versus selected-task evidence
+
+**Reported failure mode:** a parent agent summarized tests as passing despite a failed subagent
+test retained in a separate transcript. The author launched Rashomon to compare recorded actions
+with the summary; this is not an Ota outreach opening.
+
+**Ota boundary and pressure question:** Ota can retain results for tasks it actually selects and
+executes, not arbitrary subagent transcripts or a parent agent's final prose. A future fixture
+could run a failing selected verification task while a separate agent summary says "done" and
+confirm the task receipt remains failed. Any claim about all subagent activity would require an
+explicit integration and independent evidence of complete capture.
+
+**Not proved:** Ota observes every agent action, can validate free-form summaries, or prevents a
+parent agent from making an unsupported completion claim.
+
+### [Hermes #126552](https://github.com/NousResearch/hermes-agent/issues/126552): failed probe is not missing capability
+
+**Reported failure mode:** a configured executable path is a traversable directory; the probe
+cannot execute it but returns `NO`, leading to a false update recommendation. The report already
+contains a concrete reproduction and proposed Hermes-side correction.
+
+**Ota pressure question:** in a disposable repository, configure an analogous invalid executable
+path and check that Doctor distinguishes a failed or unverified probe from an established missing
+capability, without suggesting an unsupported version remedy. Record the exact probe command,
+target path type, exit status, diagnostic classification, and next action. This is a test of Ota's
+own diagnostic semantics, not a claim that Ota has the Hermes defect.
+
+**Not proved:** a current Ota Doctor defect, universal `unknown` classification for every probe,
+or Ota ownership of Hermes Desktop's SSH path validation.
+
+**Disposition:** [Codex #48877](https://github.com/openai/codex/issues/48877) concerns effective
+skill loading and instruction compliance outside Ota's selected execution path; the report does
+not establish which failed. [Codex #48908](https://github.com/openai/codex/issues/48908) concerns
+Codex's effective process privileges; Ota cannot infer host authority from a mode label, but this
+issue alone adds no distinct Ota pressure case. Neither warrants Ota outreach or roadmap expansion.
+
 ## dbmask PostgreSQL Pressure Signals
 
 These signals come from the bounded PostgreSQL pressure design for
