@@ -8898,6 +8898,33 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn private_github_oidc_relay_refuses_replay_into_a_distinct_session() {
+        let first_nonce = "cd".repeat(32);
+        let (first_request_identity, frame) = private_github_oidc_relay_fixture(&first_nonce);
+        let replayed_bytes = frame.as_wire_bytes().to_vec();
+        let (mut first_session, mut first_peer) = private_github_oidc_relay_session();
+        first_peer
+            .write_all(&replayed_bytes)
+            .expect("write first-session private relay frame");
+        first_session
+            .receive_private_github_oidc_frame(&first_request_identity, &first_nonce)
+            .expect("receive frame in its bound session");
+
+        let second_request_identity = format!("sha256:{}", "ef".repeat(32));
+        let second_nonce = first_nonce.clone();
+        let (mut second_session, mut second_peer) = private_github_oidc_relay_session();
+        second_peer
+            .write_all(&replayed_bytes)
+            .expect("replay first-session frame into second session");
+        assert!(
+            second_session
+                .receive_private_github_oidc_frame(&second_request_identity, &second_nonce)
+                .is_err(),
+            "a frame consumed by one request/session must not correlate in another"
+        );
+    }
+
+    #[test]
     fn private_github_oidc_relay_refuses_timeout_and_restores_session_timeout() {
         let nonce = "cd".repeat(32);
         let (request_identity, _frame) = private_github_oidc_relay_fixture(&nonce);

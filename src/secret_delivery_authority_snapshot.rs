@@ -3670,6 +3670,30 @@ secret_requirements:
         SecretDeliveryTransactionBindingError,
     > {
         let startup = startup();
+        verified_v4_for_provider_transport_route_from_startup(
+            &startup,
+            substitute_record,
+            contract,
+            task_name,
+            workflow_reference,
+        )
+    }
+
+    fn verified_v4_for_provider_transport_route_from_startup(
+        startup: &LauncherStartupContinuationV1,
+        substitute_record: bool,
+        contract: Contract,
+        task_name: &str,
+        workflow_reference: &str,
+    ) -> Result<
+        (
+            VerifiedSecretDeliveryTransactionBindingV4,
+            RetainedCapabilityProjectionVerifierV1,
+            SnapshotBoundSecretDeliveryTransactionCandidateV1,
+            u64,
+        ),
+        SecretDeliveryTransactionBindingError,
+    > {
         let run_plan = plan_task_execution_structure_for_target_os(
             &contract,
             task_name,
@@ -3878,6 +3902,93 @@ secret_requirements:
                 .consume_for_private_github_oidc_relay_at(&wrong_task_verifier, wrong_task_now,),
             Err(SecretDeliveryTransactionBindingError::ResponseInvalid)
         ));
+    }
+
+    #[cfg(feature = "secret-delivery-pressure")]
+    #[test]
+    fn private_relay_frame_cannot_replay_into_a_distinct_child_session() {
+        const LIVE_WORKFLOW: &str = "ota-run/ota/.github/workflows/secret-delivery-github-oidc-live.yml@refs/heads/1.6.29-implementation";
+        let first_startup = startup();
+        let mut second_startup = first_startup.clone();
+        second_startup.invocation_id = String::from("snapshot-test-second-child");
+        second_startup.child_process_identity = identity('9');
+        second_startup.identity = launcher_startup_continuation_identity(&second_startup)
+            .expect("second startup identity");
+        assert_ne!(first_startup.identity, second_startup.identity);
+
+        let contract = parse_contract_str(
+            Path::new("docs/pressure/fixtures/secret-delivery-service-path/ota.yaml"),
+            include_str!("../docs/pressure/fixtures/secret-delivery-service-path/ota.yaml"),
+        )
+        .expect("live pressure contract");
+        let (first, first_verifier, _, first_now) =
+            verified_v4_for_provider_transport_route_from_startup(
+                &first_startup,
+                false,
+                contract.clone(),
+                "governed",
+                LIVE_WORKFLOW,
+            )
+            .expect("first child V4 binding");
+        let (second, second_verifier, _, second_now) =
+            verified_v4_for_provider_transport_route_from_startup(
+                &second_startup,
+                false,
+                contract,
+                "governed",
+                LIVE_WORKFLOW,
+            )
+            .expect("second child V4 binding");
+        let first = first
+            .consume_for_private_github_oidc_relay_at(&first_verifier, first_now)
+            .expect("first child relay authority");
+        let second = second
+            .consume_for_private_github_oidc_relay_at(&second_verifier, second_now)
+            .expect("second child relay authority");
+        assert_ne!(
+            first.relay_request().session_identity,
+            second.relay_request().session_identity
+        );
+        assert_ne!(
+            first.relay_request().identity,
+            second.relay_request().identity
+        );
+
+        let first_nonce = "ab".repeat(32);
+        let first_frame = ota_authority_protocol::build_protected_github_oidc_private_frame_v1(
+            &first.relay_request().identity,
+            &first_nonce,
+            ota_authority_protocol::ProtectedGithubOidcSecretInputV1::new(
+                b"https://example.invalid/oidc".to_vec(),
+            ),
+            ota_authority_protocol::ProtectedGithubOidcSecretInputV1::new(
+                b"private-runner-bearer".to_vec(),
+            ),
+        )
+        .expect("first child private frame");
+        let replayed_bytes = first_frame.as_wire_bytes().to_vec();
+        let mut receive = ota_authority_protocol::ProtectedGithubOidcPrivateReceiveBufferV1::new();
+        let mut offset = 0;
+        while !receive.unfilled_mut().is_empty() {
+            let count = receive
+                .unfilled_mut()
+                .len()
+                .min(replayed_bytes.len() - offset);
+            receive.unfilled_mut()[..count]
+                .copy_from_slice(&replayed_bytes[offset..offset + count]);
+            receive.record_read(count).expect("record replayed bytes");
+            offset += count;
+        }
+        assert_eq!(offset, replayed_bytes.len());
+        assert!(
+            receive
+                .finish()
+                .and_then(|frame| {
+                    frame.correlate(&second.relay_request().identity, &first_nonce)
+                })
+                .is_err(),
+            "a private frame from the first child/session must not correlate to the second even when the nonce is unchanged"
+        );
     }
 
     #[test]

@@ -42,7 +42,7 @@ fn live_oidc_workflow_is_manual_exact_revision_and_bounded() {
     assert!(!WORKFLOW.contains("secrets."));
 
     for expected in [
-        "EXPECTED_LAUNCHER_SOURCE_REVISION: bafbf1717f102c9d9765c5af382ad06c4ea7eb66",
+        "EXPECTED_LAUNCHER_SOURCE_REVISION: 7d81d93d309fe360968dd48543671d13958adadc",
         "EXPECTED_PROTOCOL_SOURCE_REVISION: e5fe1c83e562e02f60e27026c7148918bd016155",
         "EXPECTED_WORKFLOW_REFERENCE: ota-run/ota/.github/workflows/secret-delivery-github-oidc-live.yml@refs/heads/1.6.29-implementation",
         "CLIENT: /usr/lib/ota-authority/bin/ota-authority-systemd-client",

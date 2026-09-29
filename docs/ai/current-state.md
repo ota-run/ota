@@ -2142,19 +2142,67 @@ The local [GitHub OIDC JWT claim reconciliation checkpoint](../planning/v12.1/pl
 is committed and pushed as Core `f0ae68f89bbc84923096868cc9df2d9264931144`. It adds protected,
 duplicate-safe local matching of the retained unadmitted JWT against the signed V4 candidate,
 distinguishes `claims_refused` from transport refusal, and proves exact and substituted synthetic
-responses through the snapshot-bound V4 fixture. MUSE's frozen-diff review found no P1/P2; the
-remaining P3 is an explicitly open proof limit for distinct-child/session replay and child/cgroup
-cleanup. Default no-feature compilation and focused pressure tests passed.
+responses through the snapshot-bound V4 fixture. MUSE's frozen-diff review found no P1/P2 and
+identified distinct-child/session replay and child/cgroup cleanup as open proof prerequisites.
+Default no-feature compilation and focused pressure tests passed.
 
-The active next Step 7 gate is a fresh protected Linux/X64 hosted reconciliation run pinned to
-its exact final Core dispatch revision, Launcher `bafbf1717f102c9d9765c5af382ad06c4ea7eb66`,
-and Protocol `e5fe1c83e562e02f60e27026c7148918bd016155`. It requires a fresh administrator-owned request,
-stopped-runner provisioning, exact workflow/run/ref/SHA binding, and retained non-secret outcome.
-It may prove only one structurally valid JWT response was locally reconciled or refused. It does
-not authorize Google STS/WIF, Secret Manager, materialization, injection, selected work, Step 8,
-V12.2, signature verification, or provider acceptance.
+An exact Step 7 protected Linux/X64 reconciliation workflow passed in Core
+[run `36548056015`](https://github.com/ota-run/ota/actions/runs/36548056015), attempt `1`,
+job `109339134798`, on a fresh Ubuntu 24.04 Google Cloud VM. It bound Core
+`eeab51e4d473d09073094424750643abbfe2dc11`, Launcher
+`bafbf1717f102c9d9765c5af382ad06c4ea7eb66`, Protocol
+`e5fe1c83e562e02f60e27026c7148918bd016155`, and Runner.Listener `2.337.0`.
+The runner remained stopped while the job queued; an administrator-owned mode-`0400` request
+bound the exact run, attempt, ref, SHA, repository and actor IDs, and runner version before
+provisioning. Operator-side GitHub checks found that the dedicated runner group initially had no
+selected repositories, so it could not assign the job; temporary access was added only for
+`ota-run/ota`, with the exact workflow restriction retained. After assignment, the job passed on
+the provisioned runner. Its job-derived
+public posture recorded `core_invocations=1`, `outcome=response_received`,
+`jwt_claim_reconciliation=matched_unadmitted`, `jwt_admission=not_established`,
+`jwt_signature_verification=not_attempted`, `google_contact=not_attempted`, and
+`selected_work_executed=false`. The retained public logs and two public installation records are
+in [`secret-delivery-github-oidc-live-36548056015.zip`](../pressure/retained-artifacts/secret-delivery-github-oidc-live-36548056015.zip)
+(SHA-256 `5bab516260b47ca107bbea7f3c9a8018b5e51a5bde373dfd939f01ce96fba312`).
+Operator-side checks after the run confirmed that the runner was stopped and deregistered,
+temporary group repository access was removed, and the VM, auto-deleting boot disk, dedicated
+firewall, subnet, and VPC were deleted; the project has no remaining VM or disk. These
+administrative cleanup facts are not proved by the retained job archive. This is a bounded
+job-observed local reconciliation result, not an independent
+root-custodied semantic attestation. Provider-side and lower-layer request cardinality remain
+`not_proved`; it does not establish GitHub signature validity, issuer authority, Google/provider
+acceptance, Google STS/WIF, Secret Manager, materialization, injection, selected work, Step 8,
+or V12.2.
 
-Do not touch the unrelated untracked `docs/pressure/agent-authority-signals.md` unless the user
+The missing local prerequisites are now covered in the Core implementation on this branch and
+Launcher `7d81d93d309fe360968dd48543671d13958adadc`. Core derives distinct consumed-V4
+request/session identities and refuses the first private frame against the second at the protocol
+correlator. A separate production inherited-session receiver test refuses a replayed frame against
+a distinct synthetic request identity with the nonce held constant. GitHub JWT claims remain bound
+to workflow/run context, not local child identity; this proves private-frame/capability replay
+refusal, not that otherwise-valid raw JWT bytes are intrinsically session-specific. Launcher now
+routes
+`fail_selected_boundary` through one cleanup helper and exercises that exact helper against a real
+root/systemd child, transient scope/cgroup, and active slot on Linux/arm64. The test confirms child
+absence, scope/cgroup terminality through a non-mutating observer, and active-slot removal. It does
+not send the terminal client frame or inject a real relay mismatch, and `/bin/true` may exit
+immediately after resume, so it is connected production-path coverage rather than an end-to-end
+replay-to-terminal demonstration. Focused Core tests passed 1/1 each, the Launcher root/systemd
+test passed 1/1, and formatting and diff checks passed. MUSE independently reviewed the revised
+frozen code diffs (Core
+`217742a4bba24ac8851c6c46c18c31ca9e444325f227daab2c5829fd7cc9e526`, Launcher
+`1e656797fb0ab3f4c137cc056141c62d7133296cb6fbe46f5b75dbd512a34707`) and found no
+P1/P2; its remaining P3 is this retained proof limit.
+
+V12.1 Step 7 remains active, and the planned hosted reconciliation proof gate remains open because
+run `36548056015` predates these prerequisites. The smallest next action is to publish the
+paired Core/Launcher revisions, then execute a fresh exact-revision protected Linux/X64 hosted run
+before claiming the planned gate is closed. No next provider-contact or admission gate is activated;
+broader provider use needs a separately scoped amendment. These internal feature-gated tests and
+cleanup refactor change no public command, schema, JSON, or operator-facing concept, so no Examples,
+Skills, Site, Learn, FAQ, Glossary, command-reference, or public JSON propagation is required.
+
+Do not touch the unrelated `docs/pressure/agent-authority-signals.md` unless the user
 explicitly asks.
 
 ## Working Rules

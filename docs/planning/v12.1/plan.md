@@ -1738,9 +1738,11 @@ link does not authorize implementation.
 ### Local GitHub OIDC JWT Claim Reconciliation Checkpoint (Active 2026-09-28)
 
 The exact protected Linux/X64 GitHub request-service checkpoint above is closed, but its JWT was
-only structurally valid and unadmitted. This activated Step 7 slice authorizes only the
-local Core implementation and synthetic tests specified below. It does not authorize a hosted
-gate, dispatch beyond the already proved request-service call, or token use at a provider. The existing V1 profile, binding,
+only structurally valid and unadmitted. This activated Step 7 slice initially authorized only the
+local Core implementation and synthetic tests specified below; it did not itself authorize a
+hosted gate. The exact hosted reconciliation gate below was separately authorized by the operator
+on 2026-09-29. Neither authorization permits dispatch beyond the already proved request-service
+call or token use at a provider. The existing V1 profile, binding,
 authority records, released V2/V4 wire meanings, and provider-free routes remain immutable.
 
 Core alone would parse the retained JWT payload under its existing bounded, one-use protected
@@ -1789,17 +1791,57 @@ diagnostics. Every refusal remains terminal and reaps the existing child and cgr
 this local check nor the prior GitHub response proves signature validity, provider acceptance,
 provider-side request cardinality, or execution authority.
 
+GitHub JWT claims bind the expected workflow and run context; they do not encode Ota's local
+child/session identity. Distinct-child/session replay protection therefore belongs to the private
+relay frame and capability request: the frame must correlate to the signed consumed-V4
+request/session identity and one-time nonce. Do not claim that otherwise-valid raw JWT bytes are
+intrinsically child-specific or that local claim reconciliation alone refuses their reuse.
+
 After activation and before hosted proof, add focused production-path tests with synthetic JWTs:
-one exact protected match; independent substitution of issuer, audience, each bound identity claim, repository,
-owner, and runner environment; missing/duplicate/wrong-type fields; malformed or oversized
-encoding; stale, future, boundary, overflow, and inconsistently ordered times, including the
-documented `nbf < iat < exp` shape; protected snapshot or V4 mismatch;
-and replay into a second child/session. Lock no JWT disclosure, no second Core dispatch, no
-Google request, no selected child start, and terminal cleanup. The hosted proof gate then needs
-its own exact Core/Launcher/Protocol revisions, fresh administrator-owned request, stopped-runner
-provisioning, and protected Linux/X64 run. Retain only a closed non-secret local outcome; a green
-hosted job must still label the JWT unadmitted and Google/provider acceptance `not_proved`.
-Google contact remains a separate later amendment and proof gate.
+one exact protected match; independent substitution of issuer, audience, each bound identity claim,
+repository, owner, and runner environment; missing/duplicate/wrong-type fields; malformed or
+oversized encoding; stale, future, boundary, overflow, and inconsistently ordered times, including
+the documented `nbf < iat < exp` shape; and protected snapshot or V4 mismatch. Separately prove
+that a private relay frame/capability from one child/session cannot correlate to a second
+independently derived request/session while holding the nonce constant. Lock no JWT disclosure, no
+second Core dispatch, no Google request, no selected-work execution, and terminal cleanup. Connected
+unit and production-path coverage may establish those local properties, but it is not an
+end-to-end replay-to-terminal hosted demonstration. The hosted proof gate then needs its own exact
+Core/Launcher/Protocol revisions, fresh administrator-owned request, stopped-runner provisioning,
+and protected Linux/X64 run. Retain only a closed non-secret local outcome; a green hosted job must
+still label the JWT unadmitted and Google/provider acceptance `not_proved`. Google contact remains
+a separate later amendment and proof gate.
+
+An exact protected Linux/X64 reconciliation workflow passed in Core
+[run `36548056015`](https://github.com/ota-run/ota/actions/runs/36548056015), attempt `1`,
+job `109339134798`, at Core `eeab51e4d473d09073094424750643abbfe2dc11`, Launcher
+`bafbf1717f102c9d9765c5af382ad06c4ea7eb66`, Protocol
+`e5fe1c83e562e02f60e27026c7148918bd016155`, and Runner.Listener `2.337.0`.
+The administrator-owned mode-`0400` request bound the queued job before provisioning and runner
+start. The job checked the exact public installation, made one Core request-service invocation,
+locally matched the structurally valid JWT against its protected expectation, and refused before
+admission or selected work. Its job-derived public posture is `outcome=response_received`,
+`jwt_claim_reconciliation=matched_unadmitted`, `jwt_admission=not_established`,
+`jwt_signature_verification=not_attempted`, `google_contact=not_attempted`, and
+`selected_work_executed=false`. The retained logs and two public installation records are in
+[`secret-delivery-github-oidc-live-36548056015.zip`](../../pressure/retained-artifacts/secret-delivery-github-oidc-live-36548056015.zip)
+(SHA-256 `5bab516260b47ca107bbea7f3c9a8018b5e51a5bde373dfd939f01ce96fba312`).
+This is not an independent root-custodied semantic attestation. Provider-side and lower-layer
+cardinality remain `not_proved`; no JWT signature, issuer authority, provider acceptance, Google
+STS/WIF, Secret Manager, materialization, injection, selected work, Step 8, or V12.2 follows.
+Operator-side checks after the run confirmed the runner was stopped and deregistered, temporary
+repository access was removed, and the short-lived VM, boot disk, firewall, subnet, and VPC were
+deleted; these administrative actions are not established by the retained job archive. The
+planned hosted proof gate remains open: the prerequisite private-frame distinct-child/session
+replay and selected-failure terminal-cleanup coverage above was not present in this run's exact
+revisions. That coverage was subsequently added and independently reviewed with no P1/P2 finding:
+Core holds the nonce constant while refusing a frame under a second independently derived
+request/session, and Launcher exercises the exact selected-failure cleanup helper against a real
+root/systemd child, scope/cgroup, and active slot on Linux/arm64. The Launcher test does not send a
+terminal client frame or inject a real relay mismatch, and `/bin/true` may exit immediately after
+resume; it proves connected cleanup behavior, not a full end-to-end replay-to-terminal path. This
+historical run remains a bounded single-attempt observation. Require a fresh exact-revision
+protected Linux/X64 run before declaring the planned gate closed.
 
 ## Product Boundary
 
