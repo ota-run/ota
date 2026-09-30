@@ -54,6 +54,9 @@ use crate::secret_requirements::resolve_secret_requirement_catalog;
 
 const REQUEST_KIND: &str = "secret_delivery_pressure_authority_request";
 const REQUEST_IDENTITY_DOMAIN: &[u8] = b"ota.secret-delivery-pressure.authority-request.v1\0";
+const STS_REQUEST_KIND: &str = "secret_delivery_sts_pressure_authority_request";
+const STS_REQUEST_IDENTITY_DOMAIN: &[u8] =
+    b"ota.secret-delivery-sts-pressure.authority-request.v2\0";
 const PRESSURE_CONTRACT_PATH: &str = "/srv/ota-v3-pressure/ota.yaml";
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -75,6 +78,99 @@ struct PressureAuthorityRequestV1 {
     workflow_sha: String,
     git_ref: String,
     commit_sha: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct PressureAuthorityRequestV2 {
+    schema_version: u32,
+    record_kind: String,
+    contract_path: PathBuf,
+    task: String,
+    repository: String,
+    repository_id: String,
+    repository_owner_id: String,
+    actor_id: String,
+    event_name: String,
+    workflow_run_id: String,
+    workflow_run_attempt: String,
+    workflow_reference: String,
+    runner_version: String,
+    workflow_sha: String,
+    git_ref: String,
+    commit_sha: String,
+    sts_target: PressureStsTarget,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct PressureStsTarget {
+    workload_identity_provider: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum PressureAuthorityRequest {
+    V1(PressureAuthorityRequestV1),
+    V2(PressureAuthorityRequestV2),
+}
+
+impl PressureAuthorityRequest {
+    fn into_validated_parts(
+        self,
+        expected_contract_path: &Path,
+    ) -> Result<
+        (
+            PressureAuthorityRequestV1,
+            String,
+            Option<PressureStsTarget>,
+        ),
+        String,
+    > {
+        match self {
+            Self::V1(request) => {
+                validate_request(&request, expected_contract_path)?;
+                let identity =
+                    ota_authority_protocol::message_identity(REQUEST_IDENTITY_DOMAIN, &request)
+                        .map_err(|_| "pressure request identity is unavailable")?;
+                Ok((request, identity, None))
+            }
+            Self::V2(request) => {
+                if request.schema_version != 2
+                    || request.record_kind != STS_REQUEST_KIND
+                    || request.git_ref != "refs/heads/1.6.29-implementation"
+                    || request.workflow_reference
+                        != crate::secret_delivery_transaction_binding::LIVE_GOOGLE_STS_WORKFLOW_REFERENCE_V1
+                {
+                    return Err("pressure STS request is outside the closed fixture boundary".into());
+                }
+                let identity =
+                    ota_authority_protocol::message_identity(STS_REQUEST_IDENTITY_DOMAIN, &request)
+                        .map_err(|_| "pressure request identity is unavailable")?;
+                // This is an internal invocation view, never a V1 admission or identity fallback.
+                let invocation = PressureAuthorityRequestV1 {
+                    schema_version: request.schema_version,
+                    record_kind: request.record_kind,
+                    contract_path: request.contract_path,
+                    task: request.task,
+                    repository: request.repository,
+                    repository_id: request.repository_id,
+                    repository_owner_id: request.repository_owner_id,
+                    actor_id: request.actor_id,
+                    event_name: request.event_name,
+                    workflow_run_id: request.workflow_run_id,
+                    workflow_run_attempt: request.workflow_run_attempt,
+                    workflow_reference: request.workflow_reference,
+                    runner_version: request.runner_version,
+                    workflow_sha: request.workflow_sha,
+                    git_ref: request.git_ref,
+                    commit_sha: request.commit_sha,
+                };
+                validate_request_invocation(&invocation, expected_contract_path)?;
+                Ok((invocation, identity, Some(request.sts_target)))
+            }
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -118,9 +214,10 @@ fn render_authority_payload_for_contract(
     if bytes.len() > 64 * 1024 {
         return Err("pressure request exceeds the bounded input size".into());
     }
-    let request: PressureAuthorityRequestV1 =
+    let request: PressureAuthorityRequest =
         serde_json::from_slice(&bytes).map_err(|_| "pressure request is invalid")?;
-    validate_request(&request, expected_contract_path)?;
+    let (request, request_identity, sts_target) =
+        request.into_validated_parts(expected_contract_path)?;
     if request.commit_sha != expected_core_source_revision {
         return Err("pressure request does not match the installed Core revision".into());
     }
@@ -263,7 +360,7 @@ fn render_authority_payload_for_contract(
     let (transport_dependency_feature_graph, transport_dependency_record) =
         crate::secret_delivery_transport_dependencies::embedded_transport_dependency_expectation_v1()
             .map_err(|_| "pressure transport dependency expectation is unavailable")?;
-    let authority_payload = ProtectedSecretDeliveryAuthorityPayloadV2 {
+    let mut authority_payload = ProtectedSecretDeliveryAuthorityPayloadV2 {
         schema_version: 2,
         record_kind: "protected_secret_delivery_authority_payload_v2".into(),
         binding_snapshots: vec![snapshot],
@@ -298,6 +395,21 @@ fn render_authority_payload_for_contract(
         )
         .map_err(|_| "pressure effect policy is invalid")?,
     };
+    if let Some(sts_target) = sts_target {
+        let provider = sts_target.workload_identity_provider;
+        let (pool, provider_id) = provider
+            .rsplit_once("/providers/")
+            .ok_or("pressure STS target is invalid")?;
+        if provider != format!("{pool}/providers/{provider_id}") {
+            return Err("pressure STS target is noncanonical".into());
+        }
+        let invocation = &mut authority_payload.invocation_bindings[0];
+        invocation.oidc_audience = format!("https://iam.googleapis.com/{provider}");
+        invocation.workload_identity_pool = pool.into();
+        invocation.workload_identity_provider = provider;
+        crate::secret_provider_profile::validate_google_tuple(invocation)
+            .map_err(|_| "pressure STS target is invalid")?;
+    }
     let selected_process_environment = BTreeMap::from([
         (
             "GITHUB_RUN_ATTEMPT".into(),
@@ -316,11 +428,7 @@ fn render_authority_payload_for_contract(
     serde_jcs::to_vec(&PressureAuthorityInstallationV1 {
         schema_version: 1,
         record_kind: "secret_delivery_pressure_authority_installation".into(),
-        request_identity: ota_authority_protocol::message_identity(
-            REQUEST_IDENTITY_DOMAIN,
-            &request,
-        )
-        .map_err(|_| "pressure request identity is unavailable")?,
+        request_identity,
         authority_payload,
         selected_process_environment,
     })
@@ -331,9 +439,28 @@ fn validate_request(
     request: &PressureAuthorityRequestV1,
     expected_contract_path: &Path,
 ) -> Result<(), String> {
+    validate_request_invocation(request, expected_contract_path)?;
     if request.schema_version != 1
         || request.record_kind != REQUEST_KIND
-        || request.contract_path != expected_contract_path
+        || (request.workflow_reference
+            != format!(
+                "{}/.github/workflows/secret-delivery-oidc-endpoint-evidence.yml@{}",
+                request.repository, request.git_ref
+            )
+            && !(request.git_ref == "refs/heads/1.6.29-implementation"
+                && request.workflow_reference
+                    == crate::secret_delivery_transaction_binding::LIVE_GITHUB_OIDC_WORKFLOW_REFERENCE_V1))
+    {
+        return Err("pressure authority request is outside the closed fixture boundary".into());
+    }
+    Ok(())
+}
+
+fn validate_request_invocation(
+    request: &PressureAuthorityRequestV1,
+    expected_contract_path: &Path,
+) -> Result<(), String> {
+    if request.contract_path != expected_contract_path
         || request.task != "governed"
         || request.repository != "ota-run/ota"
         || request.event_name != "workflow_dispatch"
@@ -347,14 +474,6 @@ fn validate_request(
         || request.workflow_sha != request.commit_sha
         || !is_canonical_version(&request.runner_version)
         || !is_pressure_implementation_ref(&request.git_ref)
-        || (request.workflow_reference
-            != format!(
-                "{}/.github/workflows/secret-delivery-oidc-endpoint-evidence.yml@{}",
-                request.repository, request.git_ref
-            )
-            && !(request.git_ref == "refs/heads/1.6.29-implementation"
-                && request.workflow_reference
-                    == crate::secret_delivery_transaction_binding::LIVE_GITHUB_OIDC_WORKFLOW_REFERENCE_V1))
     {
         return Err("pressure authority request is outside the closed fixture boundary".into());
     }
@@ -457,6 +576,358 @@ secret_requirements:
             "git_ref": "refs/heads/1.6.29-implementation",
             "commit_sha": "b".repeat(40),
         })
+    }
+
+    fn sts_request(contract_path: &Path) -> serde_json::Value {
+        let mut value = request(contract_path);
+        value["schema_version"] = 2.into();
+        value["record_kind"] = STS_REQUEST_KIND.into();
+        value["workflow_reference"] =
+            crate::secret_delivery_transaction_binding::LIVE_GOOGLE_STS_WORKFLOW_REFERENCE_V1
+                .into();
+        value["sts_target"] = serde_json::json!({
+            "workload_identity_provider": "projects/456/locations/global/workloadIdentityPools/live-pool/providers/live-github"
+        });
+        value
+    }
+
+    fn render_test_request(
+        directory: &Path,
+        value: &serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
+        let path = directory.join("request.json");
+        fs::write(&path, serde_json::to_vec(value).expect("request")).expect("request file");
+        render_test_bytes(
+            &path,
+            Path::new(value["contract_path"].as_str().expect("path")),
+        )
+    }
+
+    fn render_test_bytes(
+        request_path: &Path,
+        contract_path: &Path,
+    ) -> Result<serde_json::Value, String> {
+        let bytes = render_authority_payload_for_contract(
+            request_path,
+            &format!("sha256:{}", "4".repeat(64)),
+            &format!("sha256:{}", "5".repeat(64)),
+            &"b".repeat(40),
+            &format!("sha256:{}", "2".repeat(64)),
+            &format!("sha256:{}", "3".repeat(64)),
+            contract_path,
+        )?;
+        let value = serde_json::from_slice(&bytes).expect("installation");
+        assert_eq!(serde_jcs::to_vec(&value).expect("canonical"), bytes);
+        Ok(value)
+    }
+
+    #[test]
+    fn preserves_v1_schema_and_known_request_identity() {
+        let value = request(Path::new(PRESSURE_CONTRACT_PATH));
+        let parsed: PressureAuthorityRequestV1 =
+            serde_json::from_value(value.clone()).expect("V1 request");
+        assert_eq!(serde_json::to_value(&parsed).expect("V1 fields"), value);
+        let (_, identity, target) = serde_json::from_value::<PressureAuthorityRequest>(value)
+            .expect("closed request")
+            .into_validated_parts(Path::new(PRESSURE_CONTRACT_PATH))
+            .expect("V1 admission");
+        assert!(target.is_none());
+        assert_eq!(
+            identity,
+            "sha256:6ba255191b916d793c1c88cf908ad558faccf5bceb4789f961aa42afc301e7d8"
+        );
+    }
+
+    #[test]
+    fn sts_target_changes_only_wif_coordinates_in_existing_payload_shape() {
+        let directory = tempfile::tempdir().expect("directory");
+        let contract_path = directory.path().join("ota.yaml");
+        fs::write(&contract_path, contract()).expect("contract");
+        let mut legacy = render_test_request(directory.path(), &request(&contract_path))
+            .expect("legacy installation");
+        let value = sts_request(&contract_path);
+        let sts = render_test_request(directory.path(), &value).expect("STS installation");
+        let authority: ProtectedSecretDeliveryAuthorityPayloadV2 =
+            serde_json::from_value(sts["authority_payload"].clone()).expect("closed payload");
+        let binding = &authority.invocation_bindings[0];
+        assert_eq!(
+            binding.workload_identity_pool,
+            "projects/456/locations/global/workloadIdentityPools/live-pool"
+        );
+        assert_eq!(
+            binding.workload_identity_provider,
+            value["sts_target"]["workload_identity_provider"]
+                .as_str()
+                .expect("provider")
+        );
+        assert_eq!(
+            binding.oidc_audience,
+            "https://iam.googleapis.com/projects/456/locations/global/workloadIdentityPools/live-pool/providers/live-github"
+        );
+        crate::secret_provider_profile::validate_google_tuple(binding).expect("canonical tuple");
+        assert_eq!(
+            binding.service_account,
+            "ota-pressure@ota-pressure.iam.gserviceaccount.com"
+        );
+        assert_eq!(binding.google_project, "ota-pressure");
+        assert_eq!(
+            binding.secret_resource,
+            "projects/ota-pressure/secrets/CAEP_API-Key_1"
+        );
+        assert_eq!(binding.secret_version, 7);
+        assert_eq!(
+            legacy["authority_payload"]["invocation_bindings"][0]["workload_identity_provider"],
+            "projects/123/locations/global/workloadIdentityPools/ota-pool/providers/github"
+        );
+        for field in [
+            "oidc_audience",
+            "workload_identity_pool",
+            "workload_identity_provider",
+        ] {
+            legacy["authority_payload"]["invocation_bindings"][0][field] =
+                sts["authority_payload"]["invocation_bindings"][0][field].clone();
+        }
+        let claims = legacy["authority_payload"]["invocation_bindings"][0]["oidc_claims"]
+            .as_array_mut()
+            .expect("claims");
+        let workflow = claims
+            .iter_mut()
+            .find(|claim| {
+                claim["claim"] == serde_json::to_value(GithubOidcClaim::WorkflowRef).expect("claim")
+            })
+            .expect("workflow claim");
+        workflow["expected_value"] = value["workflow_reference"].clone();
+        legacy["selected_process_environment"]["GITHUB_WORKFLOW_REF"] =
+            value["workflow_reference"].clone();
+        legacy["request_identity"] = sts["request_identity"].clone();
+        assert_eq!(
+            legacy, sts,
+            "no new installation fields or unrelated fixture changes"
+        );
+    }
+
+    #[test]
+    fn sts_identity_covers_every_invocation_and_target_field() {
+        let value = sts_request(Path::new(PRESSURE_CONTRACT_PATH));
+        let (_, identity, _) = serde_json::from_value::<PressureAuthorityRequest>(value.clone())
+            .expect("request")
+            .into_validated_parts(Path::new(PRESSURE_CONTRACT_PATH))
+            .expect("STS admission");
+        // Independently pin the domain and canonical complete JSON, rather than the Rust view.
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        hasher.update(b"ota.secret-delivery-sts-pressure.authority-request.v2\0");
+        hasher.update(serde_jcs::to_vec(&value).expect("JCS request"));
+        assert_eq!(identity, format!("sha256:{:x}", hasher.finalize()));
+        for field in value.as_object().expect("fields").keys() {
+            let mut changed = value.clone();
+            match field.as_str() {
+                "schema_version" => changed[field] = 3.into(),
+                "sts_target" => changed[field]["workload_identity_provider"] =
+                    "projects/789/locations/global/workloadIdentityPools/live-pool/providers/live-github".into(),
+                _ => changed[field] = format!("{}-other", changed[field].as_str().expect("string")).into(),
+            }
+            let parsed: PressureAuthorityRequestV2 =
+                serde_json::from_value(changed).expect("closed V2 fields");
+            assert_ne!(
+                ota_authority_protocol::message_identity(STS_REQUEST_IDENTITY_DOMAIN, &parsed)
+                    .expect("identity"),
+                identity,
+                "identity must cover {field}"
+            );
+        }
+    }
+
+    #[test]
+    fn sts_rendered_identity_changes_for_admitted_targets_and_invocations() {
+        let directory = tempfile::tempdir().expect("directory");
+        let contract_path = directory.path().join("ota.yaml");
+        fs::write(&contract_path, contract()).expect("contract");
+        let base = sts_request(&contract_path);
+        let original = render_test_request(directory.path(), &base).expect("installation");
+        for (field, replacement) in [
+            ("repository_id", "2001"),
+            ("repository_owner_id", "2002"),
+            ("actor_id", "2003"),
+            ("workflow_run_id", "2004"),
+            ("workflow_run_attempt", "2"),
+            ("runner_version", "2.338.0"),
+        ] {
+            let mut changed = base.clone();
+            changed[field] = replacement.into();
+            let rendered =
+                render_test_request(directory.path(), &changed).expect("admitted change");
+            assert_ne!(
+                rendered["request_identity"], original["request_identity"],
+                "{field}"
+            );
+        }
+        for target in [
+            "projects/789/locations/global/workloadIdentityPools/live-pool/providers/live-github",
+            "projects/456/locations/global/workloadIdentityPools/other-pool/providers/live-github",
+            "projects/456/locations/global/workloadIdentityPools/live-pool/providers/other-github",
+        ] {
+            let mut changed = base.clone();
+            changed["sts_target"]["workload_identity_provider"] = target.into();
+            let rendered =
+                render_test_request(directory.path(), &changed).expect("admitted target");
+            assert_ne!(
+                rendered["request_identity"], original["request_identity"],
+                "{target}"
+            );
+            assert_eq!(
+                rendered["authority_payload"]["invocation_bindings"][0]["workload_identity_provider"],
+                target
+            );
+        }
+    }
+
+    #[test]
+    fn refuses_mixed_request_versions_kinds_and_workflows() {
+        let directory = tempfile::tempdir().expect("directory");
+        let contract_path = directory.path().join("ota.yaml");
+        fs::write(&contract_path, contract()).expect("contract");
+        for base in [request(&contract_path), sts_request(&contract_path)] {
+            for (field, replacement) in [
+                ("schema_version", serde_json::json!(3)),
+                (
+                    "schema_version",
+                    serde_json::json!(if base["schema_version"] == 1 { 2 } else { 1 }),
+                ),
+                (
+                    "record_kind",
+                    serde_json::json!(if base["schema_version"] == 1 {
+                        STS_REQUEST_KIND
+                    } else {
+                        REQUEST_KIND
+                    }),
+                ),
+                (
+                    "git_ref",
+                    serde_json::json!("refs/heads/1.6.30-implementation"),
+                ),
+                (
+                    "workflow_reference",
+                    serde_json::json!(
+                        "ota-run/ota/.github/workflows/other.yml@refs/heads/1.6.29-implementation"
+                    ),
+                ),
+                (
+                    "workflow_reference",
+                    serde_json::json!(if base["schema_version"] == 1 {
+                        crate::secret_delivery_transaction_binding::LIVE_GOOGLE_STS_WORKFLOW_REFERENCE_V1
+                    } else {
+                        crate::secret_delivery_transaction_binding::LIVE_GITHUB_OIDC_WORKFLOW_REFERENCE_V1
+                    }),
+                ),
+            ] {
+                let mut changed = base.clone();
+                changed[field] = replacement;
+                assert!(
+                    render_test_request(directory.path(), &changed).is_err(),
+                    "{field}"
+                );
+            }
+        }
+        let mut v2 = sts_request(&contract_path);
+        v2["workflow_reference"] = request(&contract_path)["workflow_reference"].clone();
+        assert!(render_test_request(directory.path(), &v2).is_err());
+        v2.as_object_mut().expect("fields").remove("sts_target");
+        assert!(render_test_request(directory.path(), &v2).is_err());
+    }
+
+    #[test]
+    fn refuses_noncanonical_sts_targets_and_target_overrides() {
+        let directory = tempfile::tempdir().expect("directory");
+        let contract_path = directory.path().join("ota.yaml");
+        fs::write(&contract_path, contract()).expect("contract");
+        let base = sts_request(&contract_path);
+        let provider = base["sts_target"]["workload_identity_provider"]
+            .as_str()
+            .expect("provider");
+        for target in [
+            String::new(),
+            provider.replace("projects/456/", "projects/0/"),
+            provider.replace("projects/456/", "projects/0456/"),
+            provider.replace("projects/456/", "projects/+456/"),
+            provider.replace("projects/456/", "projects/18446744073709551616/"),
+            provider.replace("projects/456/", "projects/ota-pressure/"),
+            provider.replace("global", "europe-west1"),
+            provider.replace("live-pool", "gcp-pool"),
+            provider.replace("live-pool", "UPPER-pool"),
+            provider.replace("live-pool", "abc"),
+            provider.replace("live-github", "gcp-provider"),
+            provider.replace("live-github", "github_1"),
+            provider.replace("live-github", "abc"),
+            provider.replace("live-github", &"a".repeat(33)),
+            format!("{provider}/other"),
+            format!("{provider}/"),
+            format!("{provider}?query=1"),
+            format!("{provider}#fragment"),
+            format!("{provider} "),
+            format!("https://iam.googleapis.com/{provider}"),
+            format!("//iam.googleapis.com/{provider}"),
+            provider.replace("live-pool", "live-pool/../other"),
+            provider.replace("live-github", "live%2dgithub"),
+        ] {
+            let mut changed = base.clone();
+            changed["sts_target"]["workload_identity_provider"] = target.clone().into();
+            assert!(
+                render_test_request(directory.path(), &changed).is_err(),
+                "{target}"
+            );
+        }
+        for field in [
+            "oidc_audience",
+            "sts_audience",
+            "endpoint",
+            "scope",
+            "service_account",
+            "secret_resource",
+            "workload_identity_pool",
+        ] {
+            for nested in [false, true] {
+                let mut changed = base.clone();
+                if nested {
+                    changed["sts_target"][field] = "override".into();
+                } else {
+                    changed[field] = "override".into();
+                }
+                assert!(
+                    render_test_request(directory.path(), &changed).is_err(),
+                    "{field}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn refuses_duplicate_request_and_target_fields() {
+        let directory = tempfile::tempdir().expect("directory");
+        let contract_path = directory.path().join("ota.yaml");
+        fs::write(&contract_path, contract()).expect("contract");
+        let path = directory.path().join("request.json");
+        for base in [request(&contract_path), sts_request(&contract_path)] {
+            let json = serde_json::to_string(&base).expect("JSON");
+            for field in base.as_object().expect("fields").keys() {
+                let duplicate = format!("{{\"{field}\":{},{}", base[field], &json[1..]);
+                fs::write(&path, duplicate).expect("request");
+                assert!(
+                    render_test_bytes(&path, &contract_path).is_err(),
+                    "duplicate {field}"
+                );
+            }
+        }
+        let value = sts_request(&contract_path);
+        let json = serde_json::to_string(&value).expect("JSON").replace(
+            "\"sts_target\":{",
+            "\"sts_target\":{\"workload_identity_provider\":\"projects/456/locations/global/workloadIdentityPools/live-pool/providers/live-github\",",
+        );
+        fs::write(&path, json).expect("request");
+        assert!(
+            render_test_bytes(&path, &contract_path).is_err(),
+            "duplicate provider"
+        );
     }
 
     #[test]

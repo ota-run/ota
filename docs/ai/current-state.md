@@ -2299,6 +2299,65 @@ reconciliation changes no product command, schema, public JSON shape, or authori
 Skills, Examples, Learn, FAQ, Glossary, and command-reference propagation are not required.
 V12.1 Step 7 remains active; Google network enablement remains inactive.
 
+The operator requested preparation of the next STS checkpoint on 2026-09-30. The
+[network-enablement preparation checkpoint](../planning/v12.1/plan.md#sts-network-enablement-preparation-implementation-active-2026-09-30)
+defines a separate signed-context-admitted manual STS proof route, exact bounded transport and
+terminal token disposal, local negative controls, and administrator/hosted prerequisites. MUSE
+identified a missing live-target source: the existing V1 builder signs only synthetic WIF
+coordinates. The proposal now specifies an STS-only administrator pressure request V2 with one
+canonical provider resource and a distinct complete-request identity; derived target coordinates
+enter the signed authority, while V1 and the legacy workflow stay unchanged. MUSE's independent
+re-review cleared that P2 with no remaining P1/P2/P3 planning findings. The proposal is reviewed
+and explicitly activated for implementation only by the operator on 2026-09-30. Source review,
+local production transport tests, and separately authorized hosted proof remain open. No Google
+contact, provider configuration, installation change, or live dispatch is authorized in this batch.
+The existing GitHub-only proof route must remain unchanged. All later provider operations and
+selected work remain inactive.
+
+The activated 2026-09-30 source batch now implements the closed administrator request V2,
+signed-context-only STS workflow route, fixed HTTPS transport, bounded production response reader,
+post-response authority/JWT checks, and terminal token disposal. The legacy GitHub-only workflow
+is byte-for-byte unchanged, V1 request identity/output remains compatible, and failed GitHub
+claim reconciliation or a legacy owner makes zero STS calls. The new workflow input is only a
+public mirror used to reconcile the installed request identity; it is not passed to Core as a
+provider target. Every command outcome remains failure with no positive receipt or selected work.
+
+Local validation passed provider tests (14/14), snapshot tests (24/24), request tests (12/12),
+new workflow tests (5/5), the existing provider-free workflow regression (1/1), default/no-feature
+and feature-enabled no-session refusal (1/1 each), no-feature compilation, Actionlint,
+formatting/diff checks, and first-party sync. MUSE's frozen source review found no other P1/P2/P3
+blocker, but identified one P2 coverage gap: the response-time jump expired the binding before
+the JWT recheck. The refinement retains that binding-expiry control and separately tests
+`ResponseJwtExpired`: JWT valid at dispatch, expired at response time, with the production
+binding/authority preflight explicitly still valid at that time. It requires one dispatch,
+`response_refused`, and parsed-token disposal. The final snapshot suite passed 24/24.
+
+The paired actual-child systemd cleanup test passed 1/1 with all 14 cases, including accepted
+synthetic response disposal and both independent expiry controls, on the existing local
+Ubuntu 24.04 Linux/arm64 VM with Rust 1.98.1. It ran inside an isolated network namespace and
+confirmed child reaping, scope/cgroup/active-slot cleanup, and no selected-work marker.
+The guest lacks Git, so the Launcher test compilation supplied its known HEAD and dirty marker
+as build environment values; these test binaries are not clean installed-source/authority proof.
+Launcher changes are test-only; its runtime compatibility and Protocol schema remain unchanged.
+
+MUSE's focused frozen recheck cleared the P2 refinement with no remaining P1/P2/P3 finding.
+The final 24/24 snapshot suite and rebuilt 14-case root cleanup run passed against those exact
+refined sources. This implementation-only batch is locally complete. The operator authorized
+commit and push on 2026-09-30; the Core checkpoint commit owns these exact sources and the paired
+Launcher test-only checkpoint is `6fd8cde8782b772fb22eead5f8c691f036b425b5`.
+The live workflow retains the reviewed Launcher runtime pin
+`dd667c3d6b63d8d26d9e2a40f831e9d08a7a6864`; the paired change adds only cleanup test cases.
+Ordinary CI is the next source gate, followed by read-only preparation of the separately
+authorized hosted STS gate. No Google
+call, cloud/provider configuration, installation change, or hosted dispatch occurred or is
+authorized. Hosted Linux/X64 STS acceptance and exact remote WIF configuration reconciliation
+remain open. Provider/lower-layer cardinality, independent root-custodied semantic attestation,
+and token-memory erasure remain `not_proved`; IAM Credentials, Secret Manager, materialization,
+injection, selected work, Step 8, and V12.2 remain inactive. V12.1 Step 7 is still active.
+This internal pressure checkpoint changes no public command, schema, public JSON, or authoring
+concept; Site, Skills, Examples, Learn, FAQ, Glossary, command-reference, and public changelog
+propagation are not required. The planning and handoff records own this unshipped internal scope.
+
 ## Working Rules
 
 - Update this handoff immediately when the active step, blocker, next action, or proof status

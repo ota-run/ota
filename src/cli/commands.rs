@@ -65096,6 +65096,36 @@ secret_requirements:
     }
 
     #[test]
+    fn secret_delivery_without_a_retained_session_keeps_the_legacy_terminal_refusal() {
+        let contract: crate::schema::Contract = serde_yaml::from_str(include_str!(
+            "../../docs/pressure/fixtures/secret-delivery-service-path/ota.yaml"
+        ))
+        .expect("pressure contract");
+        let roots = [crate::effect_policy::EffectPolicyInvocation {
+            task: "governed".into(),
+            origin: "run".into(),
+        }];
+        let admission = crate::secret_delivery_admission::admit_secret_delivery_command(
+            &contract, None, &roots, &roots,
+        )
+        .expect("secret admission");
+        let plan = crate::runner::plan_task_execution(&contract, "governed").expect("plan");
+        let failure = super::enforce_secret_delivery_protected_transaction_boundary(
+            &contract, "governed", &plan, &admission,
+        )
+        .expect_err("no retained protected session must remain terminal");
+        assert_eq!(failure.exit_code, 1);
+        assert!(failure.receipt.is_none());
+        let plain = strip_ansi_codes(&failure.message)
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(plain.contains(
+            "terminally refused the bounded GitHub OIDC request path (core_invocations=0, outcome=not_attempted); refusing before signature verification, Google contact, or task execution"
+        ), "{plain}");
+    }
+
+    #[test]
     fn secret_delivery_command_boundary_refuses_unsupported_carriers_before_activation() {
         let admission = selected_secret_delivery_admission();
         let authority_root = tempfile::tempdir().expect("authority root");
@@ -112826,26 +112856,33 @@ fn enforce_secret_delivery_protected_transaction_boundary(
                 frame,
             )
             .map_err(|error| error.to_string())?;
-            let terminal =
-                crate::secret_delivery_provider_client::dispatch_github_oidc_v4(prepared);
-            Ok::<_, String>(terminal.public_posture())
+            Ok::<_, String>(
+                crate::secret_delivery_provider_client::dispatch_secret_delivery_checkpoint_v4(prepared),
+            )
         })()
-        .unwrap_or((0, "not_attempted")))
+        .unwrap_or((0, "not_attempted", 0, "not_selected")))
     });
 
     #[cfg(not(all(unix, target_os = "linux", feature = "secret-delivery-pressure")))]
-    let protected_result: Option<(u8, &'static str)> = {
+    let protected_result: Option<(u8, &'static str, u8, &'static str)> = {
         let _ = (contract, task_name, run_plan);
         None
     };
 
-    let (core_invocations, outcome) = protected_result.unwrap_or((0, "not_attempted"));
-    let message = match (core_invocations, outcome) {
-        (1, "response_received") => String::from(
+    let (core_invocations, outcome, sts_core_invocations, sts_outcome) =
+        protected_result.unwrap_or((0, "not_attempted", 0, "not_selected"));
+    let message = match (core_invocations, outcome, sts_outcome) {
+        (_, _, "response_accepted" | "response_refused") => format!(
+            "selected secret requirements completed the bounded STS checkpoint (github_core_invocations={core_invocations}, github_outcome={outcome}, sts_core_invocations={sts_core_invocations}, sts_outcome={sts_outcome}); any returned token was discarded; terminally refusing before IAM Credentials, Secret Manager, materialization, injection, or task execution"
+        ),
+        (1, "response_received", "not_selected") => String::from(
             "selected secret requirements completed one bounded GitHub OIDC request and locally reconciled claims in one still-unadmitted response (core_invocations=1, outcome=response_received); refusing before signature verification, Google contact, or task execution",
         ),
-        _ => format!(
+        (_, _, "not_selected") => format!(
             "selected secret requirements terminally refused the bounded GitHub OIDC request path (core_invocations={core_invocations}, outcome={outcome}); refusing before signature verification, Google contact, or task execution"
+        ),
+        _ => format!(
+            "selected secret requirements terminally refused the bounded provider checkpoint (github_core_invocations={core_invocations}, github_outcome={outcome}, sts_core_invocations={sts_core_invocations}, sts_outcome={sts_outcome}); refusing before further provider contact or task execution"
         ),
     };
     Err(RunCommandFailure {

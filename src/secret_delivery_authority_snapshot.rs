@@ -3831,7 +3831,21 @@ secret_requirements:
         SnapshotBoundSecretDeliveryTransactionCandidateV1,
         u64,
     ) {
-        const LIVE_WORKFLOW: &str = "ota-run/ota/.github/workflows/secret-delivery-github-oidc-live.yml@refs/heads/1.6.29-implementation";
+        prepared_private_v4_for_workflow_for_test(
+            startup,
+            crate::secret_delivery_transaction_binding::LIVE_GITHUB_OIDC_WORKFLOW_REFERENCE_V1,
+        )
+    }
+
+    #[cfg(feature = "secret-delivery-pressure")]
+    fn prepared_private_v4_for_workflow_for_test(
+        startup: &LauncherStartupContinuationV1,
+        workflow: &str,
+    ) -> (
+        PreparedSecretDeliveryProviderTransportV4,
+        SnapshotBoundSecretDeliveryTransactionCandidateV1,
+        u64,
+    ) {
         const REQUEST_URL: &[u8] = b"https://run-actions-1-azure-eastus.actions.githubusercontent.com/1//idtoken/123e4567-e89b-12d3-a456-426614174000/123e4567-e89b-12d3-a456-426614174001?api-version=2.0";
         let contract = parse_contract_str(
             Path::new("docs/pressure/fixtures/secret-delivery-service-path/ota.yaml"),
@@ -3840,18 +3854,14 @@ secret_requirements:
         .expect("live pressure contract");
         let (verified, verifier, candidate_for_prepare, issued_at) =
             verified_v4_for_provider_transport_route_from_startup(
-                startup,
-                false,
-                contract,
-                "governed",
-                LIVE_WORKFLOW,
+                startup, false, contract, "governed", workflow,
             )
             .expect("live V4 binding");
         let authority = verified
             .consume_for_private_github_oidc_relay_at(&verifier, issued_at)
             .expect("one consumed live relay authority");
         let relay_request = authority.relay_request().clone();
-        assert_eq!(relay_request.workflow_reference, LIVE_WORKFLOW);
+        assert_eq!(relay_request.workflow_reference, workflow);
         assert_eq!(relay_request.workflow_run_id, "1004");
         assert_eq!(relay_request.workflow_run_attempt, "1");
         let frame = ota_authority_protocol::build_protected_github_oidc_private_frame_v1(
@@ -3874,12 +3884,18 @@ secret_requirements:
         startup: &LauncherStartupContinuationV1,
         fault: GoogleStsFaultForTestV1,
     ) -> bool {
-        assert!(!matches!(fault, GoogleStsFaultForTestV1::None));
-        let (prepared, candidate, now) = prepared_live_private_v4_from_startup_for_test(startup);
+        let (prepared, candidate, now) = prepared_private_v4_for_workflow_for_test(
+            startup,
+            crate::secret_delivery_transaction_binding::LIVE_GOOGLE_STS_WORKFLOW_REFERENCE_V1,
+        );
         let body = github_oidc_response_body_for_candidate_at(&candidate, None, now);
         let (invocations, matched, fake_calls, rendered) =
             exchange_google_sts_from_oidc_response_v4_for_test(prepared, &body, now, fault);
-        assert!(!matched, "{rendered}");
+        assert_eq!(
+            matched,
+            matches!(fault, GoogleStsFaultForTestV1::None),
+            "{rendered}"
+        );
         assert_eq!(invocations, fake_calls);
         assert_eq!(
             fake_calls,
@@ -3891,9 +3907,13 @@ secret_requirements:
                     | GoogleStsFaultForTestV1::OversizedResponse
                     | GoogleStsFaultForTestV1::MalformedResponse
                     | GoogleStsFaultForTestV1::InvalidTokenType
+                    | GoogleStsFaultForTestV1::ResponseExpired
+                    | GoogleStsFaultForTestV1::ResponseJwtExpired
+                    | GoogleStsFaultForTestV1::None
             ))
         );
-        matched
+        // A locally accepted response never releases selected work; the token is already dropped.
+        false
     }
 
     #[cfg(feature = "secret-delivery-pressure")]
@@ -3989,8 +4009,13 @@ secret_requirements:
             (OversizedResponse, 1, false),
             (MalformedResponse, 1, false),
             (InvalidTokenType, 1, false),
+            (ResponseExpired, 1, false),
+            (ResponseJwtExpired, 1, false),
         ] {
-            let (prepared, candidate, now) = prepared_live_private_v4_for_test();
+            let (prepared, candidate, now) = prepared_private_v4_for_workflow_for_test(
+                &startup(),
+                crate::secret_delivery_transaction_binding::LIVE_GOOGLE_STS_WORKFLOW_REFERENCE_V1,
+            );
             let body = github_oidc_response_body_for_candidate_at(&candidate, Option::None, now);
             let (invocations, matched, fake_calls, rendered) =
                 exchange_google_sts_from_oidc_response_v4_for_test(prepared, &body, now, fault);
@@ -3998,6 +4023,46 @@ secret_requirements:
             assert_eq!(fake_calls, expected_calls, "{rendered}");
             assert_eq!(matched, expected_match, "{rendered}");
         }
+    }
+
+    #[cfg(feature = "secret-delivery-pressure")]
+    #[test]
+    fn legacy_github_workflow_cannot_promote_its_owner_to_sts() {
+        let (prepared, candidate, now) = prepared_live_private_v4_for_test();
+        let body = github_oidc_response_body_for_candidate_at(&candidate, Option::None, now);
+        let (invocations, matched, fake_calls, _) =
+            exchange_google_sts_from_oidc_response_v4_for_test(
+                prepared,
+                &body,
+                now,
+                GoogleStsFaultForTestV1::None,
+            );
+        assert_eq!((invocations, matched, fake_calls), (0, false, 0));
+    }
+
+    #[cfg(feature = "secret-delivery-pressure")]
+    #[test]
+    fn checkpoint_routes_keep_claim_refusal_and_legacy_success_out_of_sts() {
+        use crate::secret_delivery_provider_client::checkpoint_without_sts_dispatch_for_test;
+        let (prepared, candidate, now) = prepared_private_v4_for_workflow_for_test(
+            &startup(),
+            crate::secret_delivery_transaction_binding::LIVE_GOOGLE_STS_WORKFLOW_REFERENCE_V1,
+        );
+        let body = github_oidc_response_body_for_candidate_at(
+            &candidate,
+            Some(("run_attempt", serde_json::json!("999"))),
+            now,
+        );
+        assert_eq!(
+            checkpoint_without_sts_dispatch_for_test(prepared, &body, now),
+            (1, "claims_refused", 0, "not_attempted")
+        );
+        let (prepared, candidate, now) = prepared_live_private_v4_for_test();
+        let body = github_oidc_response_body_for_candidate_at(&candidate, None, now);
+        assert_eq!(
+            checkpoint_without_sts_dispatch_for_test(prepared, &body, now),
+            (1, "response_received", 0, "not_selected")
+        );
     }
 
     #[cfg(feature = "secret-delivery-pressure")]

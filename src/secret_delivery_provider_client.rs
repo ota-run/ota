@@ -3,8 +3,9 @@
 //! This module derives exact Google operation targets from semantically verified Core truth. It
 //! retains the historical network-disabled V2 preparation path. Only the feature-gated V4
 //! dispatch owner can make one GitHub Actions OIDC request. Its JWT retains the exact consumed
-//! V4 context; the private STS owner has no Google transport implementation or caller route.
-//! No route here contacts Google, materializes a recipient environment, or publishes evidence.
+//! V4 context. Only the separately signed STS workflow may consume it for one fixed Google STS
+//! exchange, dropping even an accepted token before terminal refusal. No later provider operation,
+//! recipient materialization, selected work, or positive delivery evidence is enabled.
 
 #![allow(dead_code)]
 
@@ -189,6 +190,11 @@ impl fmt::Debug for ProtectedProviderValue {
 
 impl Drop for ProtectedProviderValue {
     fn drop(&mut self) {
+        #[cfg(test)]
+        if self.0 == b"synthetic-federated-token" {
+            // Observe disposal of the fake response's unique token without retaining its bytes.
+            STS_TOKEN_DROPS.with(|count| count.set(count.get() + 1));
+        }
         self.0.fill(0);
     }
 }
@@ -282,6 +288,11 @@ impl ProtectedProviderRequestV1 {
 pub(crate) struct StsAccessTokenV1 {
     token: ProtectedProviderValue,
     pub expires_in_seconds: u64,
+}
+
+#[cfg(test)]
+thread_local! {
+    static STS_TOKEN_DROPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 pub(crate) struct ServiceAccountAccessTokenV1 {
@@ -798,6 +809,101 @@ struct GoogleStsExchangeTerminalV1 {
 }
 
 #[cfg(feature = "secret-delivery-pressure")]
+impl GoogleStsExchangeTerminalV1 {
+    fn public_posture(&self) -> (u8, &'static str) {
+        (
+            self.core_invocations,
+            match (self.core_invocations, self.result.is_ok()) {
+                (0, _) => "not_attempted",
+                (_, true) => "response_accepted",
+                (_, false) => "response_refused",
+            },
+        )
+    }
+}
+
+#[cfg(feature = "secret-delivery-pressure")]
+fn selected_sts_checkpoint(
+    prepared: &PreparedSecretDeliveryProviderTransportV4,
+) -> Result<bool, SecretDeliveryProviderClientError> {
+    prepared.verify_signed_transport_expectation()?;
+    let operation = &prepared.capability.plan.operations[0];
+    let realizations: Vec<_> = prepared
+        .capability
+        .candidate
+        .candidate()
+        .realizations
+        .iter()
+        .filter(|realization| {
+            realization.realization_identity == operation.realization_identity
+                && realization.invocation_binding_identity == operation.invocation_binding_identity
+        })
+        .collect();
+    let [realization] = realizations.as_slice() else {
+        return Err(sts_exchange_refused());
+    };
+    match realization
+        .oidc_claims
+        .get(&GithubOidcClaim::WorkflowRef)
+        .map(String::as_str)
+    {
+        Some(crate::secret_delivery_transaction_binding::LIVE_GOOGLE_STS_WORKFLOW_REFERENCE_V1) => {
+            Ok(true)
+        }
+        Some(
+            crate::secret_delivery_transaction_binding::LIVE_GITHUB_OIDC_WORKFLOW_REFERENCE_V1,
+        ) => Ok(false),
+        _ => Err(sts_exchange_refused()),
+    }
+}
+
+/// Route selection comes from the retained signed candidate, never ambient workflow inputs.
+#[cfg(feature = "secret-delivery-pressure")]
+pub(crate) fn dispatch_secret_delivery_checkpoint_v4(
+    prepared: PreparedSecretDeliveryProviderTransportV4,
+) -> (u8, &'static str, u8, &'static str) {
+    dispatch_secret_delivery_checkpoint_v4_with_transport(
+        prepared,
+        dispatch_github_oidc_v4,
+        exchange_google_sts_v4,
+    )
+}
+
+#[cfg(feature = "secret-delivery-pressure")]
+fn dispatch_secret_delivery_checkpoint_v4_with_transport(
+    prepared: PreparedSecretDeliveryProviderTransportV4,
+    github: impl FnOnce(PreparedSecretDeliveryProviderTransportV4) -> GithubOidcDispatchTerminalV1,
+    sts: impl FnOnce(RetainedGithubOidcTransactionV4) -> GoogleStsExchangeTerminalV1,
+) -> (u8, &'static str, u8, &'static str) {
+    let Ok(sts_selected) = selected_sts_checkpoint(&prepared) else {
+        return (0, "not_attempted", 0, "not_attempted");
+    };
+    let terminal = github(prepared);
+    let (github_calls, github_outcome) = terminal.public_posture();
+    if !sts_selected {
+        return (github_calls, github_outcome, 0, "not_selected");
+    }
+    let (sts_calls, sts_outcome) = match terminal.result {
+        Ok(owner) => sts(owner).public_posture(),
+        Err(_) => (0, "not_attempted"),
+    };
+    (github_calls, github_outcome, sts_calls, sts_outcome)
+}
+
+#[cfg(all(test, feature = "secret-delivery-pressure"))]
+pub(crate) fn checkpoint_without_sts_dispatch_for_test(
+    prepared: PreparedSecretDeliveryProviderTransportV4,
+    body: &[u8],
+    now: u64,
+) -> (u8, &'static str, u8, &'static str) {
+    dispatch_secret_delivery_checkpoint_v4_with_transport(
+        prepared,
+        |prepared| reconcile_github_oidc_response_v4_for_test(prepared, body, now),
+        |_| panic!("this route must not reach STS"),
+    )
+}
+
+#[cfg(feature = "secret-delivery-pressure")]
 fn sts_exchange_refused() -> SecretDeliveryProviderClientError {
     error(
         "secret_delivery_google_sts_exchange_refused",
@@ -805,8 +911,8 @@ fn sts_exchange_refused() -> SecretDeliveryProviderClientError {
     )
 }
 
-// No production Google transport or route is installed in this checkpoint. The owner is consumed
-// once, and its production preflight/response path is exercised with a fake transport in tests.
+// The production route and network-disabled tests share exact request construction and bounded
+// response reads. The callback seam is private; no caller can supply an endpoint or trust root.
 #[cfg(feature = "secret-delivery-pressure")]
 fn exchange_google_sts_v4_with_transport(
     owner: RetainedGithubOidcTransactionV4,
@@ -815,11 +921,28 @@ fn exchange_google_sts_v4_with_transport(
     )
         -> Result<GoogleStsTransportResponseV1, SecretDeliveryProviderClientError>,
 ) -> GoogleStsExchangeTerminalV1 {
+    exchange_google_sts_v4_with_transport_at(owner, transport, || {
+        u64::try_from(OffsetDateTime::now_utc().unix_timestamp())
+            .map_err(|_| sts_exchange_refused())
+    })
+}
+
+#[cfg(feature = "secret-delivery-pressure")]
+fn exchange_google_sts_v4_with_transport_at(
+    owner: RetainedGithubOidcTransactionV4,
+    transport: impl FnOnce(
+        &ProtectedProviderRequestV1,
+    )
+        -> Result<GoogleStsTransportResponseV1, SecretDeliveryProviderClientError>,
+    clock: impl Fn() -> Result<u64, SecretDeliveryProviderClientError>,
+) -> GoogleStsExchangeTerminalV1 {
     let mut core_invocations = 0;
     let result = (|| {
         let verify = || {
-            let now = u64::try_from(OffsetDateTime::now_utc().unix_timestamp())
-                .map_err(|_| sts_exchange_refused())?;
+            let now = clock()?;
+            if !selected_sts_checkpoint(&owner.prepared)? {
+                return Err(sts_exchange_refused());
+            }
             verify_oidc_dispatch_preflight_at(&owner.prepared, now)
                 .map_err(|_| sts_exchange_refused())?;
             reconcile_github_oidc_jwt_claims_v4_at(&owner.jwt.0, &owner.prepared, now)
@@ -839,7 +962,8 @@ fn exchange_google_sts_v4_with_transport(
         }
         let token =
             parse_google_sts_response_v1(&response.body.0).map_err(|_| sts_exchange_refused())?;
-        // A synthetic accepted response does not admit or expose a token to another operation.
+        verify()?;
+        // Even real provider acceptance is terminal: no token reaches a subsequent operation.
         drop(token);
         Ok(())
     })();
@@ -847,6 +971,83 @@ fn exchange_google_sts_v4_with_transport(
         core_invocations,
         result,
     }
+}
+
+#[cfg(feature = "secret-delivery-pressure")]
+fn build_sts_http_request(
+    request: &ProtectedProviderRequestV1,
+) -> Result<ureq::http::Request<&[u8]>, SecretDeliveryProviderClientError> {
+    if request.method != ProviderHttpMethod::Post
+        || request.url != STS_URL
+        || request.media_type != Some(FORM_MEDIA_TYPE)
+        || request.authorization.is_some()
+    {
+        return Err(sts_exchange_refused());
+    }
+    let http = ureq::http::Request::post(STS_URL)
+        .header(ureq::http::header::CONTENT_TYPE, FORM_MEDIA_TYPE)
+        .body(request.body.as_slice())
+        .map_err(|_| sts_exchange_refused())?;
+    if http.method() != ureq::http::Method::POST
+        || http.uri().to_string() != STS_URL
+        || http.headers().len() != 1
+        || http
+            .headers()
+            .get(ureq::http::header::CONTENT_TYPE)
+            .and_then(|h| h.to_str().ok())
+            != Some(FORM_MEDIA_TYPE)
+        || *http.body() != request.body.as_slice()
+    {
+        return Err(sts_exchange_refused());
+    }
+    Ok(http)
+}
+
+#[cfg(feature = "secret-delivery-pressure")]
+fn read_sts_transport_response(
+    status: ureq::http::StatusCode,
+    headers: ureq::http::HeaderMap,
+    reader: impl Read,
+) -> Result<GoogleStsTransportResponseV1, SecretDeliveryProviderClientError> {
+    verify_oidc_response_head(status, &headers).map_err(|_| sts_exchange_refused())?;
+    let mut body = ProtectedResponseBuffer(Vec::new());
+    reader
+        .take((MAX_TOKEN_RESPONSE_BYTES + 1) as u64)
+        .read_to_end(&mut body.0)
+        .map_err(|_| sts_exchange_refused())?;
+    if body.0.len() > MAX_TOKEN_RESPONSE_BYTES {
+        return Err(sts_exchange_refused());
+    }
+    Ok(GoogleStsTransportResponseV1 {
+        status,
+        headers,
+        body,
+    })
+}
+
+#[cfg(feature = "secret-delivery-pressure")]
+fn exchange_google_sts_v4(owner: RetainedGithubOidcTransactionV4) -> GoogleStsExchangeTerminalV1 {
+    let configuration = owner.prepared.configuration.clone();
+    exchange_google_sts_v4_with_transport(owner, |request| {
+        verify_fixed_transport_configuration_v1(&configuration, MAX_SECRET_RESPONSE_BYTES)
+            .map_err(|_| sts_exchange_refused())?;
+        let http_request = build_sts_http_request(request)?;
+        let agent = ureq::Agent::new_with_config(configuration);
+        let mut response = agent
+            .run(http_request)
+            .map_err(|_| sts_exchange_refused())?;
+        let status = response.status();
+        let headers = response.headers().clone();
+        read_sts_transport_response(
+            status,
+            headers,
+            response
+                .body_mut()
+                .with_config()
+                .limit((MAX_TOKEN_RESPONSE_BYTES + 1) as u64)
+                .reader(),
+        )
+    })
 }
 
 #[cfg(all(test, feature = "secret-delivery-pressure"))]
@@ -864,6 +1065,8 @@ pub(crate) enum GoogleStsFaultForTestV1 {
     OversizedResponse,
     MalformedResponse,
     InvalidTokenType,
+    ResponseExpired,
+    ResponseJwtExpired,
 }
 
 #[cfg(all(test, feature = "secret-delivery-pressure"))]
@@ -878,7 +1081,6 @@ pub(crate) fn exchange_google_sts_from_oidc_response_v4_for_test(
     let expected_audience = owner.prepared.capability.plan.operations[0]
         .sts_audience
         .clone();
-    let expected_jwt = owner.jwt.0.as_utf8().expect("JWT").to_owned();
     match fault {
         GoogleStsFaultForTestV1::ExpiredBinding => {
             owner.prepared.capability.binding.expires_at_unix_seconds = now;
@@ -886,7 +1088,9 @@ pub(crate) fn exchange_google_sts_from_oidc_response_v4_for_test(
                 &owner.prepared.capability.binding,
             ).expect("rederived expired binding identity");
         }
-        GoogleStsFaultForTestV1::ExpiredJwt | GoogleStsFaultForTestV1::SubstitutedJwt => {
+        GoogleStsFaultForTestV1::ExpiredJwt
+        | GoogleStsFaultForTestV1::SubstitutedJwt
+        | GoogleStsFaultForTestV1::ResponseJwtExpired => {
             let jwt = owner.jwt.0.as_utf8().expect("JWT");
             let segments: Vec<_> = jwt.split('.').collect();
             let mut payload: serde_json::Value =
@@ -894,6 +1098,8 @@ pub(crate) fn exchange_google_sts_from_oidc_response_v4_for_test(
                     .expect("JWT claims");
             if matches!(fault, GoogleStsFaultForTestV1::ExpiredJwt) {
                 payload["exp"] = serde_json::json!(now);
+            } else if matches!(fault, GoogleStsFaultForTestV1::ResponseJwtExpired) {
+                payload["exp"] = serde_json::json!(now + 1);
             } else {
                 payload["run_id"] = serde_json::json!("substituted-run");
             }
@@ -925,115 +1131,160 @@ pub(crate) fn exchange_google_sts_from_oidc_response_v4_for_test(
         }
         _ => {}
     }
-    let mut fake_calls = 0;
-    let terminal = exchange_google_sts_v4_with_transport(owner, |request| {
-        fake_calls += 1;
-        assert_eq!(request.method, ProviderHttpMethod::Post);
-        assert_eq!(request.url, "https://sts.googleapis.com/v1/token");
-        assert_eq!(
-            request.media_type,
-            Some("application/x-www-form-urlencoded")
+    let expected_jwt = owner.jwt.0.as_utf8().expect("JWT").to_owned();
+    if matches!(fault, GoogleStsFaultForTestV1::ResponseJwtExpired) {
+        // Independently establish that only JWT freshness can refuse after response receipt.
+        verify_oidc_dispatch_preflight_at(&owner.prepared, now + 2)
+            .expect("V4 binding and authority remain fresh at response time");
+        assert!(reconcile_github_oidc_jwt_claims_v4_at(&owner.jwt.0, &owner.prepared, now).is_ok());
+        assert!(
+            reconcile_github_oidc_jwt_claims_v4_at(&owner.jwt.0, &owner.prepared, now + 2).is_err()
         );
-        assert!(request.authorization.is_none());
-        // Decode independently of the production request builder and encoder.
-        let decode = |encoded: &[u8]| {
-            let mut decoded = Vec::new();
-            let mut index = 0;
-            while index < encoded.len() {
-                match encoded[index] {
-                    b'%' => {
-                        let hex = std::str::from_utf8(&encoded[index + 1..index + 3])
-                            .expect("form escape");
-                        decoded.push(u8::from_str_radix(hex, 16).expect("hex escape"));
-                        index += 3;
-                    }
-                    b'+' => {
-                        decoded.push(b' ');
-                        index += 1;
-                    }
-                    byte => {
-                        decoded.push(byte);
-                        index += 1;
+    }
+    let mut fake_calls = 0;
+    let drops_before = STS_TOKEN_DROPS.with(std::cell::Cell::get);
+    let checks = std::cell::Cell::new(0);
+    let terminal = exchange_google_sts_v4_with_transport_at(
+        owner,
+        |request| {
+            fake_calls += 1;
+            let http = build_sts_http_request(request).expect("production HTTP request");
+            assert_eq!(http.method(), ureq::http::Method::POST);
+            assert_eq!(http.uri().to_string(), STS_URL);
+            assert_eq!(*http.body(), request.body.as_slice());
+            assert_eq!(request.method, ProviderHttpMethod::Post);
+            assert_eq!(request.url, "https://sts.googleapis.com/v1/token");
+            assert_eq!(
+                request.media_type,
+                Some("application/x-www-form-urlencoded")
+            );
+            assert!(request.authorization.is_none());
+            // Decode independently of the production request builder and encoder.
+            let decode = |encoded: &[u8]| {
+                let mut decoded = Vec::new();
+                let mut index = 0;
+                while index < encoded.len() {
+                    match encoded[index] {
+                        b'%' => {
+                            let hex = std::str::from_utf8(&encoded[index + 1..index + 3])
+                                .expect("form escape");
+                            decoded.push(u8::from_str_radix(hex, 16).expect("hex escape"));
+                            index += 3;
+                        }
+                        b'+' => {
+                            decoded.push(b' ');
+                            index += 1;
+                        }
+                        byte => {
+                            decoded.push(byte);
+                            index += 1;
+                        }
                     }
                 }
+                String::from_utf8(decoded).expect("UTF-8 form field")
+            };
+            let fields: Vec<_> = request
+                .body
+                .split(|byte| *byte == b'&')
+                .map(|field| {
+                    let separator = field
+                        .iter()
+                        .position(|byte| *byte == b'=')
+                        .expect("form pair");
+                    (decode(&field[..separator]), decode(&field[separator + 1..]))
+                })
+                .collect();
+            assert_eq!(
+                fields,
+                vec![
+                    (
+                        "grant_type".into(),
+                        "urn:ietf:params:oauth:grant-type:token-exchange".into()
+                    ),
+                    ("audience".into(), expected_audience),
+                    (
+                        "scope".into(),
+                        "https://www.googleapis.com/auth/cloud-platform".into()
+                    ),
+                    (
+                        "requested_token_type".into(),
+                        "urn:ietf:params:oauth:token-type:access_token".into()
+                    ),
+                    ("subject_token".into(), expected_jwt),
+                    (
+                        "subject_token_type".into(),
+                        "urn:ietf:params:oauth:token-type:jwt".into()
+                    ),
+                ]
+            );
+            if matches!(fault, GoogleStsFaultForTestV1::TransportFailure) {
+                return Err(error(
+                    "fake_failure",
+                    "synthetic-federated-token transport detail",
+                ));
             }
-            String::from_utf8(decoded).expect("UTF-8 form field")
-        };
-        let fields: Vec<_> = request
-            .body
-            .split(|byte| *byte == b'&')
-            .map(|field| {
-                let separator = field
-                    .iter()
-                    .position(|byte| *byte == b'=')
-                    .expect("form pair");
-                (decode(&field[..separator]), decode(&field[separator + 1..]))
-            })
-            .collect();
-        assert_eq!(
-            fields,
-            vec![
-                (
-                    "grant_type".into(),
-                    "urn:ietf:params:oauth:grant-type:token-exchange".into()
-                ),
-                ("audience".into(), expected_audience),
-                (
-                    "scope".into(),
-                    "https://www.googleapis.com/auth/cloud-platform".into()
-                ),
-                (
-                    "requested_token_type".into(),
-                    "urn:ietf:params:oauth:token-type:access_token".into()
-                ),
-                ("subject_token".into(), expected_jwt),
-                (
-                    "subject_token_type".into(),
-                    "urn:ietf:params:oauth:token-type:jwt".into()
-                ),
-            ]
-        );
-        if matches!(fault, GoogleStsFaultForTestV1::TransportFailure) {
-            return Err(error(
-                "fake_failure",
-                "synthetic-federated-token transport detail",
-            ));
-        }
-        let mut headers = ureq::http::HeaderMap::new();
-        headers.insert(
-            ureq::http::header::CONTENT_TYPE,
-            ureq::http::HeaderValue::from_static(JSON_MEDIA_TYPE),
-        );
-        let status = if matches!(fault, GoogleStsFaultForTestV1::Redirect) {
-            ureq::http::StatusCode::FOUND
-        } else {
-            ureq::http::StatusCode::OK
-        };
-        if matches!(fault, GoogleStsFaultForTestV1::DuplicateContentType) {
-            headers.append(
+            let mut headers = ureq::http::HeaderMap::new();
+            headers.insert(
                 ureq::http::header::CONTENT_TYPE,
                 ureq::http::HeaderValue::from_static(JSON_MEDIA_TYPE),
             );
-        }
-        let mut body = br#"{"access_token":"synthetic-federated-token","issued_token_type":"urn:ietf:params:oauth:token-type:access_token","token_type":"Bearer","expires_in":600}"#.to_vec();
-        match fault {
-            GoogleStsFaultForTestV1::OversizedResponse => {
-                body.resize(MAX_TOKEN_RESPONSE_BYTES + 1, b' ');
+            let status = if matches!(fault, GoogleStsFaultForTestV1::Redirect) {
+                ureq::http::StatusCode::FOUND
+            } else {
+                ureq::http::StatusCode::OK
+            };
+            if matches!(fault, GoogleStsFaultForTestV1::DuplicateContentType) {
+                headers.append(
+                    ureq::http::header::CONTENT_TYPE,
+                    ureq::http::HeaderValue::from_static(JSON_MEDIA_TYPE),
+                );
             }
-            GoogleStsFaultForTestV1::MalformedResponse => {
-                body = b"synthetic-federated-token".to_vec();
+            let mut body = br#"{"access_token":"synthetic-federated-token","issued_token_type":"urn:ietf:params:oauth:token-type:access_token","token_type":"Bearer","expires_in":600}"#.to_vec();
+            match fault {
+                GoogleStsFaultForTestV1::OversizedResponse => {
+                    body.resize(MAX_TOKEN_RESPONSE_BYTES + 1, b' ');
+                }
+                GoogleStsFaultForTestV1::MalformedResponse => {
+                    body = b"synthetic-federated-token".to_vec();
+                }
+                GoogleStsFaultForTestV1::InvalidTokenType => {
+                    body = br#"{"access_token":"synthetic-federated-token","issued_token_type":"urn:ietf:params:oauth:token-type:access_token","token_type":"Basic","expires_in":600}"#.to_vec();
+                }
+                _ => {}
             }
-            GoogleStsFaultForTestV1::InvalidTokenType => {
-                body = br#"{"access_token":"synthetic-federated-token","issued_token_type":"urn:ietf:params:oauth:token-type:access_token","token_type":"Basic","expires_in":600}"#.to_vec();
-            }
-            _ => {}
-        }
-        Ok(GoogleStsTransportResponseV1 {
-            status,
-            headers,
-            body: ProtectedResponseBuffer(body),
-        })
-    });
+            read_sts_transport_response(status, headers, std::io::Cursor::new(body))
+        },
+        || {
+            checks.set(checks.get() + 1);
+            Ok(
+                if matches!(fault, GoogleStsFaultForTestV1::ResponseExpired) && checks.get() >= 3 {
+                    now + 3600
+                } else if matches!(fault, GoogleStsFaultForTestV1::ResponseJwtExpired)
+                    && checks.get() >= 3
+                {
+                    now + 2
+                } else {
+                    now
+                },
+            )
+        },
+    );
+    assert_eq!(
+        STS_TOKEN_DROPS.with(std::cell::Cell::get) - drops_before,
+        usize::from(
+            fake_calls == 1
+                && matches!(
+                    fault,
+                    GoogleStsFaultForTestV1::None
+                        | GoogleStsFaultForTestV1::ResponseExpired
+                        | GoogleStsFaultForTestV1::ResponseJwtExpired
+                )
+        ),
+        "every parsed STS token must be dropped before returning terminal status",
+    );
+    if matches!(fault, GoogleStsFaultForTestV1::ResponseJwtExpired) {
+        assert_eq!(terminal.public_posture(), (1, "response_refused"));
+    }
     let rendered = format!("{terminal:?}");
     assert!(!rendered.contains("synthetic-federated-token"));
     assert!(!rendered.contains("googleapis"));
@@ -2748,6 +2999,57 @@ mod tests {
         assert_eq!(body.split('&').count(), 6);
         assert!(body.starts_with("grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Atoken-exchange&audience=%2F%2Fiam.googleapis.com"));
         assert!(!format!("{sts:?}").contains("eyJ"));
+    }
+
+    #[cfg(feature = "secret-delivery-pressure")]
+    #[test]
+    fn sts_production_reader_stops_at_the_bound_and_refuses_before_reading_bad_heads() {
+        let mut headers = ureq::http::HeaderMap::new();
+        headers.insert(
+            ureq::http::header::CONTENT_TYPE,
+            ureq::http::HeaderValue::from_static(JSON_MEDIA_TYPE),
+        );
+        let bytes = vec![b'x'; MAX_TOKEN_RESPONSE_BYTES * 2];
+        let mut reader = std::io::Cursor::new(&bytes);
+        assert!(
+            read_sts_transport_response(ureq::http::StatusCode::OK, headers.clone(), &mut reader)
+                .is_err()
+        );
+        assert_eq!(reader.position(), (MAX_TOKEN_RESPONSE_BYTES + 1) as u64);
+        let mut reader = std::io::Cursor::new(&bytes);
+        assert!(
+            read_sts_transport_response(
+                ureq::http::StatusCode::FOUND,
+                headers.clone(),
+                &mut reader
+            )
+            .is_err()
+        );
+        assert_eq!(reader.position(), 0);
+        headers.append(
+            ureq::http::header::CONTENT_TYPE,
+            ureq::http::HeaderValue::from_static(JSON_MEDIA_TYPE),
+        );
+        assert!(
+            read_sts_transport_response(ureq::http::StatusCode::OK, headers, &mut reader).is_err()
+        );
+        assert_eq!(reader.position(), 0);
+    }
+
+    #[cfg(feature = "secret-delivery-pressure")]
+    #[test]
+    fn sts_production_request_refuses_endpoint_method_header_and_credential_substitution() {
+        let plan = derive_secret_delivery_provider_client_plan_v1(&candidate()).unwrap();
+        for fault in 0..4 {
+            let mut request = build_google_sts_request_v1(&plan.operations[0], &jwt()).unwrap();
+            match fault {
+                0 => request.url = "https://caller.invalid/token".into(),
+                1 => request.method = ProviderHttpMethod::Get,
+                2 => request.media_type = Some(JSON_MEDIA_TYPE),
+                _ => request.authorization = Some(jwt()),
+            }
+            assert!(build_sts_http_request(&request).is_err());
+        }
     }
 
     #[test]

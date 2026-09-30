@@ -1905,6 +1905,126 @@ verification, every claim's provider-side enforcement, provider-side request car
 authority to run selected work. IAM Credentials, Secret Manager, materialization, injection,
 positive delivery evidence, Step 8, and V12.2 remain outside this checkpoint.
 
+#### STS Network-Enablement Preparation (Implementation Active 2026-09-30)
+
+The operator explicitly activated this independently reviewed implementation-only checkpoint on
+2026-09-30. Source and local network-disabled tests may implement the boundary below. Google
+contact, provider configuration, installation changes, and hosted dispatch remain unauthorized
+until a separate frozen-source review and explicit hosted authorization. This activation neither
+closes Step 7 nor permits a later provider operation.
+
+MUSE independently reviewed this proposal on 2026-09-30. Its initial P2 identified the missing
+administrator-owned live WIF target source; the additive V2 pressure-request boundary below
+resolved it. Re-review found no remaining P1/P2/P3 planning finding. This clears planning review
+only: implementation is now active, but source/transport review and hosted authorization remain open.
+
+The next implementation batch must reuse the existing retained V4/JWT owner, fixed direct-TLS
+configuration, STS request/response parser, and terminal completion path. It must:
+
+- Preserve `secret-delivery-github-oidc-live.yml` as the existing GitHub-only proof route, including
+  its zero-Google-contact posture. Use the separately named
+  `secret-delivery-google-sts-live.yml` only for the new manual STS proof; no generic provider
+  selector or ambient enablement flag is added.
+- Derive the STS route solely from the exact invocation context reconciled with the signed
+  authority snapshot V2 and consumed transaction binding V4: repository, workflow/ref/SHA,
+  run/attempt, selected `task`/`governed` lane, exact selected child, and retained session must
+  match. The pressure authority builder admits that new workflow only on
+  `refs/heads/1.6.29-implementation`. An ambient workflow string, CLI input, old snapshot,
+  identity-only authority, V1-V3 binding, or caller-created JWT cannot enable STS. Admission of
+  the new workflow must not widen the historical workflow's provider scope.
+- Carry the live WIF target in an additive, closed `PressureAuthorityRequestV2`, used only for
+  the new STS workflow. Preserve V1's exact schema, identity domain, fixed synthetic coordinates,
+  and existing workflow semantics. V2 uses schema version 2, record kind
+  `secret_delivery_sts_pressure_authority_request`, and identity domain
+  `ota.secret-delivery-sts-pressure.authority-request.v2\0`; its JCS identity covers every existing
+  invocation field plus `sts_target.workload_identity_provider`. Reject unknown fields, mixed
+  versions/kinds, legacy workflows with V2, and the STS workflow with V1; there is no V1 fallback.
+  This version is the administrator pressure request, not a Protocol authority-payload or
+  transaction-binding version change.
+- The only new target input is one canonical resource name
+  `projects/{positive-decimal-project-number}/locations/global/workloadIdentityPools/{pool}/providers/{provider}`,
+  validated by the existing Google tuple grammar with canonical round-trip equality. Derive the
+  parent pool, JWT audience (`https://iam.googleapis.com/{provider}`), and STS audience
+  (`//iam.googleapis.com/{provider}`) from that same value; accept no separately editable audience,
+  endpoint, scope, service-account, or secret target. The existing provisioner's descriptor/owner/
+  mode checks must cover V2 as they cover the fresh root-owned mode-0400 V1 request. No repository,
+  job, environment, or CLI-supplied target can substitute for that retained administrator input.
+  The builder signs the derived provider/pool/JWT audience in authority payload V2 and binds the
+  complete request identity into the existing protected installation evidence; Core still derives
+  its operation only from the signed snapshot and consumed V4 owner. Unchanged synthetic
+  service-account/secret fixture references remain non-executable at this checkpoint and require
+  neither creation nor access grants. A generic provider selector is out of scope.
+- Consume the successful GitHub terminal's exact private V4/JWT owner directly. Before any STS
+  network call, freshly recheck full signed transport graph/record, Core's embedded expectation,
+  operation derivation, binding expiry, complete protected JWT claims, and JWT time window.
+  A successful GitHub request with failed claim reconciliation must make zero STS calls.
+- Build exactly one POST to `https://sts.googleapis.com/v1/token`, with the six form fields
+  already specified above, no authorization header or `options`, and no alternate endpoint,
+  implicit retry, proxy, ambient credential, custom CA, or provider fallback. Independently check
+  the constructed HTTP method, URI, headers, and body against the retained request before sending.
+  Reuse the build-pinned Rustls/Web PKI roots, exact hostname verification, and existing fixed
+  timeout/header limits. Bound the response read to `MAX_TOKEN_RESPONSE_BYTES + 1` before parsing;
+  refuse over-limit, non-200, ambiguous content type, redirect, malformed/duplicate fields,
+  invalid token type/lifetime, or transport failure without retaining response details.
+- Recheck the retained binding and JWT time window after response receipt and before recording
+  acceptance. Drop the federated token in the same terminal owner; do not expose it to callers,
+  logs, arguments, environment, files, a next provider operation, or a reusable admission object.
+  On every outcome, return failure through the existing retained completion session, reap the
+  actual child, and reconcile scope/cgroup/active-slot cleanup. Never release startup continuation
+  or execute the selected workload. Buffer cleanup is not process-memory erasure or provider
+  revocation proof.
+- Return only closed non-secret attempt/outcome values: separate GitHub and STS Core dispatch
+  counters, local claim reconciliation, STS accepted/refused/not-attempted outcome, and selected
+  work false. A Core dispatch counter does not establish provider or lower-layer cardinality.
+  A validated response is job-observed provider acknowledgement under the installed WIF
+  configuration, not independent Ota JWT signature verification or proof of every condition's
+  provider-side enforcement. The workflow must derive posture from validated Core terminal output,
+  not replace a missing or failed response with a synthetic success record.
+
+Required local tests must exercise the production transport request construction and bounded read
+through an injected network-disabled transport, together with the snapshot-bound V4 owner and
+real terminal completion/cleanup fixture. Cover exact successful-response token disposal, zero
+STS dispatch for authority/claim/route substitution, one dispatch with no retry on transport or
+response refusal, expiry during response receipt, redaction, unchanged legacy GitHub-only behavior,
+and default/no-feature refusal. Test hooks must not become production endpoint or TLS overrides.
+Frozen-diff MUSE review and local tests precede commit readiness; neither authorizes a live call.
+
+Before any separately authorized hosted run, pin exact Core/Launcher/Protocol revisions and
+installed artifact identities. Out-of-band administration must verify a dedicated WIF provider's
+issuer, exact allowed audience, attribute mapping, and condition binding the numeric repository
+and owner IDs, exact workflow/ref/commit, event, and selected run/attempt. Retain its non-secret
+configuration and distinguish administrator observation from job evidence. After the job queues,
+reconcile the administrator-observed provider resource, issuer, allowed audience, mapping, and
+condition against the exact V2 request, freshly signed snapshot, and Core-rederived operation
+target before runner start; an identity string alone or a check of another provider is insufficient.
+Refuse provisioning/start on a target/configuration mismatch rather than patching the audience in
+the job. The retained request identity must rederive from the same complete V2 request bytes.
+Required local request tests must lock V1 output/identity compatibility, V2 JCS identity sensitivity
+to target and invocation changes, wrong-workflow/version refusal, malformed target refusal,
+signed target substitution refusal, and exact equality of derived audiences/pool/provider. No
+local fixture proves installed remote WIF configuration. This proof requires
+no service-account impersonation or Secret Manager grant and must not add either. Use a fresh
+root-owned mode-0400 request and fresh provisioned state with the stopped-runner sequence; reruns
+need a new request/state. Root request admission is not proof of remote WIF configuration.
+
+The hosted acceptance bar is one locally reconciled GitHub response, one accepted STS response,
+no selected-work marker, and exact child/cgroup/scope/active-slot cleanup. A refusal is retained
+honestly but does not close the positive STS gate. Provider-side cardinality, independently
+root-custodied semantic attestation, IAM Credentials, Secret Manager, materialization, injection,
+positive delivery evidence, Step 8, and V12.2 remain outside this amendment. No public command,
+schema, public JSON reference, Site, Skills, Examples, Learn, FAQ, Glossary, or command-reference
+change is required for this internal implementation checkpoint; hosted activation remains separate.
+
+Implementation record (2026-09-30): the source batch implements this boundary with no live
+contact or installation. MUSE's initial frozen source review found only a P2 requiring
+independent post-response JWT-expiry coverage while binding authority remains fresh. That
+test-only refinement is implemented, cleared by MUSE's focused frozen recheck, and locally passes,
+including the final snapshot suite and paired 14-case network-disabled actual-child cleanup
+fixture. The implementation-only batch is locally complete; see the live handoff for exact
+validation. The operator authorized commit and push of the reviewed source checkpoint on
+2026-09-30; this does not authorize hosted proof, Google contact, configuration changes,
+or any later provider/selected-work gate.
+
 ## Product Boundary
 
 Ota does not store, rotate, mint, encrypt, export, or centrally manage secret values. It governs

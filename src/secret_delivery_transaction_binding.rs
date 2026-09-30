@@ -161,6 +161,7 @@ pub(crate) struct VerifiedSecretDeliveryTransactionBindingV4 {
 }
 
 pub(crate) const LIVE_GITHUB_OIDC_WORKFLOW_REFERENCE_V1: &str = "ota-run/ota/.github/workflows/secret-delivery-github-oidc-live.yml@refs/heads/1.6.29-implementation";
+pub(crate) const LIVE_GOOGLE_STS_WORKFLOW_REFERENCE_V1: &str = "ota-run/ota/.github/workflows/secret-delivery-google-sts-live.yml@refs/heads/1.6.29-implementation";
 const LIVE_GITHUB_OIDC_TASK_V1: &str = "governed";
 
 /// One irreversibly consumed V4 authority retained through the private OIDC relay. It is neither
@@ -974,8 +975,10 @@ impl VerifiedSecretDeliveryTransactionBindingV4 {
     {
         let (workflow_reference, workflow_run_id, workflow_run_attempt) = {
             let invocation = self.snapshot.invocation_context();
-            if invocation.workflow_reference() != LIVE_GITHUB_OIDC_WORKFLOW_REFERENCE_V1
-                || invocation.lane_kind() != "task"
+            if !matches!(
+                invocation.workflow_reference(),
+                LIVE_GITHUB_OIDC_WORKFLOW_REFERENCE_V1 | LIVE_GOOGLE_STS_WORKFLOW_REFERENCE_V1
+            ) || invocation.lane_kind() != "task"
                 || invocation.lane_name() != LIVE_GITHUB_OIDC_TASK_V1
             {
                 return Err(SecretDeliveryTransactionBindingError::ResponseInvalid);
