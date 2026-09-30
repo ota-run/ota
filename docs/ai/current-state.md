@@ -2358,6 +2358,31 @@ This internal pressure checkpoint changes no public command, schema, public JSON
 concept; Site, Skills, Examples, Learn, FAQ, Glossary, command-reference, and public changelog
 propagation are not required. The planning and handoff records own this unshipped internal scope.
 
+Publication and read-only hosted preparation (2026-09-30): Core
+`0478311680276d87f5eb4930611d1f913828fff2` and Launcher
+`6fd8cde8782b772fb22eead5f8c691f036b425b5` were pushed to
+`1.6.29-implementation`; both worktrees were clean. Core push CI started. Its
+[`docs-quality` run `36688113237`](https://github.com/ota-run/ota/actions/runs/36688113237)
+failed only because Reddit returned HTTP 403 for one practitioner-report URL. An exact-URL
+automated-client exclusion follows the existing `.lycheeignore` policy; unrelated links remain
+checked. Other Core checks were still queued or running, so the checkpoint is not CI-green.
+Launcher CI accepts only `main` pushes or pull requests; this implementation-branch push started
+no Launcher hosted CI. The completed local cleanup proof remains distinct from hosted CI.
+
+Read-only Google Cloud inspection found project `ota-v121-step7-20260910` has no VM and an active
+pool `projects/783599651848/locations/global/workloadIdentityPools/ota-v121-pool`.
+Its existing provider `github-ota-step7` admits the historical
+`secret-delivery-provider-pressure.yml@refs/heads/1.6.28-implementation`, has no explicit
+allowed-audience list, and does not bind exact workflow/source SHA or run/attempt. It is not
+the new STS gate's reviewed configuration and must not be treated as ready. GitHub has no
+registered protected Linux/X64 runner; the only listed runner is offline Linux/arm64.
+The smallest next live preparation is a separately authorized dedicated WIF provider with the
+plan's exact audience, mapping, and invocation conditions, plus a short-lived Linux/X64 host.
+Preserve the historical provider. Freeze the final Core source and reviewed Launcher runtime
+pin before queueing, then bind the queued attempt in both the provider condition and fresh
+root-owned V2 request before provisioning/start. No provider/configuration mutation, VM creation,
+runner start, hosted dispatch, merge, release, or Google STS call occurred in this preparation.
+
 ## Working Rules
 
 - Update this handoff immediately when the active step, blocker, next action, or proof status

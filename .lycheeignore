@@ -8,4 +8,5 @@ https://ota.run/blogs
 
 # These services intentionally reject automated link-check clients.
 ^https://www\.reddit\.com/r/ClaudeCode/comments/1vsyn8t/what_i_learned_running_25_claude_code_and_codex/$
+^https://www\.reddit\.com/r/aiagents/comments/1wshwi1/claude_code_told_me_a_task_was_done_and/$
 ^https://x\.com/otaready$
