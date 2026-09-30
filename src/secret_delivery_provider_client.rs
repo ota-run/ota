@@ -1851,6 +1851,49 @@ pub(crate) fn verify_secret_delivery_provider_client_plan_v1(
     Ok(())
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct GoogleStsOperationTargetV1 {
+    pub oidc_issuer: String,
+    pub oidc_audience: String,
+    pub workload_identity_pool: String,
+    pub workload_identity_provider: String,
+    pub sts_audience: String,
+    pub sts_url: String,
+}
+
+/// Pure target derivation shared by runtime planning and offline inspection. This produces no
+/// candidate, request, transport or execution authority.
+pub(crate) fn derive_google_sts_operation_target_v1(
+    tuple: &SecretDeliveryInvocationBindingInput,
+) -> Result<GoogleStsOperationTargetV1, SecretDeliveryProviderClientError> {
+    validate_google_tuple(tuple).map_err(|_| {
+        error(
+            "secret_delivery_provider_tuple_invalid",
+            "provider operation tuple is not provider-canonical",
+        )
+    })?;
+    if tuple.oidc_issuer != "https://token.actions.githubusercontent.com"
+        || tuple.oidc_audience
+            != format!(
+                "https://iam.googleapis.com/{}",
+                tuple.workload_identity_provider
+            )
+    {
+        return Err(error(
+            "secret_delivery_provider_tuple_invalid",
+            "OIDC issuer or audience does not match the protected WIF provider",
+        ));
+    }
+    Ok(GoogleStsOperationTargetV1 {
+        oidc_issuer: tuple.oidc_issuer.clone(),
+        oidc_audience: tuple.oidc_audience.clone(),
+        workload_identity_pool: tuple.workload_identity_pool.clone(),
+        workload_identity_provider: tuple.workload_identity_provider.clone(),
+        sts_audience: format!("//iam.googleapis.com/{}", tuple.workload_identity_provider),
+        sts_url: STS_URL.into(),
+    })
+}
+
 fn operation_plan(
     realization: &SecretDeliveryTransactionCandidateRealization,
 ) -> Result<SecretDeliveryProviderOperationPlanV1, SecretDeliveryProviderClientError> {
@@ -1910,22 +1953,7 @@ fn operation_plan(
         secret_resource: realization.secret_resource.clone(),
         secret_version: realization.secret_version,
     };
-    validate_google_tuple(&tuple).map_err(|_| {
-        error(
-            "secret_delivery_provider_tuple_invalid",
-            "provider operation tuple is not provider-canonical",
-        )
-    })?;
-    let expected_oidc_audience = format!(
-        "https://iam.googleapis.com/{}",
-        realization.workload_identity_provider
-    );
-    if realization.oidc_audience != expected_oidc_audience {
-        return Err(error(
-            "secret_delivery_provider_tuple_invalid",
-            "OIDC audience does not match the protected WIF provider",
-        ));
-    }
+    let target = derive_google_sts_operation_target_v1(&tuple)?;
     let secret_version_resource = format!(
         "{}/versions/{}",
         realization.secret_resource, realization.secret_version
@@ -1936,13 +1964,10 @@ fn operation_plan(
         transport_dependency_record_identity: realization
             .transport_dependency_record_identity
             .clone(),
-        oidc_issuer: realization.oidc_issuer.clone(),
-        oidc_audience: realization.oidc_audience.clone(),
-        sts_audience: format!(
-            "//iam.googleapis.com/{}",
-            realization.workload_identity_provider
-        ),
-        sts_url: STS_URL.into(),
+        oidc_issuer: target.oidc_issuer,
+        oidc_audience: target.oidc_audience,
+        sts_audience: target.sts_audience,
+        sts_url: target.sts_url,
         service_account_token_url: format!(
             "{IAM_CREDENTIALS_ORIGIN}/v1/projects/-/serviceAccounts/{}:generateAccessToken",
             realization.service_account

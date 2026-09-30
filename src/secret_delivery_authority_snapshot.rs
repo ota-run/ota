@@ -760,6 +760,46 @@ fn parse_verified_authority_payload_records(
     })
 }
 
+#[cfg(feature = "secret-delivery-pressure")]
+pub(crate) fn verify_authority_payload_v2_store_bytes(
+    verifier_bytes: &[u8],
+    binding_bytes: &[u8],
+    observed_at_unix_seconds: u64,
+) -> Result<VerifiedSecretDeliveryAuthorityPayloadV2, SecretDeliveryAuthoritySnapshotError> {
+    use ota_authority_protocol::{
+        MAX_PROTECTED_LAUNCHER_STORE_BYTES_V1,
+        reconcile_protected_secret_delivery_authority_bundle_v1,
+    };
+    if [verifier_bytes, binding_bytes]
+        .iter()
+        .any(|bytes| bytes.is_empty() || bytes.len() > MAX_PROTECTED_LAUNCHER_STORE_BYTES_V1)
+    {
+        return Err(SecretDeliveryAuthoritySnapshotError::BindingBundlePayloadInvalid);
+    }
+    let verifier_store: ProtectedSecretDeliveryVerifierStoreV1 =
+        serde_json::from_slice(verifier_bytes)
+            .map_err(|_| SecretDeliveryAuthoritySnapshotError::BindingBundlePayloadInvalid)?;
+    let binding_bundle: ProtectedSecretDeliveryBindingBundleV1 =
+        serde_json::from_slice(binding_bytes)
+            .map_err(|_| SecretDeliveryAuthoritySnapshotError::BindingBundlePayloadInvalid)?;
+    if serde_jcs::to_vec(&verifier_store)
+        .map_err(|_| SecretDeliveryAuthoritySnapshotError::BindingBundlePayloadInvalid)?
+        != verifier_bytes
+        || serde_jcs::to_vec(&binding_bundle)
+            .map_err(|_| SecretDeliveryAuthoritySnapshotError::BindingBundlePayloadInvalid)?
+            != binding_bytes
+    {
+        return Err(SecretDeliveryAuthoritySnapshotError::BindingBundlePayloadInvalid);
+    }
+    reconcile_protected_secret_delivery_authority_bundle_v1(
+        &verifier_store,
+        &binding_bundle,
+        observed_at_unix_seconds,
+    )
+    .map_err(|_| SecretDeliveryAuthoritySnapshotError::BindingBundlePayloadInvalid)?;
+    parse_verified_authority_payload_v2_records(&verifier_store, &binding_bundle)
+}
+
 fn parse_verified_authority_payload_v2_records(
     verifier_store: &ProtectedSecretDeliveryVerifierStoreV1,
     binding_bundle: &ProtectedSecretDeliveryBindingBundleV1,

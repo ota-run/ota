@@ -26,6 +26,9 @@
 //! identities and signs the returned canonical payload. This module never contacts a provider,
 //! reads a secret, or installs authority.
 
+mod preflight;
+pub use preflight::verify_installed_authority_payload;
+
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -173,7 +176,8 @@ impl PressureAuthorityRequest {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 struct PressureAuthorityInstallationV1 {
     schema_version: u32,
     record_kind: String,
@@ -211,19 +215,45 @@ fn render_authority_payload_for_contract(
     expected_contract_path: &Path,
 ) -> Result<Vec<u8>, String> {
     let bytes = fs::read(request_path).map_err(|_| "pressure request is unavailable")?;
+    render_authority_payload_from_request_bytes(
+        &bytes,
+        verifier_key_identity,
+        verifier_identity,
+        expected_core_source_revision,
+        implementation_build_identity,
+        implementation_artifact_identity,
+        expected_contract_path,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_authority_payload_from_request_bytes(
+    bytes: &[u8],
+    verifier_key_identity: &str,
+    verifier_identity: &str,
+    expected_core_source_revision: &str,
+    implementation_build_identity: &str,
+    implementation_artifact_identity: &str,
+    expected_contract_path: &Path,
+    retained_contract: Option<&crate::schema::Contract>,
+) -> Result<Vec<u8>, String> {
     if bytes.len() > 64 * 1024 {
         return Err("pressure request exceeds the bounded input size".into());
     }
     let request: PressureAuthorityRequest =
-        serde_json::from_slice(&bytes).map_err(|_| "pressure request is invalid")?;
+        serde_json::from_slice(bytes).map_err(|_| "pressure request is invalid")?;
     let (request, request_identity, sts_target) =
         request.into_validated_parts(expected_contract_path)?;
     if request.commit_sha != expected_core_source_revision {
         return Err("pressure request does not match the installed Core revision".into());
     }
 
-    let contract = load_contract(&request.contract_path)
-        .map_err(|_| "pressure contract is unavailable or invalid")?;
+    let contract = match retained_contract {
+        Some(contract) => contract.clone(),
+        None => load_contract(&request.contract_path)
+            .map_err(|_| "pressure contract is unavailable or invalid")?,
+    };
     let selected_subject = vec!["task".to_string(), request.task.clone()];
     let selected = selected_secret_requirement_identities(&contract, &selected_subject)
         .map_err(|_| "pressure task secret requirements are invalid")?;
@@ -516,6 +546,639 @@ fn is_identity(value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[derive(Clone)]
+    struct OfflineFixture {
+        contract: crate::schema::Contract,
+        request: Vec<u8>,
+        verifier: Vec<u8>,
+        binding: Vec<u8>,
+        provider: Vec<u8>,
+        installation: Vec<u8>,
+        key_identity: String,
+        verifier_identity: String,
+    }
+
+    impl OfflineFixture {
+        fn new() -> Self {
+            use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+            use ota_authority_protocol::*;
+            let contract_path = Path::new(PRESSURE_CONTRACT_PATH);
+            let contract = crate::parser::parse_contract_str(contract_path, contract()).unwrap();
+            let request_value = sts_request(contract_path);
+            let request = serde_jcs::to_vec(&request_value).unwrap();
+            let public_key = URL_SAFE_NO_PAD.encode(
+                ed25519_dalek::SigningKey::from_bytes(&[7; 32])
+                    .verifying_key()
+                    .to_bytes(),
+            );
+            let mut verifier = ProtectedSecretDeliveryBindingBundleVerifierV1 {
+                schema_version: 1,
+                record_kind: PROTECTED_SECRET_DELIVERY_BINDING_BUNDLE_VERIFIER.into(),
+                identity: String::new(),
+                key_identity: protected_secret_delivery_binding_bundle_key_identity_v1(&public_key)
+                    .unwrap(),
+                public_key,
+                key_usage: PROTECTED_SECRET_DELIVERY_BINDING_BUNDLE_KEY_USAGE_V1.into(),
+                signature_domain: std::str::from_utf8(
+                    PROTECTED_SECRET_DELIVERY_BINDING_BUNDLE_SIGNATURE_DOMAIN_V1,
+                )
+                .unwrap()
+                .into(),
+            };
+            verifier.identity =
+                protected_secret_delivery_binding_bundle_verifier_v1_identity(&verifier).unwrap();
+            let installation: serde_json::Value = serde_json::from_slice(
+                &render_authority_payload_from_request_bytes(
+                    &request,
+                    &verifier.key_identity,
+                    &verifier.identity,
+                    &"b".repeat(40),
+                    &format!("sha256:{}", "2".repeat(64)),
+                    &format!("sha256:{}", "3".repeat(64)),
+                    contract_path,
+                    Some(&contract),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+            let typed_request: PressureAuthorityRequestV2 =
+                serde_json::from_value(request_value.clone()).unwrap();
+            let provider = serde_json::json!({
+                "name": request_value["sts_target"]["workload_identity_provider"],
+                "state": "ACTIVE", "disabled": true,
+                "attributeMapping": preflight::expected_attribute_mapping(),
+                "attributeCondition": preflight::expected_attribute_condition(&typed_request),
+                "oidc": {
+                    "issuerUri": "https://token.actions.githubusercontent.com",
+                    "allowedAudiences": [installation["authority_payload"]["invocation_bindings"][0]["oidc_audience"]]
+                }
+            });
+            let mut fixture = Self {
+                contract,
+                request,
+                verifier: Vec::new(),
+                binding: Vec::new(),
+                provider: serde_jcs::to_vec(&provider).unwrap(),
+                installation: Vec::new(),
+                key_identity: verifier.key_identity.clone(),
+                verifier_identity: verifier.identity.clone(),
+            };
+            let store = ProtectedSecretDeliveryVerifierStoreV1 {
+                schema_version: 1,
+                record_kind: PROTECTED_SECRET_DELIVERY_VERIFIER_STORE.into(),
+                identity: String::new(),
+                authority_id: "ota-secret-delivery".into(),
+                generation: 1,
+                not_before_unix_seconds: 1000,
+                not_after_unix_seconds: 4600,
+                verifiers: vec![verifier],
+                active_binding_bundle_identity: String::new(),
+                active_binding_bundle_generation: 1,
+            };
+            fixture.verifier = serde_jcs::to_vec(&store).unwrap();
+            fixture.sign_payload(&installation["authority_payload"]);
+            let mut public_installation = serde_json::json!({
+                "schema_version": 1,
+                "record_kind": "secret_delivery_pressure_public_installation_evidence",
+                "identity": "",
+                "core_source_revision": "b".repeat(40),
+                "builder_artifact_identity": format!("sha256:{}", "6".repeat(64)),
+                "request_identity": installation["request_identity"],
+                "authority_posture": "synthetic_provider_free_installed",
+                "selected_process_environment": installation["selected_process_environment"]
+            });
+            public_installation["identity"] = ota_authority_protocol::message_identity(
+                b"ota.authority-launcher.secret-delivery-pressure-installation.v1\0",
+                &public_installation,
+            )
+            .unwrap()
+            .into();
+            fixture.installation = serde_jcs::to_vec(&public_installation).unwrap();
+            fixture
+        }
+
+        fn sign_payload(&mut self, payload: &serde_json::Value) {
+            self.sign_payload_bytes(&serde_jcs::to_vec(payload).unwrap());
+        }
+
+        fn sign_payload_bytes(&mut self, bytes: &[u8]) {
+            use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+            use ed25519_dalek::Signer;
+            use ota_authority_protocol::*;
+            let mut store: ProtectedSecretDeliveryVerifierStoreV1 =
+                serde_json::from_slice(&self.verifier).unwrap();
+            let mut bundle = ProtectedSecretDeliveryBindingBundleV1 {
+                schema_version: 1,
+                record_kind: PROTECTED_SECRET_DELIVERY_BINDING_BUNDLE.into(),
+                identity: String::new(),
+                authority_id: "ota-secret-delivery".into(),
+                generation: 1,
+                issued_at_unix_seconds: store.not_before_unix_seconds,
+                expires_at_unix_seconds: store.not_after_unix_seconds,
+                verifier_identity: self.verifier_identity.clone(),
+                payload: URL_SAFE_NO_PAD.encode(bytes),
+                payload_identity: protected_secret_delivery_binding_bundle_payload_v1_identity(
+                    bytes,
+                )
+                .unwrap(),
+                signature: URL_SAFE_NO_PAD.encode([0u8; 64]),
+            };
+            bundle.identity =
+                protected_secret_delivery_binding_bundle_v1_identity(&bundle).unwrap();
+            bundle.signature = URL_SAFE_NO_PAD.encode(
+                ed25519_dalek::SigningKey::from_bytes(&[7; 32])
+                    .sign(
+                        &protected_secret_delivery_binding_bundle_signature_message_v1(
+                            &bundle.identity,
+                        )
+                        .unwrap(),
+                    )
+                    .to_bytes(),
+            );
+            store.active_binding_bundle_identity = bundle.identity.clone();
+            store.identity = protected_secret_delivery_verifier_store_v1_identity(&store).unwrap();
+            self.verifier = serde_jcs::to_vec(&store).unwrap();
+            self.binding = serde_jcs::to_vec(&bundle).unwrap();
+        }
+
+        fn inspect(&self, now: u64) -> Result<Vec<u8>, String> {
+            preflight::verify_inputs(preflight::PreflightInputs {
+                request: &self.request,
+                verifier: &self.verifier,
+                binding: &self.binding,
+                provider: &self.provider,
+                installation: &self.installation,
+                contract: &self.contract,
+                contract_path: Path::new(PRESSURE_CONTRACT_PATH),
+                verifier_key_identity: &self.key_identity,
+                verifier_identity: &self.verifier_identity,
+                core_revision: &"b".repeat(40),
+                build_identity: &format!("sha256:{}", "2".repeat(64)),
+                artifact_identity: &format!("sha256:{}", "3".repeat(64)),
+                builder_artifact_identity: &format!("sha256:{}", "6".repeat(64)),
+                now,
+            })
+        }
+
+        fn payload(&self) -> serde_json::Value {
+            use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+            let bundle: ota_authority_protocol::ProtectedSecretDeliveryBindingBundleV1 =
+                serde_json::from_slice(&self.binding).unwrap();
+            serde_json::from_slice(&URL_SAFE_NO_PAD.decode(&bundle.payload).unwrap()).unwrap()
+        }
+    }
+
+    #[test]
+    fn offline_preflight_verifies_signed_complete_payload_and_bounds_its_report() {
+        let fixture = OfflineFixture::new();
+        let before = (
+            fixture.request.clone(),
+            fixture.verifier.clone(),
+            fixture.binding.clone(),
+            fixture.provider.clone(),
+            fixture.installation.clone(),
+        );
+        let bytes = fixture.inspect(1001).unwrap();
+        let report: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(serde_jcs::to_vec(&report).unwrap(), bytes);
+        assert_eq!(
+            report["posture"],
+            "offline_inspected_not_admitted_not_dispatched"
+        );
+        assert_eq!(
+            report["repository_subject_evidence"],
+            "point_in_time_subject_owner_consistency_not_recipient_identity"
+        );
+        assert_eq!(report["runtime_reconciliation"], "still_required");
+        for field in [
+            "provider_contact",
+            "snapshot_exchange",
+            "authority_consumed",
+            "installation_mutated",
+            "selected_work_executed",
+        ] {
+            assert_eq!(report[field], false, "{field}");
+        }
+        let request: serde_json::Value = serde_json::from_slice(&fixture.request).unwrap();
+        assert_eq!(
+            report["request_identity"],
+            ota_authority_protocol::message_identity(STS_REQUEST_IDENTITY_DOMAIN, &request)
+                .unwrap()
+        );
+        let target = crate::secret_delivery_provider_client::derive_google_sts_operation_target_v1(
+            &serde_json::from_value::<ProtectedSecretDeliveryAuthorityPayloadV2>(fixture.payload())
+                .unwrap()
+                .invocation_bindings[0],
+        )
+        .unwrap();
+        assert_eq!(
+            target.sts_audience,
+            "//iam.googleapis.com/projects/456/locations/global/workloadIdentityPools/live-pool/providers/live-github"
+        );
+        assert_eq!(target.sts_url, "https://sts.googleapis.com/v1/token");
+        assert_eq!(
+            target.workload_identity_pool,
+            "projects/456/locations/global/workloadIdentityPools/live-pool"
+        );
+        let text = std::str::from_utf8(&bytes).unwrap();
+        for private in [
+            "CAEP_API-Key_1",
+            "live-github",
+            "control-plane://",
+            "public_key",
+            "signature",
+            "allowedAudiences",
+            "assertion.",
+        ] {
+            assert!(!text.contains(private), "{private}");
+        }
+        assert_eq!(
+            before,
+            (
+                fixture.request.clone(),
+                fixture.verifier.clone(),
+                fixture.binding.clone(),
+                fixture.provider.clone(),
+                fixture.installation.clone()
+            )
+        );
+        assert!(fixture.inspect(999).is_err());
+        assert!(fixture.inspect(4601).is_err());
+    }
+
+    #[test]
+    fn offline_preflight_refuses_request_and_provider_substitution_without_mutation() {
+        let fixture = OfflineFixture::new();
+        for field in [
+            "repository_id",
+            "repository_owner_id",
+            "actor_id",
+            "workflow_run_id",
+            "workflow_run_attempt",
+            "runner_version",
+            "workflow_reference",
+            "commit_sha",
+            "git_ref",
+        ] {
+            let mut changed = fixture.clone();
+            let mut request: serde_json::Value = serde_json::from_slice(&changed.request).unwrap();
+            request[field] = format!("{}-other", request[field].as_str().unwrap()).into();
+            changed.request = serde_jcs::to_vec(&request).unwrap();
+            assert!(changed.inspect(1001).is_err(), "{field}");
+        }
+        for (pointer, value) in [
+            (
+                "/name",
+                serde_json::json!(
+                    "projects/789/locations/global/workloadIdentityPools/live-pool/providers/live-github"
+                ),
+            ),
+            ("/state", serde_json::json!("DELETED")),
+            ("/disabled", serde_json::json!(false)),
+            ("/attributeCondition", serde_json::json!("true")),
+            (
+                "/attributeMapping/google.subject",
+                serde_json::json!("assertion.actor_id"),
+            ),
+            (
+                "/oidc/issuerUri",
+                serde_json::json!("https://other.invalid"),
+            ),
+            ("/oidc/allowedAudiences", serde_json::json!(["other"])),
+        ] {
+            let mut changed = fixture.clone();
+            let mut provider: serde_json::Value =
+                serde_json::from_slice(&changed.provider).unwrap();
+            *provider.pointer_mut(pointer).unwrap() = value;
+            changed.provider = serde_jcs::to_vec(&provider).unwrap();
+            let before = changed.provider.clone();
+            assert!(changed.inspect(1001).is_err(), "{pointer}");
+            assert_eq!(changed.provider, before);
+        }
+        let mut legacy = fixture.clone();
+        legacy.request = serde_jcs::to_vec(&request(Path::new(PRESSURE_CONTRACT_PATH))).unwrap();
+        assert!(legacy.inspect(1001).is_err());
+        let mut identity_only = fixture.clone();
+        identity_only.request = br#"{"request_identity":"sha256:identity"}"#.to_vec();
+        assert!(identity_only.inspect(1001).is_err());
+    }
+
+    #[test]
+    fn offline_preflight_refuses_signed_payload_substitution_and_legacy_fallback() {
+        let fixture = OfflineFixture::new();
+        for pointer in [
+            "/invocation_bindings/0/oidc_audience",
+            "/invocation_bindings/0/workload_identity_provider",
+            "/implementation_subject/build_identity",
+            "/transport_dependency_feature_graph/root_package_name",
+            "/transport_dependency_record_identity",
+            "/binding_snapshots/0/source/private_locator",
+        ] {
+            let mut changed = fixture.clone();
+            let mut payload = fixture.payload();
+            *payload.pointer_mut(pointer).unwrap() = "substituted".into();
+            changed.sign_payload(&payload);
+            assert!(changed.inspect(1001).is_err(), "{pointer}");
+        }
+        for field in [
+            "transport_dependency_feature_graph",
+            "transport_dependency_record",
+        ] {
+            let mut changed = fixture.clone();
+            let mut payload = fixture.payload();
+            payload.as_object_mut().unwrap().remove(field);
+            changed.sign_payload(&payload);
+            assert!(changed.inspect(1001).is_err(), "missing {field}");
+        }
+        let mut legacy = fixture.clone();
+        let mut payload = fixture.payload();
+        payload["schema_version"] = 1.into();
+        payload["record_kind"] = "protected_secret_delivery_authority_payload".into();
+        payload
+            .as_object_mut()
+            .unwrap()
+            .remove("transport_dependency_feature_graph");
+        payload
+            .as_object_mut()
+            .unwrap()
+            .remove("transport_dependency_record");
+        legacy.sign_payload(&payload);
+        assert!(legacy.inspect(1001).is_err());
+    }
+
+    #[test]
+    fn offline_preflight_refuses_bad_signatures_envelopes_jcs_and_bounds() {
+        let fixture = OfflineFixture::new();
+        for field in [
+            "signature",
+            "verifier_identity",
+            "identity",
+            "payload_identity",
+            "authority_id",
+        ] {
+            let mut changed = fixture.clone();
+            let mut bundle: serde_json::Value = serde_json::from_slice(&changed.binding).unwrap();
+            bundle[field] = "invalid".into();
+            changed.binding = serde_jcs::to_vec(&bundle).unwrap();
+            assert!(changed.inspect(1001).is_err(), "{field}");
+        }
+        let mut wrong_signature = fixture.clone();
+        let mut bundle: serde_json::Value =
+            serde_json::from_slice(&wrong_signature.binding).unwrap();
+        use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+        bundle["signature"] = URL_SAFE_NO_PAD.encode([9u8; 64]).into();
+        wrong_signature.binding = serde_jcs::to_vec(&bundle).unwrap();
+        assert!(wrong_signature.inspect(1001).is_err());
+        for input in ["binding", "verifier", "request", "provider"] {
+            let mut changed = fixture.clone();
+            let bytes = match input {
+                "binding" => &mut changed.binding,
+                "verifier" => &mut changed.verifier,
+                "request" => &mut changed.request,
+                _ => &mut changed.provider,
+            };
+            *bytes = vec![b' '; 65537];
+            assert!(changed.inspect(1001).is_err(), "{input}");
+        }
+        for input in ["binding", "verifier"] {
+            let mut changed = fixture.clone();
+            let bytes = if input == "binding" {
+                &mut changed.binding
+            } else {
+                &mut changed.verifier
+            };
+            bytes.push(b'\n');
+            assert!(changed.inspect(1001).is_err(), "non-JCS {input}");
+        }
+        let mut other_key = fixture.clone();
+        other_key.key_identity = format!("sha256:{}", "f".repeat(64));
+        assert!(other_key.inspect(1001).is_err());
+        let mut non_jcs_payload = fixture.clone();
+        let mut payload_bytes = serde_jcs::to_vec(&fixture.payload()).unwrap();
+        payload_bytes.push(b'\n');
+        non_jcs_payload.sign_payload_bytes(&payload_bytes);
+        assert!(non_jcs_payload.inspect(1001).is_err());
+        for field in [
+            "request_identity",
+            "builder_artifact_identity",
+            "core_source_revision",
+            "authority_posture",
+            "identity",
+            "record_kind",
+        ] {
+            let mut changed = fixture.clone();
+            let mut installation: serde_json::Value =
+                serde_json::from_slice(&changed.installation).unwrap();
+            installation[field] = "substituted".into();
+            changed.installation = serde_jcs::to_vec(&installation).unwrap();
+            assert!(changed.inspect(1001).is_err(), "installation {field}");
+        }
+    }
+
+    #[test]
+    fn offline_preflight_refuses_coherently_reidentified_environment_and_invocation_mismatches() {
+        let fixture = OfflineFixture::new();
+        let reidentify_installation = |value: &mut serde_json::Value| {
+            value["identity"] = "".into();
+            value["identity"] = ota_authority_protocol::message_identity(
+                b"ota.authority-launcher.secret-delivery-pressure-installation.v1\0",
+                value,
+            )
+            .unwrap()
+            .into();
+        };
+        // Keep the complete request and its public identity unchanged. Only the canonical
+        // environment changes, with a correctly rederived public-record identity.
+        let mut changed = fixture.clone();
+        let mut public: serde_json::Value = serde_json::from_slice(&changed.installation).unwrap();
+        public["selected_process_environment"]["OTA_CAPABILITY_OBSERVATION_RUNNER_VERSION"] =
+            "2.338.0".into();
+        reidentify_installation(&mut public);
+        changed.installation = serde_jcs::to_vec(&public).unwrap();
+        assert_eq!(
+            changed.inspect(1001).unwrap_err(),
+            "offline public installation does not match the complete request/build"
+        );
+
+        for (field, value) in [("workflow_run_attempt", "2"), ("workflow_run_id", "2004")] {
+            let mut changed = fixture.clone();
+            let mut request: serde_json::Value = serde_json::from_slice(&changed.request).unwrap();
+            request[field] = value.into();
+            changed.request = serde_jcs::to_vec(&request).unwrap();
+            let expected: serde_json::Value = serde_json::from_slice(
+                &render_authority_payload_from_request_bytes(
+                    &changed.request,
+                    &changed.key_identity,
+                    &changed.verifier_identity,
+                    &"b".repeat(40),
+                    &format!("sha256:{}", "2".repeat(64)),
+                    &format!("sha256:{}", "3".repeat(64)),
+                    Path::new(PRESSURE_CONTRACT_PATH),
+                    Some(&changed.contract),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+            let mut public: serde_json::Value =
+                serde_json::from_slice(&changed.installation).unwrap();
+            public["request_identity"] = expected["request_identity"].clone();
+            public["selected_process_environment"] =
+                expected["selected_process_environment"].clone();
+            reidentify_installation(&mut public);
+            changed.installation = serde_jcs::to_vec(&public).unwrap();
+            let mut provider: serde_json::Value =
+                serde_json::from_slice(&changed.provider).unwrap();
+            provider["attributeCondition"] = preflight::expected_attribute_condition(
+                &serde_json::from_value::<PressureAuthorityRequestV2>(request).unwrap(),
+            )
+            .into();
+            changed.provider = serde_jcs::to_vec(&provider).unwrap();
+            // The actual signed bundle remains independently valid for the original invocation.
+            crate::secret_delivery_authority_snapshot::verify_authority_payload_v2_store_bytes(
+                &changed.verifier,
+                &changed.binding,
+                1001,
+            )
+            .unwrap();
+            assert_eq!(
+                changed.inspect(1001).unwrap_err(),
+                "offline installed authority does not match the complete request",
+                "{field}"
+            );
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[ignore = "requires a fresh isolated Linux root container with network disabled"]
+    fn offline_preflight_production_entrypoint_preserves_installed_files_on_success_and_refusal() {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        assert_eq!(unsafe { libc::geteuid() }, 0);
+        for path in ["/etc/ota", "/srv/ota-v3-pressure", "/var/lib/ota"] {
+            assert!(
+                !Path::new(path).exists(),
+                "requires fresh isolated fixture: {path}"
+            );
+        }
+        let mut fixture = OfflineFixture::new();
+        let now = u64::try_from(time::OffsetDateTime::now_utc().unix_timestamp()).unwrap();
+        let mut store: serde_json::Value = serde_json::from_slice(&fixture.verifier).unwrap();
+        store["not_before_unix_seconds"] = (now - 60).into();
+        store["not_after_unix_seconds"] = (now + 3600).into();
+        fixture.verifier = serde_jcs::to_vec(&store).unwrap();
+        fixture.sign_payload(&fixture.payload());
+        for path in [
+            "/etc/ota/secret-delivery",
+            "/var/lib/ota/authority-launcher-public",
+            "/srv/ota-v3-pressure",
+        ] {
+            fs::create_dir_all(path).unwrap();
+            fs::set_permissions(
+                path,
+                fs::Permissions::from_mode(if path.starts_with("/srv/") {
+                    0o750
+                } else {
+                    0o755
+                }),
+            )
+            .unwrap();
+        }
+        let files: Vec<(&str, &[u8], u32)> = vec![
+            (
+                "/etc/ota/secret-delivery-pressure-request.json",
+                &fixture.request,
+                0o400,
+            ),
+            (
+                "/etc/ota/secret-delivery/verifiers-v1.json",
+                &fixture.verifier,
+                0o400,
+            ),
+            (
+                "/etc/ota/secret-delivery/bindings-v1.json",
+                &fixture.binding,
+                0o400,
+            ),
+            (
+                "/etc/ota/secret-delivery-provider-readback.json",
+                &fixture.provider,
+                0o400,
+            ),
+            (
+                "/var/lib/ota/authority-launcher-public/secret-delivery-pressure-installation.json",
+                &fixture.installation,
+                0o644,
+            ),
+            (PRESSURE_CONTRACT_PATH, contract().as_bytes(), 0o640),
+        ];
+        for (path, bytes, mode) in &files {
+            fs::write(path, bytes).unwrap();
+            fs::set_permissions(path, fs::Permissions::from_mode(*mode)).unwrap();
+        }
+        for path in ["/srv/ota-v3-pressure", PRESSURE_CONTRACT_PATH] {
+            let cpath = std::ffi::CString::new(path).unwrap();
+            assert_eq!(unsafe { libc::chown(cpath.as_ptr(), 65534, 65534) }, 0);
+        }
+        fs::create_dir_all("/var/lib/ota/replay-sentinel").unwrap();
+        fs::write(
+            "/var/lib/ota/replay-sentinel/record.json",
+            b"reserved, do not consume",
+        )
+        .unwrap();
+        let inspect = || {
+            verify_installed_authority_payload(
+                Path::new("/etc/ota/secret-delivery-pressure-request.json"),
+                Path::new("/etc/ota/secret-delivery-provider-readback.json"),
+                &fixture.key_identity,
+                &fixture.verifier_identity,
+                &"b".repeat(40),
+                &format!("sha256:{}", "2".repeat(64)),
+                &format!("sha256:{}", "3".repeat(64)),
+                &format!("sha256:{}", "6".repeat(64)),
+            )
+        };
+        let metadata = || {
+            files
+                .iter()
+                .map(|(path, _, _)| {
+                    let m = fs::metadata(path).unwrap();
+                    (
+                        m.ino(),
+                        m.mode(),
+                        m.uid(),
+                        m.gid(),
+                        m.len(),
+                        m.mtime(),
+                        m.mtime_nsec(),
+                        m.ctime(),
+                        m.ctime_nsec(),
+                        m.atime(),
+                        m.atime_nsec(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        let before = metadata();
+        assert!(inspect().is_ok());
+        assert_eq!(metadata(), before);
+        fs::set_permissions(
+            "/etc/ota/secret-delivery/bindings-v1.json",
+            fs::Permissions::from_mode(0o600),
+        )
+        .unwrap();
+        let before_refusal = metadata();
+        assert!(inspect().is_err());
+        assert_eq!(metadata(), before_refusal);
+        for (path, bytes, _) in &files {
+            assert_eq!(&fs::read(path).unwrap(), bytes);
+        }
+        assert_eq!(
+            fs::read("/var/lib/ota/replay-sentinel/record.json").unwrap(),
+            b"reserved, do not consume"
+        );
+        assert!(!Path::new("/srv/ota-v3-pressure/selected-work-executed").exists());
+    }
 
     fn contract() -> &'static str {
         r#"version: 1

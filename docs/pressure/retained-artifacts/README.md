@@ -4,6 +4,25 @@ This directory retains exact public hosted-pressure payloads after GitHub Action
 expires. A retained ZIP proves only the bounded facts recorded for its source run; it does not widen
 the run into provider, delivery, or general governance evidence.
 
+## Cancelled STS Readiness Attempt
+
+- Source run: [36725521542](https://github.com/ota-run/ota/actions/runs/36725521542), attempt 1.
+- Core: `f9ddc0f67b52031cdf16d017b405c3783de56ced`; Launcher runtime:
+  `dd667c3d6b63d8d26d9e2a40f831e9d08a7a6864`.
+- Archive: `secret-delivery-google-sts-readiness-36725521542.zip`.
+- SHA-256: `0215fc51d7c277fbcf7148f987c0e04171e79aa2f2a6663bd2288c7f66c5f686`.
+
+This retains administrator-observed preparation, the frozen readiness packet, its P2 hold,
+pre-start cancellation, and verified temporary-resource teardown. The runner never started and
+the pool/provider were never enabled. It proves no OIDC/STS invocation or acceptance, token
+disposal, post-job cleanup, root semantic attestation, delivery or selected work. The closed
+operator `outcome.json` and `OUTCOME.md` carry those limits and the required canonical offline
+installed-snapshot/operation-target verification repair. Google's pool soft-deletion is recorded
+as such, not as permanent erasure. This is not a successful hosted-provider pressure case.
+The follow-up `disk-after.json`/`disk-after-observation.txt` retain an exact-name disk-absence
+query. They do not independently prove the original boot disk's autoDelete setting or deletion
+mechanism; `OUTCOME.md` explicitly qualifies that distinction.
+
 ## V4 Protected Capability And OIDC Endpoint Compatibility
 
 - Source run: [34443349694](https://github.com/ota-run/ota/actions/runs/34443349694)

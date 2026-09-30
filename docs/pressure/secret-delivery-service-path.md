@@ -102,6 +102,44 @@ provider contact, materialization, delivery, or selected-work release.
 
 ## Acceptance
 
+### Separate STS Pre-Start Inspection
+
+The separately authorized Google STS attempt requires offline inspection after fresh provision
+and before provider enablement or runner start. This does not widen the provider-free gate above.
+Use the exact reviewed Core source with the non-default feature, while the runner is stopped.
+The root-owned mode-0400 complete V2 request selects the exact STS workflow/run/attempt and provider.
+Retain the administrator's current provider description at the fixed root-owned mode-0400 path
+`/etc/ota/secret-delivery-provider-readback.json`; its closed fields are `name`, `state`, `disabled`,
+`attributeMapping`, `attributeCondition`, and `oidc` (`issuerUri`, `allowedAudiences`). It must still
+be disabled with state `ACTIVE`. This readback is administrator-observed, not independently attested.
+
+As root, run the installed helper with independently checked source/build/artifact and verifier
+expectations from the pre-start packet; never substitute values from a prior attempt:
+
+```bash
+/usr/lib/ota-authority/bin/ota-secret-delivery-pressure-authority \
+  --verify-installed \
+  --request /etc/ota/secret-delivery-pressure-request.json \
+  --provider-readback /etc/ota/secret-delivery-provider-readback.json \
+  --verifier-key-identity "$VERIFIER_KEY_IDENTITY" \
+  --verifier-identity "$VERIFIER_IDENTITY" \
+  --expected-core-source-revision "$CORE_REVISION" \
+  --implementation-build-identity "$CORE_BUILD_IDENTITY" \
+  --implementation-artifact-identity "$CORE_ARTIFACT_IDENTITY" \
+  --expected-builder-artifact-identity "$BUILDER_ARTIFACT_IDENTITY"
+```
+
+The helper reads only the fixed installed inputs, production-verifies the actual signed V2
+stores/envelope/full graph and record, compares the complete expected payload and public
+request/environment linkage, and uses the same pure STS target derivation as runtime planning.
+No signing key, snapshot RPC, network transport, replay/reservation or installation write is used.
+Preserve the canonical recipient-owned repository directory/contract at exact 0750/0640 modes;
+the observed common owner is subject consistency, not independent proof of recipient identity.
+The closed report is point-in-time, offline/not-admitted/not-dispatched and explicitly still
+requires runtime reconciliation. It is not permission to reuse state or bypass another pre-start
+check. Refusal keeps the runner stopped and provider disabled. Only a separately reviewed fresh
+hosted packet may proceed to the already bounded OIDC/STS attempt.
+
 The hosted command must return the specific provider-free Step 7 refusal, never create
 `selected-work-executed`, remove the selected child and transient scope, leave no active Launcher
 state, and avoid publishing protected binding, source, capability, invocation, or transaction

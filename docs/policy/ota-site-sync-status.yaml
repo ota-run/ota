@@ -24,7 +24,7 @@
 
 version: 1
 repository: ota-run/ota-site
-mode: synced
+mode: waived
 consumer_commit: 7d37cc9fe628243174e81f9855194ca121d79296
-reviewed_ota_commit: 3422c8b7a57d299c97c2ae6d0db5c65c7127edda
-waiver_reason: ""
+reviewed_ota_commit: 3a4e1bca8eec22a58614c57afe2399be2842abc7
+waiver_reason: "The uncommitted Step 7 offline preflight repair and cancelled-readiness archive correction are internal administrator pressure work only. They add no public CLI, schema, JSON reference, authoring, Learn, FAQ, Glossary or successful hosted-proof claim; the retained archive is not a published pressure-evidence case."

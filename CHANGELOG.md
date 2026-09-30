@@ -26,6 +26,11 @@
 
 ## Unreleased
 
+- Add an internal, non-default Step 7 offline preflight that verifies installed signed V2
+  authority and complete transport truth against the request, public installation and disabled
+  administrator WIF readback, using shared production STS target derivation. Its output remains
+  inspection-only; it neither admits execution nor contacts a provider or closes the hosted gate.
+
 - Make generated `AGENTS.md` task commands use `--agent` across workflow phases, entrypoints,
   safe tasks, and verification tasks. Core's agent notes now distinguish inspection commands from
   admitted execution and forbid dropping the flag or directly rerunning refused work to bypass

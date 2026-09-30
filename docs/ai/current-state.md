@@ -37,6 +37,20 @@ durable agent workflow belongs in the canonical Ota skill.
 - released baseline: `v1.6.28`
 - development package identity: `v1.6.28`; this branch contains unreleased post-release source
   changes and is not a new release or support claim.
+- current proof gate (2026-09-30): V12.1 Step 7 Google STS remains open. Frozen Core
+  `f9ddc0f6` and registration stub `8422f2ce` passed source gates; the stub is on `main`.
+  MUSE held the pre-start packet because it did not canonically verify the installed signed V2
+  snapshot and Core-derived STS operation target against the request/provider readback. Run
+  `36725521542` was cancelled before runner start; no OIDC/STS call occurred. All new temporary
+  infrastructure is deleted or disabled/soft-deleted and its absence/state is observed. Next:
+  the internal offline verification mode is implemented locally in the existing pressure helper
+  and cleared by MUSE's frozen source review and narrow test recheck, with no remaining P1/P2/P3.
+  It verifies the production signed V2 payload/full graph,
+  shares pure runtime target derivation, and compares the complete request/public installation/
+  provider readback without fabricated authority, network, replay consumption, or writes. New
+  source gates and a fresh hosted attempt must follow; no new cloud resources or run exist yet.
+  Numbered milestones below retain their scope at their recorded completion; this bullet and the
+  latest Step 7 checkpoint govern the current next action.
 - active version: V12.1 secret-delivery governance. Activated on 2026-09-02 after the released V12
   closure and feasibility review of PythiaLabs' credentialed CAEP boundary. The named first adapter
   is `google_secret_manager_github_oidc_process_environment_v1`, initially limited to a
@@ -51,9 +65,10 @@ durable agent workflow belongs in the canonical Ota skill.
   invocation. Step 6 was independently reviewed and activated at Core `2dd20ab8`; its implementation
   is independently reviewed and committed at Core `67de2b4d`, with immutable consumer reconciliation
   recorded at Core `9d6696f0`.
-  No provider binding loader, concrete implementation registration, provider
-  contact, materialization, injection, execution authority, positive evidence, or support claim is
-  implemented yet. V12.2 and later versions remain inactive.
+  At that Step 6 completion boundary, no provider binding loader, concrete implementation registration, provider
+  contact, materialization, injection, execution authority, positive evidence, or support claim was
+  implemented. Subsequent Step 7 checkpoints below supersede that historical foundation;
+  delivery, Step 8, V12.2 and later versions remain inactive.
 - V12.1 implementation-order step 1 is independently reviewed and committed. `ota.yaml` now has an
   additive provider-neutral `secret_requirements` catalog with one initial
   `authentication_credential` / `external_api_authentication` vocabulary, canonical
@@ -2382,6 +2397,149 @@ Preserve the historical provider. Freeze the final Core source and reviewed Laun
 pin before queueing, then bind the queued attempt in both the provider condition and fresh
 root-owned V2 request before provisioning/start. No provider/configuration mutation, VM creation,
 runner start, hosted dispatch, merge, release, or Google STS call occurred in this preparation.
+
+Hosted STS authorization and admission blocker (2026-09-30): the operator explicitly authorized
+the dedicated WIF target, short-lived Linux/X64 VM, exact bounded STS run, evidence retention,
+and deletion of the newly created infrastructure. This supersedes the earlier implementation-only
+authorization limit for that narrow gate; it does not authorize IAM Credentials, Secret Manager,
+selected work, release, or merging before the required source gate passes. Prefer a fresh
+temporary WIF pool as well as provider, with no IAM grants, to avoid inheriting historical
+pool-wide bindings. Preserve all existing pool/provider resources.
+
+Before any mutation, read-only Actions checks found
+`secret-delivery-google-sts-live.yml` absent from `main` and the registered workflow inventory;
+both the default-branch contents lookup and workflow lookup returned HTTP 404. GitHub's
+[manual-workflow documentation](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow)
+requires default-branch presence for `workflow_dispatch`. The source workflow exists at the
+frozen implementation branch, but that alone is not dispatch readiness. Do not substitute the
+historical GitHub-only route or change the repository default branch. The smallest next action
+is to clear source CI and independently review/authorize narrow default-branch registration of
+this manual workflow; do not merge the full implementation batch merely to register it.
+Core `f9ddc0f67b52031cdf16d017b405c3783de56ced` source gates were still pending/running at
+inspection; docs-quality passed at that exact head. No new pool/provider, VM, firewall, network,
+runner registration, hosted run, or Google STS call was created while admission remained blocked.
+MUSE independently confirmed this registration gap as a P2 and found no additional production
+code repair; the plan now explicitly gates infrastructure creation on authorized default-branch
+registration and completed applicable source/merge gates. Its read-only source review did not
+execute tests or independently observe Cloud configuration. Exact-head Ota Readiness also passed
+in run `36688481991`; Release Gate `36688482134` remained pending. Before eventual runner start,
+separately verify runner-group/repository/workflow admission and one-shot job posture; four
+matching runner labels do not exclude unrelated eligible queued work. Teardown must run on
+success, refusal, cancellation, or timeout and include stopping/deregistering the runner,
+disabling the new provider, retaining non-secret evidence, deleting only newly created resources,
+and observing their deletion. No new production code or public propagation is required.
+
+Registration preparation (2026-09-30): Release Gate
+[`36688482134`](https://github.com/ota-run/ota/actions/runs/36688482134) passed at
+`f9ddc0f67b52031cdf16d017b405c3783de56ced`. The operator then authorized the narrow
+default-branch registration change. Reused the clean isolated registration worktree, based on
+`main` at `a7fe38be7bbbdd31e499c35c5d0775814c781944`, and committed/pushed only the new
+45-line STS registration stub as `8422f2ce915c2c0b853c0074ef1cdf8c69ab2d9f` on
+`bobai/register-google-sts-live-workflow`. Like the existing GitHub-only registration stub,
+it is manual-only, has empty global/job permissions, uses an ordinary hosted runner, and always
+exits 1; it has no OIDC grant or protected-runner/provider command. Both required inputs match
+the reviewed implementation workflow. Actionlint, structural checks, and diff check passed.
+The real STS workflow and production implementation at `f9ddc0f6` remain unchanged. The separate
+local agent-guidance commit and documentation changes were preserved, not promoted or discarded.
+
+The registration branch's own Release Gate
+[`36708801430`](https://github.com/ota-run/ota/actions/runs/36708801430) is running; docs-quality
+and cargo-deny passed. MUSE's original pre-commit snapshot moved before review, so no independent
+readiness verdict is claimed for it. MUSE completed the explicit frozen committed review of
+`a7fe38be..8422f2ce` with no P1/P2/P3 finding, independently confirmed the file hash and input
+parity against `f9ddc0f6`, and passed Actionlint and exact-range diff check. Its readiness verdict
+is conditional on terminal green checks at exactly `8422f2ce`; it does not cover live authority
+or dispatch. Main promotion remains held until applicable exact-source checks pass.
+No PR, main update, cloud resource,
+runner registration, or live dispatch had been created at that preparation checkpoint.
+
+Registration publication and cancelled STS readiness (2026-09-30): all six applicable source
+checks, including Release Gate `36708801430`, passed at exactly `8422f2ce`. After confirming
+`main` still matched `a7fe38be`, the independently reviewed registration stub was non-force
+fast-forwarded to `8422f2ce915c2c0b853c0074ef1cdf8c69ab2d9f`. Actions workflow `371186494`
+is registered. This is registration only, not the full implementation merge or a release.
+
+The authorized temporary Linux/X64 host built Core `f9ddc0f6`, Launcher runtime `dd667c3d`
+and Protocol `e5fe1c83`, with pinned Listener `2.337.0`. Dedicated group `4` admitted only
+Ota and the full-SHA STS workflow; runner `1379` registered ephemeral/disable-update and stayed
+offline. Protected local configuration confirmed both flags; public runner GET does not
+independently expose them. Canonical service argv, `Restart=no`, strict sandbox and the three
+writable paths remained unchanged. Root-owned read-only runner configuration must not be made
+writable to hide an anticipated ephemeral post-job deletion failure. No restart/reuse is allowed.
+Canonical provisioning established fresh authority state, inactive units, no socket owners and
+no principal processes. It correctly refused archive-preserved non-root runner ownership and a
+premature empty capture directory before installation; preparation corrected only the new host.
+
+Run [36725521542](https://github.com/ota-run/ota/actions/runs/36725521542), attempt `1`, job
+`109921288686`, queued at exact `f9ddc0f6`. Request/public-installation identities independently
+rederived, and the administrator provider readback matched the exact issuer, mapping, distinct
+audience and invocation condition. MUSE nevertheless held activation with one P2: actual installed
+signed V2 snapshot and Core-derived STS operation target were not canonically compared with the
+complete request/provider readback. Public identities and builder linkage do not close that bar.
+A P3 whole-journal exporter was changed before use to root-private scratch plus closed boolean
+facts/systemd metadata; raw journal, credential/environment contents and diagnostic lines were
+not exported. Its source-only correction is not a hosted/provider proof.
+
+The run is terminally cancelled before runner assignment/start; no Core OIDC/STS call occurred.
+Before deletion, runner status was inactive/dead, PID zero, empty cgroup, no restarts or principal
+processes, and no authority scopes, active-slot files, capture record or selected-work marker.
+Runner/group, VM, firewall/subnet/network were deleted; matching after-state
+lists are empty. Fresh provider deletion succeeded and lookup returned `NOT_FOUND` after
+parent-pool deletion. Pool `ota-sts-20260930` is disabled/`DELETED` under Google's soft-delete
+lifecycle, not permanently erased. Pool/provider were never enabled; historical resources were
+not teardown targets. Pool IAM `{}` is only that policy observation, not project-wide IAM proof.
+
+Retained non-secret readiness/teardown archive:
+`docs/pressure/retained-artifacts/secret-delivery-google-sts-readiness-36725521542.zip`, SHA-256
+`0215fc51d7c277fbcf7148f987c0e04171e79aa2f2a6663bd2288c7f66c5f686`. Archive integrity and
+JWT/private-key marker checks pass. Its operator `outcome.json` explicitly records cancellation,
+administrator observation versus semantic attestation, and all unexercised provider boundaries.
+The independently observed follow-up exact-name disk list is empty; the archive now retains
+that observation and qualifies the unobserved original autoDelete setting/deletion mechanism.
+
+Offline source repair is now implemented locally and independently source-reviewed. The feature-gated
+helper adds `--verify-installed`, requiring `--provider-readback` and
+`--expected-builder-artifact-identity` alongside its unchanged existing administrator expectations.
+It reads the fixed mode-0400 root request, signed stores, and provider readback; root-owned mode-0644
+public installation; and recipient-owned mode-0640 repository contract through bounded no-follow
+descriptors. Root ownership, singular files, exact modes and protected ancestors remain mandatory
+for authority inputs. The subject directory/file have exact 0750/0640 modes and common observed
+ownership only: this is not independently verified recipient identity or an immutable subject.
+One retained contract read feeds derivation without executing its tasks/hooks. Production Protocol
+envelope/JCS reconciliation and Core V2 signature/schema/full graph/record verification precede
+exact comparison with the complete expected payload. The public installation additionally binds
+the complete request identity, builder/source and selected environment, including runner version.
+The pure STS target derivation is shared with runtime planning; no semantic/snapshot/V4/JWT owner
+is fabricated. Exact provider resource, issuer, audience, mapping and invocation condition must
+match, with the administrator readback still disabled/ACTIVE. Output is closed, identity-only,
+offline/not-admitted/not-dispatched, with point-in-time subject-owner consistency, un-attested
+administrator provider observation, and runtime reconciliation still required. Default render
+output remains unchanged. Local checks pass: 17 pressure-fixture tests, 1 CLI mode test, 14 provider-
+client tests, 24 authority-snapshot tests, default-feature compilation, native Ota formatting and
+first-party sync. Three production-path regressions also pass in a fresh network-disabled root
+Linux/arm64 container with the workspace mounted read-only, including the complete installed
+entrypoint's success/refusal and unchanged input bytes/metadata. This is not hosted Linux/X64 proof.
+The preceding agent-guidance commit's existing local Skills reconciliation is recorded at
+`4fe996eb`; its publication remains separate. MUSE's frozen source review found no P1/P2 and one
+test-coverage P3; canonical, coherently reidentified environment and invocation mismatch tests
+resolved it in the narrow recheck. Source commit readiness is clear, with documentation outside
+that independent source review. The user has explicitly approved commit and push of this reviewed
+repair on `1.6.29-implementation`; no merge or release is authorized. Exact published-source gates
+must pass before a fresh host/group/provider/request/attempt; do not reuse cancelled state.
+Installed-host offline verification and a cleared pre-start packet remain mandatory before
+activation. No new hosted dispatch or activation has occurred.
+
+Uncovered material behavior: source gates and canonical fresh preparation are proved, not live
+execution. Installed-target verification and provider/delivery/cardinality claims are bounded
+in machine-readable `outcome.json`. GitHub scheduling, Google enforcement and post-job cleanup
+remain external/unexercised. Installed offline preflight now has a local source implementation,
+not a new hosted proof. An inactive Launcher
+diagnostic follow-on is the managed-ancestor refusal's missing offending path; owner
+`pressure_provision::verify_existing_ancestor_chain_no_follow_from`, return during prepared-
+provisioning UX triage without weakening checks. No public command/schema/JSON or authoring
+concept changes, so Site, Skills, Examples, Learn, FAQ, Glossary and command-reference need no
+propagation. Step 7 remains active; IAM Credentials, Secret Manager, materialization, injection,
+selected work, Step 8, V12.2 and release remain outside this gate.
 
 ## Agent Guidance Command Parity
 

@@ -1989,6 +1989,13 @@ response refusal, expiry during response receipt, redaction, unchanged legacy Gi
 and default/no-feature refusal. Test hooks must not become production endpoint or TLS overrides.
 Frozen-diff MUSE review and local tests precede commit readiness; neither authorizes a live call.
 
+Before creating hosted infrastructure or a live WIF target, verify that the new manual workflow
+is present on the repository's default branch and registered in Actions, with the applicable
+exact-source CI/merge gates complete and default-branch registration explicitly authorized.
+Branch-only presence is not `workflow_dispatch` admission. Do not merge the whole implementation
+batch, change the default branch, substitute a historical workflow, or add a different trigger
+to bypass this prerequisite.
+
 Before any separately authorized hosted run, pin exact Core/Launcher/Protocol revisions and
 installed artifact identities. Out-of-band administration must verify a dedicated WIF provider's
 issuer, exact allowed audience, attribute mapping, and condition binding the numeric repository
@@ -2006,6 +2013,41 @@ local fixture proves installed remote WIF configuration. This proof requires
 no service-account impersonation or Secret Manager grant and must not add either. Use a fresh
 root-owned mode-0400 request and fresh provisioned state with the stopped-runner sequence; reruns
 need a new request/state. Root request admission is not proof of remote WIF configuration.
+
+Pre-start verification gap (2026-09-30): MUSE held the frozen readiness packet for run
+`36725521542`, which was cancelled before activation and whose temporary infrastructure was
+removed. Public installation/request identities and canonical builder regeneration do not replace
+reading and verifying the actual installed signed V2 payload and using Core's production target
+derivation. At that readiness boundary, the internal pressure-helper CLI had no mode that performed
+the complete comparison. The smallest source repair is an explicit offline verification mode in that existing
+feature-gated helper, preserving default rendering bytes. Reuse canonical protected-store and
+outer envelope preconditions, the production V2 signature/JCS/schema/full graph-and-record
+verification, and canonical target derivation. If the planner cannot be reached without genuine
+candidate evidence, share its pure target derivation with the diagnostic; never fabricate
+semantic, snapshot-bound, consumed-V4 or JWT-owner objects. Export only a closed non-secret,
+offline/not-admitted/not-dispatched projection and identities. Do not read signing keys, construct
+provider transports, make snapshot RPCs, consume replay/reservations, mutate installation/state,
+or grant execution authority. Test positive installed-style fixtures and request/provider/
+condition/audience, key/signature/schema/JCS, full graph/record, legacy fallback, alias and size
+refusals, with unchanged inputs/state and no network on success or failure. Frozen review and
+new source gates precede any fresh hosted attempt. This records the missing proof path, not a
+waiver of the pre-start bar or a completed implementation.
+
+Local repair checkpoint: the existing helper now has an explicit offline `--verify-installed`
+mode with fixed root-controlled request/store/readback/public-installation inputs. It calls the
+production Protocol envelope/JCS reconciler and Core signed V2/full graph-and-record verifier,
+compares the actual payload with complete regenerated expectation, and shares pure STS target
+derivation with runtime planning. Public installation comparison binds the complete request
+identity, builder/source and selected environment, including runner version. Provider readback
+must be disabled/ACTIVE and exactly match resource, issuer, audience, mapping and run condition.
+The fixed recipient-owned contract is bounded subject input, not authority: exact directory/file
+modes and common observed ownership do not prove canonical recipient identity. Its one retained
+read supports point-in-time comparison only; runtime reconciliation is still required. Closed
+output states these limits and no contact, snapshot exchange, consumption, writes or selected work.
+MUSE cleared the frozen source review and the test-only recheck with no remaining P1/P2/P3; local
+pressure, snapshot, provider-client, CLI, default-feature and isolated Linux/arm64 production-path
+checks pass. This neither waives human publication approval or hosted source gates nor closes the
+separately authorized fresh Linux/X64 provider attempt.
 
 The hosted acceptance bar is one locally reconciled GitHub response, one accepted STS response,
 no selected-work marker, and exact child/cgroup/scope/active-slot cleanup. A refusal is retained

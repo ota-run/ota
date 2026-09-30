@@ -24,7 +24,10 @@
 
 version: 1
 repository: ota-run/skills
-mode: waived
-consumer_commit: fdb48539e61397d24ac89d2c187c68f61d3d315b
-reviewed_ota_commit: 7ef8af1a552ffcc97cbff9550aee47016f4faf38
-waiver_reason: "Core 7ef8af1a changes an internal provider-free pressure workflow and administrator runbook only; no agent authoring, review, or pressure protocol guidance changes."
+mode: synced
+consumer_commit: 4fe996eb14ed5b825ea62d9f7ae42be7a039eea8
+reviewed_ota_commit: 3a4e1bca8eec22a58614c57afe2399be2842abc7
+waiver_reason: ""
+# The preceding agent-guidance commit is already reflected in this local canonical Skills
+# commit. The current offline administrator preflight adds no further Skill guidance surface;
+# consumer publication remains separate from this source-only propagation record.
