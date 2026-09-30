@@ -2522,8 +2522,11 @@ entrypoint's success/refusal and unchanged input bytes/metadata. This is not hos
 The preceding agent-guidance commit's existing local Skills reconciliation is recorded at
 `4fe996eb`; its publication remains separate. MUSE's frozen source review found no P1/P2 and one
 test-coverage P3; canonical, coherently reidentified environment and invocation mismatch tests
-resolved it in the narrow recheck. Source commit readiness is clear, with documentation outside
-that independent source review. The user has explicitly approved commit and push of this reviewed
+resolved it in the narrow recheck. Source commit readiness is clear. MUSE's separate fixed-commit
+documentation review at `24543336` found no P1/P2 and one P3: the provider-free acceptance criteria
+were structurally nested under the STS inspection heading. A sibling `Provider-Free Hosted
+Acceptance` heading now separates the two scopes without changing either acceptance bar or source.
+The user has explicitly approved commit and push of this reviewed
 repair on `1.6.29-implementation`; no merge or release is authorized. Exact published-source gates
 must pass before a fresh host/group/provider/request/attempt; do not reuse cancelled state.
 Installed-host offline verification and a cleared pre-start packet remain mandatory before

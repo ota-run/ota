@@ -140,6 +140,8 @@ requires runtime reconciliation. It is not permission to reuse state or bypass a
 check. Refusal keeps the runner stopped and provider disabled. Only a separately reviewed fresh
 hosted packet may proceed to the already bounded OIDC/STS attempt.
 
+### Provider-Free Hosted Acceptance
+
 The hosted command must return the specific provider-free Step 7 refusal, never create
 `selected-work-executed`, remove the selected child and transient scope, leave no active Launcher
 state, and avoid publishing protected binding, source, capability, invocation, or transaction
