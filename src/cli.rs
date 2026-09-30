@@ -32070,17 +32070,17 @@ tasks:
         assert!(agents_md.contains("# AGENTS.md"));
         assert!(agents_md.contains("Generated from `./ota.yaml` by `ota agents`."));
         assert!(!agents_md.contains("DO NOT ALTER OR REMOVE COPYRIGHT NOTICES"));
-        assert!(agents_md.contains("Use only declared `ota run <task>` paths."));
+        assert!(agents_md.contains("Use only declared `ota run <task> --agent` paths."));
         assert!(agents_md.contains(
-            "do not bypass the agent boundary with raw package-manager, compiler, or test commands"
+            "do not bypass the agent boundary by dropping `--agent` or using raw package-manager, compiler, or test commands"
         ));
-        assert!(agents_md.contains("`entrypoint`: `setup` (`ota run setup`)"));
+        assert!(agents_md.contains("`entrypoint`: `setup` (`ota run setup --agent`)"));
         assert!(agents_md.contains("- `safe_tasks`:"));
-        assert!(agents_md.contains("  - `setup` (`ota run setup`)"));
-        assert!(agents_md.contains("  - `build` (`ota run build`)"));
+        assert!(agents_md.contains("  - `setup` (`ota run setup --agent`)"));
+        assert!(agents_md.contains("  - `build` (`ota run build --agent`)"));
         assert!(agents_md.contains("- `verify_after_changes`:"));
-        assert!(agents_md.contains("  - `fmt` (`ota run fmt`)"));
-        assert!(agents_md.contains("  - `check` (`ota run check`)"));
+        assert!(agents_md.contains("  - `fmt` (`ota run fmt --agent`)"));
+        assert!(agents_md.contains("  - `check` (`ota run check --agent`)"));
         assert!(agents_md.contains("## Bootstrap"));
         assert!(
             agents_md.contains("Only install ota if it is missing and installation is approved.")
@@ -32146,8 +32146,8 @@ tasks:
         assert!(agents_md.contains("# AGENTS.md"));
         assert!(agents_md.contains("Generated from `./ota.yaml` by `ota agents`."));
         assert!(!agents_md.contains("DO NOT ALTER OR REMOVE COPYRIGHT NOTICES"));
-        assert!(agents_md.contains("Use only declared `ota run <task>` paths."));
-        assert!(agents_md.contains("`entrypoint`: `setup` (`ota run setup`)"));
+        assert!(agents_md.contains("Use only declared `ota run <task> --agent` paths."));
+        assert!(agents_md.contains("`entrypoint`: `setup` (`ota run setup --agent`)"));
     }
 
     #[test]
@@ -32199,6 +32199,33 @@ tasks:
         let json: Value = serde_json::from_str(&json_output.stdout).unwrap();
         assert_eq!(json["mode"], "already_in_sync");
         assert_eq!(json["written"], false);
+    }
+
+    #[test]
+    fn agents_write_refuses_previous_generated_only_guidance_without_mutation() {
+        let fixture = ContractFixture::new(
+            "version: 1\nproject:\n  name: ota\nagent:\n  default_task: ci\ntasks:\n  ci:\n    run: cargo test\n",
+        );
+        let previous = include_str!("../tests/fixtures/agents/legacy-before-agent-flags.md");
+        let agents_path = fixture.dir.path().join("AGENTS.md");
+        fs::write(&agents_path, previous).unwrap();
+        let write = run_with(["ota", "agents", "--write", "--json", fixture.path()]);
+        assert_eq!(write.exit_code, 1);
+        assert!(
+            format!(
+                "{}{}",
+                write.stdout,
+                write.stderr.as_deref().unwrap_or_default()
+            )
+            .contains("older unmarked Ota-generated guidance"),
+            "stdout: {}; stderr: {:?}",
+            write.stdout,
+            write.stderr
+        );
+        assert_eq!(fs::read_to_string(&agents_path).unwrap(), previous);
+        let review = run_with(["ota", "agents", "--review", "--json", fixture.path()]);
+        let json: Value = serde_json::from_str(&review.stdout).unwrap();
+        assert_eq!(json["sync_state"], "update_needed");
     }
 
     #[test]

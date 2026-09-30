@@ -2133,6 +2133,11 @@ Current behavior:
 
 - keeps the contract-first boundary workflow inside `ota.yaml`: `ota agents --review` inspects the current writable/protected path boundary and provenance, `ota agents --confirm --dry-run` previews the exact `reviewed: true` mutation, and `ota agents --confirm` writes that confirmation into the contract before any `AGENTS.md` sync
 - derives `AGENTS.md` from the repo contract’s `agent` block when one is present
+- renders task execution examples with `--agent`, including entrypoint, default task, safe tasks,
+  verification tasks, and default-workflow phases. The flag enforces admission at execution time;
+  a displayed workflow task is not automatically agent-safe. Inspection and authorized authoring
+  commands use their actual supported CLI flags. Contract-authored note commands are not rewritten;
+  trailing whitespace is removed and lines are emitted with LF endings.
 - doctor treats the structured managed block as governed boundary evidence, so stale `safe_tasks`,
   `verify_after_changes`, `writable_paths`, and `protected_paths` content surfaces as
   agent-boundary drift instead of silently staying outdated
@@ -2151,7 +2156,9 @@ Current behavior:
   block, and refuses without modifying the file when markers are incomplete, duplicate, reversed,
   or otherwise ambiguous
 - new files are written with the same managed markers, and a legacy file containing only the exact
-  prior generated guidance is migrated into one managed block instead of duplicating that content
+  current generated guidance is migrated into one managed block instead of duplicating that content.
+  Older unmarked Ota-generated files whose content differs refuse without mutation and require
+  review before establishing one managed block; sync does not append conflicting instructions.
 - contract-authored content containing either reserved managed-block marker refuses in write mode,
   so generated notes or metadata cannot manufacture a second ownership boundary
 - only a genuinely missing output file enters creation; any other read or decode failure refuses

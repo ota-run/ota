@@ -34630,7 +34630,7 @@ pub fn agents(
                 Ok(merged) => merged,
                 Err(()) => {
                     let error = format!(
-                        "refusing to write `{}` because its Ota managed-block markers are incomplete, duplicate, reversed, or ambiguous; repair the markers manually and retry",
+                        "refusing to write `{}` because its Ota managed-block markers are incomplete, duplicate, reversed, or ambiguous, or it contains older unmarked Ota-generated guidance; review the existing guidance and establish one managed block before retrying",
                         compact_output_display
                     );
                     return finalize_debug(
@@ -62876,7 +62876,7 @@ fn render_agents_markdown(
         if let Some(prepare_task) = workflow.prepare_task {
             output.push_str("- `prepare`: `ota run ");
             output.push_str(prepare_task);
-            output.push_str("`\n");
+            output.push_str(" --agent`\n");
         } else if let Some(prepare_action) = workflow.prepare_action.as_ref() {
             output.push_str("- `prepare`: `workflow action ");
             output.push_str(&render_workflow_prepare_action_preview(prepare_action));
@@ -62885,12 +62885,12 @@ fn render_agents_markdown(
         if let Some(setup_task) = workflow.setup_task {
             output.push_str("- `setup`: `ota run ");
             output.push_str(setup_task);
-            output.push_str("`\n");
+            output.push_str(" --agent`\n");
         }
         if let Some(run_task) = workflow.run_task {
             output.push_str("- `run`: `ota run ");
             output.push_str(run_task);
-            output.push_str("`\n");
+            output.push_str(" --agent`\n");
         }
         if !workflow.required_services.is_empty() {
             output.push_str("- `required_services`: ");
@@ -62982,23 +62982,23 @@ fn render_agents_markdown(
 
     if let Some(agent) = agent {
         if agent.posture == "readiness_strict" {
-            output.push_str("Use only declared `ota run <task>` paths. If the contract does not model the work you need, stop and request a contract update; do not bypass the agent boundary with raw package-manager, compiler, or test commands.\n\n");
+            output.push_str("Use only declared `ota run <task> --agent` paths. If execution is refused or the contract does not model the work you need, stop and request a contract update; do not bypass the agent boundary by dropping `--agent` or using raw package-manager, compiler, or test commands.\n\n");
         } else {
-            output.push_str("Use declared `ota run <task>` paths before raw package-manager, compiler, or test commands when this contract already defines the task you need. Drop to raw commands only for narrow debugging or one-off checks that the contract does not model yet.\n\n");
+            output.push_str("Use declared `ota run <task> --agent` paths when this contract defines the task you need. After any refusal, do not bypass admission by dropping `--agent` or executing the underlying command or script directly. Explicitly authorized defect-isolation commands may address genuinely unmodelled work; this exception never permits rerunning refused work.\n\n");
         }
         if let Some(entrypoint) = agent.entrypoint {
             output.push_str("- `entrypoint`: `");
             output.push_str(entrypoint);
             output.push_str("` (`ota run ");
             output.push_str(entrypoint);
-            output.push_str("`)\n");
+            output.push_str(" --agent`)\n");
         }
         if let Some(default_task) = agent.default_task {
             output.push_str("- `default_task`: `");
             output.push_str(default_task);
             output.push_str("` (`ota run ");
             output.push_str(default_task);
-            output.push_str("`)\n");
+            output.push_str(" --agent`)\n");
         }
         if !agent.safe_tasks.is_empty() {
             render_agents_task_list(&mut output, "safe_tasks", &agent.safe_tasks);
@@ -63846,7 +63846,7 @@ fn render_agents_task_list(output: &mut String, label: &str, tasks: &[String]) {
         output.push_str(value);
         output.push_str("` (`ota run ");
         output.push_str(value);
-        output.push_str("`)\n");
+        output.push_str(" --agent`)\n");
     }
 }
 
@@ -63900,6 +63900,18 @@ fn merge_agents_markdown(existing: &str, generated: &str) -> Result<String, ()> 
         merged.push_str(AGENTS_GENERATED_END);
         merged.push_str(&existing[end_index..]);
         return Ok(merged);
+    }
+
+    let normalized = existing.replace("\r\n", "\n");
+    if normalized.starts_with("# AGENTS.md\n\nGenerated from `")
+        && normalized
+            .lines()
+            .nth(2)
+            .is_some_and(|line| line.ends_with("` by `ota agents`."))
+    {
+        // Exact current generated-only files are handled by the write path. Older
+        // unmarked guidance needs review rather than appending conflicting commands.
+        return Err(());
     }
 
     let mut merged = existing.trim_end().to_string();
@@ -96649,9 +96661,87 @@ workflows:
         let rendered =
             super::render_agents_markdown(&contract, Path::new("./ota.yaml"), None, "./ota.yaml");
 
-        assert!(rendered.contains("- `prepare`: `ota run setup:env:local`"));
-        assert!(rendered.contains("- `setup`: `ota run setup`"));
-        assert!(rendered.contains("- `run`: `ota run dev`"));
+        assert!(rendered.contains("- `prepare`: `ota run setup:env:local --agent`"));
+        assert!(rendered.contains("- `setup`: `ota run setup --agent`"));
+        assert!(rendered.contains("- `run`: `ota run dev --agent`"));
+    }
+
+    #[test]
+    fn render_agents_markdown_requires_agent_admission_for_every_task_command() {
+        let contract = parse_contract_str(
+            Path::new("./ota.yaml"),
+            r#"
+version: 1
+project:
+  name: agent-guidance
+tasks:
+  setup:
+    run: echo setup
+  verify:
+    run: echo verify
+  deploy:
+    run: echo deploy
+    safe_for_agent: false
+workflows:
+  default: release
+  release:
+    setup:
+      task: setup
+    run:
+      task: deploy
+agent:
+  entrypoint: setup
+  default_task: verify
+  safe_tasks: [setup, verify]
+  verify_after_changes: [verify]
+"#,
+        )
+        .unwrap();
+        let agent =
+            crate::output::AgentSummary::from_config(contract.agent.as_ref().unwrap()).unwrap();
+        let rendered = super::render_agents_markdown(
+            &contract,
+            Path::new("./ota.yaml"),
+            Some(&agent),
+            "./ota.yaml",
+        );
+
+        for command in rendered
+            .split('`')
+            .filter(|value| value.starts_with("ota run "))
+        {
+            assert!(command.ends_with(" --agent"), "{command}");
+        }
+        assert!(rendered.contains("`entrypoint`: `setup` (`ota run setup --agent`)"));
+        assert!(rendered.contains("`default_task`: `verify` (`ota run verify --agent`)"));
+        assert!(
+            rendered.contains("- `verify_after_changes`:\n  - `verify` (`ota run verify --agent`)")
+        );
+        assert!(rendered.contains("- `run`: `ota run deploy --agent`"));
+        assert!(!rendered.contains("ota run deploy`"));
+    }
+
+    #[test]
+    fn render_agents_markdown_authoring_postures_never_bypass_refusals() {
+        for posture in ["contract_authoring", "infra_authoring"] {
+            let contract = parse_contract_str(
+                Path::new("./ota.yaml"),
+                &format!("version: 1\nproject:\n  name: authoring\nagent:\n  posture: {posture}\n  notes: |\n    Inspect `ota doctor`.  \n    Preserve `ota run custom` as authored text.\n"),
+            ).unwrap();
+            let agent =
+                crate::output::AgentSummary::from_config(contract.agent.as_ref().unwrap()).unwrap();
+            let rendered = super::render_agents_markdown(
+                &contract,
+                Path::new("./ota.yaml"),
+                Some(&agent),
+                "./ota.yaml",
+            );
+            assert!(rendered.contains("After any refusal, do not bypass admission by dropping `--agent` or executing the underlying command or script directly."));
+            assert!(rendered.contains("this exception never permits rerunning refused work"));
+            assert!(rendered.contains(
+                "## Notes\n\nInspect `ota doctor`.\nPreserve `ota run custom` as authored text.\n"
+            ));
+        }
     }
 
     #[test]

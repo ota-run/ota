@@ -508,8 +508,8 @@ Avoid inventing overlapping terms if the above already fit.
 5. Keep validation tight but real
 6. If touching command UX, think about human output, JSON output, and exit codes together
 7. **Consult `ota.yaml` for canonical task, test, and CI flows.**
-8. **Use scripts in `scripts/` (e.g., `bump-version.sh`, `install.sh`) for release/dev flows as defined in `ota.yaml` tasks.**
-9. **When updating the release version, use `ota run bump:version --version <patch|minor|major>` by default.** Use an explicit semver string only when you intentionally need a non-incremental release version.
+8. **Use declared task paths through `ota run <task> --agent` for development work.** Repository scripts are task implementations, not alternate paths around agent admission.
+9. **Release-version changes are maintainer-owned operations.** `bump:version` is outside this repository's agent-safe surface; obtain task-specific authorization for release work and never bypass agent admission by omitting `--agent`.
 9. **Refer to example contracts in `examples/` for canonical authoring patterns.**
 
 ### Autonomous bug fixing
@@ -924,37 +924,37 @@ Generated from `./ota.yaml` by `ota agents`.
 
 ## Agent Contract
 
-Use only declared `ota run <task>` paths. If the contract does not model the work you need, stop and request a contract update; do not bypass the agent boundary with raw package-manager, compiler, or test commands.
+Use only declared `ota run <task> --agent` paths. If execution is refused or the contract does not model the work you need, stop and request a contract update; do not bypass the agent boundary by dropping `--agent` or using raw package-manager, compiler, or test commands.
 
-- `entrypoint`: `setup` (`ota run setup`)
-- `default_task`: `ci` (`ota run ci`)
+- `entrypoint`: `setup` (`ota run setup --agent`)
+- `default_task`: `ci` (`ota run ci --agent`)
 - `safe_tasks`:
-  - `setup` (`ota run setup`)
-  - `build` (`ota run build`)
-  - `fmt` (`ota run fmt`)
-  - `check` (`ota run check`)
-  - `test` (`ota run test`)
-  - `ci` (`ota run ci`)
-  - `doctor-annotations` (`ota run doctor-annotations`)
-  - `contract:validate` (`ota run contract:validate`)
-  - `contract:tasks` (`ota run contract:tasks`)
-  - `contract:doctor` (`ota run contract:doctor`)
-  - `agents:sync:check` (`ota run agents:sync:check`)
-  - `compat` (`ota run compat`)
-  - `first-party:sync:check` (`ota run first-party:sync:check`)
-  - `pressure:evidence:site:check` (`ota run pressure:evidence:site:check`)
-  - `skills:sync:check` (`ota run skills:sync:check`)
-  - `schemas:sync` (`ota run schemas:sync`)
-  - `docs:manifest:sync` (`ota run docs:manifest:sync`)
-  - `candidate-publication:faults` (`ota run candidate-publication:faults`)
-  - `effect-refusal-archive:faults` (`ota run effect-refusal-archive:faults`)
-  - `proof-assurance:faults` (`ota run proof-assurance:faults`)
-  - `release-gate` (`ota run release-gate`)
-  - `ux-review` (`ota run ux-review`)
-  - `ux:refresh` (`ota run ux:refresh`)
-  - `dependency-update` (`ota run dependency-update`)
+  - `setup` (`ota run setup --agent`)
+  - `build` (`ota run build --agent`)
+  - `fmt` (`ota run fmt --agent`)
+  - `check` (`ota run check --agent`)
+  - `test` (`ota run test --agent`)
+  - `ci` (`ota run ci --agent`)
+  - `doctor-annotations` (`ota run doctor-annotations --agent`)
+  - `contract:validate` (`ota run contract:validate --agent`)
+  - `contract:tasks` (`ota run contract:tasks --agent`)
+  - `contract:doctor` (`ota run contract:doctor --agent`)
+  - `agents:sync:check` (`ota run agents:sync:check --agent`)
+  - `compat` (`ota run compat --agent`)
+  - `first-party:sync:check` (`ota run first-party:sync:check --agent`)
+  - `pressure:evidence:site:check` (`ota run pressure:evidence:site:check --agent`)
+  - `skills:sync:check` (`ota run skills:sync:check --agent`)
+  - `schemas:sync` (`ota run schemas:sync --agent`)
+  - `docs:manifest:sync` (`ota run docs:manifest:sync --agent`)
+  - `candidate-publication:faults` (`ota run candidate-publication:faults --agent`)
+  - `effect-refusal-archive:faults` (`ota run effect-refusal-archive:faults --agent`)
+  - `proof-assurance:faults` (`ota run proof-assurance:faults --agent`)
+  - `release-gate` (`ota run release-gate --agent`)
+  - `ux-review` (`ota run ux-review --agent`)
+  - `ux:refresh` (`ota run ux:refresh --agent`)
+  - `dependency-update` (`ota run dependency-update --agent`)
 - `verify_after_changes`:
-  - `ci` (`ota run ci`)
+  - `ci` (`ota run ci --agent`)
 - `writable_paths`: `src`, `docs`, `README.md`, `scripts`, `tests`, `tasks`, `CHANGELOG.md`, `Cargo.toml`
 - `protected_paths`: `.github`, `AGENTS.md`, `Cargo.lock`, `ota.yaml`, `LICENSE`
 
@@ -970,20 +970,19 @@ Only install ota if it is missing and installation is approved.
 ## Notes
 
 Treat Ota as the default workflow, the way npm is the default in Node repos.
-Use `ota validate` to verify the contract.
-Use `ota doctor` to inspect readiness and agent guidance.
-Use `ota tasks` to discover runnable repo actions.
-When a repo already exposes a matching safe task, prefer `ota run <task>` over raw package-manager or language-tool commands.
-Fall back to direct commands only when no truthful Ota task exists or when isolating an Ota defect.
+Inspection commands do not accept `--agent`: use `ota validate` to verify the contract, `ota doctor` to inspect readiness, and `ota tasks --safe --use` to discover agent-callable lanes.
+Execute declared tasks with `ota run <task> --agent`; prepare a selected workflow with `ota up --workflow <name> --agent`.
+If agent admission refuses, stop; never drop `--agent` or use the underlying command to bypass it. Direct defect-isolation commands require explicit task-specific authorization.
 Agent-safe means admitted through the declared contract, not necessarily read-only; inspect task notes, effects, and writable paths before running maintenance tasks that regenerate tracked artifacts.
-Use `ota run setup` to prepare the repo.
-Use `ota run contract:validate` to self-host the contract validator against this checkout.
-Use `ota run ci` to run the canonical verification path.
+Use `ota run setup --agent` to prepare the repo.
+Use `ota run contract:validate --agent` to self-host the contract validator against this checkout.
+Use `ota run ci --agent` to run the canonical verification path.
+Release-version changes and installation are maintainer-owned operations outside this repo's agent-safe task surface.
 Read `docs/ai/current-state.md` and the active plan before substantive work; they own the current implementation boundary and next proof gate.
 Do not activate a later version or implementation step without an explicit reviewed and committed activation record.
 Do not initiate live provider, credential, cloud, VPS, or network pressure work unless the active plan authorizes that exact boundary and the user explicitly requests it.
 Treat `.github`, `AGENTS.md`, `Cargo.lock`, `ota.yaml`, and `LICENSE` as protected; change them only with explicit task-specific authorization.
-After changing agent guidance, run `ota run agents:sync:check --agent`; regenerate the managed block with `ota agents . --write` only when the contract change is intentional and authorized.
+After changing agent guidance, run `ota run agents:sync:check --agent`; managed-block regeneration is a protected authoring operation requiring explicit task-specific authorization.
 Preserve unrelated worktree changes and inspect connected Core, Examples, Skills, Site, Learn, FAQ, and Glossary surfaces before declaring product work complete.
 Prefer narrow changes with regression tests.
 Keep public docs and contracts aligned with implementation.

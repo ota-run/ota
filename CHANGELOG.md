@@ -26,6 +26,12 @@
 
 ## Unreleased
 
+- Make generated `AGENTS.md` task commands use `--agent` across workflow phases, entrypoints,
+  safe tasks, and verification tasks. Core's agent notes now distinguish inspection commands from
+  admitted execution and forbid dropping the flag or directly rerunning refused work to bypass
+  admission in every posture. Older unmarked generated guidance requires review before sync
+  instead of retaining stale commands alongside a new managed block.
+
 - Add the feature-gated Core side of a private, one-use GitHub Actions OIDC capability relay. The
   exact live workflow and task must consume a verified V4 transaction before the same-child session
   can receive bounded URL and bearer bytes; historical and provider-free routes refuse. This does

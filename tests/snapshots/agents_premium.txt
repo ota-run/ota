@@ -21,15 +21,15 @@ Generated from `./ota.yaml` by `ota agents`.
 
 ## Agent Contract
 
-Use only declared `ota run <task>` paths. If the contract does not model the work you need, stop and request a contract update; do not bypass the agent boundary with raw package-manager, compiler, or test commands.
+Use only declared `ota run <task> --agent` paths. If execution is refused or the contract does not model the work you need, stop and request a contract update; do not bypass the agent boundary by dropping `--agent` or using raw package-manager, compiler, or test commands.
 
-- `entrypoint`: `setup` (`ota run setup`)
-- `default_task`: `ci` (`ota run ci`)
+- `entrypoint`: `setup` (`ota run setup --agent`)
+- `default_task`: `ci` (`ota run ci --agent`)
 - `safe_tasks`:
-  - `setup` (`ota run setup`)
-  - `ci` (`ota run ci`)
+  - `setup` (`ota run setup --agent`)
+  - `ci` (`ota run ci --agent`)
 - `verify_after_changes`:
-  - `ci` (`ota run ci`)
+  - `ci` (`ota run ci --agent`)
 - `writable_paths`: `src`, `docs`
 - `protected_paths`: `ota.yaml`, `Cargo.lock`
 

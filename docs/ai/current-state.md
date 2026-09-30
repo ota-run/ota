@@ -2383,6 +2383,19 @@ pin before queueing, then bind the queued attempt in both the provider condition
 root-owned V2 request before provisioning/start. No provider/configuration mutation, VM creation,
 runner start, hosted dispatch, merge, release, or Google STS call occurred in this preparation.
 
+## Agent Guidance Command Parity
+
+Generated `AGENTS.md` task commands now include `--agent` for default-workflow phases,
+entrypoints, default tasks, safe tasks, and verification tasks. Core's `agent.notes` and
+handwritten guidance use agent admission for execution and identify flagless inspection commands
+by their actual CLI syntax. Release-version changes remain outside the agent-safe surface.
+Authoring postures also forbid directly rerunning refused work; defect isolation applies only to
+explicitly authorized unmodelled work. Older unmarked generated-only files refuse without mutation
+and remain `update_needed` pending review; exact current generated-only files still migrate.
+Core command docs, CHANGELOG, the Site command card, canonical Skill, and both installed Skill
+mirrors carry this correction. Examples, schemas, Learn, FAQ, and Glossary need no new shape or
+term: this fixes existing command guidance without changing admission semantics.
+
 ## Working Rules
 
 - Update this handoff immediately when the active step, blocker, next action, or proof status
