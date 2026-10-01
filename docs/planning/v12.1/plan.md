@@ -2325,6 +2325,99 @@ Formatting/sync/diff checks pass; strict
 warnings-as-errors Clippy is not a passing repository gate (863 diagnostics, with the filtered
 provider/binding diagnostic in unchanged STS code). No unrelated lint cleanup is included.
 
+#### Production IAM Source-Enablement Batch Activation
+
+The reviewed offline source batch is committed at Core `b789fad6`; its connected Launcher
+test-only extension is committed at `b5c8f99`. Core's production Launcher and Protocol pins
+remain `dd667c3d6b63d8d26d9e2a40f831e9d08a7a6864` and
+`e5fe1c83e562e02f60e27026c7148918bd016155`. The operator requested moving to the next
+gate on 2026-10-01. After MUSE's planning clearance, the operator explicitly authorized this
+source-only batch, its activation-record commit, the dedicated protected IAM workflow edits
+and focused Cargo/Actionlint checks. Activation takes effect through this documentation commit
+before implementation. Source commit/push and any live attempt remain unauthorized.
+
+Checklist and acceptance for the next source-only batch:
+
+- [x] Obtain independent planning clearance and task-specific authorization for the new
+  `.github/workflows/secret-delivery-google-iam-live.yml`; commit an activation record before
+  changing production admission. No `ota.yaml`, `AGENTS.md`, Cargo lock/pin or release change
+  is presumed. Focused direct Cargo/Actionlint checks also require task-specific authorization.
+- [ ] Add a closed administrator request V3, kind `secret_delivery_iam_pressure_authority_request`,
+  with identity domain `ota.secret-delivery-iam-pressure.authority-request.v3\0`. Carry every
+  existing invocation field plus one `iam_target` object containing exactly
+  `workload_identity_provider`, `google_project` and `service_account`. Reject duplicate/unknown
+  fields, missing targets, route/version/kind substitutions, invalid tuples and V1/V2 fallbacks.
+  V3 admits only the exact IAM workflow/ref already named below. V1 and STS V2 parsing,
+  identity domains, targets, workflow admission and rendered bytes retain their existing meaning.
+- [ ] Extend the existing Core pressure producer to bind the complete V3 request into the
+  existing signed authority payload V2. Derive provider/pool/audience with the existing canonical
+  tuple validator; set the named account/project together and retain the same non-executed
+  secret fixture identifier/version under that project. This creates no Secret Manager access.
+  Reuse the current Launcher signing/install path unchanged; public installation evidence binds
+  the V3 request identity, while the signed private payload carries the account and full graph/record.
+- [ ] Extend the existing offline administrator preflight to inspect V3 without weakening V2.
+  Rebuild and compare the entire signed payload and public installation from protected inputs,
+  derive the IAM endpoint through the production operation plan, and compare the exact disabled
+  WIF provider readback/claim condition for the request. Retain the existing fixed protected paths,
+  descriptor/owner/mode checks, byte-exact contract check and no-mutation/no-contact posture.
+  Its report must identify the IAM request and target without treating configuration readback
+  as admission, independent provider attestation or service-account policy proof. The separate
+  hosted packet must inspect service-account-scoped policy and inherited access; this source
+  preflight does not claim to have proved either.
+- [ ] Admit IAM only through its exact retained signed candidate and consumed V4 binding. Reuse
+  the private STS-to-IAM owner, exact request builders, fixed no-proxy/direct-TLS ureq posture,
+  bounded response reader and fresh post-validation clock checks. Add one production IAM callback
+  to that route only; no retries, redirects, renewal, ADC/metadata/credential-file fallbacks,
+  alternate target or standalone bearer inputs. Revalidate the exact HTTP request and fixed
+  transport inside the callback before `Agent::run`. For both STS and IAM on the new route,
+  finish callback validation and HTTP/agent construction before a fresh lightweight wall/monotonic
+  temporal check immediately before `Agent::run`. Apply the retained binding/JWT/transaction
+  deadlines and, for IAM, STS-token expiry with the same canonical temporal checks; do not
+  rerun expensive graph/context validation after this final sample. Failure or clock uncertainty
+  prevents the send seam. Keep Core callback counts distinct from actual send/provider-contact
+  claims. Preserve the old GitHub/STS terminal routes.
+- [ ] Keep CLI orchestration thin. Return a closed internal checkpoint posture for the selected
+  route, count only Core-level calls, and always fail terminally after IAM acceptance/refusal.
+  Existing OIDC/STS diagnostics keep their meaning; the IAM diagnostic explicitly refuses before
+  Secret Manager, materialization, injection and selected work. No public JSON schema changes.
+- [ ] Prepare one manual-only IAM workflow using the existing protected installation/principal
+  reconciliation and cleanup path. Expected Core revision, WIF provider and service account are
+  comparison-only public mirrors of the installed request, never runtime target overrides.
+  Reconstruct V3 identity locally and require it to match installation evidence before invoking
+  the client once. Retain only a closed non-secret job-observed projection after exact terminal
+  refusal and cleanup checks. Never read the recipient-owned contract from the unprivileged job,
+  publish tokens/provider error bodies or imply certification/independent custody/cardinality.
+- [ ] Prove V1/V2 byte/identity preservation, V3 field/version/domain mutations, producer and
+  complete installed preflight agreement, account/project/provider/invocation substitution,
+  exact route/no-promotion dispatch and refusal counts using network-disabled tests. Exercise
+  preparation-delayed expiry/clock failure for both new-route sends through the production
+  preparation/temporal path and an injected send seam: zero sends must occur if HTTP/agent
+  preparation crosses a deadline. A clock sample before entering the callback is insufficient.
+  Exercise
+  the rendered workflow as the real non-root principal in an isolated Linux fixture, including
+  wrong mirrors/request/build/owner, pre-client failures, token redaction and cleanup failure.
+  Preserve the 52 IAM/14 STS actual-child cases; no provider connection is needed for source proof.
+- [ ] Obtain frozen MUSE source review, then request commit authorization. Assess first-party
+  propagation: these remain non-default internal pressure/helper surfaces, not a supported public
+  command/JSON/authoring contract. Core changelog and handoff are required; Site/Skills/Examples/
+  Learn/FAQ/Glossary/schema/command cards need changes only if implementation introduces a
+  public term, command or support claim. Do not silently waive a changed public surface.
+
+Risks: request-version substitution must not widen old routes; public mirrors must not acquire
+authority; expensive reconciliation must not make dispatch clocks stale; and an internal source
+route must not be represented as a proven provider path. Runtime source admission is distinct
+from installed authority and operator permission. No hosted activation follows automatically.
+Fresh cloud resources, API enablement, accounts/grants, authority issuance, runner changes,
+workflow dispatch, IAM provider contact and teardown remain a separately authorized hosted gate.
+
+Initial frozen planning review found one P2: the existing owner clock sample precedes callback
+HTTP/agent preparation. The proposal now explicitly requires a fresh lightweight temporal check
+after that preparation at both actual send boundaries, plus isolated zero-send regressions.
+MUSE's focused frozen planning recheck cleared the P2 with no remaining P1/P2/P3 findings.
+Both document hashes and repository HEADs matched during review. Only this review-outcome record
+and the corresponding handoff changed afterward. Planning readiness is cleared; the operator
+authorized source implementation as recorded above. No hosted activation follows from this.
+
 #### Ownership And Route Preservation
 
 - Reuse Core's existing provider operation plan, request builder, response parser, fixed direct-TLS

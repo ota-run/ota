@@ -41,9 +41,12 @@ durable agent workflow belongs in the canonical Ota skill.
   `41a979b0d16200cef1608c5f469279b1dc2d2440`; MUSE cleared outcome retention after the
   narrow P3 diagnostic-ordering wording correction.
   V12.1 Step 7 remains active. MUSE cleared the next IAM Credentials checkpoint plan after the
-  timestamp-requirement correction. The operator requested the network-disabled implementation
-  batch and authorized its activation/evidence documentation commit plus focused checks. This
-  activation takes effect through that commit before source implementation. New provider contact, infrastructure,
+  timestamp-requirement correction. The reviewed network-disabled source batch is now committed
+  at Core `b789fad6`, with the Launcher test-only extension at `b5c8f99`; production pins stay
+  unchanged. MUSE cleared the production IAM source-enablement plan, and the operator authorized
+  its activation-record commit, dedicated protected IAM workflow edits and focused checks.
+  Source activation takes effect through the documentation commit before implementation.
+  New provider contact, infrastructure,
   merge and release remain inactive pending their separate gates.
   Historical predecessor: Core `0476b9a3b484c672fccb164517a1dc3097cd5e66`
   passed exact-head Release Gate `36745309983`
@@ -209,10 +212,22 @@ durable agent workflow belongs in the canonical Ota skill.
   in this batch. No IAM workflow, producer/request shape, Protocol or Launcher production change
   is authorized. The connected Launcher change is test-only: extend the existing actual-child
   cleanup fixture without changing its production runtime or Core's pinned revision.
-  Next: independently review the exact production route, producer/preflight and fixed-network
-  transport source batch before implementation. The operator requested continuing to this next
-  gate; hosted activation remains separately inactive. Do not push, provision a host, change
-  provider configuration/grants or dispatch an IAM workflow.
+  The offline source batch is committed at Core `b789fad6` and Launcher `b5c8f99` without push.
+  Next: implement the independently reviewed production IAM source-enablement batch in the plan.
+  It requires additive administrator request V3 (full invocation plus exact WIF provider,
+  project and service account), unchanged signed V2/V4 carriers, complete offline rederivation,
+  one fixed IAM transport and one dedicated protected workflow with comparison-only mirrors.
+  The operator authorized this source-only batch, its protected workflow/focused checks and
+  activation-record commit. No source commit/push or hosted activation is authorized.
+  MUSE's initial frozen planning review found one P2: HTTP/agent preparation in the callback
+  follows the owner clock sample. The corrected proposal requires fresh lightweight temporal
+  checks after preparation immediately before both new-route sends, plus zero-send delayed-expiry
+  regressions. MUSE's frozen focused recheck cleared the P2 with no remaining P1/P2/P3 findings;
+  both document hashes and HEADs matched. Only review-outcome records changed afterward.
+  Planning readiness is cleared; source activation takes effect through this documentation
+  commit before implementation. Provider/cloud/workflow-dispatch authorization remains absent.
+  Hosted activation remains separately inactive. Do not push, provision a host, change provider
+  configuration/grants or dispatch an IAM workflow.
   Uncovered material behavior: bounded OIDC/STS and protected-client finalization are proved only
   by the job-observed projection plus separate administrator absence/cleanup observations.
   Provider/lower-layer cardinality, condition enforcement, independent JWT verification,
