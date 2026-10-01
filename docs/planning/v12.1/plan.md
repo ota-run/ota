@@ -2210,6 +2210,36 @@ this source batch on 2026-10-01. The prior two ownership defects and principal-r
 resolved within this scope. That verdict accepts the reported local validation, not an independent
 test rerun, hosted proof or activation clearance.
 
+Fresh attempt-6 checkpoint (2026-10-01, independently reviewed outcome): run `36874656786`,
+attempt `1`, job `110410885453`, passed at exact Core
+`41a979b0d16200cef1608c5f469279b1dc2d2440`, Launcher
+`dd667c3d6b63d8d26d9e2a40f831e9d08a7a6864`, Protocol
+`e5fe1c83e562e02f60e27026c7148918bd016155`, on runner `1384`/group `9`.
+Separate human authorization, complete off-clock preparation review and explicit MUSE
+reviewer-ready handoff preceded one canonical issue. The frozen signed/installed delta was
+independently cleared with no P1/P2/P3 findings. Full production offline V2 graph/record and
+independent producer/build comparison passed. After the 300-second operator hold, complete
+fresh admission passed with 2482 signed seconds remaining, exceeding the 1200-second floor.
+The job's closed projection reports one Core-level GitHub response and one accepted STS
+response; JWT claims were matched-unadmitted, returned token discarded, and protected-client
+exit 1/finalization validated before IAM Credentials, Secret Manager or selected work.
+Separate root terminal observation returned 0 with no principal, scope, slot entry or marker,
+and empty runner cgroup/MainPID 0. Marker absence is point-in-time administrator observation,
+not proof that selected work never ran. The runner unit separately ended failed/failed with
+exit 2 and read-only/denied diagnostic text; do not report a clean runner-unit exit. No public
+capture record or independently root-custodied semantic attestation was produced.
+Provider/pool were disabled; reviewed teardown returned 0 and final readbacks confirmed exact
+temporary-resource absence/disabled soft-deletion. Retention:
+`docs/pressure/retained-artifacts/secret-delivery-google-sts-live-36874656786.json`.
+MUSE confirmed this meets the bounded job-observed positive STS bar, with no P1/P2 findings;
+its sole P3 diagnostic-ordering wording correction is applied and retention is cleared.
+It does not close all of Step 7 or authorize the next provider-contact/admission slice.
+Provider/lower-layer cardinality, condition enforcement, independent JWT verification,
+revocation and token-memory erasure remain explicitly `not_proved`. Cloud lifecycle, runner
+retirement, branch/dispatch freeze and administrator cleanup are repo-owned external behavior.
+Later delivery/selected-work continuation were not attempted. No new public command, schema,
+authoring concept, first-party public propagation, merge or release is implied by this record.
+
 Implementation record (2026-09-30): the source batch implements this boundary with no live
 contact or installation. MUSE's initial frozen source review found only a P2 requiring
 independent post-response JWT-expiry coverage while binding authority remains fresh. That
@@ -2219,6 +2249,179 @@ fixture. The implementation-only batch is locally complete; see the live handoff
 validation. The operator authorized commit and push of the reviewed source checkpoint on
 2026-09-30; this does not authorize hosted proof, Google contact, configuration changes,
 or any later provider/selected-work gate.
+
+### IAM Credentials Checkpoint (First Network-Disabled Batch Active 2026-10-01)
+
+The independently reviewed bounded STS outcome above meets that checkpoint's job-observed
+acceptance bar. The next proposed Step 7 operation is one service-account access-token request,
+followed by deliberate terminal refusal before Secret Manager, materialization, injection or
+selected work. The independently reviewed proposal is activated only through the first
+network-disabled batch record below. No production IAM network route, IAM grant, provider
+configuration, issuance, runner or hosted attempt is activated. Step 7 remains active; Step 8
+and V12.2 remain inactive.
+
+Independent plan review: MUSE's initial review found one P2 requiring IAM timestamp
+provider-format compatibility. The amended parser/fractional-expiry requirements below cleared
+that planning blocker in the frozen focused recheck, with no remaining P1/P2/P3 findings and all
+four plan/handoff/source hashes unchanged during review. The parser repair and first-batch
+source/test gate remain open. Review clearance is not implementation or hosted authorization.
+
+#### First Network-Disabled Batch Activation Record
+
+The operator requested this independently reviewed implementation batch on 2026-10-01 and
+explicitly authorized this activation/evidence documentation commit and focused checks.
+The activation takes effect when this record is committed, before source implementation.
+It permits the Core-owned IAM timestamp repair, retained one-shot STS/IAM ownership and
+network-disabled production-path tests described below. It permits no IAM production transport,
+Google connection, workflow creation/dispatch, credential grant, provider configuration, host,
+issuance, materialization, injection, selected work, merge or release.
+
+The candidate/producer/request allowlist boundary is frozen for this batch: production private
+relay admission continues to admit only the existing GitHub-only and STS-only workflow references.
+The proposed IAM reference may be admitted only inside `cfg(test)` fixtures to construct exact
+signed V2/V4 truth for the fake transport and real-child cleanup tests. No existing serialized
+request shape or V1/V2/V3 semantics change, and no IAM workflow file is added. Core continues to
+pin the same Launcher and Protocol revisions. The future production IAM route, administrator
+producer/request/preflight surfaces and network transport require the separate next source gate.
+
+Acceptance checklist:
+
+- [x] Activate through this authorized documentation commit before implementation; keep unrelated changes intact.
+- [ ] Repair the production IAM parser and lock provider grammar plus full-precision expiry.
+- [ ] Implement the one-shot retained owner without promoting either existing route.
+- [ ] Pass network-disabled production-path mutation/refusal/disposal tests and actual-child cleanup.
+- [ ] Obtain independent frozen source review and reconcile the handoff and affected surfaces.
+
+#### Ownership And Route Preservation
+
+- Reuse Core's existing provider operation plan, request builder, response parser, fixed direct-TLS
+  posture and protected V2/V4 transaction path. Do not introduce an SDK, external credential file,
+  shell exchange, proxy, ADC, metadata-server or caller-supplied bearer/endpoint fallback.
+- Keep the existing GitHub-only and STS-only routes terminal at their current boundaries. In
+  particular, the existing STS checkpoint still disposes of its returned token and cannot reach
+  IAM Credentials. A future IAM route is selected only by the exact workflow reference
+  `ota-run/ota/.github/workflows/secret-delivery-google-iam-live.yml@refs/heads/1.6.29-implementation`
+  carried by the independently rederived candidate and signed V2/V4 authority. That workflow
+  does not exist or become dispatchable through this planning amendment. Ambient flags, a
+  caller label, workflow inputs or a successful STS response cannot promote an older route.
+- Before implementation, freeze the connected candidate/producer/request allowlist changes for
+  that exact route. Preserve released V1/V2/V3 semantics and existing request versions; if a
+  request shape needs new fields, use an additive version rather than reinterpreting old bytes.
+  No Protocol/Launcher version bump is presumed: their existing signed full graph/record and V4
+  identity relay remain the ownership boundary unless review demonstrates a concrete gap.
+- For the IAM-selected route only, move the accepted STS token, its freshness bounds and the
+  exact consumed prepared V4 transaction into one private, non-cloneable, one-shot owner. Retain
+  the locally reconciled JWT context needed for existing claim/window checks. Do not return a
+  standalone reusable token, accept a parsed token from a caller, or reconstruct authority from
+  public identities. A consumed owner cannot dispatch twice, renew, retry, resume or change route.
+- Immediately before request construction, immediately before the injected transport call, and
+  after the bounded response, rederive the operation from the retained candidate, compare the
+  complete signed V2 graph/record against Core's embedded expectation, and validate the exact
+  consumed V4 binding, current expiry and unchanged fixed transport posture. Apply the existing
+  protected JWT claim/window checks; neither STS acceptance nor IAM acceptance admits selected
+  execution. Changed service account, project, realization, invocation, run/attempt/workflow,
+  profile, implementation, dependency expectation or retained session must refuse.
+
+#### Exact Request, Freshness And Disposal
+
+The request is exactly one POST to the plan-derived
+`https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/{ACCOUNT}:generateAccessToken`,
+with one bearer authorization value from the retained STS token, JSON media type, and the existing
+builder's body containing only `scope: ["https://www.googleapis.com/auth/cloud-platform"]` and
+`lifetime: "600s"`. Omit `delegates`; reject different method, account, origin, path, query,
+headers, media type, scope, lifetime or body before the transport seam. Account selection is
+signed private candidate truth, not an administrator mirror or workflow input. Mirrors may be
+compared as an additional refusal guard but create no authority.
+
+The new owner must enforce a transaction deadline no later than 600 seconds after the first
+provider dispatch and no later than the existing binding expiry. Record the STS dispatch-start
+clock and derive its conservative token expiry from that time plus the accepted positive
+`expires_in` (at most 3600 seconds), not from a later response time. Use checked arithmetic,
+trusted wall-clock expiry checks and monotonic elapsed-time bounds; clock failure, backward
+observation, expired JWT/binding/STS credential or exhausted transaction time refuses without
+renewal. Provider timeouts must not extend these bounds. The JWT remains locally matched but
+unadmitted, and every response must pass post-response authority/deadline checks before success.
+
+Use the existing 16-KiB token-response body bound, bounded response-head handling and redacted
+errors. Require the expected successful JSON response head and exactly one nonempty bounded
+`accessToken` and provider-canonical `expireTime`. Reuse the existing parser path, but repair its
+format check before this batch can close: Google-generated RFC 3339 timestamps are Z-normalized
+with 0, 3, 6 or 9 fractional digits, including trailing zeros. Comparing time's generic RFC 3339
+round-trip text rejects valid `.100Z`/`.100000Z`/`.100000000Z` responses because it prints `.1Z`.
+Validate the admitted provider grammar and actual calendar/time value instead; accept those
+documented widths without accepting offsets, malformed dates or arbitrary timestamp syntax.
+Duplicates, extra fields, malformed timestamps, expired tokens and expiry more than 600 seconds
+beyond trusted response observation refuse. Compare the full timestamp precision against that
+trusted observation and the 600-second bound before deriving any seconds-only summary; fractional
+truncation must not admit a timestamp just beyond the bound or lose its future/expired distinction.
+Do not use the new service-account token for a subsequent call: drop it at
+this checkpoint, along with all retained JWT/STS/request/response buffers, on success or refusal.
+Best-effort buffer clearing is not process-memory erasure, provider revocation or non-exfiltration.
+
+Google's [generateAccessToken reference](https://docs.cloud.google.com/iam/docs/reference/credentials/rest/v1/projects.serviceAccounts/generateAccessToken)
+defines the required wildcard account path, request and response. Its
+[WIF access guidance](https://docs.cloud.google.com/iam/docs/workload-download-cred-and-grant-access)
+describes service-account-scoped Workload Identity User grants. These sources describe provider
+semantics, not Ota activation, evidence or authorization.
+
+#### First Batch Acceptance And Later Gates
+
+1. Network-disabled source batch: a private injected fake transport must exercise the production
+   retained-owner path, existing builders/parsers and bounded reads. Prove zero IAM calls for any
+   pre-dispatch refusal, exactly one Core-level call for success or post-dispatch refusal, no
+   replay/rebinding, conservative STS expiry including response delay, binding/JWT/transaction
+   expiry before and after each call, overflow/clock refusal, and token disposal. Independently
+   mutate account/operation/graph/record/session and every material HTTP/request/response field;
+   exercise oversized/truncated/read-failure bodies and invalid response heads. Preserve explicit
+   IAM timestamp regressions for all documented fractional widths, trailing-zero cases, invalid
+   widths/offsets/calendar values, exact expiry boundaries and fractions immediately beyond the
+   600-second bound; exercise them through the production owner/parser, not a duplicate validator.
+   The named Ota gap is IAM expiry provider-format compatibility, owned by
+   `src/secret_delivery_provider_client.rs::parse_service_account_token_response_v1`.
+   Preserve explicit
+   no-IAM regression coverage for both existing routes. No new production Google connection or
+   IAM-selected workflow dispatch is enabled in this batch.
+2. Connected protected-child proof: reuse the actual Core child, retained completion session,
+   Launcher relay, durable terminal acknowledgement and child/scope/cgroup/slot cleanup path in a
+   network-disabled Linux root fixture. Exercise successful fake IAM acceptance followed by
+   deliberate refusal and every newly introduced refusal category. Plain parser/unit tests alone
+   do not close this gate; arm64 fixtures do not establish hosted Linux/X64 provider evidence.
+3. Separately reviewed network-enablement batch: only after the above evidence and frozen source
+   are cleared, authorize exact production request/response transport and the dedicated IAM
+   workflow/request/preflight/closed-posture surfaces. Review first-party propagation at that
+   implementation boundary. Network implementation permission is not hosted activation.
+4. Separately authorized hosted attempt: use fresh pinned sources, fresh protected Linux/X64
+   state, one new root-owned request, the stopped-runner sequence and independent installed
+   graph/record/producer/build verification. Review the complete off-clock packet before issue
+   and the bounded signed/installed delta before start; retain the final admission-time floor.
+   Do not reuse the STS checkpoint's destroyed resources, tokens, authority or expectations.
+   The provider scope must include a fresh dedicated service account with no resource-access
+   roles or keys and a service-account-scoped `roles/iam.workloadIdentityUser` grant only to the
+   exact reviewed federated principal. Independently read back that policy and inherited access
+   as well as the exact-run/workflow-commit WIF condition; broad principal sets, project-level
+   impersonation, delegation, Token Creator fallback or Secret Manager grants refuse. Grant
+   changes, API enablement, service-account creation and all infrastructure actions need the
+   separate human authorization and reviewed teardown, including grant/account removal and
+   provider/pool disablement. This paragraph authorizes none of those actions today.
+
+The proposed hosted bar is one job-observed GitHub response, one accepted STS response and one
+accepted IAM response, each counted only at Core's call seam, followed by validated deliberate
+client refusal and exact child/scope/cgroup/slot cleanup. Retain only a closed non-secret status
+projection. Independently record administrator marker absence at the observation time, runner
+unit status, resource retirement and whether a public custody record actually exists; do not
+infer never-execution or independent semantic custody from those observations. A passing job
+must not hide a failed runner-unit exit. Provider-side/lower-layer cardinality, enforcement of
+every WIF claim, independent JWT verification, root-custodied semantic attestation, resource
+access, selected-work authority, revocation and memory erasure remain `not_proved`.
+
+Uncovered material behavior: the network-disabled owner/refusal/cleanup paths are proposed
+contract-owned proof, not yet executed; provider policy, cloud lifecycle and runner retirement
+are administrator-owned external behavior; IAM provider acceptance remains an inactive hosted
+proof gate. Secret Manager, materialization, injection, recipient execution and positive delivery
+remain later inactive Step 7 work. This internal proposal changes no public command, schema,
+JSON reference, authoring concept or support claim, so Site/Skills/Examples/Learn/FAQ/Glossary and
+command-reference propagation are not required here. Reassess at implementation, not by assuming
+that a future provider checkpoint has shipped.
 
 ## Product Boundary
 

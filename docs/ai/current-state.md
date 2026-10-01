@@ -37,8 +37,16 @@ durable agent workflow belongs in the canonical Ota skill.
 - released baseline: `v1.6.28`
 - development package identity: `v1.6.28`; this branch contains unreleased post-release source
   changes and is not a new release or support claim.
-- current proof gate (2026-10-01): V12.1 Step 7 Google STS remains open. Core
-  `0476b9a3b484c672fccb164517a1dc3097cd5e66` passed exact-head Release Gate `36745309983`
+- current proof gate (2026-10-01): the fresh bounded Google STS checkpoint passed at Core
+  `41a979b0d16200cef1608c5f469279b1dc2d2440`; MUSE cleared outcome retention after the
+  narrow P3 diagnostic-ordering wording correction.
+  V12.1 Step 7 remains active. MUSE cleared the next IAM Credentials checkpoint plan after the
+  timestamp-requirement correction. The operator requested the network-disabled implementation
+  batch and authorized its activation/evidence documentation commit plus focused checks. This
+  activation takes effect through that commit before source implementation. New provider contact, infrastructure,
+  merge and release remain inactive pending their separate gates.
+  Historical predecessor: Core `0476b9a3b484c672fccb164517a1dc3097cd5e66`
+  passed exact-head Release Gate `36745309983`
   and connected source gates; no merge or release occurred. Launcher is pinned to
   `dd667c3d6b63d8d26d9e2a40f831e9d08a7a6864`, Protocol to
   `e5fe1c83e562e02f60e27026c7148918bd016155`.
@@ -96,16 +104,91 @@ durable agent workflow belongs in the canonical Ota skill.
   the regressions and accepted the reported validation; it did not independently rerun them.
   Source/commit readiness is cleared. The operator authorized commit and push on 2026-10-01;
   this does not authorize hosted activation, merge or release.
-  Next: commit/push this reviewed checkpoint and verify exact-source gates before preparing any
-  separately authorized hosted attempt. No rerun, new VM, renewal, reissue or activation is authorized by this
-  repair; any future attempt requires reviewed exact-source gates and fresh state.
-  Uncovered material behavior: live OIDC/STS acceptance, invocation cardinality, runtime
-  reconciliation, protected-client cleanup and root-custodied semantic attestation remain
-  explicitly `not_proved`. Cloud lifecycle and branch/dispatch freeze are repo-owned operator
-  behavior outside declared Ota task scope; cleanup is administrator observation only.
+  The reviewed repair is committed and pushed at Core
+  `41a979b0d16200cef1608c5f469279b1dc2d2440`. Release Gate `36848230857` passed on Linux,
+  macOS and Windows; all seven other connected source checks passed. Ordinary Linux/systemd
+  proof `36848230872` also passed at that exact revision on attempt 2, job `110363849585`,
+  using local OrbStack runner `27`. Attempt 1 was cancelled queued with no steps after restoring
+  the existing stopped runner failed to assign that old job; the one exact-source retry executed.
+  Artifact `11161343431` binds the same Core SHA. Its runtime proof reports `ok: true`, workflow
+  `app` and verdict `ready`, with `agent_verdict: not_ready`; this is not agent-session containment
+  or protected Step 7/provider evidence. Registration, labels, clock and user bus were checked
+  before starting the ordinary runner; no re-registration or permission changes were needed.
+  Fresh operator-helper source preparation is at
+  `/tmp/ota-sts-live-20261001-attempt6-source-preparation`; the historical attempt-5 packet is unchanged.
+  MUSE identified terminal scope/slot refusal gaps and a build-helper legacy marker probe. New
+  copies use the canonical root observer, explicit all-entry slot absence, and systemd's own
+  `ota-*.scope` filter with empty-output/error refusal. Prestart consumes five independent producer
+  expectations through the existing installed verifier before observing the marker. Local guard
+  regressions cover failed-unit status symbols, active/inactive scopes, observation errors, hidden
+  slot entries, subdirectories and aliases. MUSE's final frozen scope-fix recheck found no
+  P1/P2/P3 findings and cleared these six helper-source copies only; hashes matched before and
+  after review. Reported tests were source-reviewed, not independently rerun. Fresh-packet,
+  issuance and activation clearance remain separate.
+  The operator separately authorized one fresh bounded OIDC-to-STS attempt on 2026-10-01.
+  Fresh VM/network/subnet/pool/group `ota-sts6-20261001` were prepared; the VM had no attached
+  service account/scopes, an auto-deleting boot disk and a 7200-second DELETE lifetime. Exact
+  clean Core/Launcher builds completed with the runner stopped and provider/pool disabled.
+  Fresh run `36874656786`, attempt `1`, job `110410885453`, passed at Core
+  `41a979b0d16200cef1608c5f469279b1dc2d2440` on exact runner `1384`/group `9`.
+  Fresh packet: `/tmp/ota-sts-live-20261001-attempt6`. MUSE cleared source and complete
+  PREISSUE readiness with no P1/P2/P3 findings after one off-clock model-capacity retry;
+  it explicitly acknowledged reviewer readiness before one canonical issue.
+  MUSE found a P2 cancellation-cleanup gap: ephemeral registration can survive cancellation
+  before execution. The fresh cleanup copy now verifies/removes exact runner `1384` or confirms
+  organization-wide absence before group deletion, with twelve production-function guard
+  scenarios passing locally. MUSE cleared the correction. One canonical provisioning operation
+  completed with independently observed producer/build/artifact expectations; complete production
+  offline signed V2 graph/record/request/provider comparison and strict prestart observation
+  returned 0. MUSE's bounded signed/installed delta review found no P1/P2/P3 findings and
+  conditionally cleared one attempt; all 61 preissue and 24 installed packet hashes matched.
+  Generation 1 expiry was `2026-10-01T15:39:52Z`; no authority is reusable. After the 300-second
+  operator propagation hold, final complete verification and exact external/strict-absence checks
+  passed with 2482 signed seconds remaining, above the 1200-second floor. The assigned job passed
+  installation reconciliation and the bounded STS checkpoint. Its closed projection reports one
+  Core-level GitHub response and one accepted STS response, matched-unadmitted JWT claims and
+  discarded returned token. The protected client deliberately exited 1 before IAM Credentials,
+  Secret Manager, materialization, injection or selected work; the job validated its terminal
+  envelope and child/scope/cgroup/active-slot cleanup. This is job-observed acceptance and
+  finalization, not independently root-custodied semantic attestation or provider cardinality.
+  Separate administrator terminal observation returned 0: stopped MainPID 0, empty runner cgroup,
+  no principal process, authority scope, active-slot entry or selected-work marker. The marker
+  observation is point-in-time absence, not proof of never executing. No public capture record
+  was produced. The runner unit itself ended failed/failed with exit 2; read-only/denied text
+  and listener-completion text were both observed without establishing their ordering. Retain
+  that separately from the passing workflow and protected-client finalization. A clean runner-unit
+  exit is not proved.
+  Provider/pool were disabled and reviewed teardown returned 0. Readbacks confirm VM, boot disk,
+  network, subnet, firewall, runner and group absent, disabled soft-deleted pool, and provider
+  deletion acknowledged then NOT_FOUND under the deleted pool. No temporary host remains.
+  Retention: `docs/pressure/retained-artifacts/secret-delivery-google-sts-live-36874656786.json`.
+  MUSE confirmed the bounded positive STS bar is met with no P1/P2 findings. Its sole P3,
+  an unsupported diagnostic-ordering claim, is corrected; outcome/cleanup retention is cleared
+  within these proof limits. No later delivery, merge or release is authorized. Next: implement
+  only the activated, independently reviewed network-disabled IAM retained-STS-owner and
+  parser-repair batch. Preserve existing OIDC/STS terminal routes; one exact IAM route must
+  retain signed V2/V4 authority, conservative credential/transaction deadlines and disposal, then
+  refuse before Secret Manager or selected work. Implementation, network enablement and hosted
+  activation have separate review/authorization gates; only the network-disabled batch is activated.
+  MUSE's initial planning review found one P2: the current IAM parser's generic RFC 3339
+  round-trip check rejects valid Google fractional timestamp formats with trailing zeros.
+  The proposal now requires a narrow provider-format repair and full-precision expiry-boundary
+  regressions in the first batch. This is a named Ota parser gap, not a provider or repo issue;
+  no code repair has been implemented. MUSE's frozen focused recheck cleared the planning P2
+  with no remaining P1/P2/P3 findings and all four reviewed hashes matching. Plan readiness is
+  cleared; first-batch implementation/source tests remain open. The activation freezes
+  production relay admission at the existing OIDC/STS routes; IAM admission is test-fixture-only
+  in this batch. No IAM workflow, producer/request shape, Protocol or Launcher change is authorized.
+  Uncovered material behavior: bounded OIDC/STS and protected-client finalization are proved only
+  by the job-observed projection plus separate administrator absence/cleanup observations.
+  Provider/lower-layer cardinality, condition enforcement, independent JWT verification,
+  root-custodied semantic attestation, revocation and token-memory erasure remain `not_proved`.
+  Later delivery and selected-work continuation were not attempted. Cloud lifecycle, runner
+  retirement and branch/dispatch freeze are repo-owned outside the declared Ota task scope;
+  cleanup is administrator observation only.
   Complete installed comparison is proved by the offline verifier, not execution authority.
   Site/Skills/Examples/Learn/FAQ/Glossary/schema/public JSON and command reference are unaffected
-  by this internal pre-client failure; the Site waiver records that decision. Provider delivery,
+  by this internal pressure checkpoint: no public command/schema/authoring concept changed. Provider delivery,
   Step 8 and V12.2 remain inactive. Numbered milestones retain their scope at recorded completion;
   this bullet and the latest Step 7 checkpoint govern the current next action.
 - active version: V12.1 secret-delivery governance. Activated on 2026-09-02 after the released V12
