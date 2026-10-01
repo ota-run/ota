@@ -2476,6 +2476,11 @@ This source batch does not close the hosted IAM gate or establish service-accoun
   default-branch change, alternate trigger,
   existing-route promotion or weakened admission is permitted. Any main change requires
   separate authorization and passing exact-head gates.
+  The operator has now authorized only the inert stub promotion. MUSE cleared the exact
+  one-file registration batch at `23ca11096211c8fc25c945ed0d684dc5859c8cbc`, based on main
+  `8422f2ce915c2c0b853c0074ef1cdf8c69ab2d9f`. Promotion remains pending source Release Gate
+  `36941232116`, registration Release Gate `36942569361` and applicable exact-head checks;
+  recheck the frozen file and main base immediately before promotion. No promotion has occurred.
 - Read-only Google preparation confirmed project `ota-v121-step7-20260910`, number
   `783599651848`, is active; IAM, IAM Credentials and STS APIs are enabled. This neither
   proves service-account/inherited policy nor authorizes grants or provider contact.
