@@ -25,6 +25,6 @@
 version: 1
 repository: ota-run/ota-site
 mode: waived
-consumer_commit: 7d37cc9fe628243174e81f9855194ca121d79296
-reviewed_ota_commit: 0476b9a3b484c672fccb164517a1dc3097cd5e66
-waiver_reason: "The Step 7 installed offline checkpoints and cancelled runs 36764606243/36775307269/36784346916 remain internal readiness evidence. Run 36793610729 exercised exact-run branch scheduling but failed before the protected client; its provider step was skipped and temporary infrastructure removed. The connected internal pressure-harness repair moves exact fixture-byte equality into administrator preflight, removes job workload probes, qualifies its private posture as client-terminal evidence, and shares a read-only root marker observer. No job OIDC/STS or hosted semantic proof was obtained. No public CLI, schema, JSON reference, authoring, Learn, FAQ, Glossary, command reference or successful hosted-provider claim changed; no public propagation is required."
+consumer_commit: d14fcf5f551283ca67fe3ac11adc88af8210c782
+reviewed_ota_commit: def8d789bd4e205c241f0201fbb961e6d444469d
+waiver_reason: "The retained Step 7 run 36874656786 establishes bounded job-observed OIDC/STS acceptance and deliberate refusal only, not delivery or independent semantic custody. The connected offline IAM batch repairs an internal provider timestamp parser and adds one-shot ownership, fake-transport and actual-child cleanup fixtures. Production IAM admission and networking remain inactive. No public CLI, schema, JSON reference, authoring, Examples, Skills, Learn, FAQ, Glossary, command reference or shipped support claim changes. This internal proof/implementation record requires no Site propagation; reassess the separately gated production IAM route."

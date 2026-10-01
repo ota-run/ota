@@ -164,21 +164,55 @@ durable agent workflow belongs in the canonical Ota skill.
   Retention: `docs/pressure/retained-artifacts/secret-delivery-google-sts-live-36874656786.json`.
   MUSE confirmed the bounded positive STS bar is met with no P1/P2 findings. Its sole P3,
   an unsupported diagnostic-ordering claim, is corrected; outcome/cleanup retention is cleared
-  within these proof limits. No later delivery, merge or release is authorized. Next: implement
-  only the activated, independently reviewed network-disabled IAM retained-STS-owner and
-  parser-repair batch. Preserve existing OIDC/STS terminal routes; one exact IAM route must
-  retain signed V2/V4 authority, conservative credential/transaction deadlines and disposal, then
-  refuse before Secret Manager or selected work. Implementation, network enablement and hosted
-  activation have separate review/authorization gates; only the network-disabled batch is activated.
+  within these proof limits. No later delivery, merge or release is authorized. The operator's
+  activation/evidence documentation is committed at `def8d789bd4e205c241f0201fbb961e6d444469d`.
+  The first network-disabled IAM batch is implemented and independently reviewed; the operator
+  authorized its source commit on 2026-10-01. The Launcher test extension is committed at
+  `b5c8f99`; Core's production Launcher pin remains unchanged.
+  It retains one consumed V4 owner through STS/IAM, signed full graph/record comparisons,
+  conservative credential/transaction deadlines and terminal disposal. Production relay admission
+  still refuses IAM; no production IAM transport is attached. Existing OIDC/STS routes stay terminal.
+  Network enablement and hosted activation remain separate inactive review/authorization gates.
   MUSE's initial planning review found one P2: the current IAM parser's generic RFC 3339
   round-trip check rejects valid Google fractional timestamp formats with trailing zeros.
   The proposal now requires a narrow provider-format repair and full-precision expiry-boundary
   regressions in the first batch. This is a named Ota parser gap, not a provider or repo issue;
-  no code repair has been implemented. MUSE's frozen focused recheck cleared the planning P2
+  the production parser now validates Google's grammar/calendar and full-precision expiry instead
+  of generic round-trip formatting. MUSE's frozen focused recheck cleared the planning P2
   with no remaining P1/P2/P3 findings and all four reviewed hashes matching. Plan readiness is
-  cleared; first-batch implementation/source tests remain open. The activation freezes
+  cleared. Initial frozen source review found one P2: a timestamp sampled before expensive
+  signed-truth/JWT validation could be stale at dispatch. The repair completes that validation
+  before sampling fresh wall/monotonic time, then applies lightweight binding/JWT/credential
+  deadlines before dispatch and after parsing. Eight additional deterministic cases require
+  zero corresponding calls when validation crosses expiry or the final clock fails; clock
+  callbacks also assert full context validation completed first. MUSE's frozen repair recheck
+  cleared the P2 with no remaining P1/P2/P3 findings; all nine hashes and both HEADs matched.
+  It checked source and retained logs without rerunning tests. Only this review-outcome record
+  changed after that frozen review. Source commit readiness is cleared, not hosted/provider
+  readiness. Local macOS checks pass: provider
+  client 16/16; signed-owner IAM/STS matrices 2/2 (52 IAM cases and 14 STS cases); legacy
+  no-promotion 2/2; production IAM admission refusal 1/1; existing STS workflow 5/5.
+  The network-isolated Linux/arm64 root fixture passes 1/1 across 52 IAM actual-child cases,
+  including real-clock seams, fake acceptance followed by deliberate refusal, every new refusal
+  category, durable acknowledgement and exact child/scope/cgroup/active-slot cleanup. This is not
+  hosted Linux/X64 or provider proof. The fixture uses Launcher HEAD
+  `6fd8cde8782b772fb22eead5f8c691f036b425b5` plus its uncommitted test-only extension; its build
+  identity is a local fixture label, not installed authority. Core's runtime pin remains unchanged.
+  Logs: `/tmp/ota-iam-offline-expiry-repair.log`; the existing 14-case STS child fixture also
+  passes 1/1 after the clock-ordering repair (`/tmp/ota-sts-offline-expiry-repair.log`). No Ota
+  invocation scopes remain after both runs. Formatting,
+  first-party sync and diff checks pass.
+  Strict `clippy --lib -- -D warnings` is not a passing gate: it reports 863 diagnostics, including
+  unrelated pre-existing code. The filtered provider/binding diagnostics show only the unchanged
+  STS HTTP URI comparison; no broad lint cleanup is included. The activation freezes
   production relay admission at the existing OIDC/STS routes; IAM admission is test-fixture-only
-  in this batch. No IAM workflow, producer/request shape, Protocol or Launcher change is authorized.
+  in this batch. No IAM workflow, producer/request shape, Protocol or Launcher production change
+  is authorized. The connected Launcher change is test-only: extend the existing actual-child
+  cleanup fixture without changing its production runtime or Core's pinned revision.
+  Next: independently review the exact production route, producer/preflight and fixed-network
+  transport source batch before implementation. The operator requested continuing to this next
+  gate; hosted activation remains separately inactive. Do not push, provision a host, change
+  provider configuration/grants or dispatch an IAM workflow.
   Uncovered material behavior: bounded OIDC/STS and protected-client finalization are proved only
   by the job-observed projection plus separate administrator absence/cleanup observations.
   Provider/lower-layer cardinality, condition enforcement, independent JWT verification,

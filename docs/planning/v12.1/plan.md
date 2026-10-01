@@ -2283,14 +2283,47 @@ signed V2/V4 truth for the fake transport and real-child cleanup tests. No exist
 request shape or V1/V2/V3 semantics change, and no IAM workflow file is added. Core continues to
 pin the same Launcher and Protocol revisions. The future production IAM route, administrator
 producer/request/preflight surfaces and network transport require the separate next source gate.
+The connected Launcher extension is test-only and reuses the existing actual-child completion
+and cleanup fixture; it does not change production behavior, schemas, versions or Core's pin.
 
 Acceptance checklist:
 
 - [x] Activate through this authorized documentation commit before implementation; keep unrelated changes intact.
-- [ ] Repair the production IAM parser and lock provider grammar plus full-precision expiry.
-- [ ] Implement the one-shot retained owner without promoting either existing route.
-- [ ] Pass network-disabled production-path mutation/refusal/disposal tests and actual-child cleanup.
-- [ ] Obtain independent frozen source review and reconcile the handoff and affected surfaces.
+- [x] Repair the production IAM parser and lock provider grammar plus full-precision expiry.
+- [x] Implement the one-shot retained owner without promoting either existing route.
+- [x] Pass network-disabled production-path mutation/refusal/disposal tests and actual-child cleanup.
+- [x] Obtain independent frozen source review and reconcile the handoff and affected surfaces.
+
+Local source-batch result (independent review cleared, source commit authorized): the production IAM parser
+preserves full fractional precision and accepts documented trailing-zero forms. The private
+non-cloneable owner retains the exact consumed V4 context, signed V2 graph/record and conservative
+STS expiry through one fake IAM call, rechecks authority and both clocks before/after transport,
+and drops the new token without releasing selected work. Production relay admission remains
+OIDC/STS-only; IAM is admitted only by `cfg(test)` fixtures. The bounded response seam now also
+rejects oversized decoded headers instead of relying solely on ureq's wire-header limit.
+Initial frozen source review found one P2: sampling time before full signed-truth/JWT validation
+could permit dispatch with a stale observation. The repair finishes that validation first, then
+samples wall/monotonic time and applies lightweight canonical binding/JWT/credential deadlines
+before dispatch and after parsing. Clock callbacks assert full context validation completed;
+eight additional cases require zero corresponding calls across expiry or final clock failure.
+MUSE's focused frozen repair recheck cleared the P2 with no remaining P1/P2/P3 findings and
+all nine hashes/both HEADs unchanged. It inspected source and retained logs without rerunning
+tests. Only the review-outcome handoff/plan records changed afterward. This clears source
+commit readiness subject to human authorization, not hosted/provider readiness.
+macOS provider-client tests pass 16/16, signed-owner matrices 2/2 (52 IAM and 14 STS cases),
+legacy no-promotion 2/2, production admission refusal 1/1 and the existing STS workflow 5/5.
+The network-isolated Linux/arm64 actual-child fixture passes 1/1 across all 52 IAM cases,
+including successful fake acceptance followed by deliberate refusal, durable completion and
+exact child/scope/cgroup/active-slot cleanup. Its Launcher change is test-only on local HEAD
+`6fd8cde8782b772fb22eead5f8c691f036b425b5`; Core's production pin remains unchanged.
+This does not establish hosted Linux/X64, IAM provider acceptance, independent semantic custody,
+delivery, memory erasure or provider revocation. The existing STS child-fixture preservation
+rerun also passes 1/1 across all 14 cases after the clock-ordering repair. Local logs are
+`/tmp/ota-iam-offline-expiry-repair.log` and `/tmp/ota-sts-offline-expiry-repair.log`.
+No Ota invocation scopes remain after both runs.
+Formatting/sync/diff checks pass; strict
+warnings-as-errors Clippy is not a passing repository gate (863 diagnostics, with the filtered
+provider/binding diagnostic in unchanged STS code). No unrelated lint cleanup is included.
 
 #### Ownership And Route Preservation
 
@@ -2414,8 +2447,9 @@ must not hide a failed runner-unit exit. Provider-side/lower-layer cardinality, 
 every WIF claim, independent JWT verification, root-custodied semantic attestation, resource
 access, selected-work authority, revocation and memory erasure remain `not_proved`.
 
-Uncovered material behavior: the network-disabled owner/refusal/cleanup paths are proposed
-contract-owned proof, not yet executed; provider policy, cloud lifecycle and runner retirement
+Uncovered material behavior: the network-disabled owner/refusal/cleanup paths are locally
+contract-owned and proved within the independently reviewed fixture limits above;
+provider policy, cloud lifecycle and runner retirement
 are administrator-owned external behavior; IAM provider acceptance remains an inactive hosted
 proof gate. Secret Manager, materialization, injection, recipient execution and positive delivery
 remain later inactive Step 7 work. This internal proposal changes no public command, schema,

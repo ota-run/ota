@@ -14,6 +14,8 @@ use std::fmt;
 use std::io::Read;
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
+#[cfg(feature = "secret-delivery-pressure")]
+use std::time::Instant;
 
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
@@ -195,6 +197,10 @@ impl Drop for ProtectedProviderValue {
             // Observe disposal of the fake response's unique token without retaining its bytes.
             STS_TOKEN_DROPS.with(|count| count.set(count.get() + 1));
         }
+        #[cfg(test)]
+        if self.0 == b"synthetic-iam-token" {
+            IAM_TOKEN_DROPS.with(|count| count.set(count.get() + 1));
+        }
         self.0.fill(0);
     }
 }
@@ -223,6 +229,9 @@ impl fmt::Debug for RetainedUnadmittedGithubOidcJwtV1 {
 struct RetainedGithubOidcTransactionV4 {
     prepared: PreparedSecretDeliveryProviderTransportV4,
     jwt: RetainedUnadmittedGithubOidcJwtV1,
+    binding_identity: String,
+    first_dispatch_at: OffsetDateTime,
+    first_dispatch_instant: Instant,
 }
 
 #[cfg(feature = "secret-delivery-pressure")]
@@ -293,11 +302,13 @@ pub(crate) struct StsAccessTokenV1 {
 #[cfg(test)]
 thread_local! {
     static STS_TOKEN_DROPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static IAM_TOKEN_DROPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static PROVIDER_TRUTH_CHECKS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 pub(crate) struct ServiceAccountAccessTokenV1 {
     token: ProtectedProviderValue,
-    pub expires_at_unix_seconds: u64,
+    pub expires_at: OffsetDateTime,
 }
 
 pub(crate) struct SecretManagerPayloadV1 {
@@ -320,11 +331,7 @@ macro_rules! redacted_debug {
 }
 
 redacted_debug!(StsAccessTokenV1, "token", expires_in_seconds);
-redacted_debug!(
-    ServiceAccountAccessTokenV1,
-    "token",
-    expires_at_unix_seconds
-);
+redacted_debug!(ServiceAccountAccessTokenV1, "token", expires_at);
 redacted_debug!(SecretManagerPayloadV1, "value", crc32c);
 
 /// One consumed V2 binding coupled to its exact provider operation plan. This is intentionally
@@ -573,6 +580,17 @@ fn verify_oidc_dispatch_preflight_at(
     prepared: &PreparedSecretDeliveryProviderTransportV4,
     now: u64,
 ) -> Result<(), SecretDeliveryProviderClientError> {
+    verify_oidc_dispatch_authority_v4(prepared)?;
+    if prepared.capability.binding.expires_at_unix_seconds <= now {
+        return Err(oidc_dispatch_refused());
+    }
+    Ok(())
+}
+
+#[cfg(feature = "secret-delivery-pressure")]
+fn verify_oidc_dispatch_authority_v4(
+    prepared: &PreparedSecretDeliveryProviderTransportV4,
+) -> Result<(), SecretDeliveryProviderClientError> {
     prepared.verify_signed_transport_expectation()?;
     ota_authority_protocol::validate_protected_launcher_secret_delivery_transaction_binding_v4(
         &prepared.capability.binding,
@@ -588,9 +606,7 @@ fn verify_oidc_dispatch_preflight_at(
         &prepared.oidc.endpoint_observation,
     )
     .map_err(|_| oidc_dispatch_refused())?;
-    if prepared.oidc.operation != prepared.capability.plan.operations[0]
-        || prepared.capability.binding.expires_at_unix_seconds <= now
-    {
+    if prepared.oidc.operation != prepared.capability.plan.operations[0] {
         return Err(oidc_dispatch_refused());
     }
     Ok(())
@@ -659,7 +675,18 @@ fn verify_oidc_response_head(
     status: ureq::http::StatusCode,
     headers: &ureq::http::HeaderMap,
 ) -> Result<(), SecretDeliveryProviderClientError> {
+    // Keep the injected response seam bounded too; ureq separately bounds the wire header block.
+    let header_bytes = headers
+        .iter()
+        .try_fold(0usize, |total, (name, value)| {
+            total
+                .checked_add(name.as_str().len())?
+                .checked_add(value.as_bytes().len())?
+                .checked_add(4)
+        })
+        .ok_or_else(oidc_dispatch_refused)?;
     if status != ureq::http::StatusCode::OK
+        || header_bytes > MAX_PROVIDER_RESPONSE_HEADER_BYTES
         || headers
             .get_all(ureq::http::header::CONTENT_TYPE)
             .iter()
@@ -730,6 +757,8 @@ fn dispatch_github_oidc_v4_inner(
         &prepared.oidc.operation,
         &prepared.oidc.bearer,
     )?;
+    let first_dispatch_at = OffsetDateTime::now_utc();
+    let first_dispatch_instant = Instant::now();
     attempt.invoke_once()?;
     let mut response = agent
         .run(http_request)
@@ -748,7 +777,13 @@ fn dispatch_github_oidc_v4_inner(
     }
     let jwt = parse_github_oidc_response_v1(&body.0)?;
     let jwt = retain_reconciled_github_oidc_jwt_v4(jwt, &prepared, attempt)?;
-    Ok(RetainedGithubOidcTransactionV4 { prepared, jwt })
+    Ok(RetainedGithubOidcTransactionV4 {
+        binding_identity: prepared.capability.binding.identity.clone(),
+        prepared,
+        jwt,
+        first_dispatch_at,
+        first_dispatch_instant,
+    })
 }
 
 #[cfg(feature = "secret-delivery-pressure")]
@@ -789,7 +824,16 @@ pub(crate) fn reconcile_github_oidc_response_v4_for_test(
         attempt.invoke_once()?;
         let jwt = parse_github_oidc_response_v1(body)?;
         let jwt = retain_reconciled_github_oidc_jwt_v4_at(jwt, &prepared, &mut attempt, now)?;
-        Ok(RetainedGithubOidcTransactionV4 { prepared, jwt })
+        Ok(RetainedGithubOidcTransactionV4 {
+            binding_identity: prepared.capability.binding.identity.clone(),
+            prepared,
+            jwt,
+            first_dispatch_at: OffsetDateTime::from_unix_timestamp(
+                i64::try_from(now).map_err(|_| oidc_dispatch_refused())?,
+            )
+            .map_err(|_| oidc_dispatch_refused())?,
+            first_dispatch_instant: Instant::now(),
+        })
     })();
     GithubOidcDispatchTerminalV1 { attempt, result }
 }
@@ -936,23 +980,172 @@ fn exchange_google_sts_v4_with_transport_at(
         -> Result<GoogleStsTransportResponseV1, SecretDeliveryProviderClientError>,
     clock: impl Fn() -> Result<u64, SecretDeliveryProviderClientError>,
 ) -> GoogleStsExchangeTerminalV1 {
+    let terminal = exchange_google_sts_checkpoint_v4_with_transport_at(
+        owner,
+        StsContinuationV1::Terminal,
+        transport,
+        || {
+            Ok(ProviderClockObservationV1 {
+                wall: OffsetDateTime::from_unix_timestamp(
+                    i64::try_from(clock()?).map_err(|_| sts_exchange_refused())?,
+                )
+                .map_err(|_| sts_exchange_refused())?,
+                elapsed: Duration::ZERO,
+            })
+        },
+    );
+    GoogleStsExchangeTerminalV1 {
+        core_invocations: terminal.core_invocations,
+        result: terminal.result.map(drop),
+    }
+}
+
+#[cfg(feature = "secret-delivery-pressure")]
+enum StsContinuationV1 {
+    Terminal,
+    Iam,
+}
+
+#[cfg(feature = "secret-delivery-pressure")]
+#[derive(Clone, Copy)]
+struct ProviderClockObservationV1 {
+    wall: OffsetDateTime,
+    elapsed: Duration,
+}
+
+#[cfg(feature = "secret-delivery-pressure")]
+impl ProviderClockObservationV1 {
+    fn read(first_dispatch_instant: Instant) -> Self {
+        Self {
+            wall: OffsetDateTime::now_utc(),
+            elapsed: first_dispatch_instant.elapsed(),
+        }
+    }
+}
+
+#[cfg(feature = "secret-delivery-pressure")]
+struct RetainedGoogleStsTransactionV4 {
+    oidc: RetainedGithubOidcTransactionV4,
+    token: StsAccessTokenV1,
+    token_expires_at: OffsetDateTime,
+    token_expires_elapsed: Duration,
+    last_clock: ProviderClockObservationV1,
+}
+
+#[cfg(feature = "secret-delivery-pressure")]
+struct GoogleStsContinuationTerminalV1 {
+    core_invocations: u8,
+    result: Result<Option<RetainedGoogleStsTransactionV4>, SecretDeliveryProviderClientError>,
+}
+
+#[cfg(feature = "secret-delivery-pressure")]
+fn selected_iam_checkpoint(
+    owner: &RetainedGithubOidcTransactionV4,
+) -> Result<(), SecretDeliveryProviderClientError> {
+    owner
+        .prepared
+        .verify_signed_transport_expectation()
+        .map_err(|_| iam_exchange_refused())?;
+    let realization = &owner.prepared.capability.candidate.candidate().realizations;
+    if realization.len() != 1
+        || realization[0]
+            .oidc_claims
+            .get(&GithubOidcClaim::WorkflowRef)
+            .map(String::as_str)
+            != Some(
+                crate::secret_delivery_transaction_binding::LIVE_GOOGLE_IAM_WORKFLOW_REFERENCE_V1,
+            )
+        || owner.prepared.capability.binding.identity != owner.binding_identity
+    {
+        return Err(iam_exchange_refused());
+    }
+    Ok(())
+}
+
+#[cfg(feature = "secret-delivery-pressure")]
+fn verify_iam_transaction_clock_v4(
+    owner: &RetainedGithubOidcTransactionV4,
+    clock: ProviderClockObservationV1,
+    previous: ProviderClockObservationV1,
+    jwt_freshness: &GithubOidcJwtFreshnessV1,
+) -> Result<(), SecretDeliveryProviderClientError> {
+    let deadline = owner
+        .first_dispatch_at
+        .checked_add(time::Duration::seconds(600))
+        .ok_or_else(iam_exchange_refused)?;
+    if clock.wall < previous.wall
+        || clock.elapsed < previous.elapsed
+        || clock.wall < owner.first_dispatch_at
+        || clock.wall >= deadline
+        || clock.elapsed >= Duration::from_secs(600)
+    {
+        return Err(iam_exchange_refused());
+    }
+    let now = u64::try_from(clock.wall.unix_timestamp()).map_err(|_| iam_exchange_refused())?;
+    if owner.prepared.capability.binding.expires_at_unix_seconds <= now {
+        return Err(iam_exchange_refused());
+    }
+    jwt_freshness
+        .validate_at(now)
+        .map_err(|_| iam_exchange_refused())
+}
+
+#[cfg(feature = "secret-delivery-pressure")]
+fn exchange_google_sts_checkpoint_v4_with_transport_at(
+    owner: RetainedGithubOidcTransactionV4,
+    continuation: StsContinuationV1,
+    transport: impl FnOnce(
+        &ProtectedProviderRequestV1,
+    )
+        -> Result<GoogleStsTransportResponseV1, SecretDeliveryProviderClientError>,
+    mut clock: impl FnMut() -> Result<ProviderClockObservationV1, SecretDeliveryProviderClientError>,
+) -> GoogleStsContinuationTerminalV1 {
     let mut core_invocations = 0;
     let result = (|| {
-        let verify = || {
-            let now = clock()?;
-            if !selected_sts_checkpoint(&owner.prepared)? {
-                return Err(sts_exchange_refused());
+        let mut previous = ProviderClockObservationV1 {
+            wall: owner.first_dispatch_at,
+            elapsed: Duration::ZERO,
+        };
+        let mut verify = || {
+            match continuation {
+                StsContinuationV1::Iam => selected_iam_checkpoint(&owner)?,
+                StsContinuationV1::Terminal if !selected_sts_checkpoint(&owner.prepared)? => {
+                    return Err(sts_exchange_refused());
+                }
+                StsContinuationV1::Terminal => {}
             }
-            verify_oidc_dispatch_preflight_at(&owner.prepared, now)
+            verify_oidc_dispatch_authority_v4(&owner.prepared)
                 .map_err(|_| sts_exchange_refused())?;
-            reconcile_github_oidc_jwt_claims_v4_at(&owner.jwt.0, &owner.prepared, now)
-                .map_err(|_| sts_exchange_refused())
+            let jwt_freshness = reconcile_github_oidc_jwt_context_v4(&owner.jwt.0, &owner.prepared)
+                .map_err(|_| sts_exchange_refused())?;
+            // Expensive signed truth and JWT context checks finish before the temporal sample.
+            let observed = clock().map_err(|_| match continuation {
+                StsContinuationV1::Terminal => sts_exchange_refused(),
+                StsContinuationV1::Iam => iam_exchange_refused(),
+            })?;
+            match continuation {
+                StsContinuationV1::Iam => {
+                    verify_iam_transaction_clock_v4(&owner, observed, previous, &jwt_freshness)?
+                }
+                StsContinuationV1::Terminal => {
+                    let now = u64::try_from(observed.wall.unix_timestamp())
+                        .map_err(|_| sts_exchange_refused())?;
+                    if owner.prepared.capability.binding.expires_at_unix_seconds <= now {
+                        return Err(sts_exchange_refused());
+                    }
+                    jwt_freshness
+                        .validate_at(now)
+                        .map_err(|_| sts_exchange_refused())?;
+                }
+            }
+            previous = observed;
+            Ok(observed)
         };
         verify()?;
         let operation = &owner.prepared.capability.plan.operations[0];
         let request = build_google_sts_request_v1(operation, &owner.jwt.0)
             .map_err(|_| sts_exchange_refused())?;
-        verify()?;
+        let dispatch_clock = verify()?;
         core_invocations = 1;
         let response = transport(&request).map_err(|_| sts_exchange_refused())?;
         verify_oidc_response_head(response.status, &response.headers)
@@ -962,15 +1155,198 @@ fn exchange_google_sts_v4_with_transport_at(
         }
         let token =
             parse_google_sts_response_v1(&response.body.0).map_err(|_| sts_exchange_refused())?;
-        verify()?;
-        // Even real provider acceptance is terminal: no token reaches a subsequent operation.
-        drop(token);
-        Ok(())
+        let response_clock = verify()?;
+        match continuation {
+            StsContinuationV1::Terminal => {
+                drop(token);
+                Ok(None)
+            }
+            StsContinuationV1::Iam => {
+                let token_expires_at = dispatch_clock
+                    .wall
+                    .checked_add(time::Duration::seconds(
+                        i64::try_from(token.expires_in_seconds)
+                            .map_err(|_| iam_exchange_refused())?,
+                    ))
+                    .ok_or_else(iam_exchange_refused)?;
+                let token_expires_elapsed = dispatch_clock
+                    .elapsed
+                    .checked_add(Duration::from_secs(token.expires_in_seconds))
+                    .ok_or_else(iam_exchange_refused)?;
+                if response_clock.wall >= token_expires_at
+                    || response_clock.elapsed >= token_expires_elapsed
+                {
+                    return Err(iam_exchange_refused());
+                }
+                Ok(Some(RetainedGoogleStsTransactionV4 {
+                    oidc: owner,
+                    token,
+                    token_expires_at,
+                    token_expires_elapsed,
+                    last_clock: response_clock,
+                }))
+            }
+        }
     })();
-    GoogleStsExchangeTerminalV1 {
+    GoogleStsContinuationTerminalV1 {
         core_invocations,
         result,
     }
+}
+
+#[cfg(feature = "secret-delivery-pressure")]
+fn iam_exchange_refused() -> SecretDeliveryProviderClientError {
+    error(
+        "secret_delivery_google_iam_exchange_refused",
+        "Google IAM exchange refused without retaining transport details",
+    )
+}
+
+#[cfg(feature = "secret-delivery-pressure")]
+#[derive(Debug)]
+struct GoogleIamExchangeTerminalV1 {
+    core_invocations: u8,
+    result: Result<(), SecretDeliveryProviderClientError>,
+}
+
+#[cfg(feature = "secret-delivery-pressure")]
+fn build_iam_http_request<'a>(
+    request: &'a ProtectedProviderRequestV1,
+    operation: &SecretDeliveryProviderOperationPlanV1,
+    token: &StsAccessTokenV1,
+) -> Result<ureq::http::Request<&'a [u8]>, SecretDeliveryProviderClientError> {
+    let expected = build_service_account_token_request_v1(operation, token)
+        .map_err(|_| iam_exchange_refused())?;
+    if request.method != expected.method
+        || request.url != expected.url
+        || request.media_type != expected.media_type
+        || request.body != expected.body
+        || request
+            .authorization
+            .as_ref()
+            .map(|value| value.0.as_slice())
+            != expected
+                .authorization
+                .as_ref()
+                .map(|value| value.0.as_slice())
+    {
+        return Err(iam_exchange_refused());
+    }
+    let authorization = request
+        .authorization
+        .as_ref()
+        .ok_or_else(iam_exchange_refused)?
+        .as_utf8()
+        .map_err(|_| iam_exchange_refused())?;
+    let http = ureq::http::Request::post(request.url.as_str())
+        .header(ureq::http::header::CONTENT_TYPE, JSON_MEDIA_TYPE)
+        .header(ureq::http::header::AUTHORIZATION, authorization)
+        .body(request.body.as_slice())
+        .map_err(|_| iam_exchange_refused())?;
+    if http.method() != ureq::http::Method::POST
+        || http.uri().to_string() != request.url
+        || http.headers().len() != 2
+        || http
+            .headers()
+            .get(ureq::http::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            != Some(JSON_MEDIA_TYPE)
+        || http
+            .headers()
+            .get(ureq::http::header::AUTHORIZATION)
+            .and_then(|value| value.to_str().ok())
+            != Some(authorization)
+        || *http.body() != request.body.as_slice()
+    {
+        return Err(iam_exchange_refused());
+    }
+    Ok(http)
+}
+
+// No production transport is attached to this seam in the network-disabled batch.
+#[cfg(feature = "secret-delivery-pressure")]
+fn exchange_google_iam_v4_with_transport_at(
+    owner: RetainedGoogleStsTransactionV4,
+    transport: impl FnOnce(
+        &ProtectedProviderRequestV1,
+    )
+        -> Result<GoogleStsTransportResponseV1, SecretDeliveryProviderClientError>,
+    mut clock: impl FnMut() -> Result<ProviderClockObservationV1, SecretDeliveryProviderClientError>,
+) -> GoogleIamExchangeTerminalV1 {
+    let mut core_invocations = 0;
+    let result = (|| {
+        let mut previous = owner.last_clock;
+        let mut verify = || {
+            selected_iam_checkpoint(&owner.oidc)?;
+            verify_oidc_dispatch_authority_v4(&owner.oidc.prepared)
+                .map_err(|_| iam_exchange_refused())?;
+            let jwt_freshness =
+                reconcile_github_oidc_jwt_context_v4(&owner.oidc.jwt.0, &owner.oidc.prepared)
+                    .map_err(|_| iam_exchange_refused())?;
+            let observed = clock().map_err(|_| iam_exchange_refused())?;
+            verify_iam_transaction_clock_v4(&owner.oidc, observed, previous, &jwt_freshness)?;
+            if observed.wall >= owner.token_expires_at
+                || observed.elapsed >= owner.token_expires_elapsed
+            {
+                return Err(iam_exchange_refused());
+            }
+            previous = observed;
+            Ok(observed)
+        };
+        verify()?;
+        let operation = &owner.oidc.prepared.capability.plan.operations[0];
+        let request = build_service_account_token_request_v1(operation, &owner.token)
+            .map_err(|_| iam_exchange_refused())?;
+        build_iam_http_request(&request, operation, &owner.token)?;
+        verify()?;
+        core_invocations = 1;
+        let response = transport(&request).map_err(|_| iam_exchange_refused())?;
+        verify_oidc_response_head(response.status, &response.headers)
+            .map_err(|_| iam_exchange_refused())?;
+        let observed = verify()?;
+        let token = parse_service_account_token_response_v1(&response.body.0, observed.wall)
+            .map_err(|_| iam_exchange_refused())?;
+        if verify()?.wall >= token.expires_at {
+            return Err(iam_exchange_refused());
+        }
+        drop(token);
+        Ok(())
+    })();
+    GoogleIamExchangeTerminalV1 {
+        core_invocations,
+        result,
+    }
+}
+
+#[cfg(feature = "secret-delivery-pressure")]
+fn exchange_google_sts_for_iam_v4_with_transport(
+    owner: RetainedGithubOidcTransactionV4,
+    transport: impl FnOnce(
+        &ProtectedProviderRequestV1,
+    )
+        -> Result<GoogleStsTransportResponseV1, SecretDeliveryProviderClientError>,
+) -> GoogleStsContinuationTerminalV1 {
+    let started = owner.first_dispatch_instant;
+    exchange_google_sts_checkpoint_v4_with_transport_at(
+        owner,
+        StsContinuationV1::Iam,
+        transport,
+        || Ok(ProviderClockObservationV1::read(started)),
+    )
+}
+
+#[cfg(feature = "secret-delivery-pressure")]
+fn exchange_google_iam_v4_with_transport(
+    owner: RetainedGoogleStsTransactionV4,
+    transport: impl FnOnce(
+        &ProtectedProviderRequestV1,
+    )
+        -> Result<GoogleStsTransportResponseV1, SecretDeliveryProviderClientError>,
+) -> GoogleIamExchangeTerminalV1 {
+    let started = owner.oidc.first_dispatch_instant;
+    exchange_google_iam_v4_with_transport_at(owner, transport, || {
+        Ok(ProviderClockObservationV1::read(started))
+    })
 }
 
 #[cfg(feature = "secret-delivery-pressure")]
@@ -1295,6 +1671,520 @@ pub(crate) fn exchange_google_sts_from_oidc_response_v4_for_test(
         fake_calls,
         rendered,
     )
+}
+
+#[cfg(all(test, feature = "secret-delivery-pressure"))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize)]
+pub(crate) enum GoogleIamFaultForTestV1 {
+    None,
+    RealClock,
+    Fraction0,
+    Fraction6,
+    Fraction9,
+    SubstitutedAccount,
+    SubstitutedSession,
+    SubstitutedGraph,
+    SubstitutedRecord,
+    ExpiredBinding,
+    ExpiredJwt,
+    ExpiredSts,
+    TransactionExpired,
+    MonotonicExpired,
+    ClockBackward,
+    MonotonicBackward,
+    ClockFailure,
+    ClockOverflow,
+    StsResponseDelayed,
+    TransportFailure,
+    Redirect,
+    DuplicateContentType,
+    MissingContentType,
+    BadContentType,
+    OversizedHead,
+    OversizedResponse,
+    TruncatedResponse,
+    ExtraField,
+    DuplicateField,
+    EmptyToken,
+    OversizedToken,
+    InvalidTimestamp,
+    ExpiredToken,
+    ExcessLifetime,
+    InvalidFraction,
+    FractionBeyondLimit,
+    ReadFailure,
+    ResponseBindingExpired,
+    ResponseJwtExpired,
+    ResponseStsExpired,
+    ResponseTransactionExpired,
+    ResponseClockBackward,
+    PostParseExpired,
+    PostParseTokenExpired,
+    ValidationBindingExpired,
+    ValidationJwtExpired,
+    ValidationStsExpired,
+    ValidationTransactionExpired,
+    ValidationClockFailure,
+    StsValidationBindingExpired,
+    StsValidationJwtExpired,
+    StsValidationTransactionExpired,
+}
+
+#[cfg(all(test, feature = "secret-delivery-pressure"))]
+impl GoogleIamFaultForTestV1 {
+    pub(crate) const ALL: [Self; 52] = [
+        Self::None,
+        Self::RealClock,
+        Self::Fraction0,
+        Self::Fraction6,
+        Self::Fraction9,
+        Self::SubstitutedAccount,
+        Self::SubstitutedSession,
+        Self::SubstitutedGraph,
+        Self::SubstitutedRecord,
+        Self::ExpiredBinding,
+        Self::ExpiredJwt,
+        Self::ExpiredSts,
+        Self::TransactionExpired,
+        Self::MonotonicExpired,
+        Self::ClockBackward,
+        Self::MonotonicBackward,
+        Self::ClockFailure,
+        Self::ClockOverflow,
+        Self::StsResponseDelayed,
+        Self::TransportFailure,
+        Self::Redirect,
+        Self::DuplicateContentType,
+        Self::MissingContentType,
+        Self::BadContentType,
+        Self::OversizedHead,
+        Self::OversizedResponse,
+        Self::TruncatedResponse,
+        Self::ExtraField,
+        Self::DuplicateField,
+        Self::EmptyToken,
+        Self::OversizedToken,
+        Self::InvalidTimestamp,
+        Self::ExpiredToken,
+        Self::ExcessLifetime,
+        Self::InvalidFraction,
+        Self::FractionBeyondLimit,
+        Self::ReadFailure,
+        Self::ResponseBindingExpired,
+        Self::ResponseJwtExpired,
+        Self::ResponseStsExpired,
+        Self::ResponseTransactionExpired,
+        Self::ResponseClockBackward,
+        Self::PostParseExpired,
+        Self::PostParseTokenExpired,
+        Self::ValidationBindingExpired,
+        Self::ValidationJwtExpired,
+        Self::ValidationStsExpired,
+        Self::ValidationTransactionExpired,
+        Self::ValidationClockFailure,
+        Self::StsValidationBindingExpired,
+        Self::StsValidationJwtExpired,
+        Self::StsValidationTransactionExpired,
+    ];
+
+    pub(crate) fn expected_calls(self) -> (u8, bool) {
+        use GoogleIamFaultForTestV1::*;
+        match self {
+            None | RealClock | Fraction0 | Fraction6 | Fraction9 => (1, true),
+            TransportFailure
+            | Redirect
+            | DuplicateContentType
+            | MissingContentType
+            | BadContentType
+            | OversizedHead
+            | OversizedResponse
+            | TruncatedResponse
+            | ExtraField
+            | DuplicateField
+            | EmptyToken
+            | OversizedToken
+            | InvalidTimestamp
+            | ExpiredToken
+            | ExcessLifetime
+            | InvalidFraction
+            | FractionBeyondLimit
+            | ReadFailure
+            | ResponseBindingExpired
+            | ResponseJwtExpired
+            | ResponseStsExpired
+            | ResponseTransactionExpired
+            | ResponseClockBackward
+            | PostParseExpired
+            | PostParseTokenExpired => (1, false),
+            _ => (0, false),
+        }
+    }
+
+    pub(crate) fn expected_sts_calls(self) -> u8 {
+        u8::from(!matches!(
+            self,
+            Self::StsValidationBindingExpired
+                | Self::StsValidationJwtExpired
+                | Self::StsValidationTransactionExpired
+        ))
+    }
+}
+
+#[cfg(all(test, feature = "secret-delivery-pressure"))]
+pub(crate) fn exchange_google_iam_from_oidc_response_v4_for_test(
+    prepared: PreparedSecretDeliveryProviderTransportV4,
+    oidc_body: &[u8],
+    now: u64,
+    fault: GoogleIamFaultForTestV1,
+) -> (u8, u8, bool) {
+    use GoogleIamFaultForTestV1::*;
+    let mut jwt_body: serde_json::Value = serde_json::from_slice(oidc_body).unwrap();
+    let jwt = jwt_body["value"].as_str().unwrap();
+    let parts: Vec<_> = jwt.split('.').collect();
+    let mut payload: serde_json::Value =
+        serde_json::from_slice(&URL_SAFE_NO_PAD.decode(parts[1]).unwrap()).unwrap();
+    payload["exp"] = serde_json::json!(
+        now + if matches!(
+            fault,
+            ExpiredJwt | ResponseJwtExpired | ValidationJwtExpired | StsValidationJwtExpired
+        ) {
+            1
+        } else {
+            800
+        }
+    );
+    jwt_body["value"] = serde_json::json!(format!(
+        "{}.{}.{}",
+        parts[0],
+        URL_SAFE_NO_PAD.encode(serde_json::to_vec(&payload).unwrap()),
+        parts[2]
+    ));
+    let terminal = reconcile_github_oidc_response_v4_for_test(
+        prepared,
+        &serde_json::to_vec(&jwt_body).unwrap(),
+        now,
+    );
+    let oidc = terminal
+        .result
+        .expect("exact locally reconciled IAM fixture");
+    let binding_expiry = oidc.prepared.capability.binding.expires_at_unix_seconds;
+    let wall = OffsetDateTime::from_unix_timestamp(i64::try_from(now).unwrap()).unwrap();
+    let sts_drops = STS_TOKEN_DROPS.with(std::cell::Cell::get);
+    let iam_drops = IAM_TOKEN_DROPS.with(std::cell::Cell::get);
+    let mut sts_calls = 0;
+    let sts_checks = std::cell::Cell::new(0);
+    let last_sts_truth = std::cell::Cell::new(PROVIDER_TRUTH_CHECKS.with(std::cell::Cell::get));
+    let sts_transport = |request: &ProtectedProviderRequestV1| {
+        sts_calls += 1;
+        build_sts_http_request(request).unwrap();
+        let lifetime = if matches!(
+            fault,
+            ExpiredSts | ResponseStsExpired | StsResponseDelayed | ValidationStsExpired
+        ) {
+            1
+        } else {
+            3600
+        };
+        let body = serde_json::to_vec(&serde_json::json!({"access_token":"synthetic-federated-token", "issued_token_type":ACCESS_TOKEN_TYPE,"token_type":"Bearer","expires_in":lifetime})).unwrap();
+        let mut headers = ureq::http::HeaderMap::new();
+        headers.insert(
+            ureq::http::header::CONTENT_TYPE,
+            ureq::http::HeaderValue::from_static(JSON_MEDIA_TYPE),
+        );
+        read_sts_transport_response(
+            ureq::http::StatusCode::OK,
+            headers,
+            std::io::Cursor::new(body),
+        )
+    };
+    let sts_clock = || {
+        let truth_checks = PROVIDER_TRUTH_CHECKS.with(std::cell::Cell::get);
+        assert!(
+            truth_checks > last_sts_truth.replace(truth_checks),
+            "STS clock must follow complete truth validation"
+        );
+        sts_checks.set(sts_checks.get() + 1);
+        let delay = if matches!(fault, StsResponseDelayed) && sts_checks.get() >= 3 {
+            1
+        } else {
+            0
+        };
+        let mut observed = ProviderClockObservationV1 {
+            wall: wall + time::Duration::seconds(delay),
+            elapsed: Duration::from_secs(delay as u64),
+        };
+        if sts_checks.get() >= 2 {
+            match fault {
+                StsValidationBindingExpired => {
+                    observed.wall =
+                        OffsetDateTime::from_unix_timestamp(binding_expiry as i64).unwrap()
+                }
+                StsValidationJwtExpired => observed.wall += time::Duration::seconds(1),
+                StsValidationTransactionExpired => observed.elapsed = Duration::from_secs(600),
+                _ => {}
+            }
+        }
+        Ok(observed)
+    };
+    let sts_terminal = if matches!(fault, RealClock) {
+        exchange_google_sts_for_iam_v4_with_transport(oidc, sts_transport)
+    } else {
+        exchange_google_sts_checkpoint_v4_with_transport_at(
+            oidc,
+            StsContinuationV1::Iam,
+            sts_transport,
+            sts_clock,
+        )
+    };
+    assert_eq!(sts_terminal.core_invocations, sts_calls);
+    let mut iam_calls = 0;
+    let matched = match sts_terminal.result {
+        Ok(Some(mut owner)) => {
+            match fault {
+                SubstitutedAccount => {
+                    owner.oidc.prepared.capability.plan.operations[0]
+                        .service_account_token_url
+                        .push_str("?substituted");
+                    owner.oidc.prepared.oidc.operation =
+                        owner.oidc.prepared.capability.plan.operations[0].clone();
+                    owner.oidc.prepared.capability.plan.identity =
+                        plan_identity(&owner.oidc.prepared.capability.plan).unwrap();
+                }
+                SubstitutedSession => {
+                    owner.oidc.prepared.capability.binding.session_identity =
+                        format!("sha256:{}", "a".repeat(64));
+                    owner.oidc.prepared.capability.binding.identity = ota_authority_protocol::protected_launcher_secret_delivery_transaction_binding_v4_identity(&owner.oidc.prepared.capability.binding).unwrap();
+                    assert_ne!(
+                        owner.oidc.binding_identity,
+                        owner.oidc.prepared.capability.binding.identity
+                    );
+                }
+                SubstitutedGraph => {
+                    owner
+                        .oidc
+                        .prepared
+                        .capability
+                        .transport_dependency_feature_graph
+                        .schema_version = 99
+                }
+                SubstitutedRecord => {
+                    owner
+                        .oidc
+                        .prepared
+                        .capability
+                        .transport_dependency_record
+                        .record_identity = "f".repeat(64)
+                }
+                ClockOverflow => {
+                    owner.oidc.first_dispatch_at = time::Date::MAX
+                        .with_time(time::Time::from_hms(23, 59, 59).unwrap())
+                        .assume_utc()
+                }
+                _ => {}
+            }
+            let binding_expiry = owner
+                .oidc
+                .prepared
+                .capability
+                .binding
+                .expires_at_unix_seconds;
+            let checks = std::cell::Cell::new(0);
+            let last_iam_truth =
+                std::cell::Cell::new(PROVIDER_TRUTH_CHECKS.with(std::cell::Cell::get));
+            let iam_transport = |request: &ProtectedProviderRequestV1| {
+                iam_calls += 1;
+                assert_eq!(request.method, ProviderHttpMethod::Post);
+                assert!(request.url.starts_with(
+                    "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/"
+                ));
+                assert_eq!(request.body, br#"{"scope":["https://www.googleapis.com/auth/cloud-platform"],"lifetime":"600s"}"#);
+                assert_eq!(
+                    request.authorization.as_ref().unwrap().bytes_for_test(),
+                    b"Bearer synthetic-federated-token"
+                );
+                if matches!(fault, TransportFailure) {
+                    return Err(error(
+                        "fake_transport",
+                        "synthetic-iam-token confidential detail",
+                    ));
+                }
+                let mut headers = ureq::http::HeaderMap::new();
+                headers.insert(
+                    ureq::http::header::CONTENT_TYPE,
+                    ureq::http::HeaderValue::from_static(JSON_MEDIA_TYPE),
+                );
+                if matches!(fault, DuplicateContentType) {
+                    headers.append(
+                        ureq::http::header::CONTENT_TYPE,
+                        ureq::http::HeaderValue::from_static(JSON_MEDIA_TYPE),
+                    );
+                }
+                match fault {
+                    MissingContentType => {
+                        headers.remove(ureq::http::header::CONTENT_TYPE);
+                    }
+                    BadContentType => {
+                        headers.insert(
+                            ureq::http::header::CONTENT_TYPE,
+                            ureq::http::HeaderValue::from_static("text/html"),
+                        );
+                    }
+                    OversizedHead => {
+                        headers.insert(
+                            "x-padding",
+                            ureq::http::HeaderValue::from_str(
+                                &"a".repeat(MAX_PROVIDER_RESPONSE_HEADER_BYTES + 1),
+                            )
+                            .unwrap(),
+                        );
+                    }
+                    _ => {}
+                }
+                let status = if matches!(fault, Redirect) {
+                    ureq::http::StatusCode::FOUND
+                } else {
+                    ureq::http::StatusCode::OK
+                };
+                let seconds = match fault {
+                    ExpiredToken => now - 1,
+                    ExcessLifetime => now + 601,
+                    FractionBeyondLimit => now + 600,
+                    _ => now + 60,
+                };
+                let base = OffsetDateTime::from_unix_timestamp(seconds as i64)
+                    .unwrap()
+                    .format(&Rfc3339)
+                    .unwrap();
+                let fraction = match fault {
+                    Fraction0 => "",
+                    Fraction6 => ".100000",
+                    Fraction9 => ".100000000",
+                    ExcessLifetime | FractionBeyondLimit => ".000000001",
+                    InvalidFraction => ".1",
+                    _ => ".100",
+                };
+                let expiry = format!("{}{fraction}Z", base.strip_suffix('Z').unwrap());
+                let mut body = serde_json::to_vec(
+                    &serde_json::json!({"accessToken":"synthetic-iam-token", "expireTime":expiry}),
+                )
+                .unwrap();
+                match fault {
+                        OversizedResponse => body.resize(MAX_TOKEN_RESPONSE_BYTES + 1, b' '),
+                        TruncatedResponse => { body.pop(); },
+                        ExtraField => body = format!(r#"{{"accessToken":"synthetic-iam-token","expireTime":"{expiry}","extra":true}}"#).into_bytes(),
+                        DuplicateField => body = format!(r#"{{"accessToken":"synthetic-iam-token","accessToken":"synthetic-iam-token","expireTime":"{expiry}"}}"#).into_bytes(),
+                        EmptyToken => body = serde_json::to_vec(&serde_json::json!({"accessToken":"", "expireTime":expiry})).unwrap(),
+                        OversizedToken => body = serde_json::to_vec(&serde_json::json!({"accessToken":"a".repeat(MAX_TOKEN_BYTES + 1), "expireTime":expiry})).unwrap(),
+                        InvalidTimestamp => body = serde_json::to_vec(&serde_json::json!({"accessToken":"synthetic-iam-token", "expireTime":"2026-02-30T12:00:00Z"})).unwrap(),
+                        _ => {}
+                    }
+                if matches!(fault, ReadFailure) {
+                    struct FailedRead;
+                    impl Read for FailedRead {
+                        fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
+                            Err(std::io::Error::other("synthetic-iam-token"))
+                        }
+                    }
+                    return read_sts_transport_response(status, headers, FailedRead);
+                }
+                read_sts_transport_response(status, headers, std::io::Cursor::new(body))
+            };
+            let iam_clock = || {
+                let truth_checks = PROVIDER_TRUTH_CHECKS.with(std::cell::Cell::get);
+                assert!(
+                    truth_checks > last_iam_truth.replace(truth_checks),
+                    "IAM clock must follow complete truth validation"
+                );
+                checks.set(checks.get() + 1);
+                let response = checks.get() >= 3;
+                if matches!(fault, ClockFailure)
+                    || matches!(fault, ValidationClockFailure) && checks.get() >= 2
+                {
+                    return Err(error("fake_clock", "synthetic-iam-token"));
+                }
+                let mut observed = ProviderClockObservationV1 {
+                    wall,
+                    elapsed: Duration::ZERO,
+                };
+                match fault {
+                    ExpiredBinding => {
+                        observed.wall =
+                            OffsetDateTime::from_unix_timestamp(binding_expiry as i64).unwrap()
+                    }
+                    ExpiredJwt | ExpiredSts => {
+                        observed.wall += time::Duration::seconds(1);
+                        observed.elapsed = Duration::from_secs(1);
+                    }
+                    TransactionExpired => observed.wall += time::Duration::seconds(600),
+                    MonotonicExpired => observed.elapsed = Duration::from_secs(600),
+                    ClockBackward => observed.wall -= time::Duration::nanoseconds(1),
+                    MonotonicBackward => {
+                        observed.elapsed = Duration::from_secs(u64::from(checks.get() == 1));
+                    }
+                    ResponseBindingExpired if response => {
+                        observed.wall =
+                            OffsetDateTime::from_unix_timestamp(binding_expiry as i64).unwrap()
+                    }
+                    ResponseJwtExpired | ResponseStsExpired if response => {
+                        observed.wall += time::Duration::seconds(1);
+                        observed.elapsed = Duration::from_secs(1);
+                    }
+                    ResponseTransactionExpired if response => {
+                        observed.wall += time::Duration::seconds(600)
+                    }
+                    ResponseClockBackward if response => {
+                        observed.wall -= time::Duration::nanoseconds(1)
+                    }
+                    PostParseExpired if checks.get() >= 4 => {
+                        observed.wall =
+                            OffsetDateTime::from_unix_timestamp(binding_expiry as i64).unwrap()
+                    }
+                    PostParseTokenExpired if checks.get() >= 4 => {
+                        observed.wall += time::Duration::seconds(61)
+                    }
+                    ValidationBindingExpired if checks.get() >= 2 => {
+                        observed.wall =
+                            OffsetDateTime::from_unix_timestamp(binding_expiry as i64).unwrap()
+                    }
+                    ValidationJwtExpired | ValidationStsExpired if checks.get() >= 2 => {
+                        observed.wall += time::Duration::seconds(1);
+                        observed.elapsed = Duration::from_secs(1);
+                    }
+                    ValidationTransactionExpired if checks.get() >= 2 => {
+                        observed.elapsed = Duration::from_secs(600)
+                    }
+                    _ => {}
+                }
+                Ok(observed)
+            };
+            let terminal = if matches!(fault, RealClock) {
+                exchange_google_iam_v4_with_transport(owner, iam_transport)
+            } else {
+                exchange_google_iam_v4_with_transport_at(owner, iam_transport, iam_clock)
+            };
+            assert_eq!(terminal.core_invocations, iam_calls);
+            let debug = format!("{terminal:?}");
+            for prohibited in [
+                "synthetic-iam-token",
+                "synthetic-federated-token",
+                "googleapis",
+                "eyJ",
+            ] {
+                assert!(!debug.contains(prohibited), "{debug}");
+            }
+            terminal.result.is_ok()
+        }
+        _ => false,
+    };
+    assert_eq!(
+        STS_TOKEN_DROPS.with(std::cell::Cell::get) - sts_drops,
+        usize::from(sts_calls == 1)
+    );
+    assert_eq!(
+        IAM_TOKEN_DROPS.with(std::cell::Cell::get) - iam_drops,
+        usize::from(matched || matches!(fault, PostParseExpired | PostParseTokenExpired))
+    );
+    (sts_calls, iam_calls, matched)
 }
 
 struct PreparedOidcContextV1 {
@@ -2077,7 +2967,7 @@ pub(crate) fn parse_google_sts_response_v1(
 
 pub(crate) fn build_service_account_token_request_v1(
     operation: &SecretDeliveryProviderOperationPlanV1,
-    federated_token: StsAccessTokenV1,
+    federated_token: &StsAccessTokenV1,
 ) -> Result<ProtectedProviderRequestV1, SecretDeliveryProviderClientError> {
     #[derive(Serialize)]
     struct Body<'a> {
@@ -2093,14 +2983,14 @@ pub(crate) fn build_service_account_token_request_v1(
         method: ProviderHttpMethod::Post,
         url: operation.service_account_token_url.clone(),
         media_type: Some(JSON_MEDIA_TYPE),
-        authorization: Some(bearer_authorization(federated_token.token)?),
+        authorization: Some(bearer_authorization_borrowed(&federated_token.token)?),
         body,
     })
 }
 
 pub(crate) fn parse_service_account_token_response_v1(
     bytes: &[u8],
-    observed_at_unix_seconds: u64,
+    observed_at: OffsetDateTime,
 ) -> Result<ServiceAccountAccessTokenV1, SecretDeliveryProviderClientError> {
     #[derive(Deserialize)]
     #[serde(deny_unknown_fields)]
@@ -2111,28 +3001,50 @@ pub(crate) fn parse_service_account_token_response_v1(
         expire_time: String,
     }
     let response: Response = parse_bounded_json(bytes, MAX_TOKEN_RESPONSE_BYTES)?;
-    let expires_at_value = OffsetDateTime::parse(&response.expire_time, &Rfc3339)
-        .map_err(|_| invalid_iam_response())?;
-    if !response.expire_time.ends_with('Z')
-        || expires_at_value
-            .format(&Rfc3339)
-            .map_err(|_| invalid_iam_response())?
-            != response.expire_time
+    let timestamp = response.expire_time.as_bytes();
+    let fraction_digits = match timestamp.len() {
+        20 => 0,
+        24 => 3,
+        27 => 6,
+        30 => 9,
+        _ => return Err(invalid_iam_response()),
+    };
+    // Google's canonical timestamps retain 3/6/9 fractional digits, including trailing zeros.
+    if timestamp[4] != b'-'
+        || timestamp[7] != b'-'
+        || timestamp[10] != b'T'
+        || timestamp[13] != b':'
+        || timestamp[16] != b':'
+        || timestamp[timestamp.len() - 1] != b'Z'
+        || &timestamp[17..19] == b"60"
+        || !timestamp[..19]
+            .iter()
+            .enumerate()
+            .all(|(index, byte)| matches!(index, 4 | 7 | 10 | 13 | 16) || byte.is_ascii_digit())
+        || (fraction_digits != 0
+            && (timestamp[19] != b'.'
+                || !timestamp[20..20 + fraction_digits]
+                    .iter()
+                    .all(u8::is_ascii_digit)))
     {
         return Err(invalid_iam_response());
     }
-    let expires_at =
-        u64::try_from(expires_at_value.unix_timestamp()).map_err(|_| invalid_iam_response())?;
+    let expires_at = OffsetDateTime::parse(&response.expire_time, &Rfc3339)
+        .map_err(|_| invalid_iam_response())?;
+    let latest_expiry = observed_at
+        .checked_add(time::Duration::seconds(600))
+        .ok_or_else(invalid_iam_response)?;
     if response.access_token.is_empty()
         || response.access_token.len() > MAX_TOKEN_BYTES
-        || expires_at <= observed_at_unix_seconds
-        || expires_at - observed_at_unix_seconds > 600
+        || observed_at.unix_timestamp() < 0
+        || expires_at <= observed_at
+        || expires_at > latest_expiry
     {
         return Err(invalid_iam_response());
     }
     Ok(ServiceAccountAccessTokenV1 {
         token: ProtectedProviderValue::new(response.access_token.into_bytes())?,
-        expires_at_unix_seconds: expires_at,
+        expires_at,
     })
 }
 
@@ -2279,6 +3191,14 @@ fn reconcile_github_oidc_jwt_claims_v4_at(
     prepared: &PreparedSecretDeliveryProviderTransportV4,
     now: u64,
 ) -> Result<(), SecretDeliveryProviderClientError> {
+    reconcile_github_oidc_jwt_context_v4(jwt, prepared)?.validate_at(now)
+}
+
+#[cfg(feature = "secret-delivery-pressure")]
+fn reconcile_github_oidc_jwt_context_v4(
+    jwt: &ProtectedProviderValue,
+    prepared: &PreparedSecretDeliveryProviderTransportV4,
+) -> Result<GithubOidcJwtFreshnessV1, SecretDeliveryProviderClientError> {
     prepared.verify_signed_transport_expectation()?;
     let operation = prepared
         .capability
@@ -2300,13 +3220,15 @@ fn reconcile_github_oidc_jwt_claims_v4_at(
     let [realization] = realizations.as_slice() else {
         return Err(oidc_dispatch_refused());
     };
-    reconcile_github_oidc_jwt_claims_at_v1(
+    let freshness = reconcile_github_oidc_jwt_context_v1(
         jwt,
         operation,
         realization,
         &prepared.oidc.endpoint_input.runner_environment,
-        now,
-    )
+    )?;
+    #[cfg(test)]
+    PROVIDER_TRUTH_CHECKS.with(|count| count.set(count.get() + 1));
+    Ok(freshness)
 }
 
 #[cfg(feature = "secret-delivery-pressure")]
@@ -2317,6 +3239,17 @@ fn reconcile_github_oidc_jwt_claims_at_v1(
     expected_runner_environment: &str,
     now_unix_seconds: u64,
 ) -> Result<(), SecretDeliveryProviderClientError> {
+    reconcile_github_oidc_jwt_context_v1(jwt, operation, realization, expected_runner_environment)?
+        .validate_at(now_unix_seconds)
+}
+
+#[cfg(feature = "secret-delivery-pressure")]
+fn reconcile_github_oidc_jwt_context_v1(
+    jwt: &ProtectedProviderValue,
+    operation: &SecretDeliveryProviderOperationPlanV1,
+    realization: &SecretDeliveryTransactionCandidateRealization,
+    expected_runner_environment: &str,
+) -> Result<GithubOidcJwtFreshnessV1, SecretDeliveryProviderClientError> {
     if operation.oidc_issuer != realization.oidc_issuer
         || operation.oidc_audience != realization.oidc_audience
         || expected_runner_environment != "self-hosted"
@@ -2362,7 +3295,11 @@ fn reconcile_github_oidc_jwt_claims_at_v1(
     let repository_identity = format!("{owner}/{repository}");
     require_string_claim(claims.repository, &repository_identity)?;
     require_string_claim(claims.repository_owner, owner)?;
-    validate_jwt_freshness(&claims, now_unix_seconds)
+    Ok(GithubOidcJwtFreshnessV1 {
+        nbf: claims.nbf.ok_or_else(oidc_dispatch_refused)?,
+        issued_at: claims.issued_at.ok_or_else(oidc_dispatch_refused)?,
+        expires_at: claims.expires_at.ok_or_else(oidc_dispatch_refused)?,
+    })
 }
 
 #[cfg(feature = "secret-delivery-pressure")]
@@ -2564,33 +3501,41 @@ fn parse_bound_workflow_repository<'a>(
 }
 
 #[cfg(feature = "secret-delivery-pressure")]
-fn validate_jwt_freshness(
-    claims: &UniqueJwtClaims<'_>,
-    now_unix_seconds: u64,
-) -> Result<(), SecretDeliveryProviderClientError> {
-    let nbf = claims.nbf.ok_or_else(oidc_dispatch_refused)?;
-    let issued_at = claims.issued_at.ok_or_else(oidc_dispatch_refused)?;
-    let expires_at = claims.expires_at.ok_or_else(oidc_dispatch_refused)?;
-    let latest_issued_at = now_unix_seconds
-        .checked_add(60)
-        .ok_or_else(oidc_dispatch_refused)?;
-    if nbf > now_unix_seconds
-        || expires_at <= now_unix_seconds
-        || issued_at > latest_issued_at
-        || issued_at >= expires_at
-        || nbf >= expires_at
-        || expires_at
-            .checked_sub(issued_at)
-            .ok_or_else(oidc_dispatch_refused)?
-            > 900
-        || expires_at
-            .checked_sub(nbf)
-            .ok_or_else(oidc_dispatch_refused)?
-            > 900
-    {
-        return Err(oidc_dispatch_refused());
+struct GithubOidcJwtFreshnessV1 {
+    nbf: u64,
+    issued_at: u64,
+    expires_at: u64,
+}
+
+#[cfg(feature = "secret-delivery-pressure")]
+impl GithubOidcJwtFreshnessV1 {
+    fn validate_at(&self, now_unix_seconds: u64) -> Result<(), SecretDeliveryProviderClientError> {
+        let Self {
+            nbf,
+            issued_at,
+            expires_at,
+        } = *self;
+        let latest_issued_at = now_unix_seconds
+            .checked_add(60)
+            .ok_or_else(oidc_dispatch_refused)?;
+        if nbf > now_unix_seconds
+            || expires_at <= now_unix_seconds
+            || issued_at > latest_issued_at
+            || issued_at >= expires_at
+            || nbf >= expires_at
+            || expires_at
+                .checked_sub(issued_at)
+                .ok_or_else(oidc_dispatch_refused)?
+                > 900
+            || expires_at
+                .checked_sub(nbf)
+                .ok_or_else(oidc_dispatch_refused)?
+                > 900
+        {
+            return Err(oidc_dispatch_refused());
+        }
+        Ok(())
     }
-    Ok(())
 }
 
 fn canonical_base64url_segment(segment: &str) -> bool {
@@ -3110,7 +4055,7 @@ mod tests {
     fn iam_request_and_response_are_exact_and_bounded() {
         let operation = operation();
         let sts = parse_google_sts_response_v1(br#"{"access_token":"federated","issued_token_type":"urn:ietf:params:oauth:token-type:access_token","token_type":"Bearer","expires_in":600}"#).unwrap();
-        let request = build_service_account_token_request_v1(&operation, sts).unwrap();
+        let request = build_service_account_token_request_v1(&operation, &sts).unwrap();
         assert_eq!(request.media_type, Some(JSON_MEDIA_TYPE));
         assert_eq!(
             request.body_for_test(),
@@ -3121,17 +4066,123 @@ mod tests {
             Some(b"Bearer federated".as_slice())
         );
 
-        let expiry = OffsetDateTime::parse("2026-09-15T12:10:00Z", &Rfc3339)
-            .unwrap()
-            .unix_timestamp() as u64;
+        let expiry = OffsetDateTime::parse("2026-09-15T12:10:00Z", &Rfc3339).unwrap();
         let valid = br#"{"accessToken":"service-account","expireTime":"2026-09-15T12:10:00Z"}"#;
-        let token = parse_service_account_token_response_v1(valid, expiry - 600).unwrap();
-        assert_eq!(token.expires_at_unix_seconds, expiry);
-        assert!(parse_service_account_token_response_v1(valid, expiry - 601).is_err());
+        let token =
+            parse_service_account_token_response_v1(valid, expiry - time::Duration::seconds(600))
+                .unwrap();
+        assert_eq!(token.expires_at, expiry);
+        assert!(
+            parse_service_account_token_response_v1(valid, expiry - time::Duration::seconds(601))
+                .is_err()
+        );
         assert!(
             parse_service_account_token_response_v1(
                 br#"{"accessToken":"x","expireTime":"2026-09-15T12:10:00Z","delegates":[]}"#,
-                expiry - 600
+                expiry - time::Duration::seconds(600)
+            )
+            .is_err()
+        );
+    }
+
+    #[cfg(feature = "secret-delivery-pressure")]
+    #[test]
+    fn iam_http_request_rejects_each_material_request_mutation() {
+        let operation = operation();
+        let sts = parse_google_sts_response_v1(br#"{"access_token":"federated","issued_token_type":"urn:ietf:params:oauth:token-type:access_token","token_type":"Bearer","expires_in":600}"#).unwrap();
+        let request = build_service_account_token_request_v1(&operation, &sts).unwrap();
+        let http = build_iam_http_request(&request, &operation, &sts).unwrap();
+        assert_eq!(http.headers().len(), 2);
+        assert_eq!(http.uri().to_string(), operation.service_account_token_url);
+        for field in 0..11 {
+            let mut request = build_service_account_token_request_v1(&operation, &sts).unwrap();
+            match field {
+                0 => request.method = ProviderHttpMethod::Get,
+                1 => request.url = request.url.replace("iamcredentials.googleapis.com", "example.invalid"),
+                2 => request.url = request.url.replace(":generateAccessToken", ":signBlob"),
+                3 => request.url.push_str("?account=substitute"),
+                4 => request.url = request.url.replace("serviceAccounts/", "serviceAccounts/substitute"),
+                5 => request.authorization = None,
+                6 => request.authorization = Some(ProtectedProviderValue::new(b"Bearer substitute".to_vec()).unwrap()),
+                7 => request.media_type = Some(FORM_MEDIA_TYPE),
+                8 => request.body = br#"{"scope":["substitute"],"lifetime":"600s"}"#.to_vec(),
+                9 => request.body = br#"{"scope":["https://www.googleapis.com/auth/cloud-platform"],"lifetime":"601s"}"#.to_vec(),
+                10 => request.body = br#"{"scope":["https://www.googleapis.com/auth/cloud-platform"],"lifetime":"600s","delegates":[]}"#.to_vec(),
+                _ => unreachable!(),
+            }
+            assert!(
+                build_iam_http_request(&request, &operation, &sts).is_err(),
+                "mutation {field}"
+            );
+        }
+    }
+
+    #[test]
+    fn iam_expiry_accepts_google_fractional_widths_without_truncation() {
+        let observed = OffsetDateTime::parse("2026-09-15T12:00:00Z", &Rfc3339).unwrap();
+        for suffix in [
+            "Z",
+            ".000Z",
+            ".100Z",
+            ".000000Z",
+            ".100000Z",
+            ".000000000Z",
+            ".100000000Z",
+            ".123456789Z",
+        ] {
+            let expiry = format!("2026-09-15T12:00:01{suffix}");
+            let body = serde_json::to_vec(
+                &serde_json::json!({"accessToken":"synthetic-iam-token", "expireTime":expiry}),
+            )
+            .unwrap();
+            let token = parse_service_account_token_response_v1(&body, observed).unwrap();
+            assert_eq!(
+                token.expires_at,
+                OffsetDateTime::parse(&expiry, &Rfc3339).unwrap()
+            );
+        }
+        for expiry in [
+            "2026-09-15T12:00:00Z",
+            "2026-09-15T12:10:00.000000001Z",
+            "2026-09-15T12:00:01.1Z",
+            "2026-09-15T12:00:01.1000Z",
+            "2026-09-15T12:00:01+00:00",
+            "2026-09-15t12:00:01Z",
+            "2026-02-30T12:00:01Z",
+            "2026-09-15T12:00:60Z",
+            "2026-09-15T12:00:01z",
+        ] {
+            let body = serde_json::to_vec(
+                &serde_json::json!({"accessToken":"synthetic-iam-token", "expireTime":expiry}),
+            )
+            .unwrap();
+            assert!(
+                parse_service_account_token_response_v1(&body, observed).is_err(),
+                "{expiry}"
+            );
+        }
+        let body = br#"{"accessToken":"synthetic-iam-token","expireTime":"2026-09-15T12:00:00.000000001Z"}"#;
+        assert!(parse_service_account_token_response_v1(body, observed).is_ok());
+        assert!(
+            parse_service_account_token_response_v1(
+                body,
+                observed + time::Duration::nanoseconds(1)
+            )
+            .is_err()
+        );
+        let body =
+            br#"{"accessToken":"synthetic-iam-token","expireTime":"2026-09-15T12:10:00.100Z"}"#;
+        assert!(
+            parse_service_account_token_response_v1(
+                body,
+                observed + time::Duration::milliseconds(100)
+            )
+            .is_ok()
+        );
+        assert!(
+            parse_service_account_token_response_v1(
+                body,
+                observed + time::Duration::milliseconds(99)
             )
             .is_err()
         );

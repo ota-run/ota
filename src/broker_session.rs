@@ -6656,18 +6656,37 @@ pub(crate) mod tests {
     #[test]
     #[ignore = "child fixture invoked only by Launcher's network-isolated root cleanup test"]
     fn google_sts_refusal_scoped_child_completion() {
+        provider_refusal_scoped_child_completion(false);
+    }
+
+    #[cfg(all(target_os = "linux", feature = "secret-delivery-pressure"))]
+    #[test]
+    #[ignore = "child fixture invoked only by Launcher's network-isolated root cleanup test"]
+    fn google_iam_refusal_scoped_child_completion() {
+        provider_refusal_scoped_child_completion(true);
+    }
+
+    #[cfg(all(target_os = "linux", feature = "secret-delivery-pressure"))]
+    fn provider_refusal_scoped_child_completion(iam: bool) {
         let mut session = LauncherSession::from_inherited_descriptor(3)
             .expect("actual scoped child's retained launcher session");
         let (startup, admission, fault): (
             LauncherStartupContinuationV1,
             ota_authority_protocol::LeaseConsumptionAdmissionV1,
-            crate::secret_delivery_provider_client::GoogleStsFaultForTestV1,
+            String,
         ) = session.receive_json().expect("scoped fixture inputs");
         assert_eq!(startup.child_process_identity.len(), 71);
-        let sts_matched =
+        let selected_work_ran = if iam {
+            crate::secret_delivery_authority_snapshot::tests::fake_iam_refusal_for_scoped_child(
+                &startup,
+                serde_json::from_value(serde_json::Value::String(fault)).expect("IAM fixture case"),
+            )
+        } else {
             crate::secret_delivery_authority_snapshot::tests::fake_sts_refusal_for_scoped_child(
-                &startup, fault,
-            );
+                &startup,
+                serde_json::from_value(serde_json::Value::String(fault)).expect("STS fixture case"),
+            )
+        };
         let identity = |value: char| format!("sha256:{}", value.to_string().repeat(64));
         let mut completion = SystemdExecutionCompletion {
             session,
@@ -6702,12 +6721,12 @@ pub(crate) mod tests {
             .persist_terminal_completion(
                 &transaction,
                 None,
-                sts_matched,
+                selected_work_ran,
                 false,
                 Some(1),
                 "not_created",
             )
-            .expect("real Launcher durable acknowledgement of STS refusal");
+            .expect("real Launcher durable acknowledgement of provider refusal");
         assert_eq!(persisted.outcome, LauncherExecutionOutcomeV1::Failed);
         assert!(persisted.receipt_archive_identity.is_none());
         // The relay must observe the refused child's real exit, not the test harness's success.

@@ -1429,8 +1429,10 @@ pub(crate) mod tests {
     };
     #[cfg(feature = "secret-delivery-pressure")]
     use crate::secret_delivery_provider_client::{
-        GoogleStsFaultForTestV1, PreparedSecretDeliveryProviderTransportV4,
-        dispatch_github_oidc_v4, exchange_google_sts_from_oidc_response_v4_for_test,
+        GoogleIamFaultForTestV1, GoogleStsFaultForTestV1,
+        PreparedSecretDeliveryProviderTransportV4, dispatch_github_oidc_v4,
+        exchange_google_iam_from_oidc_response_v4_for_test,
+        exchange_google_sts_from_oidc_response_v4_for_test,
         prepare_secret_delivery_provider_transport_from_private_relay_v4,
         reconcile_github_oidc_response_v4_for_test,
     };
@@ -3954,6 +3956,62 @@ secret_requirements:
         );
         // A locally accepted response never releases selected work; the token is already dropped.
         false
+    }
+
+    #[cfg(all(target_os = "linux", feature = "secret-delivery-pressure"))]
+    pub(crate) fn fake_iam_refusal_for_scoped_child(
+        startup: &LauncherStartupContinuationV1,
+        fault: GoogleIamFaultForTestV1,
+    ) -> bool {
+        let (prepared, candidate, now) = prepared_private_v4_for_workflow_for_test(
+            startup,
+            crate::secret_delivery_transaction_binding::LIVE_GOOGLE_IAM_WORKFLOW_REFERENCE_V1,
+        );
+        let body = github_oidc_response_body_for_candidate_at(&candidate, None, now);
+        let (sts_calls, iam_calls, matched) =
+            exchange_google_iam_from_oidc_response_v4_for_test(prepared, &body, now, fault);
+        assert_eq!(sts_calls, fault.expected_sts_calls(), "{fault:?}");
+        assert_eq!((iam_calls, matched), fault.expected_calls(), "{fault:?}");
+        // Even the accepted fake IAM response is discarded before deliberate child refusal.
+        false
+    }
+
+    #[cfg(feature = "secret-delivery-pressure")]
+    #[test]
+    fn google_iam_v4_retained_owner_refuses_substitution_expiry_and_invalid_responses() {
+        for fault in GoogleIamFaultForTestV1::ALL {
+            let (prepared, candidate, now) = prepared_private_v4_for_workflow_for_test(
+                &startup(),
+                crate::secret_delivery_transaction_binding::LIVE_GOOGLE_IAM_WORKFLOW_REFERENCE_V1,
+            );
+            let body = github_oidc_response_body_for_candidate_at(&candidate, None, now);
+            let (sts_calls, iam_calls, matched) =
+                exchange_google_iam_from_oidc_response_v4_for_test(prepared, &body, now, fault);
+            assert_eq!(sts_calls, fault.expected_sts_calls(), "{fault:?}");
+            assert_eq!((iam_calls, matched), fault.expected_calls(), "{fault:?}");
+        }
+    }
+
+    #[cfg(feature = "secret-delivery-pressure")]
+    #[test]
+    fn legacy_checkpoint_routes_cannot_retain_an_iam_continuation() {
+        for workflow in [
+            crate::secret_delivery_transaction_binding::LIVE_GITHUB_OIDC_WORKFLOW_REFERENCE_V1,
+            crate::secret_delivery_transaction_binding::LIVE_GOOGLE_STS_WORKFLOW_REFERENCE_V1,
+        ] {
+            let (prepared, candidate, now) =
+                prepared_private_v4_for_workflow_for_test(&startup(), workflow);
+            let body = github_oidc_response_body_for_candidate_at(&candidate, None, now);
+            assert_eq!(
+                exchange_google_iam_from_oidc_response_v4_for_test(
+                    prepared,
+                    &body,
+                    now,
+                    GoogleIamFaultForTestV1::None,
+                ),
+                (0, 0, false),
+            );
+        }
     }
 
     #[cfg(feature = "secret-delivery-pressure")]

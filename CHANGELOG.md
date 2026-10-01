@@ -26,6 +26,12 @@
 
 ## Unreleased
 
+- Repair the internal IAM token-response parser to accept Google's canonical 0/3/6/9 fractional
+  timestamp widths, including trailing zeros, without truncating expiry comparisons. Add the
+  network-disabled Step 7 retained STS/IAM owner, strict request/response and freshness checks,
+  and connected actual-child refusal fixtures. Existing OIDC/STS routes stay terminal; production
+  IAM admission, provider contact, Secret Manager access and selected work remain inactive.
+
 - Correct the internal Step 7 STS pressure workflow's principal boundary: keep exact fixture-byte
   comparison in the existing administrator preflight rather than reading execution-owned files
   from the job. Share a root-only, no-follow marker observer between prestart and terminal

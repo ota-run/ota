@@ -162,7 +162,15 @@ pub(crate) struct VerifiedSecretDeliveryTransactionBindingV4 {
 
 pub(crate) const LIVE_GITHUB_OIDC_WORKFLOW_REFERENCE_V1: &str = "ota-run/ota/.github/workflows/secret-delivery-github-oidc-live.yml@refs/heads/1.6.29-implementation";
 pub(crate) const LIVE_GOOGLE_STS_WORKFLOW_REFERENCE_V1: &str = "ota-run/ota/.github/workflows/secret-delivery-google-sts-live.yml@refs/heads/1.6.29-implementation";
+pub(crate) const LIVE_GOOGLE_IAM_WORKFLOW_REFERENCE_V1: &str = "ota-run/ota/.github/workflows/secret-delivery-google-iam-live.yml@refs/heads/1.6.29-implementation";
 const LIVE_GITHUB_OIDC_TASK_V1: &str = "governed";
+
+fn production_private_relay_workflow_admitted(workflow: &str) -> bool {
+    matches!(
+        workflow,
+        LIVE_GITHUB_OIDC_WORKFLOW_REFERENCE_V1 | LIVE_GOOGLE_STS_WORKFLOW_REFERENCE_V1
+    )
+}
 
 /// One irreversibly consumed V4 authority retained through the private OIDC relay. It is neither
 /// cloneable nor serializable, and no plain binding record can reconstruct it.
@@ -975,10 +983,13 @@ impl VerifiedSecretDeliveryTransactionBindingV4 {
     {
         let (workflow_reference, workflow_run_id, workflow_run_attempt) = {
             let invocation = self.snapshot.invocation_context();
-            if !matches!(
-                invocation.workflow_reference(),
-                LIVE_GITHUB_OIDC_WORKFLOW_REFERENCE_V1 | LIVE_GOOGLE_STS_WORKFLOW_REFERENCE_V1
-            ) || invocation.lane_kind() != "task"
+            let admitted_workflow =
+                production_private_relay_workflow_admitted(invocation.workflow_reference());
+            #[cfg(test)]
+            let admitted_workflow = admitted_workflow
+                || invocation.workflow_reference() == LIVE_GOOGLE_IAM_WORKFLOW_REFERENCE_V1;
+            if !admitted_workflow
+                || invocation.lane_kind() != "task"
                 || invocation.lane_name() != LIVE_GITHUB_OIDC_TASK_V1
             {
                 return Err(SecretDeliveryTransactionBindingError::ResponseInvalid);
@@ -1314,6 +1325,20 @@ pub(crate) mod tests {
     };
 
     const WORKFLOW: &str = "ota-run/ota/.github/workflows/test.yml@refs/heads/main";
+
+    #[test]
+    fn production_private_relay_does_not_admit_the_offline_iam_fixture() {
+        assert!(production_private_relay_workflow_admitted(
+            LIVE_GITHUB_OIDC_WORKFLOW_REFERENCE_V1
+        ));
+        assert!(production_private_relay_workflow_admitted(
+            LIVE_GOOGLE_STS_WORKFLOW_REFERENCE_V1
+        ));
+        assert!(!production_private_relay_workflow_admitted(
+            LIVE_GOOGLE_IAM_WORKFLOW_REFERENCE_V1
+        ));
+        assert!(!production_private_relay_workflow_admitted(WORKFLOW));
+    }
 
     fn identity(byte: char) -> String {
         format!("sha256:{}", byte.to_string().repeat(64))
