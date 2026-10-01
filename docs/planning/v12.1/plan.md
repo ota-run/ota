@@ -1996,6 +1996,23 @@ Branch-only presence is not `workflow_dispatch` admission. Do not merge the whol
 batch, change the default branch, substitute a historical workflow, or add a different trigger
 to bypass this prerequisite.
 
+Runner-group compatibility is a separate prerequisite. This non-reusable `workflow_dispatch`
+workflow must use the exact fully qualified branch selector
+`ota-run/ota/.github/workflows/secret-delivery-google-sts-live.yml@refs/heads/1.6.29-implementation`;
+GitHub documents branch pins for non-reusable workflows and permits SHA pins for reusable ones.
+API persistence of a full-SHA selector does not prove scheduling compatibility. For this bounded
+operator-controlled checkpoint, explicitly freeze branch updates and competing dispatches at the
+reviewed Core SHA. Independently observe that branch head, exact queued run/attempt/job and absence
+of any other eligible queued/in-progress invocation before authority issuance and again before
+runner start. On drift or competing assignment, stop/cancel/teardown rather than retargeting the
+packet or retrying. These external controls are not cryptographic scheduling proof: branch access
+does not enforce immutable workflow code, and workflow guards run only after assignment. Preserve
+the exact installed source, signed workflow/commit/run/attempt, full graph/record, offline comparison
+and provider-condition checks without substitution. Signed Ota authority does not govern arbitrary
+shell execution before those checks. If immutable job-code admission becomes required, separately
+design and review a SHA-pinned reusable workflow with explicit caller/callee identity handling;
+it is not a transparent replacement or part of this pressure-only scheduling correction.
+
 Before any separately authorized hosted run, pin exact Core/Launcher/Protocol revisions and
 installed artifact identities. Out-of-band administration must verify a dedicated WIF provider's
 issuer, exact allowed audience, attribute mapping, and condition binding the numeric repository
@@ -2049,6 +2066,98 @@ pressure, snapshot, provider-client, CLI, default-feature and isolated Linux/arm
 checks pass. This neither waives human publication approval or hosted source gates nor closes the
 separately authorized fresh Linux/X64 provider attempt.
 
+Fresh installed checkpoint (2026-09-30): exact Core `0476b9a3` passed source gates, including
+Release Gate `36745309983`, and its production offline helper passed against a fresh Linux/X64
+installation with Launcher `dd667c3d` and Protocol `e5fe1c83`. MUSE cleared the exact packet plus
+addendum conditionally; this did not admit execution. Run `36764606243`, attempt `1`, was cancelled
+queued with zero steps because final checks left insufficient signed lifetime for the job timeout,
+propagation and cleanup. Provider/pool remained disabled and runner stopped; no OIDC/STS occurred.
+Temporary resources were removed and their absence/disabled soft-deletion observed. The retained
+closed outcome is `docs/pressure/retained-artifacts/secret-delivery-google-sts-readiness-36764606243.json`.
+For the next attempt, stage builds and review reusable operational helpers before issuing the new
+short-lived request; exact installed verification, independent packet clearance and fresh admission
+checks remain mandatory afterward. Do not extend, renew or reuse cancelled authority. This closes
+the installed offline comparison checkpoint only, not the positive STS acceptance bar below.
+
+Scheduling checkpoint: fresh run `36775307269`, attempt `1`, passed production offline verification,
+independent packet review and immediate admission with adequate lifetime. Operator process checks
+were corrected to accept only `pgrep` status `1`, refusing matches and observation errors; the
+corrected sources, stub checks and actual host observations were independently rechecked. The
+provider was enabled and the stopped runner started, but the healthy online runner remained idle
+and the job unassigned. The manual workflow's full-SHA runner-group pin conflicts with GitHub's
+documented branch-only pinning for non-reusable workflows. This is a likely scheduling cause, not
+a definitive scheduler diagnostic. The run was cancelled with zero steps, its fresh resources
+removed, and no OIDC/STS proof obtained. Retention:
+`docs/pressure/retained-artifacts/secret-delivery-google-sts-readiness-36775307269.json`.
+MUSE's read-only design review supports the branch-specific preparation under the explicit
+operator branch/dispatch freeze above, preserving exact signed source/run authority. That review
+does not clear another live activation. Do not relax a live reviewed packet or claim branch
+admission enforces immutable workflow code. No cancelled request/authority is reusable.
+
+Review-window checkpoint: run `36784346916`, attempt `1`, used the reviewed branch selector and
+passed the installed production offline comparison after one canonical authority issue. Preparation,
+group binding and pre-issue packet were independently cleared, but final installed-packet activation
+review did not return a verdict within the safe window. With 1232 seconds remaining, review, fresh
+checks and propagation could not preserve the 1200-second final-admission floor. The run was
+cancelled with zero steps before enabling the provider or starting the runner; temporary resources
+were removed with administrator-observed absence/disabled soft-deletion. Retention:
+`docs/pressure/retained-artifacts/secret-delivery-google-sts-readiness-36784346916.json`.
+MUSE's retrospective review found no P1 or additional P2/P3 installed-packet defect and identified
+a P2 operator/reviewer sequencing failure: broad post-issue review consumed the usable admission
+budget. This is not activation clearance or a demonstrated Core runtime defect. Corrected branch
+scheduling and live OIDC/STS remain unexercised.
+
+Bounded admission checklist for independent review before another infrastructure attempt:
+
+1. Complete broad source/helper/refusal/configuration and packet-shape review before issuing.
+   Use existing network-disabled fixtures and the canonical verifier, not a parallel validator.
+   Freeze exact source pins, helpers, expected graph/build/configuration and this acceptance list.
+2. Stage and independently review the exact fresh invocation/provider/readbacks, stopped-runner
+   posture and build evidence before signing. Obtain an explicit reviewer-ready handoff; no broad
+   review or user-dependent question may remain outstanding at issuance.
+3. Issue once. Run the production complete signed-store/JCS/schema/graph/record/request/provider
+   comparison with independently observed producer expectations. Final independent review checks
+   only the delta against the frozen pre-review: fresh signed identities/window, verifier exit 0
+   and closed offline posture, installed digests/ownership/units, exact external tuple and strict
+   absence/drift observations. Retain the full packet; compact comparison must not omit any check.
+4. Target five minutes for that final review as an operational budget, not an approval guarantee.
+   Interruption, drift or a need for wider investigation requires cancellation, not restarting
+   review against the same ageing authority. Fresh admission still requires at least 1200 signed
+   seconds after propagation and no competing eligible invocation. No automatic retry.
+5. If the bounded handoff is still unreliable, hold infrastructure and separately review the
+   preparation design. Do not lengthen TTL, override verification time, substitute unsigned
+   rendering for installed proof, waive independent clearance or renew/reuse cancelled authority.
+
+MUSE independently cleared this cancellation-retention checkpoint and bounded sequencing design
+with no new P1/P2/P3 findings. That verdict is documentation/sequencing readiness only, not live
+activation clearance. The checklist does not itself authorize a new VM or activation; it preserves
+the existing proof bar and fixed signed window.
+
+Fresh attempt-5 checkpoint (2026-10-01): run `36793610729`, attempt `1`, job `110151889834`,
+was assigned to the exact runner `1383`/group `8` at Core
+`0476b9a3b484c672fccb164517a1dc3097cd5e66`. Corrected branch scheduling was exercised under
+the operator freeze, not immutable workflow-code enforcement. Pre-issue review and explicit
+reviewer-ready handoff preceded one issue; MUSE conditionally cleared the signed/installed delta.
+Production offline complete graph/record comparison and immediate checks passed; 2409 signed
+seconds remained after the 300-second operator propagation hold, above the 1200-second floor.
+The first workflow reconciliation failed before the protected client: `cmp` could not read the
+execution-owned `/srv/ota-v3-pressure/ota.yaml` (directory 0750, contract 0640). The provider step
+was skipped. Provider enablement and scheduling do not establish OIDC/STS execution or acceptance.
+Provider/pool were disabled and exact temporary resources removed; teardown returned 0 and
+administrator observations confirmed absence/disabled soft-deletion. Terminal observation found
+no principal processes, authority scopes, active slots, selected marker or public capture record;
+the runner unit was failed/failed with exit 2, not protected-client finalization proof. Retention:
+`docs/pressure/retained-artifacts/secret-delivery-google-sts-readiness-36793610729.json`.
+This is a workflow principal-boundary mismatch, not a demonstrated Core runtime defect. Review
+the comparison and connected job-side marker guards at their actual owner boundary before another
+attempt: `test ! -e` cannot distinguish absence from inaccessible execution-owned paths. Do not
+relax ownership/modes, grant job access, invent a parallel verifier or silently remove the check.
+Any source repair requires independent review and exact source gates; protected workflow edits
+require task-specific authorization. No new VM, retry, issue or activation is authorized by this
+record. Step 7 stays active/open; later delivery gates remain inactive. No public propagation is
+required for this internal pre-client failure; owner-side readiness and cleanup observations are
+not independently attested execution evidence.
+
 The hosted acceptance bar is one locally reconciled GitHub response, one accepted STS response,
 no selected-work marker, and exact child/cgroup/scope/active-slot cleanup. A refusal is retained
 honestly but does not close the positive STS gate. Provider-side cardinality, independently
@@ -2056,6 +2165,50 @@ root-custodied semantic attestation, IAM Credentials, Secret Manager, materializ
 positive delivery evidence, Step 8, and V12.2 remain outside this amendment. No public command,
 schema, public JSON reference, Site, Skills, Examples, Learn, FAQ, Glossary, or command-reference
 change is required for this internal implementation checkpoint; hosted activation remains separate.
+
+Owner-boundary repair (2026-10-01, reviewed source checkpoint): exact original fixture-byte
+equality is now a predicate of the existing administrator-only installed preflight, against the
+fixture embedded in that exact Core build. Comment or formatting changes that preserve parsed
+semantics must refuse; complete signed graph/record/request/provider comparison remains mandatory.
+The job retains source cleanliness, public installation identity/pins, exact invocation mirror
+and protected-client terminal/finalization checks, but does not inspect execution-owned files.
+Its internal posture qualifies `selected_work_executed: false` with
+`selected_work_evidence: client_terminal_only_owner_marker_observation_required`. This is not an
+independent filesystem observation, root-custodied semantic attestation or provider cardinality.
+
+Keep earlier private packets frozen. Fresh preparation must freeze the shared read-only observer
+`scripts/observe-secret-delivery-pressure-marker.py` from the exact root-owned Core source tree
+with the other helper hashes. It accepts no path/UID/environment overrides and performs only a
+root, no-follow, descriptor-relative observation of the fixed repository and marker. Only final
+marker ENOENT is absence; existing entries (including dangling symlinks) and every earlier
+ownership, mode, directory-open or observation error refuse. Run with an isolated interpreter.
+
+In the existing root prestart recipe, after stopped-runner/process/scope/slot checks and the
+complete production installed verification, replace the shell marker absence probe with:
+
+```sh
+/usr/bin/python3 -I -B /opt/ota-build/service-path-core/scripts/observe-secret-delivery-pressure-marker.py
+```
+
+In the existing root post-run terminal recipe, after stopping the runner and confirming principal
+process, scope, slot and runner-cgroup absence, perform and retain a separate observation:
+
+```sh
+/usr/bin/python3 -I -B /opt/ota-build/service-path-core/scripts/observe-secret-delivery-pressure-marker.py
+```
+
+Success is administrator-observed marker absence at that instant, not proof that selected work
+never ran. Both call sites must retain exit status and the exact frozen observer hash; never use
+the job checkout, change permissions or rewrite earlier packets. The real-principal Linux
+regression uses actual job/exec UIDs and 0750/0640 permissions, actual extracted workflow scripts
+and the production observer/public Listener verifier. Service topology and the protected-client
+response are test stubs, not hosted authority or live provider proof. Root production preflight
+coverage separately exercises exact bytes, comment-only mismatch and non-mutating refusal.
+Local/source readiness does not authorize another VM, provider activation or attempt.
+MUSE's frozen source review found no P1/P2/P3 findings. The operator authorized commit and push of
+this source batch on 2026-10-01. The prior two ownership defects and principal-regression gap are
+resolved within this scope. That verdict accepts the reported local validation, not an independent
+test rerun, hosted proof or activation clearance.
 
 Implementation record (2026-09-30): the source batch implements this boundary with no live
 contact or installation. MUSE's initial frozen source review found only a P2 requiring

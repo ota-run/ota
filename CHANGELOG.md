@@ -26,6 +26,12 @@
 
 ## Unreleased
 
+- Correct the internal Step 7 STS pressure workflow's principal boundary: keep exact fixture-byte
+  comparison in the existing administrator preflight rather than reading execution-owned files
+  from the job. Share a root-only, no-follow marker observer between prestart and terminal
+  observations, and qualify job output as client-terminal evidence rather than filesystem proof.
+  This preserves workload permissions and does not close the hosted OIDC/STS gate.
+
 - Add an internal, non-default Step 7 offline preflight that verifies installed signed V2
   authority and complete transport truth against the request, public installation and disabled
   administrator WIF readback, using shared production STS target derivation. Its output remains

@@ -34,6 +34,54 @@ fn between<'a>(source: &'a str, start: &str, end: &str) -> &'a str {
         .0
 }
 
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore = "requires a fresh isolated Linux root container with network disabled"]
+fn sts_job_reconciliation_respects_real_principal_permissions() {
+    assert_eq!(unsafe { libc::geteuid() }, 0);
+    let interfaces: Vec<_> = std::fs::read_dir("/sys/class/net")
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    assert_eq!(interfaces, [std::ffi::OsString::from("lo")]);
+    let workflow: serde_yaml::Value = serde_yaml::from_str(WORKFLOW).unwrap();
+    let job = &workflow["jobs"]["request-one-bounded-google-sts-response"];
+    let directory = tempfile::tempdir().unwrap();
+    let first = directory.path().join("reconcile.sh");
+    let second = directory.path().join("invoke.sh");
+    std::fs::write(&first, job["steps"][0]["run"].as_str().unwrap()).unwrap();
+    std::fs::write(&second, job["steps"][1]["run"].as_str().unwrap()).unwrap();
+    let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let result = std::process::Command::new("python3")
+        .arg(source.join("tests/fixtures/secret_delivery_sts_job_principal.py"))
+        .arg(source)
+        .arg(first)
+        .arg(second)
+        .arg(ACCEPTED_TERMINAL)
+        .arg(
+            job["env"]["EXPECTED_LAUNCHER_SOURCE_REVISION"]
+                .as_str()
+                .unwrap(),
+        )
+        .arg(
+            job["env"]["EXPECTED_PROTOCOL_SOURCE_REVISION"]
+                .as_str()
+                .unwrap(),
+        )
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "isolated workflow fixture failed: {}\n{}",
+        String::from_utf8_lossy(&result.stdout),
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&result.stdout)
+            .contains("ACTUAL_WORKFLOW_REAL_PRINCIPAL_SPLIT_AND_OWNER_MARKER_CHECKS_PASSED")
+    );
+}
+
 #[test]
 fn sts_workflow_is_manual_only_with_mandatory_mirror_and_no_runtime_override() {
     let workflow: serde_yaml::Value = serde_yaml::from_str(WORKFLOW).expect("valid workflow YAML");
@@ -153,8 +201,7 @@ fn sts_workflow_reuses_protected_preflight_and_exact_revisions() {
         "INSTALLATION_EVIDENCE: /var/lib/ota/authority-launcher-public/installation-evidence.json",
         "PRESSURE_BUILDER: /usr/lib/ota-authority/bin/ota-secret-delivery-pressure-authority",
         "PRESSURE_INSTALLATION_EVIDENCE: /var/lib/ota/authority-launcher-public/secret-delivery-pressure-installation.json",
-        "\"$CORE_SOURCE/docs/pressure/fixtures/secret-delivery-service-path/ota.yaml\"",
-        "\"$PRESSURE_REPOSITORY/ota.yaml\"",
+        "Exact fixture bytes are checked by the root offline preflight before activation.",
     ] {
         assert!(
             WORKFLOW.contains(expected),
@@ -263,7 +310,6 @@ fn sts_success_response_requires_terminal_failure_and_exact_cleanup_before_publi
         "terminal.get(\"exit_code\") != 1",
         "finalization.get(field) is not True",
         "raise SystemExit(\"protected client cleanup is incomplete\")",
-        "raise SystemExit(\"selected work unexpectedly executed\")",
     ] {
         assert!(
             WORKFLOW.contains(required),
@@ -278,28 +324,30 @@ fn sts_success_response_requires_terminal_failure_and_exact_cleanup_before_publi
     ] {
         assert!(WORKFLOW.contains(&format!("                  \"{field}\",")));
     }
-    assert_eq!(
-        WORKFLOW
-            .matches("test ! -e \"$PRESSURE_REPOSITORY/selected-work-executed\"")
-            .count(),
-        2
-    );
+    for forbidden in [
+        "cmp ",
+        "\"$PRESSURE_REPOSITORY/ota.yaml\"",
+        "selected-work-executed",
+        "chmod ",
+        "chown ",
+        "setfacl ",
+        "usermod ",
+    ] {
+        assert!(
+            !WORKFLOW.contains(forbidden),
+            "wrong-owner route: {forbidden}"
+        );
+    }
     let validate = WORKFLOW
         .find("raise SystemExit(\"protected client cleanup is incomplete\")")
         .unwrap();
-    let marker = WORKFLOW
-        .find("raise SystemExit(\"selected work unexpectedly executed\")")
-        .unwrap();
     let posture = WORKFLOW.find("          posture = {").unwrap();
-    assert!(validate < marker && marker < posture);
+    assert!(validate < posture);
     let unset = WORKFLOW
         .rfind("unset ACTIONS_ID_TOKEN_REQUEST_URL ACTIONS_ID_TOKEN_REQUEST_TOKEN")
         .unwrap();
-    let marker_check = WORKFLOW
-        .rfind("test ! -e \"$PRESSURE_REPOSITORY/selected-work-executed\"")
-        .unwrap();
     let public_output = WORKFLOW.find("cat \"$PUBLIC_POSTURE\"").unwrap();
-    assert!(posture < unset && unset < marker_check && marker_check < public_output);
+    assert!(posture < unset && unset < public_output);
 }
 
 #[test]
@@ -348,6 +396,7 @@ fn sts_public_posture_is_closed_job_observation_with_no_secret_or_error_echo() {
             "cgroup_empty_or_absent",
             "active_slot_removed",
             "selected_work_executed",
+            "selected_work_evidence",
         ]
     );
     for expected in [
@@ -376,6 +425,7 @@ fn sts_public_posture_is_closed_job_observation_with_no_secret_or_error_echo() {
         "\"cgroup_empty_or_absent\": True",
         "\"active_slot_removed\": True",
         "\"selected_work_executed\": False",
+        "\"selected_work_evidence\": \"client_terminal_only_owner_marker_observation_required\"",
     ] {
         assert!(
             posture.contains(expected),

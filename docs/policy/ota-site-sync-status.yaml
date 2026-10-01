@@ -26,5 +26,5 @@ version: 1
 repository: ota-run/ota-site
 mode: waived
 consumer_commit: 7d37cc9fe628243174e81f9855194ca121d79296
-reviewed_ota_commit: 3a4e1bca8eec22a58614c57afe2399be2842abc7
-waiver_reason: "The uncommitted Step 7 offline preflight repair and cancelled-readiness archive correction are internal administrator pressure work only. They add no public CLI, schema, JSON reference, authoring, Learn, FAQ, Glossary or successful hosted-proof claim; the retained archive is not a published pressure-evidence case."
+reviewed_ota_commit: 0476b9a3b484c672fccb164517a1dc3097cd5e66
+waiver_reason: "The Step 7 installed offline checkpoints and cancelled runs 36764606243/36775307269/36784346916 remain internal readiness evidence. Run 36793610729 exercised exact-run branch scheduling but failed before the protected client; its provider step was skipped and temporary infrastructure removed. The connected internal pressure-harness repair moves exact fixture-byte equality into administrator preflight, removes job workload probes, qualifies its private posture as client-terminal evidence, and shares a read-only root marker observer. No job OIDC/STS or hosted semantic proof was obtained. No public CLI, schema, JSON reference, authoring, Learn, FAQ, Glossary, command reference or successful hosted-provider claim changed; no public propagation is required."

@@ -561,10 +561,14 @@ mod tests {
 
     impl OfflineFixture {
         fn new() -> Self {
+            Self::with_contract(contract())
+        }
+
+        fn with_contract(contract_text: &str) -> Self {
             use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
             use ota_authority_protocol::*;
             let contract_path = Path::new(PRESSURE_CONTRACT_PATH);
-            let contract = crate::parser::parse_contract_str(contract_path, contract()).unwrap();
+            let contract = crate::parser::parse_contract_str(contract_path, contract_text).unwrap();
             let request_value = sts_request(contract_path);
             let request = serde_jcs::to_vec(&request_value).unwrap();
             let public_key = URL_SAFE_NO_PAD.encode(
@@ -1049,6 +1053,28 @@ mod tests {
         }
     }
 
+    #[test]
+    fn offline_preflight_requires_exact_fixture_bytes_even_when_semantics_unchanged() {
+        let exact = preflight::PRESSURE_CONTRACT_FIXTURE;
+        let expected = preflight::parse_exact_pressure_contract(exact.as_bytes()).unwrap();
+        for changed in [
+            format!("{exact}# changed comment\n"),
+            exact.replace('\n', "\r\n"),
+        ] {
+            let parsed =
+                crate::parser::parse_contract_str(Path::new(PRESSURE_CONTRACT_PATH), &changed)
+                    .unwrap();
+            assert_eq!(
+                serde_json::to_value(parsed).unwrap(),
+                serde_json::to_value(&expected).unwrap()
+            );
+            assert_eq!(
+                preflight::parse_exact_pressure_contract(changed.as_bytes()).unwrap_err(),
+                "offline contract does not match the exact build-owned pressure fixture"
+            );
+        }
+    }
+
     #[cfg(target_os = "linux")]
     #[test]
     #[ignore = "requires a fresh isolated Linux root container with network disabled"]
@@ -1061,7 +1087,7 @@ mod tests {
                 "requires fresh isolated fixture: {path}"
             );
         }
-        let mut fixture = OfflineFixture::new();
+        let mut fixture = OfflineFixture::with_contract(preflight::PRESSURE_CONTRACT_FIXTURE);
         let now = u64::try_from(time::OffsetDateTime::now_utc().unix_timestamp()).unwrap();
         let mut store: serde_json::Value = serde_json::from_slice(&fixture.verifier).unwrap();
         store["not_before_unix_seconds"] = (now - 60).into();
@@ -1110,7 +1136,11 @@ mod tests {
                 &fixture.installation,
                 0o644,
             ),
-            (PRESSURE_CONTRACT_PATH, contract().as_bytes(), 0o640),
+            (
+                PRESSURE_CONTRACT_PATH,
+                preflight::PRESSURE_CONTRACT_FIXTURE.as_bytes(),
+                0o640,
+            ),
         ];
         for (path, bytes, mode) in &files {
             fs::write(path, bytes).unwrap();
@@ -1162,6 +1192,22 @@ mod tests {
         let before = metadata();
         assert!(inspect().is_ok());
         assert_eq!(metadata(), before);
+        let comment_only = format!(
+            "{}# changed comment\n",
+            preflight::PRESSURE_CONTRACT_FIXTURE
+        );
+        fs::write(PRESSURE_CONTRACT_PATH, comment_only.as_bytes()).unwrap();
+        let before_mismatch = metadata();
+        assert_eq!(
+            inspect().unwrap_err(),
+            "offline contract does not match the exact build-owned pressure fixture"
+        );
+        assert_eq!(metadata(), before_mismatch);
+        assert_eq!(
+            fs::read(PRESSURE_CONTRACT_PATH).unwrap(),
+            comment_only.as_bytes()
+        );
+        fs::write(PRESSURE_CONTRACT_PATH, preflight::PRESSURE_CONTRACT_FIXTURE).unwrap();
         fs::set_permissions(
             "/etc/ota/secret-delivery/bindings-v1.json",
             fs::Permissions::from_mode(0o600),

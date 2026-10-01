@@ -19,6 +19,8 @@ const INSTALLATION_PATH: &str =
     "/var/lib/ota/authority-launcher-public/secret-delivery-pressure-installation.json";
 const INSTALLATION_IDENTITY_DOMAIN: &[u8] =
     b"ota.authority-launcher.secret-delivery-pressure-installation.v1\0";
+pub(super) const PRESSURE_CONTRACT_FIXTURE: &str =
+    include_str!("../../docs/pressure/fixtures/secret-delivery-service-path/ota.yaml");
 
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -115,11 +117,7 @@ pub fn verify_installed_authority_payload(
     // The recipient-owned repository is a subject input, not a trust anchor. Its derived payload
     // must still exactly match the independently protected and verified signed authority.
     let contract_bytes = read_repository_contract()?;
-    let contract = crate::parser::parse_contract_str(
-        Path::new(PRESSURE_CONTRACT_PATH),
-        std::str::from_utf8(&contract_bytes).map_err(|_| "offline contract is invalid")?,
-    )
-    .map_err(|_| "offline contract is invalid")?;
+    let contract = parse_exact_pressure_contract(&contract_bytes)?;
     let now = u64::try_from(time::OffsetDateTime::now_utc().unix_timestamp())
         .map_err(|_| "offline verification clock is unavailable")?;
     verify_inputs(PreflightInputs {
@@ -138,6 +136,18 @@ pub fn verify_installed_authority_payload(
         builder_artifact_identity,
         now,
     })
+}
+
+pub(super) fn parse_exact_pressure_contract(
+    bytes: &[u8],
+) -> Result<crate::schema::Contract, String> {
+    if bytes != PRESSURE_CONTRACT_FIXTURE.as_bytes() {
+        return Err(
+            "offline contract does not match the exact build-owned pressure fixture".into(),
+        );
+    }
+    crate::parser::parse_contract_str(Path::new(PRESSURE_CONTRACT_PATH), PRESSURE_CONTRACT_FIXTURE)
+        .map_err(|_| "offline contract is invalid".into())
 }
 
 pub(super) fn verify_inputs(inputs: PreflightInputs<'_>) -> Result<Vec<u8>, String> {

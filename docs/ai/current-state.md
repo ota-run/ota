@@ -37,20 +37,77 @@ durable agent workflow belongs in the canonical Ota skill.
 - released baseline: `v1.6.28`
 - development package identity: `v1.6.28`; this branch contains unreleased post-release source
   changes and is not a new release or support claim.
-- current proof gate (2026-09-30): V12.1 Step 7 Google STS remains open. Frozen Core
-  `f9ddc0f6` and registration stub `8422f2ce` passed source gates; the stub is on `main`.
-  MUSE held the pre-start packet because it did not canonically verify the installed signed V2
-  snapshot and Core-derived STS operation target against the request/provider readback. Run
-  `36725521542` was cancelled before runner start; no OIDC/STS call occurred. All new temporary
-  infrastructure is deleted or disabled/soft-deleted and its absence/state is observed. Next:
-  the internal offline verification mode is implemented locally in the existing pressure helper
-  and cleared by MUSE's frozen source review and narrow test recheck, with no remaining P1/P2/P3.
-  It verifies the production signed V2 payload/full graph,
-  shares pure runtime target derivation, and compares the complete request/public installation/
-  provider readback without fabricated authority, network, replay consumption, or writes. New
-  source gates and a fresh hosted attempt must follow; no new cloud resources or run exist yet.
-  Numbered milestones below retain their scope at their recorded completion; this bullet and the
-  latest Step 7 checkpoint govern the current next action.
+- current proof gate (2026-10-01): V12.1 Step 7 Google STS remains open. Core
+  `0476b9a3b484c672fccb164517a1dc3097cd5e66` passed exact-head Release Gate `36745309983`
+  and connected source gates; no merge or release occurred. Launcher is pinned to
+  `dd667c3d6b63d8d26d9e2a40f831e9d08a7a6864`, Protocol to
+  `e5fe1c83e562e02f60e27026c7148918bd016155`.
+  Fresh run `36793610729`, attempt `1`, job `110151889834`, was assigned to runner
+  `1383` in group `8` (`ota-sts5-20261001`) at that exact Core revision. Branch-ref
+  scheduling was exercised successfully under the operator branch/dispatch freeze; it does
+  not enforce immutable workflow code.
+  Broad source/helper/configuration and fresh pre-issue review completed off the signed clock.
+  MUSE explicitly acknowledged reviewer readiness before one canonical issue, then conditionally
+  cleared the frozen signed/installed delta with no findings. Production offline verification
+  compared the complete signed V2 graph/record with independent producer/build/artifact
+  expectations. Immediate source/group/run/provider/installed/strict-absence checks passed;
+  after provider/pool enablement and the 300-second operator propagation hold, 2409 signed
+  seconds remained, exceeding the 1200-second final-admission floor. The hold is not evidence
+  of provider acceptance. Signed expiry was `2026-10-01T01:11:08Z`; no authority is reusable.
+  The first reconciliation step failed at `cmp` with
+  `/srv/ota-v3-pressure/ota.yaml: Permission denied` (exit 2). The job principal cannot
+  traverse the intentionally execution-owned 0750 repository or read its 0640 contract.
+  The protected-client/provider step was skipped: no job OIDC/STS request or protected
+  runtime reconciliation occurred. This is a workflow principal-boundary mismatch, not a
+  demonstrated Core runtime defect. Job-side `test ! -e` marker guards also cannot prove
+  absence inside this inaccessible repository; preserve owner-side absence observations
+  separately and review the connected guard before another attempt.
+  Provider/pool were disabled, runner stopped, and terminal administrator observation showed
+  MainPID 0, empty cgroup, no principal processes, active slots, authority scopes, selected-work
+  marker or public capture record. The runner unit ended failed/failed with exit 2; do not
+  report protected-client finalization or root-custodied semantic proof.
+  Reviewed teardown returned 0. VM `ota-sts5-20261001`, boot disk, network, subnet, firewall,
+  runner and group are absent; the pool is disabled and soft-deleted, and provider deletion
+  was acknowledged followed by NOT_FOUND under the deleted pool. No temporary host remains.
+  Retention: `docs/pressure/retained-artifacts/secret-delivery-google-sts-readiness-36793610729.json`.
+  Private frozen preparation/installation packet and separate result/cleanup observations:
+  `/tmp/ota-sts-live-20261001-attempt5`. Earlier cancelled attempts
+  `36764606243`/`36775307269`/`36784346916` remain in their retained readiness records
+  and the Step 7 plan; they did not execute job OIDC/STS.
+  MUSE confirmed two P2 workflow ownership defects and a P3 real-principal testing gap; the
+  failure/cleanup retention is independently cleared. The operator authorized the connected
+  owner-correct repair on 2026-10-01. The reviewed implementation moves exact original fixture-byte
+  comparison into the existing administrator preflight, removes all job workload-file probes,
+  qualifies the job's selected-work projection as client-terminal-only, and shares a root-only
+  descriptor-relative marker observer in the existing prestart/terminal recipes. No workload
+  permissions, installation schema or runtime authority have changed. New tests exercise exact
+  bytes versus semantic-equivalent changes and the real job/exec permission split; topology and
+  client response in the local workflow fixture are explicit stubs, not hosted proof.
+  Local validation passes: macOS workflow tests 5/5 and pressure preflight tests 6/6; fresh
+  network-disabled Linux/arm64 actual-workflow principal regression 1/1, including reidentified
+  wrong source/request and writable-public-evidence refusals; fresh Linux root production
+  preflight regression 1/1, including exact fixture bytes and non-mutating comment-only refusal.
+  Actionlint, Python syntax, declared formatting and first-party sync checks pass. These are
+  local fixture results, not protected Linux/X64 hosted or provider proof.
+  MUSE completed the independent frozen source review with no P1/P2/P3 findings; both P2
+  ownership defects and the P3 real-principal testing gap are resolved within this scope.
+  All ten reviewed file hashes matched before and after review (manifest SHA-256
+  `891240afbfc583ef79cc475f82542bb9ea37b1c673fd03d0df412e2899e11894`). MUSE source-reviewed
+  the regressions and accepted the reported validation; it did not independently rerun them.
+  Source/commit readiness is cleared. The operator authorized commit and push on 2026-10-01;
+  this does not authorize hosted activation, merge or release.
+  Next: commit/push this reviewed checkpoint and verify exact-source gates before preparing any
+  separately authorized hosted attempt. No rerun, new VM, renewal, reissue or activation is authorized by this
+  repair; any future attempt requires reviewed exact-source gates and fresh state.
+  Uncovered material behavior: live OIDC/STS acceptance, invocation cardinality, runtime
+  reconciliation, protected-client cleanup and root-custodied semantic attestation remain
+  explicitly `not_proved`. Cloud lifecycle and branch/dispatch freeze are repo-owned operator
+  behavior outside declared Ota task scope; cleanup is administrator observation only.
+  Complete installed comparison is proved by the offline verifier, not execution authority.
+  Site/Skills/Examples/Learn/FAQ/Glossary/schema/public JSON and command reference are unaffected
+  by this internal pre-client failure; the Site waiver records that decision. Provider delivery,
+  Step 8 and V12.2 remain inactive. Numbered milestones retain their scope at recorded completion;
+  this bullet and the latest Step 7 checkpoint govern the current next action.
 - active version: V12.1 secret-delivery governance. Activated on 2026-09-02 after the released V12
   closure and feasibility review of PythiaLabs' credentialed CAEP boundary. The named first adapter
   is `google_secret_manager_github_oidc_process_environment_v1`, initially limited to a
@@ -2530,13 +2587,74 @@ The user has explicitly approved commit and push of this reviewed
 repair on `1.6.29-implementation`; no merge or release is authorized. Exact published-source gates
 must pass before a fresh host/group/provider/request/attempt; do not reuse cancelled state.
 Installed-host offline verification and a cleared pre-start packet remain mandatory before
-activation. No new hosted dispatch or activation has occurred.
+activation. The following fresh-host checkpoint supersedes this source-only preparation state.
 
-Uncovered material behavior: source gates and canonical fresh preparation are proved, not live
-execution. Installed-target verification and provider/delivery/cardinality claims are bounded
-in machine-readable `outcome.json`. GitHub scheduling, Google enforcement and post-job cleanup
-remain external/unexercised. Installed offline preflight now has a local source implementation,
-not a new hosted proof. An inactive Launcher
+Fresh Linux/X64 offline checkpoint (2026-09-30): Core `0476b9a3b484c672fccb164517a1dc3097cd5e66`,
+Launcher `dd667c3d6b63d8d26d9e2a40f831e9d08a7a6864`, and Protocol
+`e5fe1c83e562e02f60e27026c7148918bd016155` were installed on a fresh Ubuntu 24.04 X64 VM.
+The production root-only `--verify-installed` helper passed against actual installed signed
+stores, complete graph/record, request/public installation, and disabled provider readback.
+Verifier expectations came from the exact successful producer invocation and independently
+checked source/build/artifact identities, not from the stores being verified. Its closed report
+remained offline/not-admitted/not-dispatched with runtime reconciliation still required.
+MUSE's packet review required fail-closed teardown argument guards and explicit service-account/
+firewall observations; the separately retained addendum resolved both holds. No service account
+or scopes were attached, and SSH was restricted to the operator's observed /32 on the fresh network.
+Final installed observations matched the reviewed packet, but the remaining signed lifetime was
+too short for safe activation. Run `36764606243`, attempt `1`, job `110055512134`, completed
+cancelled with zero steps. No provider was enabled and no runner was started. Before deletion,
+root observation confirmed runner MainPID `0`, no job/exec principal processes, no active Ota
+scope/slot, no public capture record, and no selected-work marker. The reviewed guarded teardown
+completed successfully; subsequent exact-name lists show no VM, boot disk, network, subnet, or
+firewall, and GitHub inventories show neither runner `1380` nor group `5`. The pool is disabled
+and `DELETED`; provider deletion was acknowledged before pool deletion, and its later description
+returned `NOT_FOUND` under the deleted pool. This is not independently retained provider semantic
+attestation. Closed public facts are retained in
+`docs/pressure/retained-artifacts/secret-delivery-google-sts-readiness-36764606243.json`;
+protected stores, producer identities, private traces and operator records are not published.
+The subsequent fresh run `36775307269`, attempt `1`, job `110091638636`, used the same frozen
+source pins on a fresh VM with fresh group `6`, runner `1381`, provider, request and generation-1
+authority. The first observer call failed before strace/provisioner/builder because the fixed
+request was not staged yet; that failure was preserved, the exact request staged at root `0400`,
+and only one canonical authority issue followed. MUSE identified a P2 in the operator wrappers:
+`pgrep` errors were treated like no matching process. Separately retained corrected read-only
+wrappers accept only status `1`; local stub checks refuse `0`, `2` and `3`, and corrected host
+observations/offline verification passed with installed bytes unchanged. MUSE cleared the frozen
+packet plus correction addendum. No signed input, binary or unit changed and no authority was
+renewed. Immediate pre-enable and post-propagation checks passed; remaining signed lifetime was
+`1867` seconds before runner start, exceeding the new `1200`-second floor.
+The fresh pool/provider were temporarily enabled, and the runner became online/idle with the
+exact labels. The job remained queued/unassigned with zero steps. Current GitHub documentation
+requires non-reusable workflows to be branch-pinned in runner groups; reusable workflows may be
+SHA-pinned. The full-SHA group restriction is a likely incompatibility, not a conclusively
+observed scheduler diagnostic. No in-place admission relaxation or rerun was attempted. The run
+was cancelled, the provider/pool disabled and runner stopped. Corrected terminal observation
+confirmed no principal processes, Ota scope/slot or selected marker; the unit retained `failed`
+and exit status `143` after operator stop, not a successful job completion. No capture record
+existed. Reviewed teardown completed; VM/disk/network/subnet/firewall/group/runner absence was
+observed, the pool is disabled/`DELETED`, and provider deletion was acknowledged then its
+description returned `NOT_FOUND` under the deleted pool. Closed facts are retained in
+`docs/pressure/retained-artifacts/secret-delivery-google-sts-readiness-36775307269.json`.
+MUSE's read-only design review supports the exact fully qualified branch selector under explicit
+administrator-controlled branch/dispatch freeze and fresh exact-head/non-competing-invocation
+observations before issuance and start. This fixes the documented compatibility mismatch, not
+immutable workflow-code enforcement: branch code can change the guards, and signed Ota authority
+does not constrain arbitrary pre-guard shell execution. A SHA-pinned reusable job would require
+separate caller/callee identity design and is not a transparent substitution. No live activation
+is cleared by this design review. Review reusable helpers and stage builds before issuing entirely fresh authority,
+then independently review the new installed packet and freshly require at least `1200` seconds
+for job timeout, propagation and cleanup. Cancelled/near-expiry authority is not renewed or reused.
+
+Uncovered material behavior: exact-head source gates, installed Linux/X64 offline comparison and
+administrator-observed temporary-resource cleanup are proved within their stated scope, not live
+provider execution. Provider/delivery/cardinality claims remain explicitly `not_proved` in the
+retained machine-readable outcome. GitHub scheduling and Google enforcement are external and
+unexercised; neither cancelled job exercised provider execution or executed-job cleanup. The
+process-observation defect is fixed in internal operator wrappers, not Core's runtime. GitHub
+runner-group scheduling is repo-owned external CI behavior outside the declared Core authority
+scope; the named pressure-admission correction is owned by the hosted operator packet/workflow,
+not a demonstrated Core engine defect. Provider/delivery behavior remains explicitly bounded
+and not proved in machine-readable retention. An inactive Launcher
 diagnostic follow-on is the managed-ancestor refusal's missing offending path; owner
 `pressure_provision::verify_existing_ancestor_chain_no_follow_from`, return during prepared-
 provisioning UX triage without weakening checks. No public command/schema/JSON or authoring
