@@ -9,7 +9,10 @@ use ota_authority_protocol::{
 };
 use serde::{Deserialize, Serialize};
 
-use super::{PRESSURE_CONTRACT_PATH, PressureAuthorityInstallationV1, PressureAuthorityRequestV2};
+use super::{
+    PRESSURE_CONTRACT_PATH, PressureAuthorityInstallationV1, PressureAuthorityRequest,
+    PressureAuthorityRequestV1, PressureProviderTarget,
+};
 
 const REQUEST_PATH: &str = "/etc/ota/secret-delivery-pressure-request.json";
 const PROVIDER_READBACK_PATH: &str = "/etc/ota/secret-delivery-provider-readback.json";
@@ -181,9 +184,15 @@ pub(super) fn verify_inputs(inputs: PreflightInputs<'_>) -> Result<Vec<u8>, Stri
     {
         return Err("offline verifier does not match the administrator expectation".into());
     }
-    // A closed V2 request is mandatory: no legacy request or identity-only fallback.
-    let request: PressureAuthorityRequestV2 = serde_json::from_slice(inputs.request)
-        .map_err(|_| "offline verification requires a complete V2 request")?;
+    // A complete route-specific request is mandatory; V1 cannot substitute for either route.
+    let request: PressureAuthorityRequest = serde_json::from_slice(inputs.request)
+        .map_err(|_| "offline verification requires a complete V2 or V3 request")?;
+    let (request, _, provider_target) = request.into_validated_parts(inputs.contract_path)?;
+    let (provider_name, iam_selected) = match provider_target {
+        Some(PressureProviderTarget::Sts(target)) => (target.workload_identity_provider, false),
+        Some(PressureProviderTarget::Iam(target)) => (target.workload_identity_provider, true),
+        None => return Err("offline verification refuses a legacy request".into()),
+    };
     let expected: PressureAuthorityInstallationV1 =
         serde_json::from_slice(&super::render_authority_payload_from_request_bytes(
             inputs.request,
@@ -196,11 +205,10 @@ pub(super) fn verify_inputs(inputs: PreflightInputs<'_>) -> Result<Vec<u8>, Stri
             Some(inputs.contract),
         )?)
         .map_err(|_| "offline expected authority is invalid")?;
-    if request.schema_version != 2
-        || serde_jcs::to_vec(&expected.authority_payload)
-            .map_err(|_| "offline expected authority is invalid")?
-            != serde_jcs::to_vec(&verified.payload)
-                .map_err(|_| "offline installed authority is invalid")?
+    if serde_jcs::to_vec(&expected.authority_payload)
+        .map_err(|_| "offline expected authority is invalid")?
+        != serde_jcs::to_vec(&verified.payload)
+            .map_err(|_| "offline installed authority is invalid")?
         || verified.payload.invocation_bindings.len() != 1
     {
         return Err("offline installed authority does not match the complete request".into());
@@ -233,21 +241,61 @@ pub(super) fn verify_inputs(inputs: PreflightInputs<'_>) -> Result<Vec<u8>, Stri
     let provider: ProviderReadback = serde_json::from_slice(inputs.provider)
         .map_err(|_| "offline administrator provider readback is invalid")?;
     if provider.name != target.workload_identity_provider
-        || provider.name != request.sts_target.workload_identity_provider
+        || provider.name != provider_name
         || provider.state != "ACTIVE"
         || !provider.disabled
         || provider.oidc.issuer_uri != target.oidc_issuer
         || provider.oidc.allowed_audiences != [target.oidc_audience.clone()]
         || provider.attribute_mapping != expected_attribute_mapping()
-        || provider.attribute_condition != expected_attribute_condition(&request)
+        || provider.attribute_condition != expected_invocation_attribute_condition(&request)
     {
         return Err(
             "offline provider configuration does not match the installed target/request".into(),
         );
     }
+    let operation_target_identity = if iam_selected {
+        let run_plan = crate::runner::plan_task_execution_structure_for_target_os(
+            inputs.contract,
+            &request.task,
+            crate::runner::ExecutionOverrides::default(),
+            "linux",
+        )
+        .map_err(|_| "offline selected execution graph is invalid")?;
+        let target = crate::secret_delivery_authority_snapshot::inspect_signed_v2_operation_plan(
+            inputs.verifier,
+            inputs.binding,
+            inputs.now,
+            crate::secret_delivery_authority_snapshot::SecretDeliveryCandidateReconstructionInput {
+                contract: inputs.contract,
+                lane_kind: "task",
+                lane_name: &request.task,
+                run_plan: &run_plan,
+            },
+            [
+                &request.workflow_run_id,
+                &request.workflow_run_attempt,
+                &request.workflow_reference,
+            ],
+        )
+        .map_err(|_| "offline signed candidate/production operation plan is invalid")?;
+        ota_authority_protocol::message_identity(
+            b"ota.secret-delivery-iam-pressure.offline-operation-target.v1\0",
+            &target,
+        )
+    } else {
+        ota_authority_protocol::message_identity(
+            b"ota.secret-delivery-sts-pressure.offline-operation-target.v1\0",
+            &target,
+        )
+    }
+    .map_err(|_| "offline target identity is unavailable")?;
     let report = PreflightReport {
         schema_version: 1,
-        record_kind: "secret_delivery_sts_offline_preflight",
+        record_kind: if iam_selected {
+            "secret_delivery_iam_offline_preflight"
+        } else {
+            "secret_delivery_sts_offline_preflight"
+        },
         posture: "offline_inspected_not_admitted_not_dispatched",
         core_source_revision: inputs.core_revision,
         request_identity: expected.request_identity,
@@ -255,11 +303,7 @@ pub(super) fn verify_inputs(inputs: PreflightInputs<'_>) -> Result<Vec<u8>, Stri
         binding_bundle_identity: bundle.identity,
         signed_payload_identity: bundle.payload_identity,
         public_installation_identity: installation.identity,
-        operation_target_identity: ota_authority_protocol::message_identity(
-            b"ota.secret-delivery-sts-pressure.offline-operation-target.v1\0",
-            &target,
-        )
-        .map_err(|_| "offline target identity is unavailable")?,
+        operation_target_identity,
         provider_readback_identity: ota_authority_protocol::message_identity(
             b"ota.secret-delivery-sts-pressure.administrator-provider-readback.v1\0",
             &provider,
@@ -299,8 +343,10 @@ pub(super) fn expected_attribute_mapping() -> BTreeMap<String, String> {
         .collect()
 }
 
-pub(super) fn expected_attribute_condition(request: &PressureAuthorityRequestV2) -> String {
-    [
+pub(super) fn expected_invocation_attribute_condition(
+    request: &PressureAuthorityRequestV1,
+) -> String {
+    expected_condition_fields([
         ("repository_id", request.repository_id.as_str()),
         ("repository_owner_id", request.repository_owner_id.as_str()),
         ("actor_id", request.actor_id.as_str()),
@@ -312,11 +358,15 @@ pub(super) fn expected_attribute_condition(request: &PressureAuthorityRequestV2)
         ("runner_environment", "self-hosted"),
         ("run_id", request.workflow_run_id.as_str()),
         ("run_attempt", request.workflow_run_attempt.as_str()),
-    ]
-    .into_iter()
-    .map(|(claim, value)| format!("assertion.{claim}=='{value}'"))
-    .collect::<Vec<_>>()
-    .join(" && ")
+    ])
+}
+
+fn expected_condition_fields(fields: [(&str, &str); 11]) -> String {
+    fields
+        .into_iter()
+        .map(|(claim, value)| format!("assertion.{claim}=='{value}'"))
+        .collect::<Vec<_>>()
+        .join(" && ")
 }
 
 #[cfg(not(target_os = "linux"))]

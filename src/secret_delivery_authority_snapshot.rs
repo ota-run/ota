@@ -194,6 +194,68 @@ struct CandidateSnapshotContext<'a> {
     source_verification_evidence: Vec<String>,
 }
 
+struct CandidateInvocationExpectation<'a> {
+    run_id: &'a str,
+    run_attempt: &'a str,
+    workflow_reference: &'a str,
+}
+
+/// Data-only inspection projection; no candidate, snapshot, session or dispatch authority escapes.
+#[cfg(feature = "secret-delivery-pressure")]
+#[derive(serde::Serialize)]
+pub(crate) struct InspectedSecretDeliveryOperationPlanV1 {
+    pub oidc_issuer: String,
+    pub oidc_audience: String,
+    pub sts_audience: String,
+    pub sts_url: String,
+    pub service_account_token_url: String,
+    pub secret_version_url: String,
+    pub secret_version_resource: String,
+}
+
+#[cfg(feature = "secret-delivery-pressure")]
+pub(crate) fn inspect_signed_v2_operation_plan(
+    verifier_bytes: &[u8],
+    binding_bytes: &[u8],
+    now: u64,
+    input: SecretDeliveryCandidateReconstructionInput<'_>,
+    expected_invocation: [&str; 3],
+) -> Result<InspectedSecretDeliveryOperationPlanV1, SecretDeliveryAuthoritySnapshotError> {
+    let verified = verify_authority_payload_v2_store_bytes(verifier_bytes, binding_bytes, now)?;
+    let store: ProtectedSecretDeliveryVerifierStoreV1 = serde_json::from_slice(verifier_bytes)
+        .map_err(|_| SecretDeliveryAuthoritySnapshotError::BindingBundlePayloadInvalid)?;
+    let bundle: ProtectedSecretDeliveryBindingBundleV1 = serde_json::from_slice(binding_bytes)
+        .map_err(|_| SecretDeliveryAuthoritySnapshotError::BindingBundlePayloadInvalid)?;
+    let candidate = reconstruct_semantic_candidate_from_authority(
+        verified.into(),
+        CandidateInvocationExpectation {
+            run_id: expected_invocation[0],
+            run_attempt: expected_invocation[1],
+            workflow_reference: expected_invocation[2],
+        },
+        vec![store.identity, bundle.identity, bundle.verifier_identity],
+        input,
+    )?;
+    let plan =
+        crate::secret_delivery_provider_client::derive_secret_delivery_provider_client_plan_v1(
+            &candidate,
+        )
+        .map_err(|_| SecretDeliveryAuthoritySnapshotError::CandidateReconstructionInvalid)?;
+    if plan.operations.len() != 1 {
+        return Err(SecretDeliveryAuthoritySnapshotError::CandidateReconstructionInvalid);
+    }
+    let operation = plan.operations.into_iter().next().expect("one operation");
+    Ok(InspectedSecretDeliveryOperationPlanV1 {
+        oidc_issuer: operation.oidc_issuer,
+        oidc_audience: operation.oidc_audience,
+        sts_audience: operation.sts_audience,
+        sts_url: operation.sts_url,
+        service_account_token_url: operation.service_account_token_url,
+        secret_version_url: operation.secret_version_url,
+        secret_version_resource: operation.secret_version_resource,
+    })
+}
+
 /// Private Core-retained state for one snapshot exchange. The raw nonce never leaves the request.
 pub(crate) struct PendingSecretDeliveryAuthoritySnapshotV1 {
     startup_continuation: LauncherStartupContinuationV1,
@@ -1068,6 +1130,40 @@ fn reconstruct_transaction_candidate_from_authority(
     {
         return Err(SecretDeliveryAuthoritySnapshotError::CandidateReconstructionInvalid);
     }
+    let (selected_subject, _, _, _) = selected_candidate_lane(&input)?;
+    if invocation_context.lane_kind != input.lane_kind
+        || invocation_context.lane_name != selected_subject[1]
+        || invocation_context.selected_subject != selected_subject
+    {
+        return Err(SecretDeliveryAuthoritySnapshotError::CandidateReconstructionInvalid);
+    }
+    let candidate = reconstruct_semantic_candidate_from_authority(
+        verified,
+        CandidateInvocationExpectation {
+            run_id: &invocation_context.workflow_run_id,
+            run_attempt: &invocation_context.workflow_run_attempt,
+            workflow_reference: &invocation_context.workflow_reference,
+        },
+        context.source_verification_evidence,
+        input,
+    )?;
+    Ok(SnapshotBoundSecretDeliveryTransactionCandidateV1 {
+        protected_snapshot_identity: context.protected_snapshot_identity.to_string(),
+        candidate,
+    })
+}
+
+fn selected_candidate_lane<'a>(
+    input: &SecretDeliveryCandidateReconstructionInput<'a>,
+) -> Result<
+    (
+        Vec<String>,
+        Option<&'a str>,
+        SecretDeliveryRecipientKind,
+        SecretDeliveryClosureRole,
+    ),
+    SecretDeliveryAuthoritySnapshotError,
+> {
     let resolved_workflow_name = (input.lane_kind == "workflow")
         .then(|| {
             input
@@ -1076,7 +1172,7 @@ fn reconstruct_transaction_candidate_from_authority(
                 .map(|(name, _)| name)
         })
         .flatten();
-    let (selected_subject, workflow_name, recipient_kind, closure_role) = match input.lane_kind {
+    Ok(match input.lane_kind {
         "task" => (
             vec!["task".to_string(), input.lane_name.to_string()],
             None,
@@ -1097,13 +1193,29 @@ fn reconstruct_transaction_candidate_from_authority(
         _ => {
             return Err(SecretDeliveryAuthoritySnapshotError::CandidateReconstructionInvalid);
         }
-    };
-    if invocation_context.lane_kind != input.lane_kind
-        || invocation_context.lane_name != selected_subject[1]
-        || invocation_context.selected_subject != selected_subject
-    {
-        return Err(SecretDeliveryAuthoritySnapshotError::CandidateReconstructionInvalid);
-    }
+    })
+}
+
+fn reconstruct_semantic_candidate_from_authority(
+    verified: CandidateVerifiedAuthority,
+    invocation: CandidateInvocationExpectation<'_>,
+    mut source_verification_evidence: Vec<String>,
+    input: SecretDeliveryCandidateReconstructionInput<'_>,
+) -> Result<
+    SemanticallyVerifiedSecretDeliveryTransactionCandidate,
+    SecretDeliveryAuthoritySnapshotError,
+> {
+    let contract_identity = semantic_contract_identity(input.contract)
+        .map_err(|_| SecretDeliveryAuthoritySnapshotError::CandidateReconstructionInvalid)?;
+    verify_archived_run_plan(
+        input.contract,
+        input.lane_kind,
+        input.lane_name,
+        input.run_plan,
+    )
+    .map_err(|_| SecretDeliveryAuthoritySnapshotError::CandidateReconstructionInvalid)?;
+    let (selected_subject, workflow_name, recipient_kind, closure_role) =
+        selected_candidate_lane(&input)?;
     let selected_root_ids = input
         .run_plan
         .roots
@@ -1175,12 +1287,9 @@ fn reconstruct_transaction_candidate_from_authority(
                 .find(|entry| entry.claim == claim)
                 .map(|entry| entry.expected_value.as_str())
         };
-        if expected_claim(GithubOidcClaim::RunId)
-            != Some(invocation_context.workflow_run_id.as_str())
-            || expected_claim(GithubOidcClaim::RunAttempt)
-                != Some(invocation_context.workflow_run_attempt.as_str())
-            || expected_claim(GithubOidcClaim::WorkflowRef)
-                != Some(invocation_context.workflow_reference.as_str())
+        if expected_claim(GithubOidcClaim::RunId) != Some(invocation.run_id)
+            || expected_claim(GithubOidcClaim::RunAttempt) != Some(invocation.run_attempt)
+            || expected_claim(GithubOidcClaim::WorkflowRef) != Some(invocation.workflow_reference)
         {
             return Err(SecretDeliveryAuthoritySnapshotError::CandidateReconstructionInvalid);
         }
@@ -1298,7 +1407,6 @@ fn reconstruct_transaction_candidate_from_authority(
 
     let policy_identity = semantic_contract_identity(&verified.payload.policy)
         .map_err(|_| SecretDeliveryAuthoritySnapshotError::CandidateReconstructionInvalid)?;
-    let mut source_verification_evidence = context.source_verification_evidence;
     source_verification_evidence.sort();
     source_verification_evidence.dedup();
     let loaded_policy = LoadedOrgPolicyPack {
@@ -1346,10 +1454,7 @@ fn reconstruct_transaction_candidate_from_authority(
         candidate_input,
     )
     .map_err(|_| SecretDeliveryAuthoritySnapshotError::CandidateReconstructionInvalid)?;
-    Ok(SnapshotBoundSecretDeliveryTransactionCandidateV1 {
-        protected_snapshot_identity: context.protected_snapshot_identity.to_string(),
-        candidate,
-    })
+    Ok(candidate)
 }
 
 #[cfg(test)]
@@ -3974,6 +4079,40 @@ secret_requirements:
         assert_eq!((iam_calls, matched), fault.expected_calls(), "{fault:?}");
         // Even the accepted fake IAM response is discarded before deliberate child refusal.
         false
+    }
+
+    #[cfg(feature = "secret-delivery-pressure")]
+    #[test]
+    fn production_checkpoint_router_preserves_legacy_routes_and_exact_iam_refusal_posture() {
+        let (mut invalid, _, now) = prepared_private_v4_for_workflow_for_test(
+            &startup(),
+            crate::secret_delivery_transaction_binding::LIVE_GOOGLE_IAM_WORKFLOW_REFERENCE_V1,
+        );
+        invalid.invalidate_binding_for_test();
+        crate::secret_delivery_provider_client::assert_checkpoint_routing_for_test(
+            invalid, b"", now, 5, 3,
+        );
+        for (route, workflow) in [
+            crate::secret_delivery_transaction_binding::LIVE_GITHUB_OIDC_WORKFLOW_REFERENCE_V1,
+            crate::secret_delivery_transaction_binding::LIVE_GOOGLE_STS_WORKFLOW_REFERENCE_V1,
+            crate::secret_delivery_transaction_binding::LIVE_GOOGLE_IAM_WORKFLOW_REFERENCE_V1,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            for failure_stage in if route == 2 { 0..=5 } else { 5..=5 } {
+                let (prepared, candidate, now) =
+                    prepared_private_v4_for_workflow_for_test(&startup(), workflow);
+                let body = github_oidc_response_body_for_candidate_at(&candidate, None, now);
+                crate::secret_delivery_provider_client::assert_checkpoint_routing_for_test(
+                    prepared,
+                    &body,
+                    now,
+                    failure_stage,
+                    route as u8,
+                );
+            }
+        }
     }
 
     #[cfg(feature = "secret-delivery-pressure")]

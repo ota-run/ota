@@ -26,11 +26,21 @@
 
 ## Unreleased
 
+- Add the internal Step 7 IAM source route: a closed administrator request V3, complete signed
+  V2 graph/record rederivation and shared runtime semantic/production-plan inspection, fixed
+  retained STS-to-IAM transport, fresh post-preparation send
+  guards and a dedicated manual protected workflow with comparison-only mirrors. Existing V1/V2
+  requests and OIDC/STS terminal routes retain their meaning. IAM output remains bounded job
+  observation followed by deliberate refusal; no hosted IAM proof, Secret Manager, materialization,
+  injection or selected-work execution is established or activated by these source changes.
+
 - Repair the internal IAM token-response parser to accept Google's canonical 0/3/6/9 fractional
   timestamp widths, including trailing zeros, without truncating expiry comparisons. Add the
   network-disabled Step 7 retained STS/IAM owner, strict request/response and freshness checks,
   and connected actual-child refusal fixtures. Existing OIDC/STS routes stay terminal; production
-  IAM admission, provider contact, Secret Manager access and selected work remain inactive.
+  IAM admission and provider contact were not enabled by that offline batch; the separately
+  activated source successor above is not hosted/provider proof. Secret Manager and selected
+  work remain inactive.
 
 - Correct the internal Step 7 STS pressure workflow's principal boundary: keep exact fixture-byte
   comparison in the existing administrator preflight rather than reading execution-owned files

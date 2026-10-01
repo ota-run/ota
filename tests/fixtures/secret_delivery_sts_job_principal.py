@@ -22,6 +22,7 @@ CORE = Path("/opt/ota-build/service-path-core")
 PUBLIC = Path("/var/lib/ota/authority-launcher-public")
 JOB_UID = 60001
 EXEC_UID = 60002
+IAM = len(sys.argv) > 7 and sys.argv[7] == "iam"
 
 
 def run(*args, **kwargs):
@@ -180,7 +181,10 @@ builder = Path("/usr/lib/ota-authority/bin/ota-secret-delivery-pressure-authorit
 builder.parent.mkdir(parents=True)
 builder.write_bytes(b"fixture builder artifact")
 workflow_reference = "ota-run/ota/.github/workflows/secret-delivery-google-sts-live.yml@refs/heads/1.6.29-implementation"
+if IAM:
+    workflow_reference = workflow_reference.replace("google-sts-live", "google-iam-live")
 provider = "projects/456/locations/global/workloadIdentityPools/fixture/providers/github"
+service_account = "ota-iam@fixture-project.iam.gserviceaccount.com"
 request = {
     "schema_version": 2, "record_kind": "secret_delivery_sts_pressure_authority_request",
     "contract_path": str(contract), "task": "governed", "repository": "ota-run/ota",
@@ -190,13 +194,21 @@ request = {
     "workflow_sha": revision, "git_ref": "refs/heads/1.6.29-implementation", "commit_sha": revision,
     "sts_target": {"workload_identity_provider": provider},
 }
+domain = b"ota.secret-delivery-sts-pressure.authority-request.v2\0"
+if IAM:
+    request["schema_version"] = 3
+    request["record_kind"] = "secret_delivery_iam_pressure_authority_request"
+    del request["sts_target"]
+    request["iam_target"] = dict(workload_identity_provider=provider,
+                                google_project="fixture-project", service_account=service_account)
+    domain = b"ota.secret-delivery-iam-pressure.authority-request.v3\0"
 request_bytes = json.dumps(request, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
 pressure = {
     "schema_version": 1, "record_kind": "secret_delivery_pressure_public_installation_evidence",
     "identity": "", "core_source_revision": revision,
     "builder_artifact_identity": "sha256:" + hashlib.sha256(builder.read_bytes()).hexdigest(),
     "request_identity": "sha256:" + hashlib.sha256(
-        b"ota.secret-delivery-sts-pressure.authority-request.v2\0" + request_bytes).hexdigest(),
+        domain + request_bytes).hexdigest(),
     "authority_posture": "synthetic_provider_free_installed",
     "selected_process_environment": {
         "GITHUB_RUN_ATTEMPT": "1", "GITHUB_RUN_ID": "1004", "GITHUB_WORKFLOW_REF": workflow_reference,
@@ -244,6 +256,8 @@ environment = dict(os.environ, HOME=str(temporary), PATH="/usr/local/bin:/usr/bi
     GITHUB_RUN_ATTEMPT="1", GITHUB_REPOSITORY_ID="1001", GITHUB_REPOSITORY_OWNER_ID="1002",
     GITHUB_ACTOR_ID="1003", RUNNER_OS="Linux", RUNNER_ARCH="X64", PYTHONDONTWRITEBYTECODE="1",
     ACTIONS_ID_TOKEN_REQUEST_URL="", ACTIONS_ID_TOKEN_REQUEST_TOKEN="")
+if IAM:
+    environment["EXPECTED_SERVICE_ACCOUNT"] = service_account
 first = subprocess.run(["bash", "-c", Path(sys.argv[2]).read_text()], env=environment,
     preexec_fn=become_job, capture_output=True, text=True, cwd="/")
 assert first.returncode == 0, first.stderr
@@ -270,6 +284,17 @@ pressure_path.write_text(json.dumps(pressure))
 pressure_path.chmod(0o666)
 require_reconciliation_refusal()
 pressure_path.chmod(0o644)
+for key, wrong in (("EXPECTED_WORKLOAD_IDENTITY_PROVIDER", provider + "-wrong"),
+                   ("GITHUB_RUN_ATTEMPT", "2"), ("GITHUB_WORKFLOW_SHA", "a" * 40)):
+    old = environment[key]
+    environment[key] = wrong
+    require_reconciliation_refusal()
+    environment[key] = old
+if IAM:
+    for wrong in ("other-sa@fixture-project.iam.gserviceaccount.com", "bad?account"):
+        environment["EXPECTED_SERVICE_ACCOUNT"] = wrong
+        require_reconciliation_refusal()
+    environment["EXPECTED_SERVICE_ACCOUNT"] = service_account
 
 client = builder.parent / "ota-authority-systemd-client"
 client.write_text("#!/usr/bin/python3\nimport json,sys\n"
@@ -291,6 +316,23 @@ posture = json.loads(second.stdout)
 assert posture["selected_work_evidence"] == "client_terminal_only_owner_marker_observation_required"
 assert posture["root_custodied_semantic_attestation"] == "not_proved"
 observer.observe_marker_absence()
+if IAM:
+    original = client.read_text()
+    for altered in (
+        original.replace("'active_slot_removed': True", "'active_slot_removed': False"),
+        original.replace("'output_complete': True", "'output_complete': False"),
+        original.replace("file=sys.stderr)", "file=sys.stderr); print('private-fixture-bearer', file=sys.stderr)"),
+        original.replace("file=sys.stderr)", "file=sys.stderr); print('eyJhbGciOiJ9.eyJzdWIiOiJ9.c2ln', file=sys.stderr)"),
+    ):
+        assert altered != original
+        client.write_text(altered)
+        refused = subprocess.run(["bash", "-c", Path(sys.argv[3]).read_text()], env=environment,
+            preexec_fn=become_job, capture_output=True, text=True, cwd="/")
+        assert refused.returncode != 0 and not refused.stdout
+        assert not Path(environment["PUBLIC_POSTURE"]).exists()
+    client.write_text(original)
+    assert posture["iam_outcome"] == "response_accepted"
+    assert posture["service_account_policy_enforcement"] == "not_proved"
 stat_modes = (oct(REPOSITORY.stat().st_mode & 0o777), oct(contract.stat().st_mode & 0o777))
 assert stat_modes == ("0o750", "0o640")
 print("ACTUAL_WORKFLOW_REAL_PRINCIPAL_SPLIT_AND_OWNER_MARKER_CHECKS_PASSED")

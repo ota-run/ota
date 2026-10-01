@@ -2333,8 +2333,9 @@ remain `dd667c3d6b63d8d26d9e2a40f831e9d08a7a6864` and
 `e5fe1c83e562e02f60e27026c7148918bd016155`. The operator requested moving to the next
 gate on 2026-10-01. After MUSE's planning clearance, the operator explicitly authorized this
 source-only batch, its activation-record commit, the dedicated protected IAM workflow edits
-and focused Cargo/Actionlint checks. Activation takes effect through this documentation commit
-before implementation. Source commit/push and any live attempt remain unauthorized.
+and focused Cargo/Actionlint checks. Activation is committed at
+`a1b06cb1358f3454f078e572503eaeab925dee5c`, before implementation.
+Source commit/push and any live attempt remain unauthorized.
 
 Checklist and acceptance for the next source-only batch:
 
@@ -2342,20 +2343,20 @@ Checklist and acceptance for the next source-only batch:
   `.github/workflows/secret-delivery-google-iam-live.yml`; commit an activation record before
   changing production admission. No `ota.yaml`, `AGENTS.md`, Cargo lock/pin or release change
   is presumed. Focused direct Cargo/Actionlint checks also require task-specific authorization.
-- [ ] Add a closed administrator request V3, kind `secret_delivery_iam_pressure_authority_request`,
+- [x] Add a closed administrator request V3, kind `secret_delivery_iam_pressure_authority_request`,
   with identity domain `ota.secret-delivery-iam-pressure.authority-request.v3\0`. Carry every
   existing invocation field plus one `iam_target` object containing exactly
   `workload_identity_provider`, `google_project` and `service_account`. Reject duplicate/unknown
   fields, missing targets, route/version/kind substitutions, invalid tuples and V1/V2 fallbacks.
   V3 admits only the exact IAM workflow/ref already named below. V1 and STS V2 parsing,
   identity domains, targets, workflow admission and rendered bytes retain their existing meaning.
-- [ ] Extend the existing Core pressure producer to bind the complete V3 request into the
+- [x] Extend the existing Core pressure producer to bind the complete V3 request into the
   existing signed authority payload V2. Derive provider/pool/audience with the existing canonical
   tuple validator; set the named account/project together and retain the same non-executed
   secret fixture identifier/version under that project. This creates no Secret Manager access.
   Reuse the current Launcher signing/install path unchanged; public installation evidence binds
   the V3 request identity, while the signed private payload carries the account and full graph/record.
-- [ ] Extend the existing offline administrator preflight to inspect V3 without weakening V2.
+- [x] Extend the existing offline administrator preflight to inspect V3 without weakening V2.
   Rebuild and compare the entire signed payload and public installation from protected inputs,
   derive the IAM endpoint through the production operation plan, and compare the exact disabled
   WIF provider readback/claim condition for the request. Retain the existing fixed protected paths,
@@ -2364,7 +2365,7 @@ Checklist and acceptance for the next source-only batch:
   as admission, independent provider attestation or service-account policy proof. The separate
   hosted packet must inspect service-account-scoped policy and inherited access; this source
   preflight does not claim to have proved either.
-- [ ] Admit IAM only through its exact retained signed candidate and consumed V4 binding. Reuse
+- [x] Admit IAM only through its exact retained signed candidate and consumed V4 binding. Reuse
   the private STS-to-IAM owner, exact request builders, fixed no-proxy/direct-TLS ureq posture,
   bounded response reader and fresh post-validation clock checks. Add one production IAM callback
   to that route only; no retries, redirects, renewal, ADC/metadata/credential-file fallbacks,
@@ -2376,18 +2377,18 @@ Checklist and acceptance for the next source-only batch:
   rerun expensive graph/context validation after this final sample. Failure or clock uncertainty
   prevents the send seam. Keep Core callback counts distinct from actual send/provider-contact
   claims. Preserve the old GitHub/STS terminal routes.
-- [ ] Keep CLI orchestration thin. Return a closed internal checkpoint posture for the selected
+- [x] Keep CLI orchestration thin. Return a closed internal checkpoint posture for the selected
   route, count only Core-level calls, and always fail terminally after IAM acceptance/refusal.
   Existing OIDC/STS diagnostics keep their meaning; the IAM diagnostic explicitly refuses before
   Secret Manager, materialization, injection and selected work. No public JSON schema changes.
-- [ ] Prepare one manual-only IAM workflow using the existing protected installation/principal
+- [x] Prepare one manual-only IAM workflow using the existing protected installation/principal
   reconciliation and cleanup path. Expected Core revision, WIF provider and service account are
   comparison-only public mirrors of the installed request, never runtime target overrides.
   Reconstruct V3 identity locally and require it to match installation evidence before invoking
   the client once. Retain only a closed non-secret job-observed projection after exact terminal
   refusal and cleanup checks. Never read the recipient-owned contract from the unprivileged job,
   publish tokens/provider error bodies or imply certification/independent custody/cardinality.
-- [ ] Prove V1/V2 byte/identity preservation, V3 field/version/domain mutations, producer and
+- [x] Prove V1/V2 byte/identity preservation, V3 field/version/domain mutations, producer and
   complete installed preflight agreement, account/project/provider/invocation substitution,
   exact route/no-promotion dispatch and refusal counts using network-disabled tests. Exercise
   preparation-delayed expiry/clock failure for both new-route sends through the production
@@ -2397,7 +2398,7 @@ Checklist and acceptance for the next source-only batch:
   the rendered workflow as the real non-root principal in an isolated Linux fixture, including
   wrong mirrors/request/build/owner, pre-client failures, token redaction and cleanup failure.
   Preserve the 52 IAM/14 STS actual-child cases; no provider connection is needed for source proof.
-- [ ] Obtain frozen MUSE source review, then request commit authorization. Assess first-party
+- [x] Obtain frozen MUSE source review, then request commit authorization (approved 2026-10-02). Assess first-party
   propagation: these remain non-default internal pressure/helper surfaces, not a supported public
   command/JSON/authoring contract. Core changelog and handoff are required; Site/Skills/Examples/
   Learn/FAQ/Glossary/schema/command cards need changes only if implementation introduces a
@@ -2409,6 +2410,11 @@ route must not be represented as a proven provider path. Runtime source admissio
 from installed authority and operator permission. No hosted activation follows automatically.
 Fresh cloud resources, API enablement, accounts/grants, authority issuance, runner changes,
 workflow dispatch, IAM provider contact and teardown remain a separately authorized hosted gate.
+On 2026-10-02 the operator authorized the temporary AWS host lifecycle and exact-resource
+cleanup only. London on-demand `m6i.xlarge`, Ubuntu 24.04 X64 and encrypted auto-delete gp3
+are selected; launch is deferred until the source/hosted packet is ready to avoid idle billing.
+No host exists yet. This partial infrastructure authorization does not activate Google resources,
+grants, authority issuance, the runner, workflow dispatch or provider contact.
 
 Initial frozen planning review found one P2: the existing owner clock sample precedes callback
 HTTP/agent preparation. The proposal now explicitly requires a fresh lightweight temporal check
@@ -2417,6 +2423,43 @@ MUSE's focused frozen planning recheck cleared the P2 with no remaining P1/P2/P3
 Both document hashes and repository HEADs matched during review. Only this review-outcome record
 and the corresponding handoff changed afterward. Planning readiness is cleared; the operator
 authorized source implementation as recorded above. No hosted activation follows from this.
+
+Source implementation is reviewed and authorized for commit/push on 2026-10-02.
+The first frozen batch's macOS checks pass: producer/preflight 20/20 (including
+V1/V2 preservation and V3 mutation/refusal), provider client 16/16, IAM matrix 1/1 across 58
+cases, STS matrix 1/1 across 14 cases, production router 1/1, IAM workflow 1/1 and existing
+STS workflow 5/5. The six added IAM cases exercise positive send guards and zero-send refusal
+when HTTP/agent preparation expires or the final clock fails, separately from callback counts.
+Actionlint and Python syntax pass. That batch's isolated Linux/arm64 actual-child checks passed
+58 IAM/14 STS cases, with no scopes left, and both rendered workflow/principal checks passed
+in fresh network-none containers. The serial build passed after a combined build was memory-killed.
+MUSE's first source review found one P2: V3 rewrote invocation project/resource after resolving
+the snapshot for `ota-pressure`; regeneration-only preflight repeated the inconsistency and
+runtime correctly refused it before V4. The producer now canonically validates/selects the
+target before snapshot construction and resolves binding/source identities once. Offline
+inspection verifies raw signed stores itself, derives its evidence internally and shares the
+same runtime semantic candidate derivation and production operation planner. Only a seven-field
+plan projection escapes; no snapshot identity, candidate, V4 binding, provider owner or dispatch
+handle is returned. Protected runtime correlation checks and snapshot-bound wrapping remain
+runtime-only. Repaired producer/preflight 21/21 passes, including the requested-project
+locator/full operation plan and a validly signed locator mismatch refused by shared semantics.
+Final repaired authority/snapshot tests pass 27/27, the serial offline Linux build and default
+library check pass, and fresh network-disabled Linux/arm64 actual-child checks pass all 58 IAM
+and 14 STS cases with no Ota invocation scopes left. Logs:
+`/tmp/ota-iam-repaired-source-send-gate.log` and `/tmp/ota-sts-repaired-source-send-gate.log`.
+Both rendered workflow/principal checks pass in fresh network-none containers; the existing
+STS root installed-preflight production-entrypoint success/refusal regression passes 1/1 there.
+These are offline source regressions, not installed or hosted IAM proof. MUSE's frozen repair
+recheck has no remaining P1/P2/P3 findings; all reviewed hashes and both HEADs matched before
+this outcome was recorded. Only review-outcome records changed afterward. The final passing
+checks satisfy MUSE's conditional source readiness; the operator approved source commit/push
+on 2026-10-02. The Launcher test-only extension is committed at
+`77478ae9fad170d2484aa4409b0bb3032436a52c`; neither production pin changes.
+The Launcher extension is test-only and
+neither runtime pin changes. Site/Skills/Examples/Learn/FAQ/Glossary/schema/command cards need
+no changes because these are internal feature-gated pressure surfaces with no new public CLI,
+JSON, authoring or shipped support claim. Core changelog/handoff and the sync waiver record this.
+This source batch does not close the hosted IAM gate or establish service-account policy proof.
 
 #### Ownership And Route Preservation
 
@@ -2427,8 +2470,9 @@ authorized source implementation as recorded above. No hosted activation follows
   particular, the existing STS checkpoint still disposes of its returned token and cannot reach
   IAM Credentials. A future IAM route is selected only by the exact workflow reference
   `ota-run/ota/.github/workflows/secret-delivery-google-iam-live.yml@refs/heads/1.6.29-implementation`
-  carried by the independently rederived candidate and signed V2/V4 authority. That workflow
-  does not exist or become dispatchable through this planning amendment. Ambient flags, a
+  carried by the independently rederived candidate and signed V2/V4 authority. The source-only
+  batch prepares that workflow locally; this plan alone neither publishes nor dispatches it.
+  Ambient flags, a
   caller label, workflow inputs or a successful STS response cannot promote an older route.
 - Before implementation, freeze the connected candidate/producer/request allowlist changes for
   that exact route. Preserve released V1/V2/V3 semantics and existing request versions; if a

@@ -168,7 +168,9 @@ const LIVE_GITHUB_OIDC_TASK_V1: &str = "governed";
 fn production_private_relay_workflow_admitted(workflow: &str) -> bool {
     matches!(
         workflow,
-        LIVE_GITHUB_OIDC_WORKFLOW_REFERENCE_V1 | LIVE_GOOGLE_STS_WORKFLOW_REFERENCE_V1
+        LIVE_GITHUB_OIDC_WORKFLOW_REFERENCE_V1
+            | LIVE_GOOGLE_STS_WORKFLOW_REFERENCE_V1
+            | LIVE_GOOGLE_IAM_WORKFLOW_REFERENCE_V1
     )
 }
 
@@ -985,9 +987,6 @@ impl VerifiedSecretDeliveryTransactionBindingV4 {
             let invocation = self.snapshot.invocation_context();
             let admitted_workflow =
                 production_private_relay_workflow_admitted(invocation.workflow_reference());
-            #[cfg(test)]
-            let admitted_workflow = admitted_workflow
-                || invocation.workflow_reference() == LIVE_GOOGLE_IAM_WORKFLOW_REFERENCE_V1;
             if !admitted_workflow
                 || invocation.lane_kind() != "task"
                 || invocation.lane_name() != LIVE_GITHUB_OIDC_TASK_V1
@@ -1327,14 +1326,14 @@ pub(crate) mod tests {
     const WORKFLOW: &str = "ota-run/ota/.github/workflows/test.yml@refs/heads/main";
 
     #[test]
-    fn production_private_relay_does_not_admit_the_offline_iam_fixture() {
+    fn production_private_relay_admits_only_the_three_exact_checkpoint_routes() {
         assert!(production_private_relay_workflow_admitted(
             LIVE_GITHUB_OIDC_WORKFLOW_REFERENCE_V1
         ));
         assert!(production_private_relay_workflow_admitted(
             LIVE_GOOGLE_STS_WORKFLOW_REFERENCE_V1
         ));
-        assert!(!production_private_relay_workflow_admitted(
+        assert!(production_private_relay_workflow_admitted(
             LIVE_GOOGLE_IAM_WORKFLOW_REFERENCE_V1
         ));
         assert!(!production_private_relay_workflow_admitted(WORKFLOW));

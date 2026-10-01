@@ -4,8 +4,9 @@
 //! retains the historical network-disabled V2 preparation path. Only the feature-gated V4
 //! dispatch owner can make one GitHub Actions OIDC request. Its JWT retains the exact consumed
 //! V4 context. Only the separately signed STS workflow may consume it for one fixed Google STS
-//! exchange, dropping even an accepted token before terminal refusal. No later provider operation,
-//! recipient materialization, selected work, or positive delivery evidence is enabled.
+//! exchange. The separately signed IAM workflow may retain that owner through one fixed IAM
+//! exchange, then discard its token and refuse. Recipient materialization, selected work and
+//! positive delivery evidence remain disabled; source capability is not hosted/provider proof.
 
 #![allow(dead_code)]
 
@@ -903,14 +904,84 @@ fn selected_sts_checkpoint(
 
 /// Route selection comes from the retained signed candidate, never ambient workflow inputs.
 #[cfg(feature = "secret-delivery-pressure")]
+pub(crate) struct SecretDeliveryCheckpointPostureV1 {
+    pub github_calls: u8,
+    pub github_outcome: &'static str,
+    pub sts_calls: u8,
+    pub sts_outcome: &'static str,
+    pub iam_calls: u8,
+    pub iam_outcome: &'static str,
+    pub iam_selected: bool,
+}
+
+#[cfg(feature = "secret-delivery-pressure")]
 pub(crate) fn dispatch_secret_delivery_checkpoint_v4(
     prepared: PreparedSecretDeliveryProviderTransportV4,
-) -> (u8, &'static str, u8, &'static str) {
-    dispatch_secret_delivery_checkpoint_v4_with_transport(
+) -> SecretDeliveryCheckpointPostureV1 {
+    dispatch_secret_delivery_checkpoint_v4_with_callbacks(
         prepared,
         dispatch_github_oidc_v4,
         exchange_google_sts_v4,
+        exchange_google_sts_for_iam_v4,
+        exchange_google_iam_v4,
     )
+}
+
+#[cfg(feature = "secret-delivery-pressure")]
+fn dispatch_secret_delivery_checkpoint_v4_with_callbacks(
+    prepared: PreparedSecretDeliveryProviderTransportV4,
+    github: impl FnOnce(PreparedSecretDeliveryProviderTransportV4) -> GithubOidcDispatchTerminalV1,
+    terminal_sts: impl FnOnce(RetainedGithubOidcTransactionV4) -> GoogleStsExchangeTerminalV1,
+    retained_sts: impl FnOnce(RetainedGithubOidcTransactionV4) -> GoogleStsContinuationTerminalV1,
+    iam: impl FnOnce(RetainedGoogleStsTransactionV4) -> GoogleIamExchangeTerminalV1,
+) -> SecretDeliveryCheckpointPostureV1 {
+    let iam_selected = prepared.verify_signed_transport_expectation().is_ok()
+        && prepared.capability.candidate.candidate().realizations.len() == 1
+        && prepared.capability.candidate.candidate().realizations[0]
+            .oidc_claims
+            .get(&GithubOidcClaim::WorkflowRef)
+            .map(String::as_str)
+            == Some(
+                crate::secret_delivery_transaction_binding::LIVE_GOOGLE_IAM_WORKFLOW_REFERENCE_V1,
+            );
+    if iam_selected {
+        let github = github(prepared);
+        let (github_calls, github_outcome) = github.public_posture();
+        let mut posture = SecretDeliveryCheckpointPostureV1 {
+            github_calls,
+            github_outcome,
+            sts_calls: 0,
+            sts_outcome: "not_attempted",
+            iam_calls: 0,
+            iam_outcome: "not_attempted",
+            iam_selected: true,
+        };
+        if let Ok(owner) = github.result {
+            let sts = retained_sts(owner);
+            posture.sts_calls = sts.core_invocations;
+            posture.sts_outcome = match (sts.core_invocations, &sts.result) {
+                (0, _) => "not_attempted",
+                (_, Ok(Some(_))) => "response_accepted",
+                _ => "response_refused",
+            };
+            if let Ok(Some(owner)) = sts.result {
+                let iam = iam(owner);
+                (posture.iam_calls, posture.iam_outcome) = iam.public_posture();
+            }
+        }
+        return posture;
+    }
+    let (github_calls, github_outcome, sts_calls, sts_outcome) =
+        dispatch_secret_delivery_checkpoint_v4_with_transport(prepared, github, terminal_sts);
+    SecretDeliveryCheckpointPostureV1 {
+        github_calls,
+        github_outcome,
+        sts_calls,
+        sts_outcome,
+        iam_calls: 0,
+        iam_outcome: "not_selected",
+        iam_selected: false,
+    }
 }
 
 #[cfg(feature = "secret-delivery-pressure")]
@@ -945,6 +1016,139 @@ pub(crate) fn checkpoint_without_sts_dispatch_for_test(
         |prepared| reconcile_github_oidc_response_v4_for_test(prepared, body, now),
         |_| panic!("this route must not reach STS"),
     )
+}
+
+#[cfg(all(test, feature = "secret-delivery-pressure"))]
+pub(crate) fn assert_checkpoint_routing_for_test(
+    prepared: PreparedSecretDeliveryProviderTransportV4,
+    body: &[u8],
+    now: u64,
+    failure_stage: u8,
+    route: u8,
+) {
+    let calls = std::cell::Cell::new([0u8; 4]);
+    let mark = |index: usize| {
+        let mut observed = calls.get();
+        observed[index] += 1;
+        calls.set(observed);
+    };
+    let clock = || {
+        Ok(ProviderClockObservationV1 {
+            wall: OffsetDateTime::from_unix_timestamp(now as i64).unwrap(),
+            elapsed: Duration::ZERO,
+        })
+    };
+    let fake_sts = |_: &ProtectedProviderRequestV1| {
+        Ok(GoogleStsTransportResponseV1 {
+            status: ureq::http::StatusCode::OK,
+            headers: [(ureq::http::header::CONTENT_TYPE, ureq::http::HeaderValue::from_static(JSON_MEDIA_TYPE))].into_iter().collect(),
+            body: ProtectedResponseBuffer(br#"{"access_token":"synthetic-sts","issued_token_type":"urn:ietf:params:oauth:token-type:access_token","token_type":"Bearer","expires_in":3600}"#.to_vec()),
+        })
+    };
+    let posture = dispatch_secret_delivery_checkpoint_v4_with_callbacks(
+        prepared,
+        |prepared| {
+            mark(0);
+            reconcile_github_oidc_response_v4_for_test(
+                prepared,
+                if failure_stage == 0 { b"{}" } else { body },
+                now,
+            )
+        },
+        |owner| {
+            mark(1);
+            exchange_google_sts_v4_with_transport_at(owner, fake_sts, || Ok(now))
+        },
+        |owner| {
+            mark(2);
+            if failure_stage == 1 || failure_stage == 2 {
+                return GoogleStsContinuationTerminalV1 {
+                    core_invocations: u8::from(failure_stage == 2),
+                    result: Err(sts_exchange_refused()),
+                };
+            }
+            exchange_google_sts_checkpoint_v4_with_transport_at(
+                owner,
+                StsContinuationV1::Iam,
+                fake_sts,
+                clock,
+            )
+        },
+        |_| {
+            mark(3);
+            GoogleIamExchangeTerminalV1 {
+                core_invocations: u8::from(failure_stage != 3),
+                result: if failure_stage == 5 {
+                    Ok(())
+                } else {
+                    Err(iam_exchange_refused())
+                },
+            }
+        },
+    );
+    if route == 3 {
+        assert_eq!(calls.get(), [0; 4]);
+        assert_eq!(
+            (posture.github_calls, posture.sts_calls, posture.iam_calls),
+            (0, 0, 0)
+        );
+        assert_eq!(
+            (
+                posture.github_outcome,
+                posture.sts_outcome,
+                posture.iam_outcome
+            ),
+            ("not_attempted", "not_attempted", "not_selected")
+        );
+        assert!(!posture.iam_selected);
+        return;
+    }
+    let expected_calls = match route {
+        0 => [1, 0, 0, 0],
+        1 => [1, 1, 0, 0],
+        2 if failure_stage == 0 => [1, 0, 0, 0],
+        2 if failure_stage <= 2 => [1, 0, 1, 0],
+        2 => [1, 0, 1, 1],
+        _ => panic!("unknown fixture route"),
+    };
+    assert_eq!(calls.get(), expected_calls);
+    assert_eq!(posture.github_calls, 1);
+    assert_eq!(
+        posture.github_outcome,
+        if failure_stage == 0 {
+            "transport_refused"
+        } else {
+            "response_received"
+        }
+    );
+    assert_eq!(posture.iam_selected, route == 2);
+    assert_eq!(
+        posture.sts_calls,
+        u8::from(route == 1 || (route == 2 && failure_stage >= 2))
+    );
+    assert_eq!(
+        posture.sts_outcome,
+        match route {
+            0 => "not_selected",
+            1 => "response_accepted",
+            _ if failure_stage <= 1 => "not_attempted",
+            _ if failure_stage == 2 => "response_refused",
+            _ => "response_accepted",
+        }
+    );
+    assert_eq!(
+        posture.iam_calls,
+        u8::from(route == 2 && failure_stage >= 4)
+    );
+    assert_eq!(
+        posture.iam_outcome,
+        match route {
+            0 | 1 => "not_selected",
+            _ if failure_stage <= 3 => "not_attempted",
+            _ if failure_stage == 4 => "response_refused",
+            _ => "response_accepted",
+        }
+    );
 }
 
 #[cfg(feature = "secret-delivery-pressure")]
@@ -1098,14 +1302,39 @@ fn exchange_google_sts_checkpoint_v4_with_transport_at(
         &ProtectedProviderRequestV1,
     )
         -> Result<GoogleStsTransportResponseV1, SecretDeliveryProviderClientError>,
+    clock: impl FnMut() -> Result<ProviderClockObservationV1, SecretDeliveryProviderClientError>,
+) -> GoogleStsContinuationTerminalV1 {
+    exchange_google_sts_checkpoint_v4_with_guarded_transport_at(
+        owner,
+        continuation,
+        |request, _| transport(request),
+        clock,
+    )
+}
+
+#[cfg(feature = "secret-delivery-pressure")]
+type ProviderSendGuardV1<'a> = dyn FnMut(
+        Result<ProviderClockObservationV1, SecretDeliveryProviderClientError>,
+    ) -> Result<ProviderClockObservationV1, SecretDeliveryProviderClientError>
+    + 'a;
+
+#[cfg(feature = "secret-delivery-pressure")]
+fn exchange_google_sts_checkpoint_v4_with_guarded_transport_at(
+    owner: RetainedGithubOidcTransactionV4,
+    continuation: StsContinuationV1,
+    transport: impl FnOnce(
+        &ProtectedProviderRequestV1,
+        &mut ProviderSendGuardV1<'_>,
+    )
+        -> Result<GoogleStsTransportResponseV1, SecretDeliveryProviderClientError>,
     mut clock: impl FnMut() -> Result<ProviderClockObservationV1, SecretDeliveryProviderClientError>,
 ) -> GoogleStsContinuationTerminalV1 {
     let mut core_invocations = 0;
     let result = (|| {
-        let mut previous = ProviderClockObservationV1 {
+        let previous = std::cell::Cell::new(ProviderClockObservationV1 {
             wall: owner.first_dispatch_at,
             elapsed: Duration::ZERO,
-        };
+        });
         let mut verify = || {
             match continuation {
                 StsContinuationV1::Iam => selected_iam_checkpoint(&owner)?,
@@ -1124,9 +1353,12 @@ fn exchange_google_sts_checkpoint_v4_with_transport_at(
                 StsContinuationV1::Iam => iam_exchange_refused(),
             })?;
             match continuation {
-                StsContinuationV1::Iam => {
-                    verify_iam_transaction_clock_v4(&owner, observed, previous, &jwt_freshness)?
-                }
+                StsContinuationV1::Iam => verify_iam_transaction_clock_v4(
+                    &owner,
+                    observed,
+                    previous.get(),
+                    &jwt_freshness,
+                )?,
                 StsContinuationV1::Terminal => {
                     let now = u64::try_from(observed.wall.unix_timestamp())
                         .map_err(|_| sts_exchange_refused())?;
@@ -1138,16 +1370,31 @@ fn exchange_google_sts_checkpoint_v4_with_transport_at(
                         .map_err(|_| sts_exchange_refused())?;
                 }
             }
-            previous = observed;
+            previous.set(observed);
             Ok(observed)
         };
         verify()?;
         let operation = &owner.prepared.capability.plan.operations[0];
         let request = build_google_sts_request_v1(operation, &owner.jwt.0)
             .map_err(|_| sts_exchange_refused())?;
-        let dispatch_clock = verify()?;
+        let send_freshness = reconcile_github_oidc_jwt_context_v4(&owner.jwt.0, &owner.prepared)
+            .map_err(|_| sts_exchange_refused())?;
+        verify()?;
+        let mut send_authorized = false;
+        let mut send_guard =
+            |observed: Result<ProviderClockObservationV1, SecretDeliveryProviderClientError>| {
+                if send_authorized {
+                    return Err(sts_exchange_refused());
+                }
+                let observed = observed.map_err(|_| sts_exchange_refused())?;
+                verify_iam_transaction_clock_v4(&owner, observed, previous.get(), &send_freshness)?;
+                previous.set(observed);
+                send_authorized = true;
+                Ok(observed)
+            };
         core_invocations = 1;
-        let response = transport(&request).map_err(|_| sts_exchange_refused())?;
+        let response = transport(&request, &mut send_guard).map_err(|_| sts_exchange_refused())?;
+        let dispatch_clock = previous.get();
         verify_oidc_response_head(response.status, &response.headers)
             .map_err(|_| sts_exchange_refused())?;
         if response.body.0.len() > MAX_TOKEN_RESPONSE_BYTES {
@@ -1207,6 +1454,20 @@ fn iam_exchange_refused() -> SecretDeliveryProviderClientError {
 struct GoogleIamExchangeTerminalV1 {
     core_invocations: u8,
     result: Result<(), SecretDeliveryProviderClientError>,
+}
+
+#[cfg(feature = "secret-delivery-pressure")]
+impl GoogleIamExchangeTerminalV1 {
+    fn public_posture(&self) -> (u8, &'static str) {
+        (
+            self.core_invocations,
+            match (self.core_invocations, self.result.is_ok()) {
+                (0, _) => "not_attempted",
+                (_, true) => "response_accepted",
+                (_, false) => "response_refused",
+            },
+        )
+    }
 }
 
 #[cfg(feature = "secret-delivery-pressure")]
@@ -1271,11 +1532,30 @@ fn exchange_google_iam_v4_with_transport_at(
         &ProtectedProviderRequestV1,
     )
         -> Result<GoogleStsTransportResponseV1, SecretDeliveryProviderClientError>,
+    clock: impl FnMut() -> Result<ProviderClockObservationV1, SecretDeliveryProviderClientError>,
+) -> GoogleIamExchangeTerminalV1 {
+    exchange_google_iam_v4_with_guarded_transport_at(
+        owner,
+        |request, _, _, _| transport(request),
+        clock,
+    )
+}
+
+#[cfg(feature = "secret-delivery-pressure")]
+fn exchange_google_iam_v4_with_guarded_transport_at(
+    owner: RetainedGoogleStsTransactionV4,
+    transport: impl FnOnce(
+        &ProtectedProviderRequestV1,
+        &SecretDeliveryProviderOperationPlanV1,
+        &StsAccessTokenV1,
+        &mut ProviderSendGuardV1<'_>,
+    )
+        -> Result<GoogleStsTransportResponseV1, SecretDeliveryProviderClientError>,
     mut clock: impl FnMut() -> Result<ProviderClockObservationV1, SecretDeliveryProviderClientError>,
 ) -> GoogleIamExchangeTerminalV1 {
     let mut core_invocations = 0;
     let result = (|| {
-        let mut previous = owner.last_clock;
+        let previous = std::cell::Cell::new(owner.last_clock);
         let mut verify = || {
             selected_iam_checkpoint(&owner.oidc)?;
             verify_oidc_dispatch_authority_v4(&owner.oidc.prepared)
@@ -1284,13 +1564,13 @@ fn exchange_google_iam_v4_with_transport_at(
                 reconcile_github_oidc_jwt_context_v4(&owner.oidc.jwt.0, &owner.oidc.prepared)
                     .map_err(|_| iam_exchange_refused())?;
             let observed = clock().map_err(|_| iam_exchange_refused())?;
-            verify_iam_transaction_clock_v4(&owner.oidc, observed, previous, &jwt_freshness)?;
+            verify_iam_transaction_clock_v4(&owner.oidc, observed, previous.get(), &jwt_freshness)?;
             if observed.wall >= owner.token_expires_at
                 || observed.elapsed >= owner.token_expires_elapsed
             {
                 return Err(iam_exchange_refused());
             }
-            previous = observed;
+            previous.set(observed);
             Ok(observed)
         };
         verify()?;
@@ -1298,9 +1578,35 @@ fn exchange_google_iam_v4_with_transport_at(
         let request = build_service_account_token_request_v1(operation, &owner.token)
             .map_err(|_| iam_exchange_refused())?;
         build_iam_http_request(&request, operation, &owner.token)?;
+        let send_freshness =
+            reconcile_github_oidc_jwt_context_v4(&owner.oidc.jwt.0, &owner.oidc.prepared)
+                .map_err(|_| iam_exchange_refused())?;
         verify()?;
+        let mut send_authorized = false;
+        let mut send_guard =
+            |observed: Result<ProviderClockObservationV1, SecretDeliveryProviderClientError>| {
+                if send_authorized {
+                    return Err(iam_exchange_refused());
+                }
+                let observed = observed.map_err(|_| iam_exchange_refused())?;
+                verify_iam_transaction_clock_v4(
+                    &owner.oidc,
+                    observed,
+                    previous.get(),
+                    &send_freshness,
+                )?;
+                if observed.wall >= owner.token_expires_at
+                    || observed.elapsed >= owner.token_expires_elapsed
+                {
+                    return Err(iam_exchange_refused());
+                }
+                previous.set(observed);
+                send_authorized = true;
+                Ok(observed)
+            };
         core_invocations = 1;
-        let response = transport(&request).map_err(|_| iam_exchange_refused())?;
+        let response = transport(&request, operation, &owner.token, &mut send_guard)
+            .map_err(|_| iam_exchange_refused())?;
         verify_oidc_response_head(response.status, &response.headers)
             .map_err(|_| iam_exchange_refused())?;
         let observed = verify()?;
@@ -1424,6 +1730,87 @@ fn exchange_google_sts_v4(owner: RetainedGithubOidcTransactionV4) -> GoogleStsEx
                 .reader(),
         )
     })
+}
+
+// Construction and fixed-posture checks finish before the retained lightweight send guard.
+// Tests inject only the final send; the same agent preparation and guard run without networking.
+#[cfg(feature = "secret-delivery-pressure")]
+fn send_token_http_with_guard_v1<'a>(
+    http: ureq::http::Request<&'a [u8]>,
+    configuration: UreqConfig,
+    guard: &mut ProviderSendGuardV1<'_>,
+    clock: impl FnOnce() -> Result<ProviderClockObservationV1, SecretDeliveryProviderClientError>,
+    send: impl FnOnce(
+        &ureq::Agent,
+        ureq::http::Request<&'a [u8]>,
+    ) -> Result<GoogleStsTransportResponseV1, SecretDeliveryProviderClientError>,
+) -> Result<GoogleStsTransportResponseV1, SecretDeliveryProviderClientError> {
+    verify_fixed_transport_configuration_v1(&configuration, MAX_SECRET_RESPONSE_BYTES)?;
+    let agent = ureq::Agent::new_with_config(configuration);
+    guard(clock())?;
+    send(&agent, http)
+}
+
+#[cfg(feature = "secret-delivery-pressure")]
+fn send_google_token_http_v1(
+    agent: &ureq::Agent,
+    http: ureq::http::Request<&[u8]>,
+) -> Result<GoogleStsTransportResponseV1, SecretDeliveryProviderClientError> {
+    let mut response = agent.run(http).map_err(|_| iam_exchange_refused())?;
+    let status = response.status();
+    let headers = response.headers().clone();
+    read_sts_transport_response(
+        status,
+        headers,
+        response
+            .body_mut()
+            .with_config()
+            .limit((MAX_TOKEN_RESPONSE_BYTES + 1) as u64)
+            .reader(),
+    )
+}
+
+#[cfg(feature = "secret-delivery-pressure")]
+fn exchange_google_sts_for_iam_v4(
+    owner: RetainedGithubOidcTransactionV4,
+) -> GoogleStsContinuationTerminalV1 {
+    let configuration = owner.prepared.configuration.clone();
+    let started = owner.first_dispatch_instant;
+    exchange_google_sts_checkpoint_v4_with_guarded_transport_at(
+        owner,
+        StsContinuationV1::Iam,
+        |request, guard| {
+            let http = build_sts_http_request(request)?;
+            send_token_http_with_guard_v1(
+                http,
+                configuration,
+                guard,
+                || Ok(ProviderClockObservationV1::read(started)),
+                send_google_token_http_v1,
+            )
+        },
+        || Ok(ProviderClockObservationV1::read(started)),
+    )
+}
+
+#[cfg(feature = "secret-delivery-pressure")]
+fn exchange_google_iam_v4(owner: RetainedGoogleStsTransactionV4) -> GoogleIamExchangeTerminalV1 {
+    let configuration = owner.oidc.prepared.configuration.clone();
+    let started = owner.oidc.first_dispatch_instant;
+    exchange_google_iam_v4_with_guarded_transport_at(
+        owner,
+        |request, operation, token, guard| {
+            let http = build_iam_http_request(request, operation, token)?;
+            send_token_http_with_guard_v1(
+                http,
+                configuration,
+                guard,
+                || Ok(ProviderClockObservationV1::read(started)),
+                send_google_token_http_v1,
+            )
+        },
+        || Ok(ProviderClockObservationV1::read(started)),
+    )
 }
 
 #[cfg(all(test, feature = "secret-delivery-pressure"))]
@@ -1728,11 +2115,17 @@ pub(crate) enum GoogleIamFaultForTestV1 {
     StsValidationBindingExpired,
     StsValidationJwtExpired,
     StsValidationTransactionExpired,
+    StsSendPreparationExpired,
+    StsSendClockFailure,
+    IamSendPreparationExpired,
+    IamSendClockFailure,
+    StsSendPreparationReady,
+    IamSendPreparationReady,
 }
 
 #[cfg(all(test, feature = "secret-delivery-pressure"))]
 impl GoogleIamFaultForTestV1 {
-    pub(crate) const ALL: [Self; 52] = [
+    pub(crate) const ALL: [Self; 58] = [
         Self::None,
         Self::RealClock,
         Self::Fraction0,
@@ -1785,12 +2178,24 @@ impl GoogleIamFaultForTestV1 {
         Self::StsValidationBindingExpired,
         Self::StsValidationJwtExpired,
         Self::StsValidationTransactionExpired,
+        Self::StsSendPreparationExpired,
+        Self::StsSendClockFailure,
+        Self::IamSendPreparationExpired,
+        Self::IamSendClockFailure,
+        Self::StsSendPreparationReady,
+        Self::IamSendPreparationReady,
     ];
 
     pub(crate) fn expected_calls(self) -> (u8, bool) {
         use GoogleIamFaultForTestV1::*;
         match self {
-            None | RealClock | Fraction0 | Fraction6 | Fraction9 => (1, true),
+            None
+            | RealClock
+            | Fraction0
+            | Fraction6
+            | Fraction9
+            | StsSendPreparationReady
+            | IamSendPreparationReady => (1, true),
             TransportFailure
             | Redirect
             | DuplicateContentType
@@ -1815,7 +2220,9 @@ impl GoogleIamFaultForTestV1 {
             | ResponseTransactionExpired
             | ResponseClockBackward
             | PostParseExpired
-            | PostParseTokenExpired => (1, false),
+            | PostParseTokenExpired
+            | IamSendPreparationExpired
+            | IamSendClockFailure => (1, false),
             _ => (0, false),
         }
     }
@@ -1874,7 +2281,7 @@ pub(crate) fn exchange_google_iam_from_oidc_response_v4_for_test(
     let mut sts_calls = 0;
     let sts_checks = std::cell::Cell::new(0);
     let last_sts_truth = std::cell::Cell::new(PROVIDER_TRUTH_CHECKS.with(std::cell::Cell::get));
-    let sts_transport = |request: &ProtectedProviderRequestV1| {
+    let mut sts_transport = |request: &ProtectedProviderRequestV1| {
         sts_calls += 1;
         build_sts_http_request(request).unwrap();
         let lifetime = if matches!(
@@ -1926,7 +2333,62 @@ pub(crate) fn exchange_google_iam_from_oidc_response_v4_for_test(
         }
         Ok(observed)
     };
-    let sts_terminal = if matches!(fault, RealClock) {
+    let sts_terminal = if matches!(fault, StsSendPreparationReady) {
+        let configuration = oidc.prepared.configuration.clone();
+        exchange_google_sts_checkpoint_v4_with_guarded_transport_at(
+            oidc,
+            StsContinuationV1::Iam,
+            |request, guard| {
+                let http = build_sts_http_request(request)?;
+                send_token_http_with_guard_v1(
+                    http,
+                    configuration,
+                    guard,
+                    || {
+                        Ok(ProviderClockObservationV1 {
+                            wall,
+                            elapsed: Duration::ZERO,
+                        })
+                    },
+                    |_, _| sts_transport(request),
+                )
+            },
+            sts_clock,
+        )
+    } else if matches!(fault, StsSendPreparationExpired | StsSendClockFailure) {
+        let configuration = oidc.prepared.configuration.clone();
+        let sends = std::cell::Cell::new(0);
+        let terminal = exchange_google_sts_checkpoint_v4_with_guarded_transport_at(
+            oidc,
+            StsContinuationV1::Iam,
+            |request, guard| {
+                sts_calls += 1;
+                let http = build_sts_http_request(request)?;
+                send_token_http_with_guard_v1(
+                    http,
+                    configuration,
+                    guard,
+                    || {
+                        if matches!(fault, StsSendClockFailure) {
+                            Err(sts_exchange_refused())
+                        } else {
+                            Ok(ProviderClockObservationV1 {
+                                wall: wall + time::Duration::seconds(600),
+                                elapsed: Duration::from_secs(600),
+                            })
+                        }
+                    },
+                    |_, _| {
+                        sends.set(sends.get() + 1);
+                        panic!("expired STS preparation must not send")
+                    },
+                )
+            },
+            sts_clock,
+        );
+        assert_eq!(sends.get(), 0);
+        terminal
+    } else if matches!(fault, RealClock) {
         exchange_google_sts_for_iam_v4_with_transport(oidc, sts_transport)
     } else {
         exchange_google_sts_checkpoint_v4_with_transport_at(
@@ -1991,7 +2453,7 @@ pub(crate) fn exchange_google_iam_from_oidc_response_v4_for_test(
             let checks = std::cell::Cell::new(0);
             let last_iam_truth =
                 std::cell::Cell::new(PROVIDER_TRUTH_CHECKS.with(std::cell::Cell::get));
-            let iam_transport = |request: &ProtectedProviderRequestV1| {
+            let mut iam_transport = |request: &ProtectedProviderRequestV1| {
                 iam_calls += 1;
                 assert_eq!(request.method, ProviderHttpMethod::Post);
                 assert!(request.url.starts_with(
@@ -2157,7 +2619,60 @@ pub(crate) fn exchange_google_iam_from_oidc_response_v4_for_test(
                 }
                 Ok(observed)
             };
-            let terminal = if matches!(fault, RealClock) {
+            let terminal = if matches!(fault, IamSendPreparationReady) {
+                let configuration = owner.oidc.prepared.configuration.clone();
+                exchange_google_iam_v4_with_guarded_transport_at(
+                    owner,
+                    |request, operation, token, guard| {
+                        let http = build_iam_http_request(request, operation, token)?;
+                        send_token_http_with_guard_v1(
+                            http,
+                            configuration,
+                            guard,
+                            || {
+                                Ok(ProviderClockObservationV1 {
+                                    wall,
+                                    elapsed: Duration::ZERO,
+                                })
+                            },
+                            |_, _| iam_transport(request),
+                        )
+                    },
+                    iam_clock,
+                )
+            } else if matches!(fault, IamSendPreparationExpired | IamSendClockFailure) {
+                let configuration = owner.oidc.prepared.configuration.clone();
+                let sends = std::cell::Cell::new(0);
+                let terminal = exchange_google_iam_v4_with_guarded_transport_at(
+                    owner,
+                    |request, operation, token, guard| {
+                        iam_calls += 1;
+                        let http = build_iam_http_request(request, operation, token)?;
+                        send_token_http_with_guard_v1(
+                            http,
+                            configuration,
+                            guard,
+                            || {
+                                if matches!(fault, IamSendClockFailure) {
+                                    Err(iam_exchange_refused())
+                                } else {
+                                    Ok(ProviderClockObservationV1 {
+                                        wall: wall + time::Duration::seconds(600),
+                                        elapsed: Duration::from_secs(600),
+                                    })
+                                }
+                            },
+                            |_, _| {
+                                sends.set(sends.get() + 1);
+                                panic!("expired IAM preparation must not send")
+                            },
+                        )
+                    },
+                    iam_clock,
+                );
+                assert_eq!(sends.get(), 0);
+                terminal
+            } else if matches!(fault, RealClock) {
                 exchange_google_iam_v4_with_transport(owner, iam_transport)
             } else {
                 exchange_google_iam_v4_with_transport_at(owner, iam_transport, iam_clock)
@@ -2178,7 +2693,9 @@ pub(crate) fn exchange_google_iam_from_oidc_response_v4_for_test(
     };
     assert_eq!(
         STS_TOKEN_DROPS.with(std::cell::Cell::get) - sts_drops,
-        usize::from(sts_calls == 1)
+        usize::from(
+            sts_calls == 1 && !matches!(fault, StsSendPreparationExpired | StsSendClockFailure)
+        )
     );
     assert_eq!(
         IAM_TOKEN_DROPS.with(std::cell::Cell::get) - iam_drops,
@@ -2784,6 +3301,29 @@ pub(crate) fn derive_google_sts_operation_target_v1(
     })
 }
 
+#[derive(Debug, Serialize)]
+pub(crate) struct GoogleIamOperationTargetV1 {
+    pub sts: GoogleStsOperationTargetV1,
+    pub google_project: String,
+    pub service_account: String,
+    pub service_account_token_url: String,
+}
+
+/// Shared pure target derivation; a target is not installed or consumed authority.
+pub(crate) fn derive_google_iam_operation_target_v1(
+    tuple: &SecretDeliveryInvocationBindingInput,
+) -> Result<GoogleIamOperationTargetV1, SecretDeliveryProviderClientError> {
+    Ok(GoogleIamOperationTargetV1 {
+        sts: derive_google_sts_operation_target_v1(tuple)?,
+        google_project: tuple.google_project.clone(),
+        service_account: tuple.service_account.clone(),
+        service_account_token_url: format!(
+            "{IAM_CREDENTIALS_ORIGIN}/v1/projects/-/serviceAccounts/{}:generateAccessToken",
+            tuple.service_account
+        ),
+    })
+}
+
 fn operation_plan(
     realization: &SecretDeliveryTransactionCandidateRealization,
 ) -> Result<SecretDeliveryProviderOperationPlanV1, SecretDeliveryProviderClientError> {
@@ -2843,7 +3383,8 @@ fn operation_plan(
         secret_resource: realization.secret_resource.clone(),
         secret_version: realization.secret_version,
     };
-    let target = derive_google_sts_operation_target_v1(&tuple)?;
+    let iam_target = derive_google_iam_operation_target_v1(&tuple)?;
+    let target = iam_target.sts;
     let secret_version_resource = format!(
         "{}/versions/{}",
         realization.secret_resource, realization.secret_version
@@ -2858,10 +3399,7 @@ fn operation_plan(
         oidc_audience: target.oidc_audience,
         sts_audience: target.sts_audience,
         sts_url: target.sts_url,
-        service_account_token_url: format!(
-            "{IAM_CREDENTIALS_ORIGIN}/v1/projects/-/serviceAccounts/{}:generateAccessToken",
-            realization.service_account
-        ),
+        service_account_token_url: iam_target.service_account_token_url,
         secret_version_url: format!("{SECRET_MANAGER_ORIGIN}/v1/{secret_version_resource}:access"),
         secret_version_resource,
     })

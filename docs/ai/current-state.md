@@ -45,9 +45,33 @@ durable agent workflow belongs in the canonical Ota skill.
   at Core `b789fad6`, with the Launcher test-only extension at `b5c8f99`; production pins stay
   unchanged. MUSE cleared the production IAM source-enablement plan, and the operator authorized
   its activation-record commit, dedicated protected IAM workflow edits and focused checks.
-  Source activation takes effect through the documentation commit before implementation.
-  New provider contact, infrastructure,
-  merge and release remain inactive pending their separate gates.
+  Source activation is committed at `a1b06cb1358f3454f078e572503eaeab925dee5c`.
+  The source batch is implemented and reviewed; MUSE's first source review found one P2
+  producer/snapshot project mismatch. The repair selects the target before resolving bindings
+  and makes offline inspection share actual runtime semantic reconstruction and production
+  operation planning, without returning runtime authority. Frozen MUSE repair review has no
+  remaining P1/P2/P3 findings; all reviewed hashes and HEADs matched, and the final repaired
+  runtime and network-disabled Linux checks passed. On 2026-10-02 the operator authorized
+  commit and push of this reviewed Core batch and the Launcher test-only extension, committed
+  at Launcher `77478ae9fad170d2484aa4409b0bb3032436a52c`. Runtime pins remain unchanged.
+  Additive request V3 binds the IAM account/project and
+  full invocation into unchanged signed V2/V4 carriers; only the exact IAM route gains the
+  fixed production callback. Both new-route sends check fresh temporal authority after HTTP/agent
+  preparation. The dedicated manual workflow remains local and undispatched.
+  On 2026-10-02 the operator authorized one temporary AWS host and exact-resource cleanup,
+  retaining the root-connected plugin for this disposable account. Read-only AWS preparation
+  selected London `eu-west-2`, on-demand `m6i.xlarge` (4 vCPUs/16 GiB), Canonical Ubuntu 24.04
+  X64 AMI `ami-05a81b93a249716f9`, and a 60 GiB encrypted baseline gp3 auto-delete boot disk.
+  Verified base prices: compute USD 0.222/hour, public IPv4 USD 0.005/hour and disk USD
+  0.0928/GB-month; estimated base cost USD 0.235/hour, excluding transfer/taxes/Google charges.
+  No EC2 resources have been created. Defer launch until source commit/push and the reviewed
+  hosted packet are ready; avoid an idle billed host. Use no instance role or NAT gateway,
+  restrict SSH to the operator /32, retain exact created resource IDs, and verify VM/disk/public
+  IP/key/network cleanup rather than merely stopping the VM. The IAM `ota-operator` identity
+  remains read-only and unused by the plugin; it is not a protection boundary for the root session.
+  This host-lifecycle authorization does not authorize source commit/push, Google configuration
+  or grants, signed authority issuance, runner activation, workflow dispatch or provider contact.
+  Merge and release remain inactive pending their separate gates.
   Historical predecessor: Core `0476b9a3b484c672fccb164517a1dc3097cd5e66`
   passed exact-head Release Gate `36745309983`
   and connected source gates; no merge or release occurred. Launcher is pinned to
@@ -173,9 +197,10 @@ durable agent workflow belongs in the canonical Ota skill.
   authorized its source commit on 2026-10-01. The Launcher test extension is committed at
   `b5c8f99`; Core's production Launcher pin remains unchanged.
   It retains one consumed V4 owner through STS/IAM, signed full graph/record comparisons,
-  conservative credential/transaction deadlines and terminal disposal. Production relay admission
-  still refuses IAM; no production IAM transport is attached. Existing OIDC/STS routes stay terminal.
-  Network enablement and hosted activation remain separate inactive review/authorization gates.
+  conservative credential/transaction deadlines and terminal disposal. That committed offline
+  batch did not attach production IAM transport or admit IAM outside tests. The current source-only
+  successor is recorded below; existing OIDC/STS routes stay terminal. Hosted activation remains
+  a separate inactive review/authorization gate.
   MUSE's initial planning review found one P2: the current IAM parser's generic RFC 3339
   round-trip check rejects valid Google fractional timestamp formats with trailing zeros.
   The proposal now requires a narrow provider-format repair and full-precision expiry-boundary
@@ -213,12 +238,48 @@ durable agent workflow belongs in the canonical Ota skill.
   is authorized. The connected Launcher change is test-only: extend the existing actual-child
   cleanup fixture without changing its production runtime or Core's pinned revision.
   The offline source batch is committed at Core `b789fad6` and Launcher `b5c8f99` without push.
-  Next: implement the independently reviewed production IAM source-enablement batch in the plan.
-  It requires additive administrator request V3 (full invocation plus exact WIF provider,
-  project and service account), unchanged signed V2/V4 carriers, complete offline rederivation,
-  one fixed IAM transport and one dedicated protected workflow with comparison-only mirrors.
+  The independently reviewed production IAM source-enablement batch is implemented and
+  authorized for commit/push on activation `a1b06cb1`. It adds administrator request V3 (full invocation plus
+  exact WIF provider, project and service account), unchanged signed V2/V4 carriers, complete
+  offline rederivation, fixed IAM transport and one dedicated protected workflow with
+  comparison-only mirrors. Production route tests lock legacy isolation and closed refusal counts.
+  The IAM matrix expands from 52 to 58 cases: HTTP/agent preparation expiry and clock failure
+  for both sends, plus positive controls through the same preparation/guard seam. Expired or
+  uncertain preparation must reach zero injected sends, not merely report an accepted callback.
+  The first frozen batch passed macOS producer/preflight 20/20, provider client 16/16, IAM 58-case
+  and STS 14-case matrices, router, manual workflow and legacy-route checks. Its isolated
+  Linux/arm64 actual-child checks passed all 58 IAM and 14 STS cases with no scopes remaining;
+  both workflow/principal tests passed in fresh network-none containers. Logs are
+  `/tmp/ota-iam-source-send-gate.log` and `/tmp/ota-sts-source-send-gate.log`.
+  Those results did not detect the P2: the producer changed the invocation project/resource after
+  resolving a snapshot for `ota-pressure`, and the old preflight regenerated that same inconsistent
+  payload. Runtime correctly refused it before V4. The repaired producer validates/selects the
+  target first, derives the snapshot locator/scope and invocation from it, and resolves identities
+  once. Offline inspection verifies raw signed stores itself, internally derives policy evidence,
+  shares runtime semantic reconstruction and returns only a seven-field production-plan projection.
+  It cannot manufacture a snapshot, V4 authority, provider owner or dispatch handle. Repaired
+  producer/preflight 21/21 passes, including a validly signed locator mismatch rejected by shared
+  reconstruction and the requested-project full plan/locator positive control. Repaired runtime
+  authority/snapshot tests pass 27/27; the serial offline Linux build and default library check
+  pass. Fresh network-disabled Linux/arm64 actual-child checks pass all 58 IAM and 14 STS cases,
+  with no Ota invocation scopes left. Logs: `/tmp/ota-iam-repaired-source-send-gate.log` and
+  `/tmp/ota-sts-repaired-source-send-gate.log`. Both rendered workflow/principal checks pass in
+  fresh network-none containers; the existing STS root installed-preflight production-entrypoint
+  success/refusal regression passes 1/1 there. This is not an installed or hosted IAM proof.
+  MUSE's frozen repair recheck has no remaining P1/P2/P3 findings. All reviewed file hashes and
+  both repository HEADs matched before recording this outcome; only review-outcome records
+  changed afterward. Its conditional source readiness is satisfied by the final passing checks.
+  The connected Launcher change extends only its actual-child test list; production pins remain
+  unchanged. No Protocol/Launcher production, public CLI, JSON, schema, authoring or support claim
+  changes: Site/Skills/Examples/Learn/FAQ/Glossary/command cards need no propagation for this
+  internal pressure batch. Core changelog and the Site sync waiver track this decision.
+  Next: publish the reviewed source batch, then prepare a fresh off-clock hosted IAM packet
+  for MUSE review. The predecessor private packet at `/tmp/ota-sts-live-20261001-attempt5`
+  is no longer available locally and must not be reused. No installed IAM packet, IAM policy
+  proof or provider acceptance is established.
   The operator authorized this source-only batch, its protected workflow/focused checks and
-  activation-record commit. No source commit/push or hosted activation is authorized.
+  activation-record commit, followed by source commit/push on 2026-10-02. Hosted activation
+  remains separately unauthorized.
   MUSE's initial frozen planning review found one P2: HTTP/agent preparation in the callback
   follows the owner clock sample. The corrected proposal requires fresh lightweight temporal
   checks after preparation immediately before both new-route sends, plus zero-send delayed-expiry
@@ -226,8 +287,9 @@ durable agent workflow belongs in the canonical Ota skill.
   both document hashes and HEADs matched. Only review-outcome records changed afterward.
   Planning readiness is cleared; source activation takes effect through this documentation
   commit before implementation. Provider/cloud/workflow-dispatch authorization remains absent.
-  Hosted activation remains separately inactive. Do not push, provision a host, change provider
-  configuration/grants or dispatch an IAM workflow.
+  Hosted activation remains separately inactive. Temporary AWS host lifecycle is authorized
+  but deferred until the packet is ready; do not change Google provider configuration/grants,
+  issue authority, start the runner or dispatch an IAM workflow.
   Uncovered material behavior: bounded OIDC/STS and protected-client finalization are proved only
   by the job-observed projection plus separate administrator absence/cleanup observations.
   Provider/lower-layer cardinality, condition enforcement, independent JWT verification,

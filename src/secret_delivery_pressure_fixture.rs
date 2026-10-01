@@ -60,6 +60,9 @@ const REQUEST_IDENTITY_DOMAIN: &[u8] = b"ota.secret-delivery-pressure.authority-
 const STS_REQUEST_KIND: &str = "secret_delivery_sts_pressure_authority_request";
 const STS_REQUEST_IDENTITY_DOMAIN: &[u8] =
     b"ota.secret-delivery-sts-pressure.authority-request.v2\0";
+const IAM_REQUEST_KIND: &str = "secret_delivery_iam_pressure_authority_request";
+const IAM_REQUEST_IDENTITY_DOMAIN: &[u8] =
+    b"ota.secret-delivery-iam-pressure.authority-request.v3\0";
 const PRESSURE_CONTRACT_PATH: &str = "/srv/ota-v3-pressure/ota.yaml";
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -111,11 +114,47 @@ struct PressureStsTarget {
     workload_identity_provider: String,
 }
 
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct PressureAuthorityRequestV3 {
+    schema_version: u32,
+    record_kind: String,
+    contract_path: PathBuf,
+    task: String,
+    repository: String,
+    repository_id: String,
+    repository_owner_id: String,
+    actor_id: String,
+    event_name: String,
+    workflow_run_id: String,
+    workflow_run_attempt: String,
+    workflow_reference: String,
+    runner_version: String,
+    workflow_sha: String,
+    git_ref: String,
+    commit_sha: String,
+    iam_target: PressureIamTarget,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct PressureIamTarget {
+    workload_identity_provider: String,
+    google_project: String,
+    service_account: String,
+}
+
+enum PressureProviderTarget {
+    Sts(PressureStsTarget),
+    Iam(PressureIamTarget),
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
 enum PressureAuthorityRequest {
     V1(PressureAuthorityRequestV1),
     V2(PressureAuthorityRequestV2),
+    V3(PressureAuthorityRequestV3),
 }
 
 impl PressureAuthorityRequest {
@@ -126,7 +165,7 @@ impl PressureAuthorityRequest {
         (
             PressureAuthorityRequestV1,
             String,
-            Option<PressureStsTarget>,
+            Option<PressureProviderTarget>,
         ),
         String,
     > {
@@ -170,7 +209,48 @@ impl PressureAuthorityRequest {
                     commit_sha: request.commit_sha,
                 };
                 validate_request_invocation(&invocation, expected_contract_path)?;
-                Ok((invocation, identity, Some(request.sts_target)))
+                Ok((
+                    invocation,
+                    identity,
+                    Some(PressureProviderTarget::Sts(request.sts_target)),
+                ))
+            }
+            Self::V3(request) => {
+                if request.schema_version != 3
+                    || request.record_kind != IAM_REQUEST_KIND
+                    || request.git_ref != "refs/heads/1.6.29-implementation"
+                    || request.workflow_reference
+                        != crate::secret_delivery_transaction_binding::LIVE_GOOGLE_IAM_WORKFLOW_REFERENCE_V1
+                {
+                    return Err("pressure IAM request is outside the closed fixture boundary".into());
+                }
+                let identity =
+                    ota_authority_protocol::message_identity(IAM_REQUEST_IDENTITY_DOMAIN, &request)
+                        .map_err(|_| "pressure request identity is unavailable")?;
+                let invocation = PressureAuthorityRequestV1 {
+                    schema_version: request.schema_version,
+                    record_kind: request.record_kind,
+                    contract_path: request.contract_path,
+                    task: request.task,
+                    repository: request.repository,
+                    repository_id: request.repository_id,
+                    repository_owner_id: request.repository_owner_id,
+                    actor_id: request.actor_id,
+                    event_name: request.event_name,
+                    workflow_run_id: request.workflow_run_id,
+                    workflow_run_attempt: request.workflow_run_attempt,
+                    workflow_reference: request.workflow_reference,
+                    runner_version: request.runner_version,
+                    workflow_sha: request.workflow_sha,
+                    git_ref: request.git_ref,
+                    commit_sha: request.commit_sha,
+                };
+                validate_request_invocation(&invocation, expected_contract_path)?;
+                Ok((
+                    invocation,
+                    identity,
+                    Some(PressureProviderTarget::Iam(request.iam_target)),
+                ))
             }
         }
     }
@@ -243,7 +323,7 @@ fn render_authority_payload_from_request_bytes(
     }
     let request: PressureAuthorityRequest =
         serde_json::from_slice(bytes).map_err(|_| "pressure request is invalid")?;
-    let (request, request_identity, sts_target) =
+    let (request, request_identity, provider_target) =
         request.into_validated_parts(expected_contract_path)?;
     if request.commit_sha != expected_core_source_revision {
         return Err("pressure request does not match the installed Core revision".into());
@@ -308,9 +388,53 @@ fn render_authority_payload_from_request_bytes(
         resolve_adapter_implementation_subject(&resolved_profile, &implementation_subject)
             .map_err(|_| "pressure implementation subject is invalid")?;
 
+    let (provider, project, account) = match provider_target {
+        None => (
+            "projects/123/locations/global/workloadIdentityPools/ota-pool/providers/github"
+                .to_string(),
+            "ota-pressure".to_string(),
+            "ota-pressure@ota-pressure.iam.gserviceaccount.com".to_string(),
+        ),
+        Some(PressureProviderTarget::Sts(target)) => (
+            target.workload_identity_provider,
+            "ota-pressure".into(),
+            "ota-pressure@ota-pressure.iam.gserviceaccount.com".into(),
+        ),
+        Some(PressureProviderTarget::Iam(target)) => (
+            target.workload_identity_provider,
+            target.google_project,
+            target.service_account,
+        ),
+    };
+    let (pool, _) = provider
+        .rsplit_once("/providers/")
+        .ok_or("pressure STS target is invalid")?;
+    // Validate target data before resolving any binding; empty proof fields are not authority.
+    let tuple = SecretDeliveryInvocationBindingInput {
+        schema_version: 1,
+        profile_semantic_identity: resolved_profile.profile_semantic_identity.clone(),
+        implementation_subject_identity: resolved_subject.implementation_subject_identity.clone(),
+        transport_dependency_record_identity: resolved_subject
+            .transport_dependency_record_identity
+            .clone(),
+        requirement_identity: requirement.identity.clone(),
+        provider_binding_identity: String::new(),
+        provider_binding_source_identity: String::new(),
+        oidc_issuer: "https://token.actions.githubusercontent.com".into(),
+        oidc_audience: format!("https://iam.googleapis.com/{provider}"),
+        oidc_claims: Vec::new(),
+        workload_identity_pool: pool.into(),
+        workload_identity_provider: provider,
+        service_account: account,
+        secret_resource: format!("projects/{project}/secrets/CAEP_API-Key_1"),
+        google_project: project,
+        secret_version: 7,
+    };
+    crate::secret_provider_profile::validate_google_tuple(&tuple)
+        .map_err(|_| "pressure STS target is invalid")?;
     let authority_scope = BTreeMap::from([
         ("environment".into(), "test".into()),
-        ("project".into(), "ota-pressure".into()),
+        ("project".into(), tuple.google_project.clone()),
         ("repository".into(), request.repository.clone()),
     ]);
     let workload_identity = format!("repo:{}:ref:{}", request.repository, request.git_ref);
@@ -334,7 +458,10 @@ fn render_authority_payload_from_request_bytes(
             workload_identity: workload_identity.clone(),
             provider_reference: SecretProviderReferenceInput {
                 binding_class: SecretProviderBindingClass::VersionedSecret,
-                private_locator: "projects/ota-pressure/secrets/CAEP_API-Key_1/versions/7".into(),
+                private_locator: format!(
+                    "{}/versions/{}",
+                    tuple.secret_resource, tuple.secret_version
+                ),
             },
             lifecycle: SecretProviderBindingLifecycle::BoundedFreshness {
                 maximum_age_seconds: 300,
@@ -390,30 +517,15 @@ fn render_authority_payload_from_request_bytes(
     let (transport_dependency_feature_graph, transport_dependency_record) =
         crate::secret_delivery_transport_dependencies::embedded_transport_dependency_expectation_v1()
             .map_err(|_| "pressure transport dependency expectation is unavailable")?;
-    let mut authority_payload = ProtectedSecretDeliveryAuthorityPayloadV2 {
+    let authority_payload = ProtectedSecretDeliveryAuthorityPayloadV2 {
         schema_version: 2,
         record_kind: "protected_secret_delivery_authority_payload_v2".into(),
         binding_snapshots: vec![snapshot],
         invocation_bindings: vec![SecretDeliveryInvocationBindingInput {
-            schema_version: 1,
-            profile_semantic_identity: resolved_profile.profile_semantic_identity,
-            implementation_subject_identity: resolved_subject.implementation_subject_identity,
-            transport_dependency_record_identity: resolved_subject.transport_dependency_record_identity.clone(),
-            requirement_identity: requirement.identity.clone(),
             provider_binding_identity: binding.identity.clone(),
             provider_binding_source_identity: source.identity.clone(),
-            oidc_issuer: "https://token.actions.githubusercontent.com".into(),
-            oidc_audience: "https://iam.googleapis.com/projects/123/locations/global/workloadIdentityPools/ota-pool/providers/github".into(),
             oidc_claims: claims,
-            workload_identity_pool:
-                "projects/123/locations/global/workloadIdentityPools/ota-pool".into(),
-            workload_identity_provider:
-                "projects/123/locations/global/workloadIdentityPools/ota-pool/providers/github"
-                    .into(),
-            service_account: "ota-pressure@ota-pressure.iam.gserviceaccount.com".into(),
-            google_project: "ota-pressure".into(),
-            secret_resource: "projects/ota-pressure/secrets/CAEP_API-Key_1".into(),
-            secret_version: 7,
+            ..tuple
         }],
         profile,
         implementation_subject,
@@ -425,21 +537,6 @@ fn render_authority_payload_from_request_bytes(
         )
         .map_err(|_| "pressure effect policy is invalid")?,
     };
-    if let Some(sts_target) = sts_target {
-        let provider = sts_target.workload_identity_provider;
-        let (pool, provider_id) = provider
-            .rsplit_once("/providers/")
-            .ok_or("pressure STS target is invalid")?;
-        if provider != format!("{pool}/providers/{provider_id}") {
-            return Err("pressure STS target is noncanonical".into());
-        }
-        let invocation = &mut authority_payload.invocation_bindings[0];
-        invocation.oidc_audience = format!("https://iam.googleapis.com/{provider}");
-        invocation.workload_identity_pool = pool.into();
-        invocation.workload_identity_provider = provider;
-        crate::secret_provider_profile::validate_google_tuple(invocation)
-            .map_err(|_| "pressure STS target is invalid")?;
-    }
     let selected_process_environment = BTreeMap::from([
         (
             "GITHUB_RUN_ATTEMPT".into(),
@@ -565,11 +662,19 @@ mod tests {
         }
 
         fn with_contract(contract_text: &str) -> Self {
+            Self::with_request(contract_text, false)
+        }
+
+        fn with_request(contract_text: &str, iam: bool) -> Self {
             use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
             use ota_authority_protocol::*;
             let contract_path = Path::new(PRESSURE_CONTRACT_PATH);
             let contract = crate::parser::parse_contract_str(contract_path, contract_text).unwrap();
-            let request_value = sts_request(contract_path);
+            let request_value = if iam {
+                iam_request(contract_path)
+            } else {
+                sts_request(contract_path)
+            };
             let request = serde_jcs::to_vec(&request_value).unwrap();
             let public_key = URL_SAFE_NO_PAD.encode(
                 ed25519_dalek::SigningKey::from_bytes(&[7; 32])
@@ -606,13 +711,14 @@ mod tests {
                 .unwrap(),
             )
             .unwrap();
-            let typed_request: PressureAuthorityRequestV2 =
+            let typed_request: PressureAuthorityRequest =
                 serde_json::from_value(request_value.clone()).unwrap();
+            let (typed_request, _, _) = typed_request.into_validated_parts(contract_path).unwrap();
             let provider = serde_json::json!({
-                "name": request_value["sts_target"]["workload_identity_provider"],
+                "name": installation["authority_payload"]["invocation_bindings"][0]["workload_identity_provider"],
                 "state": "ACTIVE", "disabled": true,
                 "attributeMapping": preflight::expected_attribute_mapping(),
-                "attributeCondition": preflight::expected_attribute_condition(&typed_request),
+                "attributeCondition": preflight::expected_invocation_attribute_condition(&typed_request),
                 "oidc": {
                     "issuerUri": "https://token.actions.githubusercontent.com",
                     "allowedAudiences": [installation["authority_payload"]["invocation_bindings"][0]["oidc_audience"]]
@@ -730,6 +836,32 @@ mod tests {
             let bundle: ota_authority_protocol::ProtectedSecretDeliveryBindingBundleV1 =
                 serde_json::from_slice(&self.binding).unwrap();
             serde_json::from_slice(&URL_SAFE_NO_PAD.decode(&bundle.payload).unwrap()).unwrap()
+        }
+
+        fn inspect_plan(
+            &self,
+        ) -> Result<
+            crate::secret_delivery_authority_snapshot::InspectedSecretDeliveryOperationPlanV1,
+            crate::secret_delivery_authority_snapshot::SecretDeliveryAuthoritySnapshotError,
+        > {
+            let request: PressureAuthorityRequest = serde_json::from_slice(&self.request).unwrap();
+            let (request, _, _) = request
+                .into_validated_parts(Path::new(PRESSURE_CONTRACT_PATH))
+                .unwrap();
+            let run_plan = crate::runner::plan_task_execution_structure_for_target_os(
+                &self.contract,
+                &request.task,
+                crate::runner::ExecutionOverrides::default(),
+                "linux",
+            )
+            .unwrap();
+            crate::secret_delivery_authority_snapshot::inspect_signed_v2_operation_plan(
+                &self.verifier, &self.binding, 1001,
+                crate::secret_delivery_authority_snapshot::SecretDeliveryCandidateReconstructionInput {
+                    contract: &self.contract, lane_kind: "task", lane_name: &request.task, run_plan: &run_plan,
+                },
+                [&request.workflow_run_id, &request.workflow_run_attempt, &request.workflow_reference],
+            )
         }
     }
 
@@ -1033,10 +1165,12 @@ mod tests {
             changed.installation = serde_jcs::to_vec(&public).unwrap();
             let mut provider: serde_json::Value =
                 serde_json::from_slice(&changed.provider).unwrap();
-            provider["attributeCondition"] = preflight::expected_attribute_condition(
-                &serde_json::from_value::<PressureAuthorityRequestV2>(request).unwrap(),
-            )
-            .into();
+            let (invocation, _, _) = serde_json::from_value::<PressureAuthorityRequest>(request)
+                .unwrap()
+                .into_validated_parts(Path::new(PRESSURE_CONTRACT_PATH))
+                .unwrap();
+            provider["attributeCondition"] =
+                preflight::expected_invocation_attribute_condition(&invocation).into();
             changed.provider = serde_jcs::to_vec(&provider).unwrap();
             // The actual signed bundle remains independently valid for the original invocation.
             crate::secret_delivery_authority_snapshot::verify_authority_payload_v2_store_bytes(
@@ -1298,6 +1432,233 @@ secret_requirements:
             "workload_identity_provider": "projects/456/locations/global/workloadIdentityPools/live-pool/providers/live-github"
         });
         value
+    }
+
+    fn iam_request(contract_path: &Path) -> serde_json::Value {
+        let mut value = request(contract_path);
+        value["schema_version"] = 3.into();
+        value["record_kind"] = IAM_REQUEST_KIND.into();
+        value["workflow_reference"] =
+            crate::secret_delivery_transaction_binding::LIVE_GOOGLE_IAM_WORKFLOW_REFERENCE_V1
+                .into();
+        value["iam_target"] = serde_json::json!({
+            "workload_identity_provider": "projects/456/locations/global/workloadIdentityPools/live-pool/providers/live-github",
+            "google_project": "live-project",
+            "service_account": "ota-iam@live-project.iam.gserviceaccount.com"
+        });
+        value
+    }
+
+    #[test]
+    fn iam_v3_producer_and_complete_offline_preflight_agree_without_legacy_promotion() {
+        let fixture = OfflineFixture::with_request(contract(), true);
+        let report: serde_json::Value =
+            serde_json::from_slice(&fixture.inspect(1001).unwrap()).unwrap();
+        assert_eq!(
+            report["record_kind"],
+            "secret_delivery_iam_offline_preflight"
+        );
+        let request: serde_json::Value = serde_json::from_slice(&fixture.request).unwrap();
+        assert_eq!(
+            report["request_identity"],
+            ota_authority_protocol::message_identity(IAM_REQUEST_IDENTITY_DOMAIN, &request)
+                .unwrap()
+        );
+        let payload: ProtectedSecretDeliveryAuthorityPayloadV2 =
+            serde_json::from_value(fixture.payload()).unwrap();
+        let target = fixture.inspect_plan().unwrap();
+        let locator = "projects/live-project/secrets/CAEP_API-Key_1/versions/7";
+        assert_eq!(
+            payload.binding_snapshots[0].source.authority_scope["project"],
+            "live-project"
+        );
+        assert_eq!(
+            payload.binding_snapshots[0].bindings[0].authority_scope["project"],
+            "live-project"
+        );
+        assert_eq!(
+            payload.binding_snapshots[0].bindings[0]
+                .provider_reference
+                .private_locator,
+            locator
+        );
+        assert_eq!(target.secret_version_resource, locator);
+        assert_eq!(
+            target.secret_version_url,
+            format!("https://secretmanager.googleapis.com/v1/{locator}:access")
+        );
+        assert_eq!(
+            target.service_account_token_url,
+            "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/ota-iam@live-project.iam.gserviceaccount.com:generateAccessToken"
+        );
+        assert_eq!(
+            report["operation_target_identity"],
+            ota_authority_protocol::message_identity(
+                b"ota.secret-delivery-iam-pressure.offline-operation-target.v1\0",
+                &target
+            )
+            .unwrap()
+        );
+        for field in [
+            "provider_contact",
+            "snapshot_exchange",
+            "authority_consumed",
+            "installation_mutated",
+            "selected_work_executed",
+        ] {
+            assert_eq!(report[field], false);
+        }
+        for field in [
+            "service_account",
+            "google_project",
+            "workload_identity_provider",
+        ] {
+            let mut changed = fixture.clone();
+            let mut value = request.clone();
+            value["iam_target"][field] = match field {
+                "service_account" => "other-sa@live-project.iam.gserviceaccount.com",
+                "google_project" => "other-project",
+                _ => "projects/456/locations/global/workloadIdentityPools/live-pool/providers/other-provider",
+            }.into();
+            changed.request = serde_jcs::to_vec(&value).unwrap();
+            assert!(changed.inspect(1001).is_err(), "{field}");
+        }
+    }
+
+    #[test]
+    fn iam_v3_inspection_refuses_validly_signed_locator_mismatch_without_runtime_authority() {
+        let inspection_source = include_str!("secret_delivery_authority_snapshot.rs")
+            .split("pub(crate) fn inspect_signed_v2_operation_plan(")
+            .nth(1)
+            .unwrap()
+            .split("/// Private Core-retained state")
+            .next()
+            .unwrap();
+        for forbidden in [
+            "issue_",
+            "consume_",
+            "dispatch_",
+            "SnapshotBoundSecretDeliveryTransactionCandidateV1",
+            "ProviderTransport",
+        ] {
+            assert!(!inspection_source.contains(forbidden), "{forbidden}");
+        }
+        let mut fixture = OfflineFixture::with_request(contract(), true);
+        let projection = serde_json::to_value(fixture.inspect_plan().unwrap()).unwrap();
+        let mut fields: Vec<_> = projection
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        fields.sort();
+        assert_eq!(
+            fields,
+            [
+                "oidc_audience",
+                "oidc_issuer",
+                "secret_version_resource",
+                "secret_version_url",
+                "service_account_token_url",
+                "sts_audience",
+                "sts_url"
+            ]
+        );
+        let mut payload = fixture.payload();
+        payload["invocation_bindings"][0]["google_project"] = "other-project".into();
+        payload["invocation_bindings"][0]["service_account"] =
+            "ota-iam@other-project.iam.gserviceaccount.com".into();
+        payload["invocation_bindings"][0]["secret_resource"] =
+            "projects/other-project/secrets/CAEP_API-Key_1".into();
+        fixture.sign_payload(&payload);
+        // Outer signature/store verification succeeds; shared runtime semantics must still refuse.
+        crate::secret_delivery_authority_snapshot::verify_authority_payload_v2_store_bytes(
+            &fixture.verifier,
+            &fixture.binding,
+            1001,
+        )
+        .unwrap();
+        assert!(matches!(fixture.inspect_plan(), Err(crate::secret_delivery_authority_snapshot::SecretDeliveryAuthoritySnapshotError::CandidateReconstructionInvalid)));
+    }
+
+    #[test]
+    fn iam_v3_identity_and_closed_shape_refuse_version_route_target_and_duplicate_substitution() {
+        let directory = tempfile::tempdir().unwrap();
+        let contract_path = directory.path().join("ota.yaml");
+        fs::write(&contract_path, contract()).unwrap();
+        let base = iam_request(&contract_path);
+        let rendered = render_test_request(directory.path(), &base).unwrap();
+        let identity =
+            ota_authority_protocol::message_identity(IAM_REQUEST_IDENTITY_DOMAIN, &base).unwrap();
+        assert_eq!(rendered["request_identity"], identity);
+        for (field, original) in base.as_object().unwrap() {
+            let mut changed = base.clone();
+            changed[field] = if field == "iam_target" {
+                serde_json::json!({"workload_identity_provider": "other"})
+            } else if field == "schema_version" {
+                2.into()
+            } else {
+                format!("{}-changed", original.as_str().unwrap()).into()
+            };
+            assert_ne!(
+                ota_authority_protocol::message_identity(IAM_REQUEST_IDENTITY_DOMAIN, &changed)
+                    .unwrap(),
+                identity,
+                "{field}"
+            );
+        }
+        for (field, value) in [
+            ("schema_version", serde_json::json!(1)),
+            ("schema_version", serde_json::json!(2)),
+            ("record_kind", serde_json::json!(STS_REQUEST_KIND)),
+            ("workflow_reference", serde_json::json!(crate::secret_delivery_transaction_binding::LIVE_GOOGLE_STS_WORKFLOW_REFERENCE_V1)),
+            ("unknown", serde_json::json!(true)),
+            ("sts_target", serde_json::json!({"workload_identity_provider": "other"})),
+        ] {
+            let mut changed = base.clone();
+            changed[field] = value;
+            assert!(render_test_request(directory.path(), &changed).is_err(), "{field}");
+        }
+        for field in [
+            "iam_target",
+            "service_account",
+            "google_project",
+            "workload_identity_provider",
+        ] {
+            let mut changed = base.clone();
+            if field == "iam_target" {
+                changed.as_object_mut().unwrap().remove(field);
+            } else {
+                changed["iam_target"].as_object_mut().unwrap().remove(field);
+            }
+            assert!(
+                render_test_request(directory.path(), &changed).is_err(),
+                "{field}"
+            );
+        }
+        for field in [
+            "service_account",
+            "google_project",
+            "workload_identity_provider",
+        ] {
+            let mut changed = base.clone();
+            changed["iam_target"][field] = "invalid?target".into();
+            assert!(render_test_request(directory.path(), &changed).is_err());
+            let bytes = serde_json::to_string(&base).unwrap();
+            let value = base["iam_target"][field].as_str().unwrap();
+            let duplicated = bytes.replacen(
+                &format!("\"{field}\":\"{value}\""),
+                &format!("\"{field}\":\"{value}\",\"{field}\":\"{value}\""),
+                1,
+            );
+            assert!(serde_json::from_str::<PressureAuthorityRequest>(&duplicated).is_err());
+        }
+        for domain in [REQUEST_IDENTITY_DOMAIN, STS_REQUEST_IDENTITY_DOMAIN] {
+            assert_ne!(
+                ota_authority_protocol::message_identity(domain, &base).unwrap(),
+                identity
+            );
+        }
     }
 
     fn render_test_request(
