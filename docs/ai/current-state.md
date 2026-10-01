@@ -37,7 +37,10 @@ durable agent workflow belongs in the canonical Ota skill.
 - released baseline: `v1.6.28`
 - development package identity: `v1.6.28`; this branch contains unreleased post-release source
   changes and is not a new release or support claim.
-- current proof gate (2026-10-01): the fresh bounded Google STS checkpoint passed at Core
+- current proof gate (2026-10-02): register the dedicated IAM manual workflow through an
+  independently reviewed inert default-branch stub, after explicit operator authorization
+  and passing exact-head gates. Host creation and IAM dispatch remain inactive.
+  Predecessor evidence: the fresh bounded Google STS checkpoint passed at Core
   `41a979b0d16200cef1608c5f469279b1dc2d2440`; MUSE cleared outcome retention after the
   narrow P3 diagnostic-ordering wording correction.
   V12.1 Step 7 remains active. MUSE cleared the next IAM Credentials checkpoint plan after the
@@ -46,18 +49,28 @@ durable agent workflow belongs in the canonical Ota skill.
   unchanged. MUSE cleared the production IAM source-enablement plan, and the operator authorized
   its activation-record commit, dedicated protected IAM workflow edits and focused checks.
   Source activation is committed at `a1b06cb1358f3454f078e572503eaeab925dee5c`.
-  The source batch is implemented and reviewed; MUSE's first source review found one P2
+  The reviewed source batch is committed and pushed at Core
+  `d67886f27f6ee76766401d85427b0e4ea63694e2`; MUSE's first source review found one P2
   producer/snapshot project mismatch. The repair selects the target before resolving bindings
   and makes offline inspection share actual runtime semantic reconstruction and production
   operation planning, without returning runtime authority. Frozen MUSE repair review has no
   remaining P1/P2/P3 findings; all reviewed hashes and HEADs matched, and the final repaired
   runtime and network-disabled Linux checks passed. On 2026-10-02 the operator authorized
   commit and push of this reviewed Core batch and the Launcher test-only extension, committed
-  at Launcher `77478ae9fad170d2484aa4409b0bb3032436a52c`. Runtime pins remain unchanged.
+  and pushed at Launcher `77478ae9fad170d2484aa4409b0bb3032436a52c`. Runtime pins remain unchanged.
   Additive request V3 binds the IAM account/project and
   full invocation into unchanged signed V2/V4 carriers; only the exact IAM route gains the
   fixed production callback. Both new-route sends check fresh temporal authority after HTTP/agent
-  preparation. The dedicated manual workflow remains local and undispatched.
+  preparation. The dedicated manual workflow is published on the implementation branch but
+  remains undispatched. Exact-head source CI is running, including Release Gate `36941232116`;
+  docs-quality `36941232215` and cargo-deny `36941232100` passed. No merge/release is authorized.
+  Hosted-readiness blocker: read-only GitHub lookup of
+  `.github/workflows/secret-delivery-google-iam-live.yml` returned 404; the default branch is
+  `main`, and GitHub's documented manual-dispatch path requires default-branch registration.
+  Do not infer that a branch-only new workflow is dispatchable. MUSE cleared an inert same-path
+  registration stub with matching inputs, empty permissions, an ordinary hosted runner and
+  unconditional refusal; do not copy the protected IAM implementation onto `main`.
+  No default-branch, trigger or runner change is authorized.
   On 2026-10-02 the operator authorized one temporary AWS host and exact-resource cleanup,
   retaining the root-connected plugin for this disposable account. Read-only AWS preparation
   selected London `eu-west-2`, on-demand `m6i.xlarge` (4 vCPUs/16 GiB), Canonical Ubuntu 24.04
@@ -238,8 +251,8 @@ durable agent workflow belongs in the canonical Ota skill.
   is authorized. The connected Launcher change is test-only: extend the existing actual-child
   cleanup fixture without changing its production runtime or Core's pinned revision.
   The offline source batch is committed at Core `b789fad6` and Launcher `b5c8f99` without push.
-  The independently reviewed production IAM source-enablement batch is implemented and
-  authorized for commit/push on activation `a1b06cb1`. It adds administrator request V3 (full invocation plus
+  The independently reviewed production IAM source-enablement batch is committed and pushed at
+  Core `d67886f2` on activation `a1b06cb1`. It adds administrator request V3 (full invocation plus
   exact WIF provider, project and service account), unchanged signed V2/V4 carriers, complete
   offline rederivation, fixed IAM transport and one dedicated protected workflow with
   comparison-only mirrors. Production route tests lock legacy isolation and closed refusal counts.
@@ -273,8 +286,12 @@ durable agent workflow belongs in the canonical Ota skill.
   unchanged. No Protocol/Launcher production, public CLI, JSON, schema, authoring or support claim
   changes: Site/Skills/Examples/Learn/FAQ/Glossary/command cards need no propagation for this
   internal pressure batch. Core changelog and the Site sync waiver track this decision.
-  Next: publish the reviewed source batch, then prepare a fresh off-clock hosted IAM packet
-  for MUSE review. The predecessor private packet at `/tmp/ota-sts-live-20261001-attempt5`
+  Next: obtain operator authorization for MUSE's cleared inert registration path, without
+  unauthorized main/trigger changes, then finish the fresh off-clock hosted IAM packet. Read-only Google
+  preparation confirmed project `ota-v121-step7-20260910` / `783599651848` is active and
+  `iam.googleapis.com`, `iamcredentials.googleapis.com` and `sts.googleapis.com` are already
+  enabled. This is not grant, inherited-access or provider-condition proof. The predecessor
+  private packet at `/tmp/ota-sts-live-20261001-attempt5`
   is no longer available locally and must not be reused. No installed IAM packet, IAM policy
   proof or provider acceptance is established.
   The operator authorized this source-only batch, its protected workflow/focused checks and

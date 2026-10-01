@@ -2461,6 +2461,39 @@ no changes because these are internal feature-gated pressure surfaces with no ne
 JSON, authoring or shipped support claim. Core changelog/handoff and the sync waiver record this.
 This source batch does not close the hosted IAM gate or establish service-account policy proof.
 
+#### Hosted Preparation Delta (2026-10-02; Not Activated)
+
+- Reviewed source is pushed at Core `d67886f27f6ee76766401d85427b0e4ea63694e2`; the
+  Launcher test-only extension is pushed at `77478ae9fad170d2484aa4409b0bb3032436a52c`.
+  Production installation pins remain Launcher `dd667c3d6b63d8d26d9e2a40f831e9d08a7a6864`
+  and Protocol `e5fe1c83e562e02f60e27026c7148918bd016155`.
+- Read-only GitHub workflow lookup returned 404 for the new IAM workflow. The default branch
+  is `main`; the documented `workflow_dispatch` registration prerequisite is not satisfied
+  merely by publishing a new workflow on this implementation branch. This is a hosted
+  scheduling prerequisite, not an Ota runtime gap. MUSE cleared an inert same-path registration
+  stub with matching inputs, empty permissions, an ordinary hosted runner and unconditional
+  refusal; do not copy the protected IAM implementation onto `main`. No automatic merge,
+  default-branch change, alternate trigger,
+  existing-route promotion or weakened admission is permitted. Any main change requires
+  separate authorization and passing exact-head gates.
+- Read-only Google preparation confirmed project `ota-v121-step7-20260910`, number
+  `783599651848`, is active; IAM, IAM Credentials and STS APIs are enabled. This neither
+  proves service-account/inherited policy nor authorizes grants or provider contact.
+- The AWS host lifecycle is separately authorized, but launch stays deferred until scheduling
+  readiness and the off-clock packet are cleared. Freeze exact source/workflow/build identities,
+  fresh resource names and teardown ownership before creation. Use one dedicated VPC/subnet,
+  no NAT gateway or instance role, SSH from the current operator /32, encrypted auto-delete
+  boot disk and exact resource-ID retirement. Import only a locally generated SSH public key;
+  never return a private key through plugin output. Verify the SSH host key against EC2's
+  authenticated console evidence before connection. Preserve IMDSv2 for cloud-init bootstrap;
+  any later metadata restriction must be explicit and verified rather than breaking key setup.
+- Rebuild the packet from committed sources and protected inputs; the predecessor private
+  `/tmp` packet is unavailable. Never reuse its expired request, run, tokens or authority.
+  Freeze the runner-group selector and workflow scheduling before issue; then retain the
+  canonical stopped-runner sequence and the existing installed/pre-start review and signed
+  lifetime floor. Google grants/account/pool/provider creation, authority issuance, runner
+  start and workflow dispatch remain separately unauthorized.
+
 #### Ownership And Route Preservation
 
 - Reuse Core's existing provider operation plan, request builder, response parser, fixed direct-TLS
