@@ -37,8 +37,8 @@ durable agent workflow belongs in the canonical Ota skill.
 - released baseline: `v1.6.28`
 - development package identity: `v1.6.28`; this branch contains unreleased post-release source
   changes and is not a new release or support claim.
-- current proof gate (2026-10-02): restore read-only AWS readiness and complete/review the
-  Google policy-audit coverage reconciliation, then freeze/review the final off-clock source and
+- current proof gate (2026-10-02): review the operator-selected temporary GCP host delta and
+  close Google policy-audit evidence retention, then freeze/review the final off-clock source and
   hosted packet before host launch. The inert workflow registration and preparation-design
   review are complete; host creation and IAM dispatch remain inactive.
   Fresh preparation is staged at `/tmp/ota-iam-live-20261002-preparation`. MUSE's initial review
@@ -55,10 +55,20 @@ durable agent workflow belongs in the canonical Ota skill.
   Evidence is bound to the exact artifact identities in the active plan's baseline retention
   paragraph. A fresh 30-command collection records invocations, statuses, UTC times and output
   hashes; the older indexed STS2 pool is natively DELETED/disabled, not an empty policy result.
-  MUSE cleared docs-only observation retention after evidence/status wording repairs; material
-  coverage reconciliation remains open. Two prior AWS plugin calls failed internally; current AWS
-  identity/connectivity is still unverified. These remain launch blockers, not permission to widen
-  grants, create a host or activate the provider. No Google mutation beyond the authorized API
+  MUSE cleared docs-only observation retention after evidence/status wording repairs. A frozen
+  coverage candidate now classifies all 16 observed types, 141 unique indexed names, three native
+  LogViews and five additional native deleted pools. All 58 targeted native reads exited 0,
+  including 42 empty direct subnetwork policies; native list parity checks pass. Coverage outcome
+  review found no P1/P2 gaps within the enumerated baseline; two P3 retention repairs add
+  reproducible native parity and narrow the credential-read wording. MUSE cleared their final
+  delta and the GCP credential/key/network guard with no P1/P2/P3 findings for docs/private
+  preparation retention only, not launch or hosted readiness. The operator reports AWS account
+  suspension and selected GCP instead; AWS readiness is
+  no longer a launch prerequisite. Six successful read-only GCP checks confirm project/billing,
+  zero instances, a London e2-standard-4, exact Ubuntu X64 image and regional quotas. Host delta,
+  current price/operator /32 and final source/packet review remain open; no host was created.
+  Host creation reopens policy coverage for its new resources. This does not permit wider grants
+  or provider activation. No Google mutation beyond the authorized API
   enablement occurred; API restoration needs explicit cleanup permission/no competing use.
   Predecessor evidence: the fresh bounded Google STS checkpoint passed at Core
   `41a979b0d16200cef1608c5f469279b1dc2d2440`; MUSE cleared outcome retention after the
@@ -103,7 +113,8 @@ durable agent workflow belongs in the canonical Ota skill.
   not manual execution, protected installation, provider authority or hosted IAM acceptance.
   The real implementation remains on `1.6.29-implementation`; the main stub always refuses.
   No default-branch setting, alternate trigger, protected runner or provider change is authorized.
-  On 2026-10-02 the operator authorized one temporary AWS host and exact-resource cleanup,
+  Historical host proposal, superseded by the GCP selection above: on 2026-10-02 the operator
+  authorized one temporary AWS host and exact-resource cleanup,
   retaining the root-connected plugin for this disposable account. Read-only AWS preparation
   selected London `eu-west-2`, on-demand `m6i.xlarge` (4 vCPUs/16 GiB), Canonical Ubuntu 24.04
   X64 AMI `ami-05a81b93a249716f9`, and a 60 GiB encrypted baseline gp3 auto-delete boot disk.
@@ -318,7 +329,7 @@ durable agent workflow belongs in the canonical Ota skill.
   unchanged. No Protocol/Launcher production, public CLI, JSON, schema, authoring or support claim
   changes: Site/Skills/Examples/Learn/FAQ/Glossary/command cards need no propagation for this
   internal pressure batch. Core changelog and the Site sync waiver track this decision.
-  Next: restore AWS read-only connectivity and close/review baseline coverage reconciliation;
+  Next: close the reviewed GCP host delta and policy evidence-retention repairs;
   keep host and all other Google/GitHub mutations inactive. Finish
   final source/hosted packet freeze and independent review after those blockers close. Read-only Google
   preparation confirmed project `ota-v121-step7-20260910` / `783599651848` is active and
@@ -337,8 +348,13 @@ durable agent workflow belongs in the canonical Ota skill.
   both document hashes and HEADs matched. Only review-outcome records changed afterward.
   Planning readiness is cleared; source activation takes effect through this documentation
   commit before implementation. Provider/cloud/workflow-dispatch authorization remains absent.
-  Hosted activation remains separately inactive. Temporary AWS host lifecycle is authorized
-  but deferred until the packet is ready; do not change Google provider configuration/grants,
+  Hosted activation remains separately inactive. Temporary GCP host lifecycle was selected by
+  the operator after reporting AWS suspension, but is deferred until the packet is ready.
+  Explicit no-service-account/no-scopes creation and a terminal exact-ID metadata/account
+  readback must pass before any build/install or runner registration. The closed metadata/key-hash
+  and exact network/subnet/tag/sole TCP22 /32 ingress guard is MUSE-reviewed; repeat all
+  readbacks before issue/start. Any drift terminally refuses and retires owned resources.
+  Do not change Google provider configuration/grants,
   issue authority, start the runner or dispatch an IAM workflow.
   Uncovered material behavior: bounded OIDC/STS and protected-client finalization are proved only
   by the job-observed projection plus separate administrator absence/cleanup observations.

@@ -2710,6 +2710,98 @@ The remaining P3 success/failure sentence was corrected to the exact 23/6/1 stat
 Review clears docs-only observation retention, not material coverage acceptance, AWS readiness,
 final source/packet freeze, host launch, PREISSUE, provider activation, issuance or dispatch.
 
+The subsequent read-only coverage candidate classifies all 16 indexed types and each of the
+141 unique indexed names, preserving the one identical duplicate row. It also adds the three
+native-only LogViews and five native-only deleted pools: 149 classified names total. Material
+direct policy surfaces are project, subnetworks, service accounts, active pools, secrets and
+LogViews; other material rows name their parent/project policy boundary. The project billing
+association is not treated as a project-scoped allow-policy surface; external billing trust is
+not proved. Classification is grounded in Google's
+[allow-policy resource reference](https://docs.cloud.google.com/iam/docs/resource-types-with-policies)
+and connected service references, not absence of a CLI command alone.
+
+The `coverage-audit` collector retains all 58 successful native read invocations/statuses/stdio
+hashes from 10:41:32-10:43:08 UTC. Native subnet/account/secret/global-log-bucket lists match
+the observed inventory; all 42 direct subnet policies are empty. Native pools identify one
+active historical pool and six DELETED/disabled pools; the active pool policy is empty. Both
+account policies, the synthetic-secret policy and three direct view policies are retained.
+An unfiltered aggregated native instance list shows zero Google VMs. None of these observations
+authorizes teardown of historical resources or a no-exfiltration/global no-access claim.
+
+MUSE's frozen review found no P1/P2 classification gaps and two P3 evidence-retention repairs.
+The repaired native parity artifact records source hashes, exact normalized keys, counts/deltas
+and a retained deterministic generator. Its project ID/number alias is derived from the frozen
+project readback, not assumed from matching basenames. Credential wording now states that no
+target secret payload or provider-minted workload token was requested or retained; gcloud used
+operator authentication. MUSE's final frozen recheck cleared the evidence-retention and GCP
+credential/key/network guard repairs with no P1/P2/P3 findings. This clears narrow docs/private
+preparation retention only, not host launch, pricing/operator IP, final source/packet, installed,
+provider, issuance or dispatch readiness. The boundary is the enumerated project
+resource/ancestor allow-policy set, not arbitrary cloud inventory, external billing/group/trust,
+unsupported data authorization or provider resource-access proof. Later native/index changes
+reopen coverage; fresh direct role/account/provider/target readbacks remain mandatory at issue
+and immediately before start. The operator reports AWS suspension and selects GCP; AWS readiness
+is no longer a prerequisite. GCP host-delta review, final source/packet review and all hosted gates
+remain open. No cloud mutation occurred in this coverage collection.
+Frozen preparation-directory identities:
+
+- `coverage-ledger.json`: `69e42add33de9550757519afdc097aed980e10f63a3844e1dd223dbb84102484`.
+- `coverage-audit/command-ledger.json`: `6b9a55e41f1693558430a7f3c3c2cabd0d36b8f2b1295ac9f410e3df19b2a2d0`.
+- `coverage-audit/sha256.txt`: `0945b6e89377e7c911092e927be1557d2d5730ba4b1aa1d5c100ea9dcaac6a93`.
+- `coverage-result.md`: `89616f9fea685026c68a1a8beed134d5817556598efcba3b40bb485ab7c371b7`.
+- `coverage-native-parity.json`: `9c8d3814c837fd4b76a75c1c7095ca86437a3c29ab03fdf77c83427921a6e7fe`.
+- `build-native-parity.sh`: `23ccf93c6dbf71567f044ee2fc53461ca2ae04536e052b53c97bbf3947e5026a`.
+- Classification/generator/collector: `f461fde74e4a677cbbdc97dc03f3939a42e92509b43ae01f50261a86106a7716`,
+  `a21aa95f1def91ce7a1716e6f9e865401e5612cccca851b60d4430946a6f52ee`,
+  `4cd3d557e9762951b1aa15b1b2545383bcb025cdaaf84f8161fcdd9af32fbfdc` respectively.
+
+The operator-selected GCP replacement proposes one on-demand London `e2-standard-4` X64 host
+(4 vCPUs/16 GiB), a 60 GiB auto-delete balanced disk, dedicated custom network/subnet, ephemeral
+IPv4 and SSH restricted to a fresh operator /32. Creation explicitly requires
+`--no-service-account --no-scopes` and `block-project-ssh-keys=TRUE,enable-oslogin=FALSE` metadata.
+Before any build/install or runner registration, retain the exact created instance's fresh
+`instances describe`, network/subnet describes and unfiltered project firewall-rules list. Require
+`verify-gcp-host-readbacks.sh` and its jq guard to accept ledger-bound project/zone/name/numeric
+IDs, no `serviceAccounts`, the exact three metadata keys and a pre-frozen operator SSH-value
+SHA-256. The closed key allowlist rejects additional keys/startup metadata. The same guard checks
+the exact instance tag/network/subnet and custom unpeered network, and exactly one enabled
+dedicated-network ingress rule: TCP/22 from the frozen operator /32 to the expected tag, without
+alternate source/target selectors or additional ingress. Freeze expected key hash, names/CIDR/tag
+before mutation; append only the returned IDs rather than deriving expectation from observed
+configuration. A missing or mismatched readback terminally refuses and retires owned resources before
+continuing; no credential repair/fallback is permitted. Repeat before issue/start. Record the
+first host key through authenticated control-plane serial output, not independent host-key
+provenance; enforce strict known_hosts thereafter. Attach no service account or OAuth scopes;
+never inherit the existing Compute Editor identity. The exact publisher image is
+`ubuntu-os-cloud/ubuntu-2404-noble-amd64-v20260918`, image ID `763874002631433611`.
+Six successful read-only commands collected at 11:59:25-11:59:32 UTC confirm project/billing,
+empty VM inventory, machine/image and regional quotas. These are not capacity guarantees,
+a cost quote or installed readiness. Verify fresh full pricing and the operator /32 before
+launch; avoid idle charges and delete/verify owned VM, disk, firewall, subnet and network.
+Creating these resources reopens material inventory/policy reconciliation. Host lifecycle
+authorization does not authorize the fresh Google identity/grant, runner/group, issuance,
+provider activation or dispatch. All readiness flags remain false and final Core SHA is unset.
+The earlier AWS host proposal and baseline packet hashes above are historical, superseded for
+host selection by this operator delta. No AWS resources were created by this work.
+Frozen GCP replacement identities under the same private preparation directory:
+
+- `gcp-host-plan.md`: `7150c6701576f18d1ae7dfc961618f5cffeaf07909cae26cdcbec2a5f61f593c`.
+- `verify-gcp-host-readbacks.sh`: `29c35c641b58f8135a3fdf4806587b19e592cf729fd4f1db59099a1f91431f83`.
+- `verify-gcp-host-readback.jq`: `de718034879eff9b12531a174cc668872652b014bbf47e49acacb4d7b550ef9b`.
+- `test-gcp-host-readback.sh`: `afc30ab5de198402632d11f70735477787b3a919fbe88603734964e86043e8e4`.
+- `gcp-host-audit/command-ledger.json`: `bf33a3cf4f4a5b5715176987476c70a1f63b50beca51578e1a97f47f42d64019`.
+- `gcp-host-audit/sha256.txt`: `111efc46e82449907ed99948952273fcff250489bfd58af3aefc0c8e3ebc6eb8`.
+- Replacement packet JSON/operator specification: `3d2646ff0966fad439649686b0a13daf14e65484695ef9304bbd7c55ef9d1045`,
+  `53538dafd5b753dc5f61abacff29fb9da8f9b08ace00fe9021917e7faa95b35d` respectively.
+The wrapper/readback helper's local controls accept explicit/omitted empty account lists and refuse
+attached/null accounts, unsafe/duplicate/missing metadata, wrong instance ID, additional SSH keys,
+startup metadata, extra tags, network/subnet mismatch, broad CIDR, ports, wrong target and extra
+ingress (2 accepted, 16 refused). These are local
+fixture controls only, not actual host readback or installed proof.
+
+This is internal operator-evidence retention, not public CLI/schema/JSON/authoring behavior;
+Site/Skills/Examples/Learn/FAQ/Glossary/command-reference propagation is not required.
+
 The proposed hosted bar is one job-observed GitHub response, one accepted STS response and one
 accepted IAM response, each counted only at Core's call seam, followed by validated deliberate
 client refusal and exact child/scope/cgroup/slot cleanup. Retain only a closed non-secret status
