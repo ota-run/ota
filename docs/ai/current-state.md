@@ -37,11 +37,41 @@ durable agent workflow belongs in the canonical Ota skill.
 - released baseline: `v1.6.28`
 - development package identity: `v1.6.28`; this branch contains unreleased post-release source
   changes and is not a new release or support claim.
-- current proof gate (2026-10-02): review the operator-selected temporary GCP host delta and
-  close Google policy-audit evidence retention, then freeze/review the final off-clock source and
-  hosted packet before host launch. The inert workflow registration and preparation-design
-  review are complete; host creation and IAM dispatch remain inactive.
-  Fresh preparation is staged at `/tmp/ota-iam-live-20261002-preparation`. MUSE's initial review
+- current proof gate (2026-10-02): independently review the corrected off-clock runner preparation,
+  then obtain separate authorization and fresh source/host/policy/PREISSUE proof for another IAM
+  attempt. V12.1 Step 7 remains active/open; signing, runner/provider activation and later delivery
+  work remain inactive. No automatic retry or renewal is authorized.
+  The operator authorized the bounded IAM checkpoint and exact owned-resource cleanup. A2 used
+  clean Core `4aa1baa320e4bdafdddd2fc3682230730eff1b0f`, runtime Launcher `dd667c3d`, Protocol
+  `e5fe1c83`, and successful exact-head source checks, including Release Gate `37006393687`.
+  Exact Linux/X64 builds, guarded isolated GCP host, restricted group 10/runner 1385, disabled
+  exact-run provider, sole account-scoped access-token-only custom grant and complete enumerated
+  policy coverage reached frozen PREISSUE review. MUSE found one operator-preparation P2:
+  root ownership hardening left `.env`/`.path` root:root 0600, unreadable by the job account;
+  the root-only Listener version probe masked the required job-principal startup failure.
+  The unchanged stop rule required cancellation/retirement, not chmod-and-continue.
+  Run `37052192848`, attempt 1, job `110988059901` is cancelled, unassigned with zero steps.
+  No authority was issued/provisioned and no workload OIDC/STS/IAM credential checkpoint call
+  occurred. Administrator/tool-observed final SSH assertions reported no installed authority,
+  job/exec process or workload marker. Their command/returned exit 0 is retained retrospectively,
+  with local UTC bounds only, not a contemporaneous native clock/status record or attestation;
+  the plan links this distinct provenance and the separate 47 timed cloud/GitHub records.
+  The exact A2 VM/auto-delete disk/firewall/subnet/network are absent and its local operator key
+  removed. Runner/group are 404; the sole grant is removed; account disable/delete succeeded,
+  with exact ID/email absent from the native active-account list. The subsequent account describe
+  is PERMISSION_DENIED/indeterminate, not NOT_FOUND. Role is DISABLED/deleted; provider and pool
+  converge to DELETED/disabled (the initial pool read remained ACTIVE while deletion was pending).
+  Historical resources are untouched; Cloud Asset API restoration remains separately unauthorized.
+  Private evidence is under `/tmp/ota-iam-live-20261002-preparation`; the active plan records exact
+  packet, metadata and retirement identities. `register-runner-v2.sh` is a staged, syntax-checked
+  preparation repair: root-controlled/job-readable/non-writable runtime configuration plus an
+  actual job-principal Listener version probe before issuance. It has not run on a new host and
+  requires independent review and fresh installed proof; source repair is not hosted acceptance.
+  This operator defect changes no public product surface or release claim; Site/Skills/Examples/
+  Learn/FAQ/Glossary/schema/public-JSON/command-reference propagation is not required.
+  Historical preparation/source checkpoints before A1/A2 follow; their no-host/no-dispatch
+  observations and limited permissions are superseded only by the exact A2 disposition above.
+  Preparation is staged at `/tmp/ota-iam-live-20261002-preparation`. MUSE's initial review
   found two P2 planning gaps: predefined federation grants include ID-token minting, and the policy
   audit lacked a closed readback set. The proposed correction uses an account-scoped custom role
   containing only `iam.serviceAccounts.getAccessToken` and a closed project/ancestor/asset-policy

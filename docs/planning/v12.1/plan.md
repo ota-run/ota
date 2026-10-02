@@ -2802,6 +2802,68 @@ fixture controls only, not actual host readback or installed proof.
 This is internal operator-evidence retention, not public CLI/schema/JSON/authoring behavior;
 Site/Skills/Examples/Learn/FAQ/Glossary/command-reference propagation is not required.
 
+#### A2 PREISSUE Refusal And Retirement (2026-10-02)
+
+After the operator's separate bounded IAM authorization, the fresh A2 host passed its exact-ID
+credential/key/network guard and strict serial-linked SSH check. Exact Linux/X64 Core
+`4aa1baa320e4bdafdddd2fc3682230730eff1b0f`, Launcher `dd667c3d` and Protocol `e5fe1c83`
+builds/installations, restricted runner/group, actual queued V3 request and disabled exact-run
+provider were frozen for PREISSUE review. The refreshed policy audit has 146 converged indexed
+names/19 types and 156 classified union names, including native-only pool/view state. All 65
+native coverage reads and six indexed/native list comparisons pass, including fresh VM/disk
+policies, three account policies and all 43 subnet policies. This is enumerated policy coverage,
+not global absence or credential non-exfiltration. The custom grant remains access-token-only.
+
+MUSE confirmed one P2 operator-preparation defect: recursive root hardening made `.env` and
+`.path` root:root 0600; the job account could not read them. Pinned Listener startup reads `.env`
+before command handling, so the planned post-issuance job-principal version probe and runner
+startup would fail. Testing `--version` only as root did not prove job-principal readiness.
+No other P1/P2/P3 finding was identified in that reviewed scope. No exception to the frozen
+terminal infrastructure-error rule was made: A2 was cancelled and exactly retired, not repaired
+in place. Run `37052192848`/attempt 1/job `110988059901` ended cancelled with no assigned runner
+and zero steps. No signing/provisioning or workload OIDC/STS/IAM credential checkpoint call
+occurred; administrator/tool-observed final SSH assertions reported no issued stores, job/exec
+process or workload marker. Their stdout retained only a summary, without a contemporaneous
+command/status/UTC record. The additive `retirement-a2/host-final-retrospective.md` retains the
+invocation and tool-reported exit 0 from this SCOOBY interaction, not an accessible durable
+transcript or independent attestation. Adjacent recorded local commands bracket the observation
+at 19:35:40Z-19:36:45Z, not exact SSH/remote UTC. The 47 separately timed cloud/GitHub records
+remain distinct; original frozen manifests are unchanged and no new remote call was made.
+
+The exact VM, auto-delete disk, firewall, subnet and network are natively absent; no reserved
+former IP is listed and the local attempt SSH key is removed. Runner 1385/group 10 return 404.
+Account disable/delete returned success and the exact unique ID/email is absent from the native
+active-account list; its post-delete describe returns PERMISSION_DENIED, which is retained as
+indeterminate, not relabelled NOT_FOUND. The sole grant was removed first. Custom role is
+DISABLED/deleted, provider and pool are DELETED/disabled; the pool's initial ACTIVE/disabled
+post-delete read is preserved separately from the converged result. No issued token revocation
+is inferred. Historical project resources remain outside cleanup; API restoration still needs
+separate permission and no competing use.
+
+Frozen evidence under `/tmp/ota-iam-live-20261002-preparation`:
+
+- PREISSUE packet/433-entry manifest: `a4f21b097ad3edd0f7fff403f80d41d111fc4f37ca8b8c0b88b94a6cf4ebd468`,
+  `7d060857a18dd2bc20e6b8a7069cfe9c792a14e0a5cf88ada864a52b3de6f62d`.
+- Metadata-only refusal delta: `5fd3585ed43f401bff483b819e5c8f9b9a441e9ba77f5a139838e3ccaafec5e8`.
+- Retirement command ledger/raw manifest: `cb8bb249405f0b5b894006ca4dc735c8d5ff9565688c71580f60e82752fabd46`,
+  `7df6b8dd911280348ec8baa8846d0329507fd1f264dca2e9ae496a41a74108dd`.
+- Additive retrospective SSH provenance: `116532aaf79f3adff8f0ed11a4285df5d5f2373191783908efa0ebcf6e78d8be`;
+  original summary stdout `850cb673b0842e40aceadf11b1be330e8d180ebdd6ac0922d78acf58f766521d`.
+- Staged `register-runner-v2.sh`: `fbf9096b4dfeb3e79bef170b308519f6743ab58c7bc1e2262a1b3f70be68db71`.
+
+The staged repair makes all five runtime/configuration files root-controlled, singular 0640 and
+job-group readable but not writable, then requires the fixed Listener `--version` to succeed as
+the job principal before issuance. Syntax checks are not fresh-host proof. Independent review,
+separate fresh-attempt authorization, rebuilt frozen sources/policies/installed expectations and
+the existing stopped/disabled signed-delta/propagation/lifetime gates remain required. Step 7
+stays active/open; no automatic retry, renewal, delivery activation, merge or release follows.
+This is private operator preparation, not public CLI/schema/JSON behavior; no connected public
+Site/Skills/Examples/Learn/FAQ/Glossary/command-reference propagation is needed.
+Canonical `ota run ci --agent` completed successfully after these initial docs-only outcome
+edits (container mode, Rust 1.95 bookworm). The subsequent provenance wording delta passes
+`git diff --check`; neither validation is fresh-host or hosted IAM evidence. Future SSH assertions
+must retain contemporaneous command/status/UTC/hash metadata before retiring the host.
+
 The proposed hosted bar is one job-observed GitHub response, one accepted STS response and one
 accepted IAM response, each counted only at Core's call seam, followed by validated deliberate
 client refusal and exact child/scope/cgroup/slot cleanup. Retain only a closed non-secret status
