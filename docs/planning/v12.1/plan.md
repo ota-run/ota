@@ -2478,9 +2478,13 @@ This source batch does not close the hosted IAM gate or establish service-accoun
   separate authorization and passing exact-head gates.
   The operator has now authorized only the inert stub promotion. MUSE cleared the exact
   one-file registration batch at `23ca11096211c8fc25c945ed0d684dc5859c8cbc`, based on main
-  `8422f2ce915c2c0b853c0074ef1cdf8c69ab2d9f`. Promotion remains pending source Release Gate
-  `36941232116`, registration Release Gate `36942569361` and applicable exact-head checks;
-  recheck the frozen file and main base immediately before promotion. No promotion has occurred.
+  `8422f2ce915c2c0b853c0074ef1cdf8c69ab2d9f`. Source Release Gate `36941232116`, registration
+  Release Gate `36942569361` and all six applicable registration-branch workflows passed.
+  The frozen stub and unchanged main base were rechecked before the authorized one-file
+  fast-forward to `23ca1109`. GitHub reports main at the exact reviewed registration commit
+  and workflow `372936715` as `active`. This closes registration only: no dispatch, protected
+  installation, provider authority or hosted IAM acceptance is established. The real
+  implementation remains on `1.6.29-implementation`; the main stub always refuses.
 - Read-only Google preparation confirmed project `ota-v121-step7-20260910`, number
   `783599651848`, is active; IAM, IAM Credentials and STS APIs are enabled. This neither
   proves service-account/inherited policy nor authorizes grants or provider contact.

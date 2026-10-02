@@ -37,9 +37,9 @@ durable agent workflow belongs in the canonical Ota skill.
 - released baseline: `v1.6.28`
 - development package identity: `v1.6.28`; this branch contains unreleased post-release source
   changes and is not a new release or support claim.
-- current proof gate (2026-10-02): await passing exact-head source and registration gates,
-  then promote only the independently reviewed inert IAM registration stub to `main` under
-  explicit operator authorization. Host creation and IAM dispatch remain inactive.
+- current proof gate (2026-10-02): finish the fresh off-clock hosted IAM packet and obtain
+  independent review before host launch. The authorized inert workflow registration is complete;
+  host creation and IAM dispatch remain inactive.
   Predecessor evidence: the fresh bounded Google STS checkpoint passed at Core
   `41a979b0d16200cef1608c5f469279b1dc2d2440`; MUSE cleared outcome retention after the
   narrow P3 diagnostic-ordering wording correction.
@@ -62,9 +62,9 @@ durable agent workflow belongs in the canonical Ota skill.
   full invocation into unchanged signed V2/V4 carriers; only the exact IAM route gains the
   fixed production callback. Both new-route sends check fresh temporal authority after HTTP/agent
   preparation. The dedicated manual workflow is published on the implementation branch but
-  remains undispatched. Exact-head source CI is running, including Release Gate `36941232116`;
+  remains undispatched. Exact-head source Release Gate `36941232116` passed at `d67886f2`;
   docs-quality `36941232215` and cargo-deny `36941232100` passed. No implementation merge/release is authorized.
-  Hosted-readiness blocker: read-only GitHub lookup of
+  Resolved scheduling prerequisite: the initial read-only GitHub lookup of
   `.github/workflows/secret-delivery-google-iam-live.yml` returned 404; the default branch is
   `main`, and GitHub's documented manual-dispatch path requires default-branch registration.
   Do not infer that a branch-only new workflow is dispatchable. MUSE cleared an inert same-path
@@ -74,10 +74,14 @@ durable agent workflow belongs in the canonical Ota skill.
   and passing exact-head gates. MUSE cleared the frozen 49-line addition with no P1/P2/P3
   findings; it is pushed at `23ca11096211c8fc25c945ed0d684dc5859c8cbc` on
   `bobai/register-google-iam-live-workflow`, based on main `8422f2ce915c2c0b853c0074ef1cdf8c69ab2d9f`.
-  Registration Release Gate `36942569361` is running; docs-quality `36942569286` and cargo-deny
-  `36942569353` passed. Main remains unchanged. Before promotion require source Release Gate
-  `36941232116` and the registration branch's applicable exact-head gates to be terminal green,
-  recheck the frozen stub hash and main base, and stop for review if either moved.
+  Registration Release Gate `36942569361` passed on Linux/macOS/Windows, and all six
+  registration-branch workflows completed successfully at the exact registration commit.
+  Source Release Gate `36941232116` passed. The frozen stub hash and unchanged main base were
+  rechecked before the authorized one-file fast-forward from `8422f2ce` to `23ca1109`.
+  GitHub independently reports main at `23ca11096211c8fc25c945ed0d684dc5859c8cbc` and workflow
+  `372936715` (`secret-delivery-google-iam-live`) as `active`. This proves registration only,
+  not manual execution, protected installation, provider authority or hosted IAM acceptance.
+  The real implementation remains on `1.6.29-implementation`; the main stub always refuses.
   No default-branch setting, alternate trigger, protected runner or provider change is authorized.
   On 2026-10-02 the operator authorized one temporary AWS host and exact-resource cleanup,
   retaining the root-connected plugin for this disposable account. Read-only AWS preparation
@@ -294,8 +298,7 @@ durable agent workflow belongs in the canonical Ota skill.
   unchanged. No Protocol/Launcher production, public CLI, JSON, schema, authoring or support claim
   changes: Site/Skills/Examples/Learn/FAQ/Glossary/command cards need no propagation for this
   internal pressure batch. Core changelog and the Site sync waiver track this decision.
-  Next: finish the authorized stub-only registration after exact-head gates pass, then finish
-  the fresh off-clock hosted IAM packet. Read-only Google
+  Next: finish and independently review the fresh off-clock hosted IAM packet. Read-only Google
   preparation confirmed project `ota-v121-step7-20260910` / `783599651848` is active and
   `iam.googleapis.com`, `iamcredentials.googleapis.com` and `sts.googleapis.com` are already
   enabled. This is not grant, inherited-access or provider-condition proof. The predecessor
