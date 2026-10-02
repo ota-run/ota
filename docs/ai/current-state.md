@@ -37,9 +37,20 @@ durable agent workflow belongs in the canonical Ota skill.
 - released baseline: `v1.6.28`
 - development package identity: `v1.6.28`; this branch contains unreleased post-release source
   changes and is not a new release or support claim.
-- current proof gate (2026-10-02): finish the fresh off-clock hosted IAM packet and obtain
-  independent review before host launch. The authorized inert workflow registration is complete;
-  host creation and IAM dispatch remain inactive.
+- current proof gate (2026-10-02): restore read-only AWS readiness and obtain authorization for
+  the missing Google policy-audit baseline, then freeze/review the final off-clock source and
+  hosted packet before host launch. The inert workflow registration and preparation-design
+  review are complete; host creation and IAM dispatch remain inactive.
+  Fresh preparation is staged at `/tmp/ota-iam-live-20261002-preparation`. MUSE's initial review
+  found two P2 planning gaps: predefined federation grants include ID-token minting, and the policy
+  audit lacked a closed readback set. The proposed correction uses an account-scoped custom role
+  containing only `iam.serviceAccounts.getAccessToken` and a closed project/ancestor/asset-policy
+  audit with explicit coverage limits. Frozen MUSE re-review found no P1/P2/P3 issues and cleared
+  documentation/preparation retention only, not host, PREISSUE or installed readiness.
+  The baseline audit cannot yet run
+  because Cloud Asset API is disabled, and two read-only AWS plugin calls failed internally.
+  Current AWS identity/connectivity and the missing baseline audit are launch blockers, not
+  permission to enable APIs, widen grants or create a host. No Google mutation occurred.
   Predecessor evidence: the fresh bounded Google STS checkpoint passed at Core
   `41a979b0d16200cef1608c5f469279b1dc2d2440`; MUSE cleared outcome retention after the
   narrow P3 diagnostic-ordering wording correction.
@@ -298,7 +309,9 @@ durable agent workflow belongs in the canonical Ota skill.
   unchanged. No Protocol/Launcher production, public CLI, JSON, schema, authoring or support claim
   changes: Site/Skills/Examples/Learn/FAQ/Glossary/command cards need no propagation for this
   internal pressure batch. Core changelog and the Site sync waiver track this decision.
-  Next: finish and independently review the fresh off-clock hosted IAM packet. Read-only Google
+  Next: restore AWS read-only connectivity and request only the authorization needed for the
+  Cloud Asset baseline audit; keep host and all other Google/GitHub mutations inactive. Finish
+  final source/hosted packet freeze and independent review after those blockers close. Read-only Google
   preparation confirmed project `ota-v121-step7-20260910` / `783599651848` is active and
   `iam.googleapis.com`, `iamcredentials.googleapis.com` and `sts.googleapis.com` are already
   enabled. This is not grant, inherited-access or provider-condition proof. The predecessor

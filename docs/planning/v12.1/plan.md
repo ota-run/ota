@@ -2608,13 +2608,66 @@ semantics, not Ota activation, evidence or authorization.
    and the bounded signed/installed delta before start; retain the final admission-time floor.
    Do not reuse the STS checkpoint's destroyed resources, tokens, authority or expectations.
    The provider scope must include a fresh dedicated service account with no resource-access
-   roles or keys and a service-account-scoped `roles/iam.workloadIdentityUser` grant only to the
-   exact reviewed federated principal. Independently read back that policy and inherited access
+   roles or keys and one service-account-scoped custom-role grant only to the exact reviewed
+   federated principal. That fresh project role must contain exactly
+   `iam.serviceAccounts.getAccessToken`; the predefined `roles/iam.workloadIdentityUser` is not
+   an acceptable fallback because it also grants ID-token minting and account metadata reads.
+   Independently read back the exact role definition, account policy and inherited access
    as well as the exact-run/workflow-commit WIF condition; broad principal sets, project-level
    impersonation, delegation, Token Creator fallback or Secret Manager grants refuse. Grant
-   changes, API enablement, service-account creation and all infrastructure actions need the
-   separate human authorization and reviewed teardown, including grant/account removal and
-   provider/pool disablement. This paragraph authorizes none of those actions today.
+   changes, API enablement, custom-role/service-account creation and all infrastructure actions
+   need the separate human authorization and reviewed teardown, including grant/account/custom-role
+   retirement and provider/pool disablement. This paragraph authorizes none of those actions today.
+
+#### Off-Clock IAM Preparation Review (2026-10-02; No Hosted Activation)
+
+The fresh operator artifact is `/tmp/ota-iam-live-20261002-preparation`: `packet.json`,
+`operator-packet.md` and `policy-readbacks.md`. It is preparation data, not a second live handoff
+or an executable authority request. Launch/issue/dispatch readiness is false; final Core revision,
+queued invocation, Listener version, installed artifacts and signed authority remain unresolved.
+After retention, freeze the resulting clean local/remote implementation HEAD and applicable
+exact-head gates; preserve the reviewed workflow/helper hashes and production Launcher/Protocol
+pins, and independently review any changed source identity before host creation.
+
+MUSE's initial review found two P2 planning gaps: the predefined Workload Identity User role
+permits alternate credential minting, and the resource-access audit did not name a closed
+executable readback set. The proposed correction uses the one-permission custom role above,
+with no ID-token/signing/delegation/attachment permission or predefined fallback. The live
+read-only permission probe is GA with omitted `customRolesSupportLevel`; Google's
+[custom-role reference](https://docs.cloud.google.com/iam/docs/creating-custom-roles) defines
+that omission as fully supported. Custom-role creation/definition readback are not yet performed.
+
+The closed audit freezes project description/ancestry and each ancestor policy, direct fresh
+account policy/user-managed keys, exact custom-role definition, full unfiltered paginated project
+asset/resource-policy inventories and targeted account/principal/pool/public-member queries.
+It accepts only the sole intended fresh-account grant, no extra account/federated or applicable
+broad/public bindings within the enumerated set, and converged inventory reconciled with direct
+live readbacks. Unsupported material resources require frozen native readbacks; missing material
+coverage blocks launch/issue rather than becoming an absence claim. Cross-project trust, external
+group membership and unsupported data authorization remain explicitly `not_proved`; any required
+acceptance narrowing needs a reviewed plan amendment, not an operator waiver.
+
+Read-only observations: the proposed pool/account `ota-iam-20261002-a1` and custom role
+`otaIamAccess20261002A1` are absent; project ancestry is project-only. The existing Compute Editor
+account and all historical pools/groups remain outside teardown ownership. A fresh runner group
+would admit only the one exact IAM branch workflow in Core; no runners or IAM runs currently exist.
+Cloud Asset API is not enabled, so the full baseline audit is unavailable and remains a launch
+blocker; no API enablement or asset query was attempted. Two read-only AWS plugin calls returned
+internal errors without API-call evidence, so current AWS identity/connectivity also remains a
+launch blocker. Neither blocker authorizes fallback credentials, permissions changes or a VM.
+
+Google API/custom-role/account/provider/grant changes, GitHub runner/group mutation, authority
+issuance, runner activation and the hosted attempt still require separate human authorization.
+No provider call, installed proof, hosted IAM acceptance, resource access, delivery or selected work
+is established. This planning-only correction changes no public CLI/JSON/schema or authoring
+surface; Site/Skills/Examples/Learn/FAQ/Glossary/command reference need no propagation.
+
+Frozen MUSE re-review resolved both P2s with no remaining P1/P2/P3 findings. It clears only
+documentation/preparation retention: the Cloud Asset baseline and current AWS readiness remain
+hard launch blockers, and final source/PREISSUE/installed reviews remain open. Reviewed packet
+hashes are `7801f34228a70b062121760ae61ee214c4c38590debaf90e8e0a6d3ed8710c77` (JSON),
+`2724e8d273a5bdc670d350f77175bd8300b6c51a3855d6897fa67387cf53f6a8` (operator recipe) and
+`52da5aca0c6bfcdc77cd859ef1c09cc9a42c892d5c1db28a589ae216b93ebf6a` (closed policy readbacks).
 
 The proposed hosted bar is one job-observed GitHub response, one accepted STS response and one
 accepted IAM response, each counted only at Core's call seam, followed by validated deliberate
