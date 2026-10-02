@@ -2669,6 +2669,47 @@ hashes are `7801f34228a70b062121760ae61ee214c4c38590debaf90e8e0a6d3ed8710c77` (J
 `2724e8d273a5bdc670d350f77175bd8300b6c51a3855d6897fa67387cf53f6a8` (operator recipe) and
 `52da5aca0c6bfcdc77cd859ef1c09cc9a42c892d5c1db28a589ae216b93ebf6a` (closed policy readbacks).
 
+Subsequent authorized baseline observation: the operator approved only
+`cloudasset.googleapis.com` enablement for the read-only policy audit; operation
+`operations/acat.p2-783599651848-a5446aac-c887-4cde-8818-da0bf334b729` succeeded.
+Initial raw outputs, completion timestamps and hashes are retained in the preparation directory's
+`baseline-audit` artifacts. Retained outputs from two unfiltered invocations are byte-identical: 142 resource
+rows across 16 types and three policies. Four fresh-account/principal/pool/public binding
+queries are empty; exact proposed resources remain `NOT_FOUND`. Native policy reads confirm
+the older reader's canary/federation grants, outside fresh-attempt ownership. Native Logging
+reads found three views absent from CAI; their direct policies have no bindings. Stable index
+output therefore does not close inventory completeness. Material coverage reconciliation and
+independent outcome review remain open; no final baseline/PREISSUE/hosted acceptance is claimed.
+The authorized API change remains enabled; restoration needs explicit cleanup permission and
+no competing use. All other Google/GitHub mutations, host launch, authority issuance and dispatch
+remain inactive. AWS connectivity still requires reconnection after the prior internal failures.
+
+MUSE identified missing per-command success provenance and unbound artifact paths in that initial
+retention. A fresh read-only collection, `baseline-audit-v2`, records all 30 exact invocations,
+exit statuses, UTC start/end times and stdout/stderr hashes (10:30:38-10:31:29 UTC). All 23
+expected-success inventory/project/native policy reads exited 0; six fresh-resource reads exited 1
+with explicit `NOT_FOUND`. The older indexed STS2 pool policy read also exited 1 because the pool is
+`DELETED`; native describe confirms `DELETED`/disabled. It is not treated as an empty policy.
+The older active pool's direct policy is empty. Repeated new inventories/policies are byte-identical;
+142 rows contain 141 unique names and one exact duplicate STS2 provider row. This still does not
+close material/native coverage or eventual-consistency limits. The private operator packet was
+updated to explicitly supersede its disabled-API observation; all readiness flags remain false.
+Frozen evidence identities under `/tmp/ota-iam-live-20261002-preparation`:
+
+- Initial raw manifest `baseline-audit-sha256.txt`: `b40d185b85d1381d81c769d97ffe3c33dec9ec71c478aa290c100b2197dcbeb7`.
+- Initial timestamps `baseline-audit-timestamps.txt`: `20e479a20e4a70c3384ccc4e6fd99f96ad861aef6561c2f4556c083657272de2`.
+- Updated result `baseline-audit-result.md`: `ce6c1ccefb9ef63bcbf5da7331ad9d5bdf185b34118be26a1646210754ba87d9`.
+- Command ledger `baseline-audit-v2/command-ledger.json`: `c40a9f945132d127c51c56c0b057dfc6e2e743505662cbd6924fdeb55428b273`.
+- New raw/command manifest `baseline-audit-v2/sha256.txt`: `e57a7a3a34fe8a6a7a749bd3d7bda41491af38a86c1d0a44f1b89cbb24e7d480`.
+- Updated packet JSON/operator/readback specification: `9bf1535f9cfb8c55e49bc0d883f3e07acfb0cd7d331a3478e0d3666802bac20c`,
+  `4507366b0527f855f5e9ea25258bb5adb59d28d380510234d4189ce8fd25a0e7`,
+  `a1972ae5931b102e915fe7d1ba65bea1e4303469108de27cc52cd4392b5e6035` respectively.
+
+MUSE's frozen delta re-review resolved both P2 evidence-retention gaps and the stale-packet P3.
+The remaining P3 success/failure sentence was corrected to the exact 23/6/1 status split above.
+Review clears docs-only observation retention, not material coverage acceptance, AWS readiness,
+final source/packet freeze, host launch, PREISSUE, provider activation, issuance or dispatch.
+
 The proposed hosted bar is one job-observed GitHub response, one accepted STS response and one
 accepted IAM response, each counted only at Core's call seam, followed by validated deliberate
 client refusal and exact child/scope/cgroup/slot cleanup. Retain only a closed non-secret status

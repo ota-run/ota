@@ -37,8 +37,8 @@ durable agent workflow belongs in the canonical Ota skill.
 - released baseline: `v1.6.28`
 - development package identity: `v1.6.28`; this branch contains unreleased post-release source
   changes and is not a new release or support claim.
-- current proof gate (2026-10-02): restore read-only AWS readiness and obtain authorization for
-  the missing Google policy-audit baseline, then freeze/review the final off-clock source and
+- current proof gate (2026-10-02): restore read-only AWS readiness and complete/review the
+  Google policy-audit coverage reconciliation, then freeze/review the final off-clock source and
   hosted packet before host launch. The inert workflow registration and preparation-design
   review are complete; host creation and IAM dispatch remain inactive.
   Fresh preparation is staged at `/tmp/ota-iam-live-20261002-preparation`. MUSE's initial review
@@ -47,10 +47,19 @@ durable agent workflow belongs in the canonical Ota skill.
   containing only `iam.serviceAccounts.getAccessToken` and a closed project/ancestor/asset-policy
   audit with explicit coverage limits. Frozen MUSE re-review found no P1/P2/P3 issues and cleared
   documentation/preparation retention only, not host, PREISSUE or installed readiness.
-  The baseline audit cannot yet run
-  because Cloud Asset API is disabled, and two read-only AWS plugin calls failed internally.
-  Current AWS identity/connectivity and the missing baseline audit are launch blockers, not
-  permission to enable APIs, widen grants or create a host. No Google mutation occurred.
+  The operator authorized only Cloud Asset API enablement for the read-only baseline; enablement
+  succeeded. Initial and repeated unfiltered inventory/policy reads agree (142 resource rows,
+  three indexed policies); the four fresh-account/principal/pool/public queries are empty.
+  Native reads confirm the older reader's federation/canary grants, not grants to the fresh pool.
+  Native Logging reads also found three views absent from CAI, with empty direct policies.
+  Evidence is bound to the exact artifact identities in the active plan's baseline retention
+  paragraph. A fresh 30-command collection records invocations, statuses, UTC times and output
+  hashes; the older indexed STS2 pool is natively DELETED/disabled, not an empty policy result.
+  MUSE cleared docs-only observation retention after evidence/status wording repairs; material
+  coverage reconciliation remains open. Two prior AWS plugin calls failed internally; current AWS
+  identity/connectivity is still unverified. These remain launch blockers, not permission to widen
+  grants, create a host or activate the provider. No Google mutation beyond the authorized API
+  enablement occurred; API restoration needs explicit cleanup permission/no competing use.
   Predecessor evidence: the fresh bounded Google STS checkpoint passed at Core
   `41a979b0d16200cef1608c5f469279b1dc2d2440`; MUSE cleared outcome retention after the
   narrow P3 diagnostic-ordering wording correction.
@@ -309,8 +318,8 @@ durable agent workflow belongs in the canonical Ota skill.
   unchanged. No Protocol/Launcher production, public CLI, JSON, schema, authoring or support claim
   changes: Site/Skills/Examples/Learn/FAQ/Glossary/command cards need no propagation for this
   internal pressure batch. Core changelog and the Site sync waiver track this decision.
-  Next: restore AWS read-only connectivity and request only the authorization needed for the
-  Cloud Asset baseline audit; keep host and all other Google/GitHub mutations inactive. Finish
+  Next: restore AWS read-only connectivity and close/review baseline coverage reconciliation;
+  keep host and all other Google/GitHub mutations inactive. Finish
   final source/hosted packet freeze and independent review after those blockers close. Read-only Google
   preparation confirmed project `ota-v121-step7-20260910` / `783599651848` is active and
   `iam.googleapis.com`, `iamcredentials.googleapis.com` and `sts.googleapis.com` are already
