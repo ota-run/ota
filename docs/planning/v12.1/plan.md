@@ -2864,6 +2864,70 @@ edits (container mode, Rust 1.95 bookworm). The subsequent provenance wording de
 `git diff --check`; neither validation is fresh-host or hosted IAM evidence. Future SSH assertions
 must retain contemporaneous command/status/UTC/hash metadata before retiring the host.
 
+#### A3 Terminal SSH Failure And Retirement (2026-10-03)
+
+The operator separately authorized one fresh bounded attempt and exact cleanup. MUSE cleared
+host creation only against clean Core `bc441be0ee4dc3d7d777344fdcf43e685f0a4da1`, unchanged
+runtime Launcher `dd667c3d`/Protocol `e5fe1c83`, the frozen 389-entry prelaunch manifest and
+114 command records. Six exact-head source workflows passed: Release Gate `37071549652`,
+Readiness `37071549574`, CodeQL `37071549600`, Smoke `37071550037`, cargo-deny `37071549575`
+and docs-quality `37071549579`. This cleared neither installed readiness nor PREISSUE.
+
+The fresh GCP host passed six native exact-ID reads and the production v2 host guard;
+authenticated serial output matched the scanned host key retained in strict known_hosts.
+The first authenticated SSH invocation failed connecting to `34.89.56.53:22`, exit 255,
+at 00:23:18Z-00:24:33Z, before any root baseline, build or installation. Retained invocation,
+input bytes, stream hashes, returned status and local UTC bounds are contemporaneous, not a
+remote-clock attestation. Root assertions did not run; earlier key-scan success does not prove
+later authenticated connectivity. The timeout's cause remains undetermined.
+
+The terminal infrastructure-error rule stopped A3 without SSH retry, firewall widening,
+runner/group registration, dispatch, IAM resource creation, signing/provisioning or workload
+credential checkpoint. Retirement verified created numeric IDs before deletion: VM
+`8020721389582284493`, auto-delete disk `1810151512235439821`, firewall `6962457133068449529`,
+subnet `3772327524939200230`, network `6176938632883861783`. Eleven retirement commands exited
+0; five post-delete describes exited 1 with explicit NOT_FOUND. Final native lists exclude
+the instance ID and reserved former IP; the local private key is removed. Historical resources
+remain untouched; Cloud Asset API restoration remains separately unauthorized.
+
+Frozen additive evidence under `/tmp/ota-iam-live-20261002-a3`:
+
+- Prelaunch packet/manifest: `e0d04bf952c7f780506a97157dd6e7dca570778f36344d589820dfdeab80a2ff`,
+  `13ff962c9b64b6e6cc7551b2b2a0041a4f793f7840e5eaf869d6c9d9eac0d1ac`.
+- Retirement command ledger: `adfaa7ef88bdddb43c3535a2b6883bbd35b3204ffd71b3067a5d70ece5eb7dd1`.
+- Outcome manifest: `37b33b0f10169adbd38eb2eb5e014a02d4fe016ec1007d70a3945108f2053dc2`.
+
+Original prelaunch files remain unchanged. The outcome manifest binds creation, host guard,
+host-key, SSH failure and exact retirement records/helpers; private key bytes are excluded.
+Next: diagnose stable operator SSH connectivity off the authority clock before separately
+authorizing a new attempt and fresh host/policy/installed/PREISSUE gates. Step 7 remains
+active/open; IAM checkpoint acceptance, root-side absence assertions and global resource
+absence are not proved. No automatic retry, renewal, later delivery, merge or release follows.
+This private operator failure changes no public behavior; Site/Skills/Examples/Learn/FAQ/
+Glossary/schema/public-JSON/command-reference propagation is not required.
+
+Off-clock connectivity preparation: seven local diagnostic records, manifest
+`31da0097f3c2309234e125b5984251cac833709a8c409bb5dedce3d380c02637`, report three direct
+IPv4 HTTPS observations at `79.78.194.173`, different from frozen `193.176.31.46/32`.
+These later observations support a stale-egress hypothesis, not A3's historical cause or the
+source address of its TCP/22 flow. No connection to the retired host was attempted.
+The private successor recorder under `/tmp/ota-iam-connectivity-preparation-20261003` is
+`f82945691e970e9ee95445f292d18b73871bea8f3d9542b75a0ea8f2a27d11ed`: it binds destination
+and expected /32 to the ledger, checks exact direct HTTPS egress before/after one SSH command,
+refuses malformed/failed/mismatched probes without retry, and preserves the actual SSH result.
+It disables inherited SSH configuration, forwarding and multiplexing; a ten-second connection
+timeout is not a root-command deadline. A post-command mismatch cannot undo completed work.
+Syntax and 15 stubbed cases passed with network denied; validation manifest
+`fad68c00af98ae3641b278982853ded0902c34d942674bb4354baa54dcb1def2` binds their records.
+MUSE's first source review found inherited curl configuration could enable extra transfers or
+retries. The repair puts `-q` first, explicitly selects `--retry 0`, and compares the full probe
+argv in the fixture, including IPv4/noproxy, both timeouts and the sole endpoint. Candidate 1
+is archived with its original manifest; neither this regression nor source review proves a
+live hostile-config or connectivity exercise.
+This is staged operator preparation only, not live connectivity, installed or provider proof;
+separately authorized fresh-attempt gates remain required; source review cannot clear them.
+Original A3 manifests and resource expectations are unchanged; no public propagation is needed.
+
 The proposed hosted bar is one job-observed GitHub response, one accepted STS response and one
 accepted IAM response, each counted only at Core's call seam, followed by validated deliberate
 client refusal and exact child/scope/cgroup/slot cleanup. Retain only a closed non-secret status

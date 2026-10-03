@@ -37,11 +37,37 @@ durable agent workflow belongs in the canonical Ota skill.
 - released baseline: `v1.6.28`
 - development package identity: `v1.6.28`; this branch contains unreleased post-release source
   changes and is not a new release or support claim.
-- current proof gate (2026-10-02): independently review the corrected off-clock runner preparation,
-  then obtain separate authorization and fresh source/host/policy/PREISSUE proof for another IAM
-  attempt. V12.1 Step 7 remains active/open; signing, runner/provider activation and later delivery
-  work remain inactive. No automatic retry or renewal is authorized.
-  The operator authorized the bounded IAM checkpoint and exact owned-resource cleanup. A2 used
+- current proof gate (2026-10-03): diagnose stable operator SSH connectivity off the authority
+  clock before separately authorizing another fresh IAM attempt. A3 is terminally stopped and
+  exactly retired, not ready for a retry. V12.1 Step 7 remains active/open; signing,
+  runner/provider activation and later delivery work remain inactive. No merge/release follows.
+  A3 used clean Core `bc441be0ee4dc3d7d777344fdcf43e685f0a4da1`, unchanged runtime pins and
+  six successful exact-head source workflows (Release Gate `37071549652`). MUSE cleared the
+  frozen prelaunch packet for host creation only. The six native host reads and v2 exact-ID
+  credential/key/network guard passed, and authenticated serial output matched the scanned
+  host key. The first authenticated SSH invocation timed out connecting to port 22, exit 255,
+  at 00:23:18Z-00:24:33Z; no root baseline, build or installation ran. Its contemporaneous
+  invocation/input/status/local-UTC/hash record is retained, not remote-clock attestation.
+  The cause is undetermined. No SSH retry, firewall change, runner registration, dispatch,
+  IAM resource creation, signing or workload checkpoint followed. Exact-owned VM/disk/firewall/
+  subnet/network retirement succeeded; five post-delete describes explicitly returned NOT_FOUND,
+  final native lists exclude the instance and reserved former IP, and the local key is removed.
+  The 16 timed retirement commands and additive outcome manifest are retained under
+  `/tmp/ota-iam-live-20261002-a3`; the plan binds their identities. Original prelaunch evidence
+  is unchanged. This is an operator connectivity failure, not an Ota product defect or hosted
+  IAM proof. No root-side absence assertions or global resource absence are inferred.
+  Cloud Asset API restoration remains separately unauthorized; no public product propagation
+  is required for this private outcome. No automatic retry or renewal is authorized.
+  Subsequent local-only diagnostics found three direct IPv4 HTTPS observations different from
+  A3's frozen operator /32. This supports a stale-egress hypothesis, not the historical cause
+  or TCP/22 source identity. A successor non-secret SSH recorder is staged privately under
+  `/tmp/ota-iam-connectivity-preparation-20261003`: exact ledger-bound source checks bracket one
+  direct IPv4 SSH command, with no inherited config/forwarding/multiplexing and bounded connection
+  establishment, not a build timeout. Syntax and 15 network-denied offline cases pass. It has
+  not run against a live host. MUSE's first review found inherited curl configuration could add
+  retries/transfers; the staged repair disables that configuration first, explicitly disables
+  retries and locks the exact probe argv. Source review cannot replace fresh installed proof.
+  Prior A2 disposition: the operator authorized the bounded IAM checkpoint and exact cleanup. A2 used
   clean Core `4aa1baa320e4bdafdddd2fc3682230730eff1b0f`, runtime Launcher `dd667c3d`, Protocol
   `e5fe1c83`, and successful exact-head source checks, including Release Gate `37006393687`.
   Exact Linux/X64 builds, guarded isolated GCP host, restricted group 10/runner 1385, disabled
@@ -70,7 +96,7 @@ durable agent workflow belongs in the canonical Ota skill.
   This operator defect changes no public product surface or release claim; Site/Skills/Examples/
   Learn/FAQ/Glossary/schema/public-JSON/command-reference propagation is not required.
   Historical preparation/source checkpoints before A1/A2 follow; their no-host/no-dispatch
-  observations and limited permissions are superseded only by the exact A2 disposition above.
+  observations and limited permissions are superseded only by the exact A2/A3 dispositions above.
   Preparation is staged at `/tmp/ota-iam-live-20261002-preparation`. MUSE's initial review
   found two P2 planning gaps: predefined federation grants include ID-token minting, and the policy
   audit lacked a closed readback set. The proposed correction uses an account-scoped custom role
