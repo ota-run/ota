@@ -2928,6 +2928,67 @@ This is staged operator preparation only, not live connectivity, installed or pr
 separately authorized fresh-attempt gates remain required; source review cannot clear them.
 Original A3 manifests and resource expectations are unchanged; no public propagation is needed.
 
+#### A4 Connectivity, Incomplete Baseline And Retirement (2026-10-03)
+
+The operator authorized one fresh bounded attempt and exact cleanup. A4 used clean published
+Core `98d9b59c1fee8732ab7a8474c103a36e066d2101`, unchanged runtime Launcher `dd667c3d` and
+Protocol `e5fe1c83`, and six exact-head source successes: Release Gate `37089370771`,
+Readiness `37089370763`, CodeQL `37089370753`, Smoke `37089370861`, cargo-deny `37089370752`
+and docs-quality `37089371438`. MUSE accepted the read-only audit and separately cleared
+only host creation, fresh native v2 guard, serial-linked key and one non-mutating root baseline.
+The final 114 audit records preserve seven explicit NOT_FOUND failures; 138 indexed resources
+reconcile to a 148-resource classified native union. Two helper-validation records retain
+syntax and 2 accepted/31 refused network-denied host-guard controls, not installed proof.
+
+Exact A4 VM/disk/network/subnet/firewall creation and six native host checks succeeded. The
+scanned host key matched authenticated control-plane serial output. The permitted root SSH
+completed at 09:30:43Z-09:30:45Z, exit 0; matching direct IPv4 HTTPS probes bracketed it.
+The root input/stdout/stderr/status/local UTC/hash record is contemporaneous, not remote-clock
+attestation. It proves bounded connectivity/execution, not TCP/22 source or Google authority.
+
+SCOOBY discovered a P2 in the unchanged operator baseline: `host-baseline.sh:13-14` uses
+top-level `! getent passwd` for the two authority accounts. Bash errexit exempts a negated
+command; a found account can therefore reach the final success marker. Other lookup errors
+are also not distinguished from missing keys. MUSE independently reproduced and confirmed
+the issue, superseding the earlier account-assertion clearance. The actual retained stdout
+has no account rows but no individual lookup statuses; neither fail-closed account absence
+nor actual account presence is inferred. The command exit remains 0 in immutable evidence,
+while the baseline gate is explicitly unaccepted in the machine-readable outcome.
+
+A4 stopped without a second SSH, in-place repair, build/install, runner registration, IAM
+mutation, dispatch, signing, workload credential/provider call or later activation. Exact
+retirement bound VM `5225628476608705569`, disk `2419929747488076833`, firewall
+`4552075861115630634`, subnet `8035445546790253659`, and network `4866778062037808255`.
+Eleven commands succeeded; five post-delete describes returned explicit NOT_FOUND. Native
+lists exclude the instance ID and reserved former IP; the local private key is removed.
+Historical resources are untouched; Cloud Asset API restoration remains separately unauthorized.
+
+Frozen evidence under `/tmp/ota-iam-live-20261003-a4`:
+
+- Prelaunch candidate/manifest: `9b8f24483b1a05a442d54171a81be86c4117dae5a15472fa9cd3612da0a5c9e8`,
+  `31ad5240edecd5e9b027b8a2bb99913338490ae82b58614285c0a083cba724ca`.
+- Outcome/manifest: `4ce03e38bb482a79e505766974ea5fc4ff7f643795d147e917b9724dc291499a`,
+  `49379c94542ad4951c06fc880379f072906fb3aa9ce08a9d7194cbaae4eca283`.
+- Retirement command ledger: `5d79950851c713206690de4003900271ad28eda395ae4723690eb39b2c395c1d`.
+
+Original prelaunch, root input/result and A3 evidence are unchanged. The outcome manifest
+binds the successful connectivity, incomplete account assertion and exact cleanup separately;
+no global absence, independent semantic custody, installed or provider proof is implied.
+
+Off-clock successor source under `/tmp/ota-root-baseline-preparation-20261003` accepts only
+GNU getent's documented keyed-not-found status 2. It labels each lookup's stdout/stderr/status,
+explicitly refuses found=0 and all other statuses, and never relies on negation plus errexit.
+Eleven full production-baseline controls use stubbed host commands under network denial:
+both missing, each account found (including empty stdout), and each account returning 1/3/127;
+refusal must suppress the final success marker. The earlier candidate is archived separately.
+Source `e69e58f9f59d63c4f96e4245f9cfed6d8086931d848460fec5b241332ced3e85`, source-review
+manifest `ced1b08663814f3be32f92568ab931c965f865ee0314b81a0a4b280823b672ae` and validation
+manifest `f6a28bc084b1f64bef16f750d425c1ea75c2b6357ea671337997f7e6015d2fc7` bind this
+staged repair. MUSE's independent source/retention review found no remaining P1/P2/P3; it is
+not live Linux/NSS proof and does not authorize another attempt. Step 7 remains active/open. This is a private operator
+fixture defect, not public CLI/schema/JSON behavior; no public consumer propagation is needed.
+No automatic retry/renewal, merge/release, later delivery, Step 8 or V12.2 follows.
+
 The proposed hosted bar is one job-observed GitHub response, one accepted STS response and one
 accepted IAM response, each counted only at Core's call seam, followed by validated deliberate
 client refusal and exact child/scope/cgroup/slot cleanup. Retain only a closed non-secret status

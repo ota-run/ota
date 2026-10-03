@@ -37,36 +37,37 @@ durable agent workflow belongs in the canonical Ota skill.
 - released baseline: `v1.6.28`
 - development package identity: `v1.6.28`; this branch contains unreleased post-release source
   changes and is not a new release or support claim.
-- current proof gate (2026-10-03): diagnose stable operator SSH connectivity off the authority
-  clock before separately authorizing another fresh IAM attempt. A3 is terminally stopped and
-  exactly retired, not ready for a retry. V12.1 Step 7 remains active/open; signing,
-  runner/provider activation and later delivery work remain inactive. No merge/release follows.
-  A3 used clean Core `bc441be0ee4dc3d7d777344fdcf43e685f0a4da1`, unchanged runtime pins and
-  six successful exact-head source workflows (Release Gate `37071549652`). MUSE cleared the
-  frozen prelaunch packet for host creation only. The six native host reads and v2 exact-ID
-  credential/key/network guard passed, and authenticated serial output matched the scanned
-  host key. The first authenticated SSH invocation timed out connecting to port 22, exit 255,
-  at 00:23:18Z-00:24:33Z; no root baseline, build or installation ran. Its contemporaneous
-  invocation/input/status/local-UTC/hash record is retained, not remote-clock attestation.
-  The cause is undetermined. No SSH retry, firewall change, runner registration, dispatch,
-  IAM resource creation, signing or workload checkpoint followed. Exact-owned VM/disk/firewall/
-  subnet/network retirement succeeded; five post-delete describes explicitly returned NOT_FOUND,
-  final native lists exclude the instance and reserved former IP, and the local key is removed.
-  The 16 timed retirement commands and additive outcome manifest are retained under
-  `/tmp/ota-iam-live-20261002-a3`; the plan binds their identities. Original prelaunch evidence
-  is unchanged. This is an operator connectivity failure, not an Ota product defect or hosted
-  IAM proof. No root-side absence assertions or global resource absence are inferred.
-  Cloud Asset API restoration remains separately unauthorized; no public product propagation
-  is required for this private outcome. No automatic retry or renewal is authorized.
-  Subsequent local-only diagnostics found three direct IPv4 HTTPS observations different from
-  A3's frozen operator /32. This supports a stale-egress hypothesis, not the historical cause
-  or TCP/22 source identity. A successor non-secret SSH recorder is staged privately under
-  `/tmp/ota-iam-connectivity-preparation-20261003`: exact ledger-bound source checks bracket one
-  direct IPv4 SSH command, with no inherited config/forwarding/multiplexing and bounded connection
-  establishment, not a build timeout. Syntax and 15 network-denied offline cases pass. It has
-  not run against a live host. MUSE's first review found inherited curl configuration could add
-  retries/transfers; the staged repair disables that configuration first, explicitly disables
-  retries and locks the exact probe argv. Source review cannot replace fresh installed proof.
+- current proof gate (2026-10-03): retain the independently reviewed root-baseline assertion
+  repair and A4 retirement records, then obtain commit approval and separate fresh-attempt
+  authorization before the next clean-source/prelaunch gate.
+  A4 is terminally stopped and exactly retired; there is no current pressure VM or attempt key.
+  V12.1 Step 7 remains active/open; build/install, signing, runner/provider activation and later
+  delivery remain inactive. No merge/release or automatic retry/renewal follows.
+  A4 used clean Core `98d9b59c1fee8732ab7a8474c103a36e066d2101`, unchanged runtime pins and
+  six exact-head source successes (Release Gate `37089370771`). MUSE accepted the read-only
+  audit and frozen host-creation-only packet. Creation, all six native v2 host-guard reads and
+  serial-linked host key passed. The one permitted root baseline SSH returned 0 at
+  09:30:43Z-09:30:45Z, with matching bracketed HTTPS egress observations. This establishes
+  bounded authenticated execution, not TCP/22 source, independent host/clock or provider proof.
+  SCOOBY then found the baseline's two top-level `! getent` calls do not fail closed under
+  Bash errexit. MUSE independently confirmed P2 and superseded the earlier account-assertion
+  clearance. No individual lookup statuses were retained; aggregate exit 0 and empty account
+  output do not close that gate or imply either account actually existed. No second SSH,
+  repair-and-continue, build/install, runner registration, IAM mutation, dispatch, signing or
+  workload provider call occurred. Exact numeric-ID retirement completed with 11 successful
+  commands and five explicit NOT_FOUND readbacks; native lists exclude the instance and any
+  reserved former IP, and the local private key is removed. Original evidence remains unchanged
+  under `/tmp/ota-iam-live-20261003-a4`; the active plan binds packet/outcome/retirement identities.
+  The off-clock repair is staged under `/tmp/ota-root-baseline-preparation-20261003`: labelled
+  lookup stdout/stderr/status boundaries, only keyed-not-found status 2 accepted, found=0 and
+  every other status refused. Syntax and 11 full-baseline stubbed controls pass with network
+  denied, including both accounts and suppression of the final success marker. This is source
+  readiness only, not a new host or installed baseline. MUSE cleared the frozen source/retention
+  review with no remaining findings. This is a private operator-fixture defect, not a new Ota product gap; no public
+  Site/Skills/Examples/Learn/FAQ/Glossary/schema/command/JSON propagation is required.
+  Cloud Asset API restoration remains separately unauthorized; global resource/account or
+  credential absence is not proved. Prior A3 connectivity failure and exact retirement remain
+  unchanged in the active plan and `/tmp/ota-iam-live-20261002-a3`; its cause remains undetermined.
   Prior A2 disposition: the operator authorized the bounded IAM checkpoint and exact cleanup. A2 used
   clean Core `4aa1baa320e4bdafdddd2fc3682230730eff1b0f`, runtime Launcher `dd667c3d`, Protocol
   `e5fe1c83`, and successful exact-head source checks, including Release Gate `37006393687`.
@@ -96,7 +97,7 @@ durable agent workflow belongs in the canonical Ota skill.
   This operator defect changes no public product surface or release claim; Site/Skills/Examples/
   Learn/FAQ/Glossary/schema/public-JSON/command-reference propagation is not required.
   Historical preparation/source checkpoints before A1/A2 follow; their no-host/no-dispatch
-  observations and limited permissions are superseded only by the exact A2/A3 dispositions above.
+  observations and limited permissions are superseded only by the exact A2/A3/A4 dispositions.
   Preparation is staged at `/tmp/ota-iam-live-20261002-preparation`. MUSE's initial review
   found two P2 planning gaps: predefined federation grants include ID-token minting, and the policy
   audit lacked a closed readback set. The proposed correction uses an account-scoped custom role
