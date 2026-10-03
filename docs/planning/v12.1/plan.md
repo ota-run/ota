@@ -2989,6 +2989,127 @@ not live Linux/NSS proof and does not authorize another attempt. Step 7 remains 
 fixture defect, not public CLI/schema/JSON behavior; no public consumer propagation is needed.
 No automatic retry/renewal, merge/release, later delivery, Step 8 or V12.2 follows.
 
+#### A5 Strict Host-Key Refusal And Retirement (2026-10-03)
+
+A5 used clean published Core `d36ac2dbc30163d81a4614ae1ccac6020a6c9410`, runtime Core
+`d67886f27f6ee76766401d85427b0e4ea63694e2`, unchanged Launcher `dd667c3d` and Protocol
+`e5fe1c83`. Six exact-head source gates succeeded: Release Gate `37117001127`, Readiness
+`37117001137`, CodeQL `37117001126`, Smoke `37117001434`, cargo-deny `37117001172` and
+docs-quality `37117001110`. The reviewed read-only audit is retained separately, not global
+resource or credential absence. MUSE cleared the additive V2 host packet with no P1/P2/P3
+after verifying the shared six-workflow predicate, pinned Google operator and production-path
+complete/partial exact-ID retirement. Network-denied validation passed 2 accepted/31 refused
+host controls and 29 admission/operator/retirement controls; these are fixtures, not host proof.
+
+The human authorized one short-lived host, native exact-ID guard, serial-linked strict key,
+one repaired non-mutating root baseline and exact cleanup. Fresh 18-record admission passed.
+Creation and all six native host guard reads succeeded. The exact owned host had no attached
+service account or OAuth scopes; ingress remained the frozen TCP/22 operator /32.
+
+The authenticated serial read and ed25519 key scan each returned 0. The scan yielded one
+public key; the retained serial output contained fingerprints but no raw ed25519 public key
+for the reviewed exact comparison. The strict-key wrapper returned 1, and no strict known_hosts
+file or authenticated root-baseline command followed. This establishes a binding refusal,
+not a hostile key, root execution or live repaired account-absence proof. No repair-and-continue,
+second key scan, network widening, build/install, runner registration, IAM mutation, dispatch,
+signing, workload provider call or later delivery occurred. A5 is terminal, not an automatic A6.
+
+Exact retirement bound VM `3710417972253995301`, disk `7479766066762920229`, firewall
+`6687347641487765806`, subnet `5722017913094582618` and network `3439689033782702411`.
+Thirteen commands succeeded; seven describes returned explicit NOT_FOUND. Native lists exclude
+the instance and reserved former IP; the local attempt private key is removed. Historical
+resources are untouched; Cloud Asset API restoration remains separately unauthorized.
+
+Frozen evidence under `/tmp/ota-iam-live-20261003-a5-preparation/host-packet-v2`:
+
+- Prelaunch candidate/manifest: `d0a83886162b4ff28884746011282ea7c0bf6f2d1b361c98327fd0049ee3ad6b`,
+  `8fbe29ce6531409987f1d9a2c50cda31c079720b0dbf3edcb6e7ba280c87bc78`.
+- Outcome/manifest: `3fb5c107b4672262974d0ca45401355669372519ab197dbee4f272d19c0d2325`,
+  `d4eaa9b3d61567a3ceb1b27654cd085aa43d420bf1c2cd0115807e42ac379fac`.
+- Retirement command ledger: `2cce8a4c4065e2e150e9076dce417890816655e9cde47e8e295df041780631f0`.
+
+The original prelaunch evidence, A4 disposition and reviewed root-baseline source are unchanged.
+MUSE's independent terminal-outcome review found no P1/P2/P3 and verified the exact cleanup
+and documentation boundaries. Its retrospective fingerprint derivation matched the serial
+fingerprint, diagnosing the incompatible raw-key expectation without accepting A5. An off-clock
+canonical fingerprint-binding candidate needs malformed/missing/ambiguous/cross-algorithm/
+mismatch refusal fixtures and frozen independent source review before a separately authorized
+successor. That is the next boundary; no live successor is authorized by this disposition. This private
+operator gap changes no public Ota behavior, so Site/Skills/Examples/Learn/FAQ/Glossary/schema/
+command/JSON propagation is not required. Step 7 and full V12.1 remain active/open; IAM is an
+intermediate checkpoint, not completion, and later canonical delivery requirements remain open.
+
+Off-clock candidate under `/tmp/ota-host-key-preparation-20261003` replaces only the existing
+operator helper's key-binding predicate. The bounded parser requires an exact single-host ED25519
+SSH wire key, canonical base64 and SHA-256 fingerprint; a typed serial fingerprint prefix through
+the ED25519/256 randomart header with matching root/instance comment and host-key paths; and one
+unique matching fingerprint across validated console/journal prefixes. Randomart body/footer
+completion is unverified; ending at the header may be accepted. It refuses malformed prefixes,
+prefixes incomplete before the header, wrong-host, cross-algorithm,
+ambiguous and mismatched evidence. The existing helper retains the timed binding result before
+noclobber publication of a single canonical known_hosts row at mode 0600, and records explicit
+SHA-256 ssh-keygen output. No arbitrary-string or unauthenticated-key fallback is added.
+Helper source `4d40fd809b366c55ae296db2ee919594ae2cf3c68bcc225487cf4226bc7cfd3d`, parser
+`3d1c6254bb106ebcec135646aea9bcfdfae64df103e7002b1ed8621ef9e4691c` and final validation
+manifest `35f8d9a2ce877c7540bc3a3805553c0431baa16cb2bcb316a26d99539c124c6e` bind the candidate.
+Syntax and five unittest methods pass with network denied, user-home reads denied, a read-only
+source copy and scratch-only writes: native A5 replay/duplicate-copy acceptance, 27 parser refusals,
+input/CLI bounds, four production publication controls and two no-overwrite controls. Earlier
+sandbox-path and /dev/null fixture failures are retained as failed validation, not acceptance.
+MUSE's independent frozen review found no P1/P2 and one P3: the complete-generation wording
+overstated the prefix-only boundary. MUSE inspected retained output without independently
+rerunning the tests. The additive `/tmp/ota-host-key-preparation-20261003-p3` candidate narrows
+wording and labels the prefix-only positive control and pre-header truncation refusal; production
+parser/wrapper hashes remain unchanged and the original freeze is preserved. Fresh bounded
+syntax and the same five unittest methods pass; validation manifest
+`540f28b1d66cdf8b1d19a2fd3ab431f48cee396263f81b51f8d7f707891f7329` and test source
+`ac842d4c8bccffff88ec060d6d1c7c8f3d872c6de27cc791f82e7642e8e1eaae` bind the correction.
+Additive source-review manifest:
+`d26d81cfcd20ad997adf1eb3d6c73520c8d1b7eb1765aa811f40549d4d648533`.
+MUSE's frozen delta review found no remaining P1/P2/P3 and cleared source integration of this
+exact additive candidate into a separately frozen successor preparation packet. All 14 source
+manifest entries and both nested validation manifests verify; the original 13 entries still
+verify. Review remains source/retained-evidence inspection without an independent test rerun.
+Clearance does not approve that future packet or any live gate. A5 disposition and live authority
+are unchanged; no successor VM, private attempt key or provider activity is authorized by source
+validation or this review. Next: prepare/review the successor packet before separately authorized
+fresh attempt gates. Public consumer propagation remains unnecessary.
+
+#### A6 Off-Clock Successor Preparation Kit (2026-10-03)
+
+Human authorization covers preparing/reviewing the kit only. The additive
+`/tmp/ota-iam-live-20261003-a6-preparation` uses proposed resource name
+`ota-iam-20261003-a6` and firewall `ota-iam-20261003-a6-ssh`, unchanged host shape,
+source/runtime pins, six-workflow/operator admission, native guard, root baseline,
+SSH recorder and complete/partial numeric-ID retirement. The cleared fingerprint
+parser/wrapper are unchanged; randomart body/footer completion remains unverified.
+No historical A5 ledger, key, public metadata, successful admission or provider
+configuration is copied into A6 readiness. Runtime pins exist locally, not as installed proof.
+
+Frozen source-review manifest:
+`4afaf55a377576230c8b4968e1024966bb342d4264b0d15ca086540516f3533e`.
+Final validation manifest:
+`35d174a6722a39d55a6a436ea4573998927c00a16eb67d0db187861b5abe9c0d`.
+Four recorded checks pass with network/user-home reads denied, read-only source and
+scratch-only writes/resource limits: per-file shell syntax; five host-key methods
+including A6 comment acceptance/A5-for-A6 refusal; 2 accepted/31 refused native
+host-guard controls; 29 admission/operator/retirement controls. Initial mktemp
+scratch-path failures remain retained. Fixtures now explicitly target scratch;
+no permission widening or production behavior change resolved those failures.
+
+MUSE's frozen kit review found no P1/P2/P3 and cleared preparation-kit coherence/source
+integration only. All listed source/validation entries verify. Review was source/retained-
+evidence inspection, not an independent test rerun. This is not a final launch packet: at kit review,
+Core had two dirty canonical docs at `d36ac2d`, so clean admission was blocked; fresh SSH key/public
+metadata, /32, native/policy/GitHub readbacks, generated ledger/candidate, complete
+prelaunch review and explicit human host-gate authorization remain unresolved.
+If source HEAD changes, re-pin/re-review instead of weakening clean/exact-head gates.
+The human subsequently authorized this reviewed two-file documentation commit only; no push
+or live gate. Next: re-pin/re-review the clean committed source and satisfy the remaining gates.
+No key generation, cloud/GitHub/SSH call, VM, root, build/install, signing,
+runner/IAM/dispatch/provider or delivery activity occurred. A5 remains failed/retired;
+Step 7/full V12.1 remain open. Public consumer propagation remains unnecessary.
+
 The proposed hosted bar is one job-observed GitHub response, one accepted STS response and one
 accepted IAM response, each counted only at Core's call seam, followed by validated deliberate
 client refusal and exact child/scope/cgroup/slot cleanup. Retain only a closed non-secret status

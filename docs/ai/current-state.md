@@ -37,12 +37,63 @@ durable agent workflow belongs in the canonical Ota skill.
 - released baseline: `v1.6.28`
 - development package identity: `v1.6.28`; this branch contains unreleased post-release source
   changes and is not a new release or support claim.
-- current proof gate (2026-10-03): retain the independently reviewed root-baseline assertion
-  repair and A4 retirement records, then obtain commit approval and separate fresh-attempt
-  authorization before the next clean-source/prelaunch gate.
-  A4 is terminally stopped and exactly retired; there is no current pressure VM or attempt key.
+- current proof gate (2026-10-03): resolve clean-source/key/readback/final-packet requirements
+  after MUSE cleared the frozen additive A6 preparation kit with no P1/P2/P3.
+  A6 is preparation only, not a launch-ready admission packet or live authorization.
+  A5 is terminally stopped; no automatic successor or repair-and-continue.
+  A4 and A5 are exactly retired; there is no current pressure VM or attempt private key.
   V12.1 Step 7 remains active/open; build/install, signing, runner/provider activation and later
   delivery remain inactive. No merge/release or automatic retry/renewal follows.
+  A5 used clean published Core `d36ac2dbc30163d81a4614ae1ccac6020a6c9410`, unchanged runtime
+  Core `d67886f27f6ee76766401d85427b0e4ea63694e2` and Launcher/Protocol pins, and six successful
+  exact-head source checks (Release Gate `37117001127`). MUSE cleared the frozen V2 host packet
+  after closing three private operator-kit P2s: canonical six-workflow admission, exact Google
+  operator propagation and executable numeric-ID partial retirement. The human then authorized
+  only one host/native guard/strict key/repaired root baseline plus cleanup.
+  Fresh admission, exact creation and all six native host-guard reads passed. The key scan and
+  authenticated serial read both returned 0, but the retained serial output contained no raw
+  ed25519 public key for the reviewed exact comparison. The strict binding gate returned 1;
+  no strict known_hosts file or authenticated root-baseline command followed. An SSH key scan
+  is not authenticated root execution or repaired baseline proof. No retry, ingress widening,
+  build/install, runner registration, IAM mutation, dispatch, signing or workload provider call
+  occurred. Exact retirement completed with 13 successful commands and seven explicit NOT_FOUND
+  reads, native instance/address checks and removal of the local private key. No global absence
+  or provider authority is inferred. Frozen outcome and cleanup identities are in the active plan
+  and `/tmp/ota-iam-live-20261003-a5-preparation/host-packet-v2`. The original packet and A4
+  evidence are unchanged. MUSE found no P1/P2/P3 in the terminal-outcome review and diagnosed
+  the incompatible raw-key expectation; a retrospective matching fingerprint is not A5 acceptance.
+  Any fingerprint-binding candidate needs network-denied fixtures and independent source review.
+  Source candidate under `/tmp/ota-host-key-preparation-20261003` now derives canonical SHA-256
+  from exactly one scanned ED25519 wire key, compares it to one unique fingerprint in complete
+  typed serial fingerprint prefixes through the ED25519/256 randomart header, and refuses
+  malformed/missing/ambiguous/cross-algorithm or mismatched prefixes. Randomart body/footer
+  completion is not verified; a stream ending at the header may be accepted. Its existing
+  wrapper publishes only the validated row at mode 0600 and
+  refuses existing files/symlinks. Syntax and five network-denied unittest methods pass, including
+  27 parser refusal cases and production publication controls. This replays A5 evidence offline;
+  it does not accept A5, prove a live baseline or authorize another host. MUSE's frozen source
+  review found no P1/P2 and one P3 overclaim about complete generation stanzas. The additive
+  `/tmp/ota-host-key-preparation-20261003-p3` candidate narrows wording/test labels only; parser
+  and wrapper hashes are unchanged, and fresh bounded syntax/five-test validation passes.
+  The original freeze is preserved. MUSE cleared the frozen delta with no remaining P1/P2/P3;
+  source/validation identities are recorded in the active plan. Clearance permits only integration
+  into a separately frozen successor preparation packet, not that packet or a live gate.
+  A6 preparation kit `/tmp/ota-iam-live-20261003-a6-preparation` now incorporates that repair,
+  fresh proposed names and unchanged strict source/operator/ownership gates. Frozen manifest
+  `4afaf55a377576230c8b4968e1024966bb342d4264b0d15ca086540516f3533e`; MUSE found no P1/P2/P3
+  and cleared preparation-kit coherence/source integration only, not launch readiness.
+  Four bounded network-denied validation records pass: syntax, five host-key methods,
+  2 accepted/31 refused host-guard controls and 29 admission/retirement controls. Failed initial
+  scratch-path validation remains retained, not acceptance. No old ledger/key/admission success
+  is promoted to A6. At kit review, Core was at `d36ac2d` with these two docs dirty; that
+  clean-state blocker was not waived. No key, /32, fresh native/policy/GitHub readbacks or final candidate
+  exists yet. MUSE inspected source/retained evidence without an independent test rerun.
+  The human authorized the reviewed two-file documentation commit only. Next: re-pin/re-review
+  that clean committed source and resolve key/readback/final-packet gates before separately authorized fresh host
+  action. No VM or provider action has occurred.
+  This handoff records the reviewed preparation boundary; no push, release or live successor authorization.
+  This is a private operator key-binding preparation gap, not a demonstrated Ota runtime gap;
+  no Site/Skills/Examples/Learn/FAQ/Glossary/schema/command/JSON propagation is required.
   A4 used clean Core `98d9b59c1fee8732ab7a8474c103a36e066d2101`, unchanged runtime pins and
   six exact-head source successes (Release Gate `37089370771`). MUSE accepted the read-only
   audit and frozen host-creation-only packet. Creation, all six native v2 host-guard reads and
