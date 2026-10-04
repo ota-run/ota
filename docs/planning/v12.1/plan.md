@@ -3250,21 +3250,74 @@ Additive publication record `/tmp/ota-a7-source-publication-20261004`, manifest
 supports clean local/remote `a649bae1` at its observation. The mutation is an author-transcribed
 tool result, distinct from independently retained readbacks. Its snapshot shows two successful
 and four running checks; the canonical predicate correctly refuses. MUSE verified this
-bounded observation record, not later CI state or six-check admission. This two-file handoff
-reconciliation changes the selected source and requires independent review and separate
-commit/push authorization. Admission after publication must be rederived: a resulting new HEAD
-requires its own exact pin and all six successful checks
-before a fresh final-source freeze; no old-head CI or clean-worktree waiver transfers.
+bounded observation record, not later CI state or six-check admission. The two-file handoff
+reconciliation was subsequently independently reviewed and separately published at
+`c39fcd7168845e2412c39e56ddc0a122e2b44a75`; its publication is complete. R2 re-pin
+`/tmp/ota-a7-source-repin-20261004-r2`, manifest
+`65b9c3c304d27ca4edfb86089d6d86dbbde52ff8efdd2dcd88e07223cefc46c9` (82 entries),
+was independently cleared for source inclusion. Fresh all-six success and clean local/remote
+admission at that exact source are retained in the accepted A7 outcome below. These
+observations are historical; any resulting new HEAD requires its own exact pin and all six
+successful checks before successor admission. No old-head CI or clean-worktree waiver transfers.
 
 The public-input/kit pathname, full size/during-derivation, real foreign-owner and atomic
 checked-input-to-cloud-use limits remain explicit; fixture protection is not a general
-same-user bypass or hostile-code-isolation guarantee. The fresh final packet still requires
-new key/public linkage, operator/policy/native readbacks and independent completed-freeze
-review. Host-only creation/native guard/serial-key/root baseline and exact cleanup then need
-separate explicit human authorization. Build/install/signing/IAM/provider/runner/pressure
+same-user bypass or hostile-code-isolation guarantee. The following final preparation and
+host-only outcome are distinct from these historical source-only kits; fresh successor
+key/public linkage, operator/policy/native readbacks and completed-freeze review are not
+waived. Every live successor still needs separate explicit human authorization.
+Build/install/signing/IAM/provider/runner/pressure
 dispatch, merge/release, Step 7 closure, Step 8 and V12.2 are not activated. This is private
 operator-source/continuity work with no public CLI/spec/schema/JSON or first-party consumer
 change; Site/Skills/Examples/Learn/FAQ/Glossary propagation is not required.
+
+#### A7 Accepted Host-Only Baseline And Retirement (2026-10-04)
+
+Final preparation `/tmp/ota-iam-live-20261004-a7-final-preparation-r2`, manifest
+`7d1e88d46c84a5011b7c5101e20d842c14dd460361f9941b031f6733ff77fe73` (447 entries),
+was cleared together with the additive freeze correction
+`/tmp/ota-a7-final-freeze-correction-20261004`, manifest
+`ad0f4e38aa412507e0180415079ef1b05819c483b30cde7188db42d1af25f914` (10 entries).
+The correction pins the previously omitted policy-controller manifest's exact bytes and
+its 11 parent-frozen payload entries; the original parent remains unchanged. Successor
+bookkeeping uses exact-root manifest exclusion. Original preparation syntax failures and
+the earlier unaccepted final candidate remain historical, not accepted validation or authority.
+
+Bobai then separately authorized one bounded host-only creation/native guard/serial-key/
+root-baseline gate plus exact owned cleanup. A7 used clean local/remote Core
+`c39fcd7168845e2412c39e56ddc0a122e2b44a75` and six successful exact-head workflows;
+runtime Core `d67886f`, Launcher `dd667c3d` and Protocol `e5fe1c83` were unchanged.
+Fresh admission and the canonical precreation policy controller passed before the first
+mutation, including unchanged frozen operator /32 and private/public key linkage.
+All 92 underlying policy records fall within the new precreation controller bracket;
+30 baseline/59 native/1 role records, 146 classified coverage rows, repeated index equality
+and native parity remain bounded administrator-owned allow-policy evidence.
+
+Creation and eight-record native guard retained all five numeric resource IDs and exact
+VM/disk/network/SSH metadata boundaries, with no VM service account/OAuth scope. One serial
+poll observed the typed ED25519 prefix; one scan and exact fingerprint binding succeeded.
+Strict known_hosts preceded one source-bracketed non-mutating root baseline, input digest
+`e69e58f9f59d63c4f96e4245f9cfed6d8086931d848460fec5b241332ced3e85`. Root/Linux/X64/
+cgroup2/named-path/NTP assertions passed and both account lookups retained status 2.
+Both local HTTPS egress observations bracketed SSH. No independent host/clock attestation,
+TCP22-source proof or global credential absence is inferred.
+
+Exact owned retirement passed with 20 records: 13 zero calls and seven resource-specific
+NOT_FOUND results, followed by empty enumerated instance/address lists and unlinking this
+attempt's local key. Immutable outcome `/tmp/ota-iam-live-20261004-a7-host-gate`, manifest
+`41a710defaaee6e19e745da4b699ad20930519839a7065bfd6a85770fc1f78c7` (567 entries),
+was independently accepted by MUSE with no P1/P2/P3. This is historical host-only baseline
+and exact owned cleanup, not global absence, memory erasure or destruction of historical keys.
+The VM is retired; its liveness and observation freshness cannot transfer.
+
+Next is narrow independent review and separately authorized publication of this canonical
+reconciliation, followed by resulting-source re-pin and six exact-head checks. Prepare the
+bounded build/install gate off-clock: exact artifact/toolchain/install inputs, acceptance
+checks, fresh successor admission and failure/cleanup retention. Freeze/review before
+requesting separate human live authorization. No successor identity/key/VM or new live
+gate is authorized by this outcome. No build/install, signing, IAM mutation, runner,
+pressure dispatch or workload-provider activity occurred. Step 7/full V12.1 stay active/open;
+later delivery, Step 8 and V12.2 remain inactive. Public propagation remains unaffected.
 
 The proposed hosted bar is one job-observed GitHub response, one accepted STS response and one
 accepted IAM response, each counted only at Core's call seam, followed by validated deliberate

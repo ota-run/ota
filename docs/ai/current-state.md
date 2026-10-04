@@ -37,18 +37,37 @@ durable agent workflow belongs in the canonical Ota skill.
 - released baseline: `v1.6.28`
 - development package identity: `v1.6.28`; this branch contains unreleased post-release source
   changes and is not a new release or support claim.
-- current proof gate (2026-10-04): exact-source admission for the reviewed handoff-bearing
-  revision before a fresh final packet. Establish that revision only through independently
-  reviewed, separately authorized commit/publication; re-pin/re-review the resulting clean
-  source and require its six successful exact-head workflows. The retained published checkpoint
-  is `a649bae1f8c9066b14f8008d1f4505c6c162769c`; its additional change from `403544f4`
-  is only the Supabase pressure-blog draft deletion. Its clean-source/CI observations do not
-  cover these handoff edits or a resulting new HEAD. Earlier documentation publication is
-  complete, not a pending authorization. Private guard integration is independently cleared
-  for source inclusion only. No new host/key/created ledger or live authority is prepared here;
-  the earlier unaccepted A7 final candidate recorded a local key/public metadata, which is not
-  adopted by the cleared source-only kits. A6 is terminally refused and
-  exactly retired; it must not be retried or reused. A4/A5 remain historical and retired.
+- current proof gate (2026-10-04): reconcile the independently accepted A7 host-only
+  terminal outcome, then prepare the bounded build/install gate off-clock. Establish this
+  reconciliation through independent doc-delta review and separately authorized publication;
+  its resulting clean exact source needs its own re-pin/review and six successful exact-head
+  workflows before successor admission. No old-head CI or clean-worktree waiver transfers.
+  A7 used clean local/remote Core `c39fcd7168845e2412c39e56ddc0a122e2b44a75`, all six
+  exact-head successful checks, and unchanged runtime Core `d67886f`, Launcher `dd667c3d`,
+  Protocol `e5fe1c83`. The earlier two-file publication and source admission are complete,
+  not pending; those observations do not cover this reconciliation or a resulting new HEAD.
+  MUSE cleared final preparation `/tmp/ota-iam-live-20261004-a7-final-preparation-r2`,
+  manifest `7d1e88d46c84a5011b7c5101e20d842c14dd460361f9941b031f6733ff77fe73` (447 entries),
+  together with `/tmp/ota-a7-final-freeze-correction-20261004`, manifest
+  `ad0f4e38aa412507e0180415079ef1b05819c483b30cde7188db42d1af25f914` (10 entries).
+  The human separately authorized one host-only gate and exact cleanup. Fresh admission,
+  canonical policy reconciliation, creation, eight-record native guard, one serial poll,
+  one ED25519 scan/strict binding and one source-bracketed root baseline passed. Root,
+  Linux/X64, cgroup2, named authority-path/account absence and NTP assertions are bounded by
+  the retained exact script and exit, not independent host/clock or global credential proof.
+  Exact numeric-ID retirement passed: 20 records, 13 zero calls and seven explicit NOT_FOUND
+  cases, empty enumerated instance/address lists, and removal of this attempt's local key.
+  Immutable outcome `/tmp/ota-iam-live-20261004-a7-host-gate`, manifest
+  `41a710defaaee6e19e745da4b699ad20930519839a7065bfd6a85770fc1f78c7` (567 entries),
+  is independently accepted by MUSE with no P1/P2/P3. No VM remains from this attempt; its
+  liveness/observation freshness cannot transfer. No build/install, signing, IAM mutation,
+  runner/dispatch or workload-provider activity occurred; Step 7 remains active/open.
+  Build/install preparation must freeze exact artifacts/toolchain/install inputs, acceptance
+  checks, fresh successor admission and failure/cleanup retention before independent review
+  and separate human live authorization. No successor identity/key/host is allocated here.
+  Historical A6 is terminally refused and exactly retired; it must not be retried or reused.
+  A4/A5 remain historical and retired. The original unaccepted A7 final candidate and its
+  local key/public metadata remain unchanged; they were not adopted by the accepted attempt.
   A6 used clean published Core `49b10902aa9601e9f553564400098bd234532148`, six successful
   exact-head source workflows, and unchanged runtime Core `d67886f`, Launcher `dd667c3d`
   and Protocol `e5fe1c83`. MUSE cleared the complete preparation plus additive key-state
@@ -105,9 +124,10 @@ durable agent workflow belongs in the canonical Ota skill.
   six-check success. MUSE accepted this bounded record; later run state is not inferred from it.
   Public/kit pathname races, all size/during-derivation races, real foreign-owner transitions
   and atomic checked-input-to-cloud-use remain unproved; no general same-user bypass guarantee.
-  All readiness/authority flags remain false. Next is this handoff's reviewed publication and
-  exact resulting-source re-pin/checks, then fresh key/readbacks/final freeze and independent
-  review, not execution. Any live successor requires fresh identity, frozen admission,
+  Those source-only/final-preparation flags remain historical, not current live permission.
+  The accepted A7 terminal outcome above closes only the host-only baseline/retirement bar.
+  Next is this reconciliation's reviewed publication and resulting-source re-pin/checks, then
+  off-clock build/install preparation, not execution. Any live successor requires fresh identity, frozen admission,
   independent review and explicit human authorization. This is private operator sequencing, not a
   demonstrated Ota runtime defect; no public consumer/schema/command/JSON propagation is required.
   V12.1 Step 7 remains active/open; build/install, signing, runner/provider activation and later
