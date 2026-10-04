@@ -3110,6 +3110,110 @@ No key generation, cloud/GitHub/SSH call, VM, root, build/install, signing,
 runner/IAM/dispatch/provider or delivery activity occurred. A5 remains failed/retired;
 Step 7/full V12.1 remain open. Public consumer propagation remains unnecessary.
 
+#### A6 Terminal Host-Only Gate And Retirement (2026-10-04)
+
+Core `49b10902aa9601e9f553564400098bd234532148` was clean/published with six successful
+exact-head source workflows. Runtime Core `d67886f`, Launcher `dd667c3d` and Protocol
+`e5fe1c83` remained unchanged, not installed proof. MUSE cleared the full preparation
+freeze plus its key-state overlay; the human then authorized one host-only gate and
+exact owned cleanup. Fresh 18-record admission and bounded policy reconciliation passed
+with the frozen operator `/32` unchanged. This did not authorize later delivery activity.
+
+Exact creation and native guard passed for VM `8011476347923495937`, disk
+`5124094685227023361`, ephemeral IPv4 `34.142.21.19`. The serial read returned 0 at
+03:07:47-48Z, retaining 4,778 bytes of early kernel output, without cloud-init/sshd/typed
+host-key readiness markers. The first/only `ssh-keyscan -T 10 -t ed25519` ran at
+03:07:48-58Z, returned 1 and emitted no stdout/stderr. No parser acceptance, known_hosts
+publication or root-baseline execution followed. Cause is unknown; guest boot/sshd
+readiness, TCP/22 source/connectivity and network path remain not proved. The failed
+phase is not evidence of a key defect. No retry or ingress widening occurred.
+
+Exact numeric-ID retirement returned 0: 20 records = 13 successful calls plus seven
+explicit NOT_FOUND results. Final VM/disk/firewall/subnet/network absences, native
+instance/address lists and sole local attempt-key removal are retained. This proves
+exact owned cleanup and enumerated absence, not global absence. No root command,
+build/install, runner/IAM/signing/dispatch or workload provider call occurred.
+
+Immutable parent outcome: `/tmp/ota-iam-live-20261004-a6-host-gate`, manifest
+`765311c6ff41135c9f038bb33c1922f71c642143053cadd507d112573359e1d8` (227 entries).
+The original `refused-key` outcome label/boundary was too vague. Its immutable additive
+correction `/tmp/ota-iam-live-20261004-a6-terminal-outcome-correction`, manifest
+`55602cc92338b5bdecdb171ef8a6dc6626b382d9d4ea36f62b28e44bc6a8073d` (four entries),
+supersedes only the outcome record. It explicitly classifies `refused-host-key-scan`,
+unknown cause, false host-key/known_hosts/root execution, exact cleanup, inactive later
+operations and no automatic successor. MUSE independently reconciled both manifests,
+command linkage and artifact absences, resolving P2 with no remaining P1/P2/P3.
+A6 is terminally closed/refused/retired and must not be reused.
+
+The next requirement was private source preparation, completed in the review below:
+a bounded typed-serial-readiness check before a future first/only scan. Retain every serial
+poll/status/hash/snapshot under a fixed wall-clock deadline and bounded interval;
+require the same exact ED25519 typed prefix through the randomart header used by the
+existing parser. Randomart body/footer remain unverified; no stronger stanza claim
+is introduced. A deterministic pinned-image boot-completion marker may be assessed,
+not guessed. Readiness is a control-plane observation, not sshd or TCP/22 proof.
+Deadline or scan failure is terminal with stage-exact refusal and owned retirement.
+Any future live attempt needs fresh identity/key/ledger, frozen evidence, independent
+review and explicit human authorization; no A7 host or automatic retry is authorized.
+Step 7/full V12.1 remain open; all later authority/provider/delivery gates remain inactive.
+This is private operator sequencing, not a demonstrated runtime defect; Site/Skills/
+Examples/Learn/FAQ/Glossary/schema/command/public JSON propagation is unaffected.
+
+#### Bounded Serial-Readiness Source Candidate (2026-10-04)
+
+Frozen private candidate `/tmp/ota-serial-readiness-preparation-20261004`, manifest
+`ddf2e389505f3ca342c20566c8a563ee59a1fc761c3b599d1c98d60889ab1c29` (40 entries),
+reuses the unchanged canonical serial/key parser and command recorder. It retains exact
+control-plane serial polls under a 180-second monotonic deadline, 18-poll cap, ten-second
+interval and 30-second maximum read. Process groups and stdout/stderr sizes are bounded;
+read failure, timeout, malformed/conflicting prefix, invalid bytes, hash mismatch and late
+readiness refuse. Missing/unfinished prefixes remain pending. The wrapper requires exact
+typed-prefix readiness and selected-byte hash linkage before the first/only scan, preserves
+scan/serial binding and no-overwrite 0600 publication, and never falls back to root execution.
+
+Eight isolated tests passed in 2.521 seconds, covering pure clock/parser controls plus the
+real reader and production wrapper, with network and user-home reads denied, read-only
+source and scratch-only writes. Syntax and parser parity passed.
+MUSE verified 40/40 frozen entries and 10/10 final validation source entries; no P1/P2/P3.
+Clearance is source-only inclusion in a separately frozen successor preparation packet.
+The outer packet still owns fresh authorization, identity, operator/no-impersonation, native
+guard and exact ledger ownership. No actual successor identity/key/ledger, cloud call, scan
+or SSH was performed; A7-looking fixtures are offline only. Host readiness, sshd/TCP/22,
+live key binding and root baseline remain not proved. Record-finalization I/O is not a hard
+real-time guarantee. Step 7 remains open; all later gates and public propagation unchanged.
+
+#### A7 Successor Source Integration (2026-10-04)
+
+Private preparation kit `/tmp/ota-iam-live-20261004-a7-preparation`, manifest
+`401b4a678b76b2a364d51bb3824d135aaee6f522a78b3a67f6df0b190e764334` (1,031 entries),
+integrates the unchanged cleared serial observer/wrapper/parser. Native host guard, strict
+root recorder/baseline, numeric-ID complete/partial retirement, operator helper and six-
+workflow predicate are unchanged. Recorder function is unchanged; proposed host/resource/
+account/pool/principal/role names and default output paths are rebound to A7. The policy
+helpers retain read-only enumeration/reconciliation, not secret-payload reads. Legacy
+publication fixtures now integrate the observer and distinguish read failure from binding.
+
+Five validation records passed: one non-executing shell-syntax check plus four network-
+denied/user-home-denied behavioral records covering five parser/publication methods, eight
+serial-readiness methods, 2 accepted/31 refused native host controls and 29 admission/operator/
+retirement controls. Behavioral source copies were read-only and writes limited to scratch.
+This narrows the frozen kit's review prose: isolation applies to four behavioral checks,
+not the plain syntax check. No source or evidence bytes changed. MUSE rederived the manifest
+and verified all 1,031 entries,
+parent parity, no historical live artifacts, false readiness/authority flags and the
+recorded two-file dirty Core boundary; no P1/P2/P3. Clearance is source integration only.
+
+No actual key/public metadata/operator CIDR/created ledger/known_hosts/final admission
+packet exists. Proposed names and offline fixtures do not allocate a host. Core remains
+49b10902 with two reviewed dirty docs; clean-source admission is blocked, not waived.
+Next requires separately authorized documentation commit/publication, clean exact-source
+re-pin/re-review and six successful exact-head workflows, then fresh key/public metadata,
+operator /32, native/indexed policy/GitHub readbacks and an independently reviewed final
+freeze. Host creation/native guard/serial-key/root baseline and exact cleanup still need
+separate explicit human authorization. No cloud call, scan, SSH, provider, installed
+authority, runner, dispatch, selected-work, merge or release proof follows. Step 7/full
+V12.1 remain active/open; later gates remain inactive and public propagation unaffected.
+
 The proposed hosted bar is one job-observed GitHub response, one accepted STS response and one
 accepted IAM response, each counted only at Core's call seam, followed by validated deliberate
 client refusal and exact child/scope/cgroup/slot cleanup. Retain only a closed non-secret status
