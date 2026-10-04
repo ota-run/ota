@@ -37,11 +37,17 @@ durable agent workflow belongs in the canonical Ota skill.
 - released baseline: `v1.6.28`
 - development package identity: `v1.6.28`; this branch contains unreleased post-release source
   changes and is not a new release or support claim.
-- current proof gate (2026-10-04): obtain human authorization for the reviewed two-file
-  documentation commit/publication, then re-pin/re-review clean exact source and its six
-  successful workflows before fresh final-packet admission. Successor source integration is
-  independently cleared, preparation only; no allocated host/key/ledger or live authority exists.
-  A6 is terminally refused and
+- current proof gate (2026-10-04): exact-source admission for the reviewed handoff-bearing
+  revision before a fresh final packet. Establish that revision only through independently
+  reviewed, separately authorized commit/publication; re-pin/re-review the resulting clean
+  source and require its six successful exact-head workflows. The retained published checkpoint
+  is `a649bae1f8c9066b14f8008d1f4505c6c162769c`; its additional change from `403544f4`
+  is only the Supabase pressure-blog draft deletion. Its clean-source/CI observations do not
+  cover these handoff edits or a resulting new HEAD. Earlier documentation publication is
+  complete, not a pending authorization. Private guard integration is independently cleared
+  for source inclusion only. No new host/key/created ledger or live authority is prepared here;
+  the earlier unaccepted A7 final candidate recorded a local key/public metadata, which is not
+  adopted by the cleared source-only kits. A6 is terminally refused and
   exactly retired; it must not be retried or reused. A4/A5 remain historical and retired.
   A6 used clean published Core `49b10902aa9601e9f553564400098bd234532148`, six successful
   exact-head source workflows, and unchanged runtime Core `d67886f`, Launcher `dd667c3d`
@@ -55,7 +61,7 @@ durable agent workflow belongs in the canonical Ota skill.
   guest boot, sshd readiness, TCP/22 source/connectivity and network path are not proved.
   Exact numeric-ID retirement returned 0: 20 records, 13 successful calls and seven explicit
   NOT_FOUND results, final named VM/disk/firewall/subnet/network absences and empty enumerated
-  instance/address lists. The sole local attempt key is removed; no current pressure VM/key exists.
+  instance/address lists. A6's local attempt key was removed; no A6 pressure VM/key remains.
   Parent outcome `/tmp/ota-iam-live-20261004-a6-host-gate` is immutable; its additive terminal
   correction is `/tmp/ota-iam-live-20261004-a6-terminal-outcome-correction`. MUSE independently
   cleared the corrected terminal record with no P1/P2/P3; the active plan retains manifest identities.
@@ -67,8 +73,9 @@ durable agent workflow belongs in the canonical Ota skill.
   selected bytes to their retained command hash before the one scan and publication. Eight
   network-denied isolated tests passed; MUSE verified 40/40 manifest entries and found no
   P1/P2/P3. This clears only inclusion in a separately frozen successor preparation packet,
-  not live readiness, sshd/network reachability or root execution. No successor identity/key/
-  ledger was created; A7-looking fixtures are offline only. Successor source kit
+  not live readiness, sshd/network reachability or root execution. That source validation
+  created no successor identity/key/ledger; its A7-looking fixtures are offline only.
+  Historical source kit
   `/tmp/ota-iam-live-20261004-a7-preparation`, manifest
   `401b4a678b76b2a364d51bb3824d135aaee6f522a78b3a67f6df0b190e764334` (1,031 entries),
   now integrates that unchanged observer/wrapper and reuses the native guard, strict root
@@ -77,11 +84,30 @@ durable agent workflow belongs in the canonical Ota skill.
   is promoted. Five validation commands passed: one non-executing shell-syntax check and four
   isolated behavioral records covering five parser/publication tests, eight serial-readiness
   tests, 2 accepted/31 refused native controls and 29 admission/operator/retirement controls.
-  MUSE verified the freeze/parity with no P1/P2/P3; clearance is source-only,
-  not clean admission or final-packet/live clearance. Core's two reviewed docs remain dirty and
-  block admission; no commit/push authorization is inferred. All readiness/authority flags are
-  false. Next is authorized source publication/re-pin, then fresh key/readbacks/final freeze and
-  independent review, not execution. Any live successor requires fresh identity, frozen admission,
+  MUSE verified the freeze/parity with no P1/P2/P3; its dirty-doc boundary is historical.
+  The documentation was subsequently published at `403544f4`; it is not still awaiting that
+  authorization. The original final-preparation candidate remains unaccepted and unchanged.
+  Guard R1 `/tmp/ota-a7-precreate-guard-source-20261004-r1`, manifest
+  `82702ee3b0b13e2beb754ebc5f476295502daf51cf64069fe95ca56a915ac70a` (50 entries),
+  closes the private-manifest refusal and unchecked key-snapshot P2s. Original production
+  source fails four new regression methods (eight subtest failures); repaired source passes
+  all 21 methods plus shell syntax. Initial process-limit setup failure remains unaccepted.
+  Integrated source re-pin `/tmp/ota-a7-source-repin-20261004`, manifest
+  `fd6c88520799b979f813586b7b25aa8d1fee90db3fe3b5d5b504ce75a42e543e` (81 entries),
+  pins `a649bae1`, preserves unchanged runtime selections and admits exactly the two existing
+  documentation paths plus the blog deletion as source delta. All 22 isolated fixture methods
+  and shell syntax pass; no key/CIDR/ledger/readback/admission is imported. MUSE independently
+  verified both freezes and retained evidence with no remaining P1/P2/P3; clearance is source
+  inclusion only, not clean admission or final-packet/live clearance. Additive publication record
+  `/tmp/ota-a7-source-publication-20261004`, manifest
+  `35457a8c355ac2cf5c64bf58a9f209914d91577b597a427b12f50b45589f9886` (20 entries),
+  supports clean local/remote `a649bae1` at that observation and six started workflows, not
+  six-check success. MUSE accepted this bounded record; later run state is not inferred from it.
+  Public/kit pathname races, all size/during-derivation races, real foreign-owner transitions
+  and atomic checked-input-to-cloud-use remain unproved; no general same-user bypass guarantee.
+  All readiness/authority flags remain false. Next is this handoff's reviewed publication and
+  exact resulting-source re-pin/checks, then fresh key/readbacks/final freeze and independent
+  review, not execution. Any live successor requires fresh identity, frozen admission,
   independent review and explicit human authorization. This is private operator sequencing, not a
   demonstrated Ota runtime defect; no public consumer/schema/command/JSON propagation is required.
   V12.1 Step 7 remains active/open; build/install, signing, runner/provider activation and later

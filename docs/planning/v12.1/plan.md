@@ -3203,16 +3203,68 @@ and verified all 1,031 entries,
 parent parity, no historical live artifacts, false readiness/authority flags and the
 recorded two-file dirty Core boundary; no P1/P2/P3. Clearance is source integration only.
 
-No actual key/public metadata/operator CIDR/created ledger/known_hosts/final admission
-packet exists. Proposed names and offline fixtures do not allocate a host. Core remains
-49b10902 with two reviewed dirty docs; clean-source admission is blocked, not waived.
-Next requires separately authorized documentation commit/publication, clean exact-source
-re-pin/re-review and six successful exact-head workflows, then fresh key/public metadata,
-operator /32, native/indexed policy/GitHub readbacks and an independently reviewed final
-freeze. Host creation/native guard/serial-key/root baseline and exact cleanup still need
+At that source-kit freeze, no actual key/public metadata/operator CIDR/created ledger/
+known_hosts/final admission packet was imported. Proposed names and offline fixtures did
+not allocate a host. Core was then at 49b10902 with two reviewed dirty docs. Those source
+and authorization statements are historical, not the current live handoff; subsequent
+documentation publication and guard integration are recorded below. Fresh admission still
+requires clean exact-source re-pin/re-review and six successful exact-head workflows, then
+fresh key/public metadata, operator /32, native/indexed policy/GitHub readbacks and an
+independently reviewed final freeze. Host creation/native guard/serial-key/root baseline and exact cleanup still need
 separate explicit human authorization. No cloud call, scan, SSH, provider, installed
 authority, runner, dispatch, selected-work, merge or release proof follows. Step 7/full
 V12.1 remain active/open; later gates remain inactive and public propagation unaffected.
+
+#### A7 Guard Integration And Handoff Reconciliation (2026-10-04)
+
+Earlier documentation publication completed at `403544f4`. The separately authorized
+blog-draft deletion was published at `a649bae1f8c9066b14f8008d1f4505c6c162769c`.
+The original unaccepted final candidate at `/tmp/ota-iam-live-20261004-a7-final-preparation`,
+manifest `a3b48cf2172d84937221acccd5c36340946484c0f97b5c6b351d95e6cc20aec1`,
+recorded a local operator key/public metadata. It remains unchanged and unaccepted; that
+key or prior readbacks are not adopted by subsequent source-only kits. No new host/key/
+created ledger or live action follows from this reconciliation.
+
+Source guard R1 `/tmp/ota-a7-precreate-guard-source-20261004-r1`, manifest
+`82702ee3b0b13e2beb754ebc5f476295502daf51cf64069fe95ca56a915ac70a` (50 entries),
+closes two P2s: explicit grep match/error refusal precedes manifest-content verification,
+and private-key protection validation retains the same fstat snapshot, then revalidates
+final protection/identity/path. Original production source fails four new regression
+methods with eight subtest failures; R1 passes 21 methods and shell syntax. The initial
+process-limit setup failure is retained as unaccepted. MUSE inspected source and hash-linked
+retained evidence with no remaining P1/P2/P3; no independent target-code rerun is claimed.
+
+Integrated re-pin `/tmp/ota-a7-source-repin-20261004`, manifest
+`fd6c88520799b979f813586b7b25aa8d1fee90db3fe3b5d5b504ce75a42e543e` (81 entries),
+selects published `a649bae1` without changing runtime Core `d67886f`, Launcher `dd667c3d`
+or Protocol `e5fe1c83`. Its exact runtime-to-source delta is the two existing documentation
+paths plus deletion of `tasks/supabase-pressure-testing-blog.md`; no wildcard is accepted.
+The repaired key helper/controller/recorder and native/serial/root/retirement/policy helpers
+remain unchanged. All 22 isolated methods and shell syntax pass, including the canonical
+six-workflow predicate and old-head/missing/duplicate/name/status/failure refusals. MUSE
+verified all entries, snapshot/stream parity, ancestry and runtime source hashes with no
+P1/P2/P3. Acceptance is source inclusion only; no historical admission or key is promoted.
+
+Additive publication record `/tmp/ota-a7-source-publication-20261004`, manifest
+`35457a8c355ac2cf5c64bf58a9f209914d91577b597a427b12f50b45589f9886` (20 entries),
+supports clean local/remote `a649bae1` at its observation. The mutation is an author-transcribed
+tool result, distinct from independently retained readbacks. Its snapshot shows two successful
+and four running checks; the canonical predicate correctly refuses. MUSE verified this
+bounded observation record, not later CI state or six-check admission. This two-file handoff
+reconciliation changes the selected source and requires independent review and separate
+commit/push authorization. Admission after publication must be rederived: a resulting new HEAD
+requires its own exact pin and all six successful checks
+before a fresh final-source freeze; no old-head CI or clean-worktree waiver transfers.
+
+The public-input/kit pathname, full size/during-derivation, real foreign-owner and atomic
+checked-input-to-cloud-use limits remain explicit; fixture protection is not a general
+same-user bypass or hostile-code-isolation guarantee. The fresh final packet still requires
+new key/public linkage, operator/policy/native readbacks and independent completed-freeze
+review. Host-only creation/native guard/serial-key/root baseline and exact cleanup then need
+separate explicit human authorization. Build/install/signing/IAM/provider/runner/pressure
+dispatch, merge/release, Step 7 closure, Step 8 and V12.2 are not activated. This is private
+operator-source/continuity work with no public CLI/spec/schema/JSON or first-party consumer
+change; Site/Skills/Examples/Learn/FAQ/Glossary propagation is not required.
 
 The proposed hosted bar is one job-observed GitHub response, one accepted STS response and one
 accepted IAM response, each counted only at Core's call seam, followed by validated deliberate
