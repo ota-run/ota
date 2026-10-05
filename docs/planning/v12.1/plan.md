@@ -3310,14 +3310,108 @@ was independently accepted by MUSE with no P1/P2/P3. This is historical host-onl
 and exact owned cleanup, not global absence, memory erasure or destruction of historical keys.
 The VM is retired; its liveness and observation freshness cannot transfer.
 
-Next is narrow independent review and separately authorized publication of this canonical
-reconciliation, followed by resulting-source re-pin and six exact-head checks. Prepare the
-bounded build/install gate off-clock: exact artifact/toolchain/install inputs, acceptance
-checks, fresh successor admission and failure/cleanup retention. Freeze/review before
-requesting separate human live authorization. No successor identity/key/VM or new live
-gate is authorized by this outcome. No build/install, signing, IAM mutation, runner,
+The A7 reconciliation was subsequently published at Core `864c2c8f`; resulting-source
+re-pin and six exact-head checks preceded A8 admission. Its then-next bounded build/install
+preparation, separate live approval and retained outcome are recorded below. This historical
+A7 outcome itself authorized no successor identity/key/VM or new live gate. No build/install,
+signing, IAM mutation, runner,
 pressure dispatch or workload-provider activity occurred. Step 7/full V12.1 stay active/open;
 later delivery, Step 8 and V12.2 remain inactive. Public propagation remains unaffected.
+
+#### A8 Accepted Temporary Build/Staging And Additive Retirement (2026-10-05)
+
+The bounded source candidate `/tmp/ota-step7-final-build-host-preparation-20261004-r2`,
+manifest `684daafc4c0ba50b1739f0b0e932a2eada007eccb8f9e3e2add3e6b0e7d35f96`
+(95 entries), closed the recorder's EOF/signal/deadline and initial unbounded remote-source
+probe P2s. Twenty isolated offline tests passed; the original failed candidate and validation
+attempts remain unchanged. This source clearance was not host or authority permission.
+
+Bobai authorized one fresh local key and read-only admission preparation. MUSE independently
+accepted `/tmp/ota-step7-build-install-a8-preparation-20261004`, original preparation manifest
+`2b10b6b363b946c5a00239e55bd1a96b48e3c2030788db69a613a55681b153b2` (567 entries),
+with additive correction `/tmp/ota-step7-build-install-a8-preparation-wording-correction-20261004`,
+manifest `5e25a17fb97ea442fe0978ce2d873995121d89a0af58c7dea9c9db25420e6c3f` (one entry).
+The correction acknowledges read-only Secret Manager administrative API contact, not secret-value
+retrieval or provider-workload OIDC/STS/delivery. Original prepared-only flags are historical;
+they are not a claim about later host/key liveness. The private key was excluded by exact path
+before public hashing and never copied into an evidence packet.
+
+The human separately authorized one host/build/install/allowlisted-retention/retirement attempt.
+A8 used clean local/remote admission Core `864c2c8fd4cf3892a0a0a424515ee9295556b55f` and
+six successful exact-head workflows: `37226340828`, `37226340827`, `37226340859`,
+`37226340829`, `37226341047`, `37226340881`. Runtime selections remained Core
+`d67886f27f6ee76766401d85427b0e4ea63694e2`, Launcher
+`dd667c3d6b63d8d26d9e2a40f831e9d08a7a6864`, Protocol
+`e5fe1c83e562e02f60e27026c7148918bd016155`; Launcher `77478ae9` remained test-only.
+Fresh operator/policy/key/source admission preceded creation. Both native guards, strict
+serial-key binding and the sole source-bracketed root-build call passed. The temporary
+systemd unit bounded the root baseline, SHA-pinned Rust 1.95/X64 local-mirror installation,
+locked builds and exact private artifact staging/install checks. Apt used the configured
+signed repositories; its contents were live-resolved, not byte-pinned.
+
+Original live outcome `live-outcome.manifest.sha256` under the preparation directory,
+`d8d9310d9b6efa8e9294178f6de515e024314436ab085679cf9ba353f9564c11` (1,180 entries),
+is independently accepted as an honest partial terminal result. The sole root-build exit
+was 0; all eight build/private-stage/install artifact digest rows agreed, all eight ELF64/X64
+checks passed and all 22 allowlisted exports were retained. Embedded helpers and the five
+build-source input digests matched their reviewed inputs. This supports bounded script
+assertions/retention, not independent root/cgroup attestation or installed authority services.
+Original controller 0, cleanup 1, wrapper 1 and complete false remain distinct. The exact VM
+deletion succeeded, but `typed_absence.py` refused the named disk's alternate `HTTPError 404`
+format and stopped before firewall/subnet/network deletion. This private operator-harness
+compatibility gap was a safe refusal; no generic not-found waiver or retrospective success
+was applied to the original frozen evidence.
+
+MUSE then independently accepted the additive cleanup-only source at
+`/tmp/ota-a8-cleanup-continuation-20261005`, source manifest
+`23267a24339d5b3c35d2cc9b895e20c310e69ea784ac71aa2410c418ccea8fda` (35 entries),
+with `/tmp/ota-a8-cleanup-continuation-wording-correction-20261005`, manifest
+`424804080454d10e34284427b53f56d0c91f4e7cc8d263db42e5bd09e29a8106` (one entry).
+The unchanged bounded recorder/operator guard/finalizer were reused. The classifier preserved
+the old grammar and added only the exact disk-404 path/account form, requiring exact retained
+argv/operator, integer child-completed status 1, empty stdout and matching stream hashes.
+Eight offline methods covered grammar, record linkage/refusals and production numeric-identity
+guards with synthetic fixtures; shell syntax and the actual retained-response check passed.
+Earlier validation before record-linkage hardening remained historical, not final-byte coverage.
+The wording correction distinguishes pre-retirement failures that retain the key from possible
+post-unlink publication failure, which cannot restore it or be presented as a successful record.
+
+Bobai separately authorized one cleanup-only continuation bound to both source freezes and the
+original terminal outcome. No host/build retry occurred. Fresh VM/disk absence and fixed
+name/numeric-ID/selfLink guards preceded the three remaining deletions, with each identity
+checked again immediately before deletion. Firewall, subnet and network were deleted in that
+order. Additive `cleanup-outcome.manifest.sha256`,
+`5182cbc1a36fe20ecb1c00070955cea2bd503b83b5b16a434a5580b0582f6ee9` (109 entries),
+is independently accepted by MUSE with no P1/P2/P3. Twenty records retain 13 zero calls and
+seven exact scoped absence classifications, final empty project instance/address lists, then
+the exact held-key unlink and successful finalizer. The original failed retirement is unchanged.
+No A8 VM, disk, firewall, subnet, network or held attempt key remains at that bounded outcome.
+This is not secure erasure, global resource absence or independent private-path inspection by MUSE.
+Author-side invocation/quoting/manifest-directory mistakes are retained as such, not cloud retries
+or canonical successful commands. The accepted final freezes do not hide those failed checks.
+
+The temporary build host and staged binaries are gone. There is no live reusable installation,
+authority account/store/service, runner readiness or provider acceptance derived from A8.
+Signing, runner registration/activation, dispatch, workload OIDC/STS/IAM acceptance, secret-value
+access/delivery, materialization, injection and selected work were not exercised by this attempt.
+Uncovered material behavior remains explicit: build/staging and retirement are bounded recorded
+operator assertions; policy/cloud lifecycle are administrator-owned external behavior; root/clock
+attestation, hostile-root escape, same-user/pathname/during-derivation races, atomic checked-input
+use or identity-before-delete, post-retirement apt-source contents, secure erasure and broader
+credential-leak prevention are not proved. The proposed provider bar below remains inactive.
+
+Next: independently review this two-file canonical reconciliation and obtain separate publication
+approval. The resulting clean published source requires re-pin/review and six exact-head successes
+before any successor admission. Then prepare the remaining hosted checkpoint off-clock under
+the existing Step 7 gates, carrying forward the reviewed bounded recorder and strict record-bound
+absence repair. A fresh host must reproduce exact build/install and satisfy fresh frozen
+identity/policy/native/authority/runner inputs; retired-host observations cannot transfer.
+Freeze and independently review the complete next packet before requesting its distinct human
+authorization. This reconciliation grants no commit/push/merge/release, key/resource allocation,
+further build/install, signing, IAM mutation, runner/dispatch or provider-workload permission.
+V12.1 Step 7 remains active/open; later delivery, Step 8 and V12.2 stay inactive. This private
+operator evidence/continuity change requires no Core public CLI/spec/schema/JSON/CHANGELOG,
+Site/Skills/Examples/Learn/FAQ/Glossary or command-reference propagation.
 
 The proposed hosted bar is one job-observed GitHub response, one accepted STS response and one
 accepted IAM response, each counted only at Core's call seam, followed by validated deliberate
