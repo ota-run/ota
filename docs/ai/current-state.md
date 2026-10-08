@@ -33,12 +33,1541 @@ durable agent workflow belongs in the canonical Ota skill.
 
 ## Active Work
 
+### Paired Step 7 Source Publication Checkpoint: 8 October 2026
+
+Bobai authorized committing and pushing the accepted private source checkpoint
+before any next slice. This publication does not activate another slice, merge
+to main, release or authorize a live attempt. The source/configuration/test
+inputs still match the accepted r10 inventory; only private design and factual
+validation-status documentation has subsequently changed. The expectation-source
+r1 binding recommendation is accepted after independent VLAD review and MUSE
+disposition, not as implementation readiness or installed authority. MUSE-owned `ROADMAP.md` and
+`docs/planning/agent-execution-governance-core/plan.md` changes are excluded from
+this checkpoint. Core's production workflow Launcher pin remains
+`aa55319fa88f14e96b47e3fa9d08a0940fae5456`; it is not replaced by the private
+staging revision. Fresh exact-head CI remains required before merge/release, and
+installed/root/hosted/provider proof and Step 7 completion remain open.
+The private adapter's normal entry remains unconditional no-IO refusal. The
+observer has guarded observation/IO paths, not an inert stub; it remains
+uninstalled/unconnected with privileged invocation separately gated.
+
+The Launcher Stage A account/process extraction, Stage B private observer and
+private adapter checkpoint are committed on `1.6.29-implementation` at
+`60c22cf9b2e8aa5897b56430bf27a038fd7b919a`, based on
+`77478ae9fad170d2484aa4409b0bb3032436a52c`. Stage A changes
+`src/main.rs`, `src/closed_profile_observations.rs`, `src/pressure_provision.rs`, and
+the new private Linux-only `src/principal_observations.rs`. This Core handoff's
+pre-publication base on `1.6.29-implementation` is
+`1b868e1036493e0b7042dc88cbd375ce930316a6`, not the handoff commit's own identity.
+That independently reviewed ancestry-only synchronization includes main
+`23ca11096211c8fc25c945ed0d684dc5859c8cbc` while preserving the exact pre-sync
+development tree. Main's inert registration stubs and stub-only test remain
+main-owned; a future development-to-main merge must separately reconcile them.
+The carried handoff and Launcher source were not included in that ancestry merge;
+they belong to this separate publication checkpoint. Fresh exact-head CI for
+the published Launcher and Core commits is pending. No prior exact-head CI or
+live admission transfers to either new build identity.
+
+MUSE independently accepted the exact source and sandboxed canonical Linux/arm64
+verification: 231 top-level tests passed, none failed, 26 privileged tests remained
+ignored, and all 15 new regressions passed. The frozen source packet is
+`/tmp/ota-step7-principal-extraction-20261006-r2` (manifest
+`4ecd5f9f00b925784b3c96b96faf3e5d77209b0040a75a29e36af1fc2f7d298d`);
+the validation packet is `/tmp/ota-launcher-validation-20261006-r5-R65mZA`
+(manifest `8b839dcc0f7dd87ed9a7456ccefadf99bb8f9804da38fcbe7dd251cb1bdb71ee`).
+These local temporary packets are not published or durable hosted proof.
+
+MUSE also accepted the frozen macOS source-non-impact projection at
+`/tmp/ota-launcher-macos-impact-20261006-cPSFyY` (manifest
+`c191da8b68e0e7878dd41fef9abe9b25d3c37a98efe85407871229621f2822ac`):
+the exact delta leaves macOS-target-selected functional Rust paths unchanged
+across existing features and targets. Build identity metadata can differ; this
+does not establish artifact equality or a successful macOS build, formatter or
+test run. On 6 October, Bobai explicitly accepted this independently reviewed
+non-impact evidence in place of the local Stage A macOS execution prerequisite.
+Local macOS canonical verification remains `not_run`; exact-head macOS CI remains
+required before merge or release. No CI, contract or portable-refusal requirement
+is removed by this disposition.
+
+Stage B has source-implementation approval only. MUSE independently accepted
+the revised design at
+`/tmp/ota-step7-principal-stage-b-design-20261006-r2-J1atp6/design.md` (manifest
+`ea1788a6356aeba2916070f1fc0ba00e71f22c3ea3b0df661234d27eb751a689`).
+Implementation adds a private optional Linux observer target under the existing
+`systemd-v3-pressure-provision` feature, closed framing and expectation
+reconciliation, bounded native collection, and supervised child lifecycle.
+It does not wire the target into installation, registration or composition.
+
+The immutable formatted source packet is
+`/tmp/ota-step7-stage-b-source-review-20261006-r4-UwwZWK/launcher` (manifest
+`bf8a757145a083960a6fa7526990c1ab22cb1d91638c22188aa7efe0cb29f0a3`).
+Canonical nonroot Linux/arm64 `ota run verify --agent --plain --stream` passed
+fmt, check, Clippy and tests: 294 top-level tests passed, none failed, 26
+privileged tests remained ignored, and all 43 unique new Stage B tests passed.
+The separately invoked publication subprocess test is not double-counted.
+Validation packet `/tmp/ota-launcher-stage-b-validation-20261006-r4-kaAlu4`
+has manifest `8c2b69ef92f2711e8074a4b9af47a8d2a28c2979cbf726b2d31afe73ac441a3b`.
+Its ten validated source/doc/Cargo hashes match the working Launcher. The r1
+Clippy failure remains a failed attempt; no tests ran in that attempt.
+These temporary packets are local source evidence, not durable hosted proof.
+
+MUSE's r2 source review found a P2 combined-production-path regression gap.
+The r3 repair adds eight tests driving production acquisition, request release,
+exchange, owned cleanup, unprivileged preexec refusal and terminal delivery,
+without weakening root checks or adding a production fixture selector.
+MUSE closed that P2 in r3, then identified a P3 test executable-FD collision.
+The r4 fixture uses the existing high-descriptor helper and asserts FD >=5 before
+the unprivileged preexec refusal. MUSE independently accepted exact r4 source
+and its bounded Linux/arm64 verification with no remaining P1/P2/P3 findings.
+This is not final commit/PR/release readiness. New-target macOS verification is open:
+the Stage A non-impact waiver does not transfer. Unprivileged kernel fixtures
+exercise lifecycle, signal, descriptor and deadline primitives; injected
+collection fixtures do not prove real protected account/shadow observations.
+The complete root-only descriptor-exec/collector success, post-exec allowlist,
+installed integrity, outer descendant/resource containment and host visibility
+remain `not_proved`.
+The existing private operator composition remains unconnected/refusal-only;
+caller-side Python NSS and outer supervision remain integration gaps.
+
+MUSE independently accepted the new-target portability and paired source-boundary
+assessment at
+`/tmp/ota-stage-b-portability-reconciliation-20261006-r1-L6W4Yt/assessment.md`
+(manifest `eba80f77ed9cef6b441fa29c4ea17ec939df0e43bc5a363b075c24cc8da4402c`,
+10 inputs verified). The existing feature selects the optional target under
+all-feature verification; its macOS source excludes all three observer modules
+and selects fixed exit 2. This is source reachability, not a macOS build, runtime
+refusal or no-IO observation. Canonical Cargo tests use the binary test harness,
+not its normal main; even a future green macOS verify does not close that runtime
+gap without a separately bounded normal-binary check.
+Core has only this handoff delta, Launcher matches the accepted r4 source, and
+Protocol remains clean at the unchanged normal/dev/lock pin
+`e5fe1c83e562e02f60e27026c7148918bd016155`. This source-boundary reconciliation
+does not establish successor commit pins, clean artifact or installed admission.
+No native macOS build/probe ran: the recorded trusted probes did not establish
+the required address-space/data enforcement, and no adequate bounded native
+lane has been established. Do not use an unbounded fallback. On 6 October,
+Bobai explicitly accepted this independently reviewed source evidence in place
+of the local Stage B macOS execution prerequisite, for exact r4 source manifest
+`bf8a757145a083960a6fa7526990c1ab22cb1d91638c22188aa7efe0cb29f0a3`
+and the assessment manifest above only. This is a fresh Stage B disposition,
+not transfer of Stage A's waiver. Local macOS verification remains `not_run`;
+no actual macOS build, runtime refusal, no-IO or artifact equality is proved.
+The disposition does not transfer to changed source or another target and
+authorizes no commit, push, installation or live action.
+
+MUSE independently accepted the private integration design at
+`/tmp/ota-step7-observer-integration-design-20261006-r2-8mMOOi/design.md`
+(manifest `665f0c566c2aaafb1a15416d86966ecb0ca482ca53160b672f6ba5cd0af25a1a`)
+for the narrow source-only native adapter and nonroot release/reconciliation/
+composition-consumption fixtures, with no blocking P1/P2/P3 findings. The two
+manifest entries, nine input guards and accepted Stage B r4 source were verified
+at the review boundary, before this handoff update. These temporary packets
+remain local design/source evidence, not durable hosted proof.
+R1's three P2 design holds are addressed: capability-only root isolation is
+replaced by mandatory independently enforcing per-attempt MAC policy; a retained
+active parent slice carries recursive emptiness through worker-cgroup pruning;
+an inert trusted worker and actual containment readback precede request release.
+The selected systemd 255 lifecycle is source-semantics evidence, not an installed
+manager/version or kernel enforcement observation. Exact materialized AppArmor
+policy and r4 compatibility, installed closure/pipe/manager carrier, bounded
+external controller/watchdog and kernel negative controls remain open. The
+permission-transition/Listener phase needs its own outer lifecycle admission.
+
+Bobai's subsequent direct approval authorized the narrow source-only implementation,
+not root execution, infrastructure, installation, activation, commit or push.
+The first private adapter consumption increment is implemented and independently
+accepted by MUSE at exact r3 source manifest
+`b2f2bded157c6a7811f28ed4093d1ec3df07d9a7dd9b5bc43a627a83679e7092`.
+Frozen source and bounded validation are retained at
+`/tmp/ota-principal-adapter-consumption-validation-20261006-r3-GsDyAs`
+(validation manifest `81b4b9f5e62f87f0222211ba4e2e5c9de68875756316ac038a99df547d09cb8c`).
+All thirteen validated file hashes match the Launcher working tree. Canonical
+offline Linux/arm64 `ota tasks --safe --use` then `ota run verify --agent`
+passed fmt/check/Clippy/tests as UID 65534 under fixed resource/deadline bounds,
+read-only image, no network/capabilities and no-new-privileges. The run has 342
+top-level passing tests, zero failed and 26 privileged tests ignored; all fifteen
+unique new adapter tests passed. Thirty-three canonical tests linked in the new
+target are repeats, not new coverage; the publication subprocess passed separately
+and is not double-counted. Validation containers were removed.
+
+The staged kernel reuses canonical expectation/terminal framing and reconciliation,
+requires readback-before-release and EOF, caps bytes before retention, refuses
+nonempty stderr/nonzero observer exit, and separates observer/wrapper/worker
+outcomes, first failure and outer retirement. The consumption kernel takes the report by
+value with a final deadline/owned-identity check; this is in-process one-use, not
+durable attempt admission/replay protection. Readback/completion inputs are synthetic
+controller facts in these fixtures, not acquired OS proof. RUBY supplied a read-only
+test matrix. MUSE's r2 P2 uncovered a stderr test rejecting through the wrong phase;
+r3 adds a bounded diagnostic before EOF and asserts exact `StderrPresent`, byte
+count, raw-output discard and refused continuation. Final r3 review has no remaining
+P1/P2/P3 findings for this inert increment only.
+
+Bobai's subsequent direct source-only approval permits the minimum shared lifecycle
+extraction. That extraction is implemented at frozen shared-lifecycle r4 source manifest
+`15f9bc3c1c9be9eee5a8877aa2c7588e312b31f53866d7ed8b578030d1cb452e`, retained at
+`/tmp/ota-principal-shared-process-validation-20261006-r4-9K4GBu`
+(validation manifest `484ff997af5f3686fed7dc39fe529c83e000838324b41ff101e845c4f3b31e50`).
+At that extraction checkpoint, all fourteen validated hashes matched the working tree. The private
+process module retains the fixed collector arguments, environment, limits,
+pre-fork preparation, pidfd/session ownership and cleanup sequence. Collector
+artifact admission, challenge construction, interpretation and terminal delivery
+remain in their existing typed owner; reconciliation runs once at the original
+response boundary before cleanup, using the original deadline. No configurable
+process API, duplicate supervisor or Observer invocation variant was added.
+The old collector fixture module is byte-identical after removing the one new
+seam test. That test checks held/unreaped normal-zero exit at reconciliation,
+one-use callback, original deadline, refusal cleanup budget and exact reap.
+
+The retained r3 preparation packet at
+`/tmp/ota-principal-shared-process-validation-20261006-r3-atJJv2`
+used the checked official v1.6.28 ARM64 release bootstrap to build clean pinned Core
+`63297ad95ef156b335a1dfb54090146406077a3f` through its declared
+`ota run build --native --agent` task, not raw Cargo or an installer script.
+This bootstrap preparation required network for rustup's declared refresh; Cargo
+remained offline and scratch rustup self-update was disabled. The container was
+then disconnected and zero network attachments asserted before its Launcher
+verification. The final doc-adjusted r4 run reused the retained exact Core binary
+SHA-256 `59c91ef4e74f846dde832927f4d7c25509158474a8c47d3a8152fc5213a8ea9b`,
+rechecking its clean source identity. Its container used `--network=none` from
+creation with Docker mode readback, before `ota tasks --safe --use` and
+`ota run verify --agent`. Offline Linux/arm64
+fmt/check/strict Clippy/all-target/all-feature tests passed as UID 65534 under
+fixed resource/deadline bounds, read-only image, no capabilities and
+no-new-privileges: 343 top-level passed, zero failed, 26 privileged ignored.
+The publication subprocess passed separately and is not double-counted. Observer
+target coverage is 22 supervision tests plus 33 canonical relinks; only one test
+is new in this extraction. Adapter coverage and source are unchanged. Validation
+and toolchain-export containers were removed. Earlier bootstrap/fixture-import
+failures remain retained; none is positive proof. MUSE found no code/regression
+findings in r3 and one P3 stale-hash documentation claim; the doc-only r4 correction
+is implemented. MUSE's final independent readback accepted the exact shared-lifecycle
+r4 source, recorded validation and this handoff checkpoint with no remaining
+P1/P2/P3 findings. This is extraction-only acceptance, not completed observer
+integration or commit/release/live readiness.
+
+The subsequent direct source-only instruction implements the staged held-observer
+increment at `/tmp/ota-principal-held-observer-validation-20261006-r2-7Cfzgl`,
+source manifest `6f8ecf73f9c6e2a2b4ca21a7ab77a2270b64a2ed320f1535d474375ecf56ca28`,
+validation manifest `de56576f5a4043b90790668190038bfac9922d32706bd82f1d249ec71fa9339e`.
+The shared loop has only closed Collector/Observer calls, fixed arguments,
+environment and resource hardening. Adapter `observe_held` consumes one released,
+readback-bound exchange under the original absolute eight-second budget; its held
+descriptor is not installed executable/closure admission. The observer's own
+five-second operation and one-second failure budget remain unchanged.
+Actual read counts, EOF and exit are sampled before cleanup, never manufactured
+from reap or closed descriptors. Read counts include consumed bytes before a
+post-read refusal and the capped overflow probe, not all bytes emitted. The typed
+terminal is reconciled before cleanup; a valid refused/exit-zero fixture selects
+failure cleanup, while actual observer refusal retains exit 2 and cannot reconcile
+as accepted. Closed transport cause, inner cleanup, observer, wrapper and externally
+observed worker exits remain distinct. Incomplete cleanup, unknown exit or missing
+EOF block continuation even with synthetic successful outer retirement.
+
+Bounded offline-from-creation Linux/arm64 canonical `ota run verify --agent`
+passed fmt/check/strict Clippy/all-target/all-feature tests as UID 65534 using the
+same exact clean pinned Core binary: 357 top-level passed, zero failed, 26 privileged
+ignored. The publication subprocess passed separately and is not double-counted.
+Adapter coverage is 21 adapter tests, four shared-loop tests and 33 canonical
+relinks; observer coverage is 22 unchanged supervision tests, four shared-loop
+tests and 33 canonical relinks. The collector fixture module is byte-identical to
+accepted extraction r4. New syscall fixtures exercise the production transport
+kernel, including refused/nonzero exit, stderr/overflow/trailing frame and missing
+EOF. Deterministic post-read timeout/cancellation seams lock honest counts.
+The actual held-descriptor launch fixture proves only unprivileged pre-exec refusal,
+not admitted/root execveat success, NSS, descriptor exclusion, systemd/MAC/cgroup
+enforcement or watchdog. Outer readbacks remain synthetic controller inputs.
+At that held-observer checkpoint, all fourteen validated hashes matched live source; source/diff were unchanged by
+verification and both validation containers were removed. r1 strict-Clippy's
+unused cross-target shared-field/helper failure is retained, not positive proof;
+r2 narrowly documents the cross-bin consumers. MUSE independently accepted this
+exact source, retained validation and handoff checkpoint
+`5e876ebff339cae2bfae4276b2f3d80f1d39063d651925a11b610f23f6f0b4c5`
+with no remaining P1/P2/P3 findings. Ten unique new tests are linked as fourteen
+additional top-level passes, not fourteen distinct tests. This is bounded staged
+source acceptance only, not installed/root/connected readiness or commit/live clearance.
+
+The next human source-only instruction stages before/work/after composition, not
+the runtime bridge. Launcher source is frozen at
+`/tmp/ota-principal-composition-validation-20261006-r2-MHgYlA`, source manifest
+`762194ef0d56ad6467070f6d0f9b5a035ecc9456c57d53c595d65738f1f8ffb0`, validation
+manifest `88af23c07e7c62f4d20b083068d834c491da0c3207d84448d77ad5b0822b5924`.
+One-use native states preserve the before report's absolute clock, bind a distinct
+work-phase owner to the same installation/expectation and withhold numeric IDs
+until independent phase readback. Work transport and exact-owned Completion must
+reconcile separately from observer completion. MUSE's r1 P2 found that work
+transport had no ownership check despite identity-bound Completion. R2 binds
+transport to the exact attempt, worker/parent invocation, retained cgroup and
+installation, refuses component substitution and preserves an existing failure
+even with identity/retirement errors. The r1 source/365-test evidence remains
+historical and nonaccepted; a green suite did not close that missing predicate.
+After that retirement cut, the gate
+constructs fresh observer waiting state using the same original budget; final
+consumption matches its exact acquisition start. Precomputed distinct-ID reports,
+substitution, transport/worker/parent/retirement failures and phase deadline expiry
+cannot yield a continuation token. First failure is not cleared by later cleanup.
+
+The historical Python composition packet remains immutable. Its derivative at
+`/tmp/ota-principal-composition-staging-20261006-r2-p3ixD4` has source manifest
+`cf6058f92e9f068e4fcd2bbf34a35d9fa61070b0970d7bbaf45a2637c6d15985`, validation
+manifest `12fc5a1bdaef4e626fc09ec00717ea1b0d6bd0f8c2ca80badc27642953e97eb5`.
+It preserves the exact pure service-property predicate/constants (AST equality)
+and splits strict numeric validation from the unchanged root guard. The numeric
+kernel reuses protected-root/archive/tree/state/permission/fixed-Listener predicates
+without caller NSS or named pgrep. Numeric parameters are data, not admission;
+Python parses no native Report and returns only kernel-complete with native
+composition/live flags false. Legacy Listener timers/process-group cleanup remain
+unproved and cannot supply the separately required owned outer lifecycle.
+
+Offline bounded Linux/arm64 UID65534 canonical verification passed
+fmt/check/strict Clippy/all-target/all-feature: 366 top-level passed, zero failed,
+26 privileged ignored; the publication subprocess is separate. Nine new Rust
+tests use explicit synthetic controller/transport facts; no permission/Listener
+body is executed. Nine Python tests passed in a separate network-none, read-only,
+no-capability/NNP UID65534 container with scratch-only writes and explicit
+time/process/memory/IO limits. Those execute pure predicates and projected calls
+only, not root acquisition, permission mutation or Listener execution. R1 Python's
+unclosed test-source warning is retained; r2 closes it and adds AST equality proof.
+All fourteen validated Launcher hashes match live source and canonical verification
+left source/diff unchanged; all validation containers were removed. MUSE accepted
+the combined Rust r2 and unchanged Python r2 source staging, retained validation
+and exact Core handoff SHA
+`362fca9deebdba8fbca1d2d3725a99f5225eaa98e066d1920a2fa7430816d03c`
+with no remaining P1/P2/P3 findings. MUSE independently inspected source, retained
+logs/hashes and scoped container metadata; it did not rerun tests or kernels.
+This is bounded source acceptance, not commit, installed/root or live clearance.
+Native controller/readback acquisition, service-property
+acquisition, exact installed closure, contained kernel transport and the actual
+before/after runtime connection remain open. This closes none of those live holds.
+
+Dependencies and lock remain unchanged. The optional adapter entry is source-level unconditional exit 2 without
+IO, not an observed normal-binary execution. Existing composition stays
+unconnected/refusal-only. This is not completed observer integration: installed
+admission and root execution of the held observer remain unproved; connection to
+the existing composition is unfinished SOURCE work alongside controller holds.
+The 7 October source-only successor stages finite verified input handles before
+the contained carrier, not installed-closure admission. Launcher snapshot
+`/tmp/ota-principal-inputs-validation-20261007-r1-AvM2pA` has fifteen-entry source
+manifest `293b3e61a05c128ceeb647636fc48a5ac8ff2c1f86b9b19e1c67aca9f450e7fe`
+and validation manifest
+`b41369e10dc97b332f24ef4e15898fa628f92bf39f8852618eba1cc023810336`.
+The source delta from accepted composition r2 is the private input module,
+composition retention/recheck predecessor, private adapter documentation and
+Unreleased entry. MUSE supported that narrow scope before candidate review;
+bounded source acceptance is recorded below. Exact eight-role count/order binds observer,
+interpreter, five existing numeric-kernel modules and runner archive to the
+native installation expectation. Read-only/CLOEXEC root:root singular regular
+handles retain exact digest/length/mode and stable dev/ino/type/owner/link/size/
+mtime/ctime samples. Bounded offset-zero pread and exact EOF use the original
+clock and existing signal checks; recheck consumes its state. No handle extraction,
+serialization, path reopening, interpreter call or discovery flow is added.
+Path labels do not prove descriptor path/ancestry/namespace. Mutable files are
+not made immutable and blocking filesystem IO is not made interruptible. The
+finite set is not a complete interpreter/stdlib/loader/library/NSS/profile closure;
+its acquisition and independently enforced namespace/MAC remain open. The future
+carrier must consume the retained handles rather than reopen labelled paths.
+
+Canonical offline bounded Linux/arm64 UID65534 fmt/check/strict Clippy/all-target/
+all-feature verification passed 375 top-level tests, zero failed, 26 privileged
+ignored; the filtered publication subprocess remains separate. Nine new tests
+distinguish actual descriptor/hash/offset/EOF/read-error/cancellation mechanics
+and nonroot-owner refusal from projected protected metadata/sample predicates.
+There is no positive root-owned complete-input or execution proof. Successful
+protected-set duplicate-inode refusal is not exercised; the actual nonroot retain
+fixture refuses on ownership. All fifteen
+frozen/validated/live hashes match; source/diff stayed unchanged; the named
+validation container was removed. MUSE independently accepted frozen inputs r1,
+its retained validation and exact Core handoff SHA
+`66204f146e0e6ff88ef93b6982a557332bd119bcbc5dbb2c52999e6d02e80643`
+with no blocking P1/P2/P3 findings. MUSE inspected source, hashes, retained logs
+and scoped container metadata; it did not rerun target builds/tests/kernels.
+Acceptance is bounded source staging only, not installed/root/runtime or
+commit/push/live clearance.
+That input-handle checkpoint did not change Python kernel source or its accepted
+predicate evidence.
+
+The 7 October private descriptor-kernel successor removes the archive-path reopen
+from the staged numeric route without adding interpreter execution. Frozen packet
+`/tmp/ota-principal-fd-kernel-staging-20261007-r3-2585JI` has eleven-entry source
+manifest `8dba1c3135c71bbe730b9229cd10d8274ebd6e655596680d596a383adefe9780`
+and validation manifest
+`194cad008cb6f1b6ef2d9f12f5af9c5f1c3c587a401a6c17a0b3f055b0be4f03`.
+The borrowed checked archive descriptor is privately duplicated with verified
+CLOEXEC, read-only/non-O_PATH access flags and same complete metadata; bounded
+pread preserves the caller's offset. The borrowed-slot precheck is retained,
+but owned-duplicate flags are independently checked before constructing the reader.
+Shared package-policy parsing is bracketed by exact digest/EOF and complete
+metadata checks, including after the final digest. The numeric fd route fixes the
+canonical archive expectation; the legacy pathname route retains substitution
+checks and error order. This is data verification, not native input admission.
+The isolated offline Linux/arm64 Python 3.13.5 UID/GID65534 run passed 21/21;
+source, driver, runtime identity and container configuration are retained. Tiny
+archive descriptor/alias/digest/metadata tests are actual nonroot operations;
+protected tree, permission-transition and Listener tests remain projected. The
+initial r1 run failed only on a literal-escape gzip-header assertion; its source
+and failed log remain retained unchanged. MUSE held r2 for a P2: pre-dup caller
+slot reuse could yield same-inode O_RDWR without the owned copy's flags being
+checked. Its related P3 identified missing read-time EOF/growth coverage. r3 adds
+the duplicate guard and deterministic pre-dup different-inode/O_RDWR/O_PATH
+refusals, private-copy closure and caller survival/offset checks. Actual fixture
+truncation/growth after metadata admission reaches the reader's EOF guards.
+The negative packet `/tmp/ota-principal-fd-kernel-negative-20261007-pocI4k`
+uses r2 production source with the new substitution test: both same-inode cases
+fail, while different-inode refusal passes. Its retained validation manifest is
+bound in r3's validation manifest. Neither prior packet is rewritten.
+No Rust source changed, so accepted
+375-test Rust evidence retains only its original scope, not Python execution.
+MUSE independently accepted exact r3 source and retained validation plus Core
+handoff SHA `5db4a14880c0e11ea35b6ba49667f5013aea0fa0e00b9845fde89442d08f11fb`
+with no remaining P1/P2/P3 findings; both r2 findings are closed. It checked all
+source/validation/doc entries, the negative discriminator and unchanged Launcher
+source, and inspected retained logs/configuration without rerunning target code
+or tests. This acceptance record is a record-only handoff successor; the reviewed
+source packets and frozen review docs remain unchanged. Acceptance is private
+source staging only, not commit/push, installed/runtime or live clearance.
+Normal entries remain refusal-only.
+No native descriptor transfer, isolated interpreter/module loading, installed
+dynamic closure, root admission or actual before/work/after execution is proved.
+
+The next 7 October source-only predecessor is compile-only module preparation,
+not the initially considered peer loader. MUSE's superseding scope removed all
+resolver/initialization/execution scaffolding before validation; no real kernel
+body was executed. Frozen packet
+`/tmp/ota-principal-module-sources-20261007-r1-A5UixV` has four-entry source manifest
+`6cb5d02aebc0879125a7639547a95e70d5b0497f11a85b21b455d500119b69d6`
+and seven-entry validation manifest
+`a2ae4d277b803afcec1b5adcbba8c609a212e41762774bce8a09f2bfd8c1b1c5`.
+Five exact native module roles retain their order and 1 MiB each/5 MiB total caps.
+Borrowed and owned-duplicate access flags, CLOEXEC, complete sampled metadata,
+bounded pread/EOF/raw-byte hash and distinct objects reconcile before all five
+immutable snapshots are decoded as strict UTF-8 and compiled with fixed flags
+and synthetic role/digest origins. A complete code tuple is data, not loaded
+modules or admission. No source path reopening, kernel import or body execution,
+bytecode serialization, timer, resolver or retry API is added.
+Eleven fixture tests passed in offline bounded Linux/arm64 Python 3.13.5 UID/GID
+65534. Actual descriptor substitutions, read-time EOF/growth, final metadata,
+cleanup/offsets and immutable snapshots are distinguished from the projected
+aggregate-cap and CLOEXEC-readback fault controls. Two retained negative packets
+remove the duplicate access guard or decode before whole-batch verification;
+their selected tests fail as expected. Their exact validation manifests are bound
+in the successor's validation manifest. No real permission/Listener module body
+or root operation was tested. MUSE independently accepted the exact frozen source,
+retained validation and Core handoff SHA
+`82834180ba128d48b0d4299e557e3d3ebcea754a53d3114000f46ca125d1fea9`
+with no P1/P2/P3 findings. It checked all source/validation/doc entries and both
+isolated mutant diffs/logs, without rerunning target code or tests. This is bounded
+private source staging only, not loading, installed/runtime, commit/push or live
+clearance. The acceptance record does not rewrite any frozen packet. Rust source remains unchanged,
+so prior Rust evidence is not new Python/interpreter/runtime evidence. Native
+build-owned embedding, handle transfer, closed delayed-peer resolution, installed
+dynamic closure and independently contained execution remain unimplemented.
+
+The finite peer-resolution design was independently reviewed before implementation.
+Frozen `/tmp/ota-principal-peer-design-20261007-r1-Mih10I/design.md` has SHA
+`289858ea9ca9d4326eeb4793bac81e7b7ab2caa77971ecbc6cf51c708a286a3a`;
+its one-entry source manifest has SHA
+`f59ec763c198db5b20320a6774894cb63f2443cbd65cf70dcc1a5c445b0f44b0`.
+MUSE verified the design and both predecessor source packets, checked the actual
+direct/delayed import graph, and returned no P1/P2/P3 findings within the stated
+trusted-verified-source scope. Fixed private module objects, per-role local import
+dispatch, exact plain/from forms, retained delayed routing and sampled reserved
+cache collision refusals avoid peer fallback or global importer/cache mutation.
+Initialization is one-shot, with no unready/cyclic or partial-bundle exposure and
+no rollback or renewed-clock claim. This is design acceptance only: no router,
+module body, target compilation/execution or tests were run in this increment.
+Native Launcher source remains unchanged. The real ctypes body effect and all
+installed closure/containment gates remain explicit; no arbitrary-Python sandbox
+or concurrent global-mutation guarantee follows.
+
+Bobai's subsequent source-only instruction authorized the synthetic router
+increment. Historical r1 at
+`/tmp/ota-principal-peer-sources-20261007-r1-QIZ2m9` has six-entry source manifest
+`d2de08593de212e89dc1a6c10c5214d7d91599aa6366dc0ec21470c3016815c9`
+and nine-entry validation manifest
+`3922b51b5b582a3991bf70220f9b2b3643e4bb8a0f55b141e551c093dd3974c9`.
+Its 24 passing tests do not clear MUSE's cache-key review finding: the scan skipped
+string subclasses despite dictionary equality with reserved names. R1 is not
+accepted source and all its packets remain immutable. Frozen r2 at
+`/tmp/ota-principal-peer-sources-20261007-r2-PnoILU` is independently accepted,
+with six-entry source manifest
+`acbde0a8725ed0d322c8acabd5207f1dd1679824907ce7f356c75db123fe3111`
+and nine-entry validation manifest
+`67fe7a3ff8442f5ba6d63f56da894e3d13546db049c59e8bd47a193c3c6b3a72`.
+It refuses every non-exact-str cache key before user comparison or prefix calls;
+canonical strings retain the exact/dotted reserved-name rule. New tests exercise
+startup, post-external, gateway and delayed string-subclass collisions plus an
+opaque equality alias; refusal runs no custom key comparison. R1 router with r2's
+two unchanged new tests produces seven expected subcase failures. R2 also proves
+failure of an earlier bundle's retained delayed function leaves a later bundle
+intact. The validation manifest binds r1 evidence and the new discriminator.
+The unchanged descriptor-preparation predecessor feeds a private one-shot closure,
+fixed private module objects and role-local exact plain/from routing retained for
+delayed imports. Unready peers, unsupported forms and sampled object/None/dotted
+cache collisions refuse without adopting/deleting ambient peers or generic fallback.
+Caught import refusal still terminally fails the attempt; a gateway exposes only
+the fixed composition function after whole-batch preparation and all bodies.
+Twenty-six r2 tests passed in bounded offline Linux/arm64 Python 3.13.5 UID/GID
+65534: fifteen router tests plus the unchanged eleven preparation tests. Only
+tiny synthetic bodies ran, not real kernels, NSS/CDLL, Listener or permissions.
+R1's two isolated mutants permit delayed ambient fallback or failed-attempt retry;
+their selected tests fail as expected and exact manifests bind through r1 validation.
+All five test containers across r1/r2 are independently absent after cleanup.
+The closure is
+an unconnected private fixture seam, not native admission, worker ownership,
+deadline or production retry authority. External effects are not rolled back and
+external transitive imports/installed dynamic closure are not proved. Native
+Launcher source remains unchanged; no new Rust or protected-runtime proof.
+
+MUSE completed r1 review and accepted the exact frozen r2 source, retained
+evidence and connected documentation with no remaining P1/P2/P3 findings. The
+three-doc review manifest is
+`088d2f1999999abcc0603953d987bf432a441ef4e24af81d2055152df1f8d9a5`.
+It verified every entry and nested r1/three negative packets, inspected drivers/
+configuration/logs and independently observed all five containers absent, without
+rerunning/importing target code or revalidating the native-source manifest.
+This record-only successor does not rewrite any frozen packet. Acceptance is
+unconnected private synthetic source staging, not native/runtime or live clearance.
+
+The separately instructed native bootstrap/descriptor-transfer design is now
+independently accepted as design only. Frozen r2 is
+`/tmp/ota-principal-native-transfer-design-20261007-r2-UPwRCL/design.md`,
+source-manifest SHA-256
+`c71ee421e3e5d0b7cd232a43a5eaf8eeaf2851c0b684b56f640d85eb8da534c1`,
+design SHA-256
+`6dc630ea55da6ff2e6074cdc731930be4a56ba5627c6031e0b200ab73e419349`.
+MUSE verified the exact packet and r1-to-r2 delta with no remaining P1/P2/P3.
+Historical r1 remains immutable/unaccepted: its P3 closing-order ambiguity is
+resolved by keeping preparation exactly once inside the one-shot initializer,
+then closing original source handles before peer initialization/body execution.
+The design selects build-owned standalone bootstrap packaging and finite inherited
+descriptor slots without changing the observer launch. It preserves native
+attempt/phase/input ownership and original clocks; actual independently acquired
+outer containment/readback must precede interpreter release. This is not an
+implemented transfer, interpreter launch, installed admission or real kernel proof.
+No native source/tests, Cargo/dependency/pin, Protocol, public spec/command/schema/
+JSON, Site, Skills, Examples, Learn, FAQ or Glossary change is needed for this
+design-only checkpoint; only this handoff and Launcher private documentation change.
+No new changelog behavior claim or runtime execution accompanies it.
+
+The separately instructed packaging/consuming-transfer source candidate is frozen
+at `/tmp/ota-principal-transfer-sources-20261007-r1-3xJkO0`. Source-manifest SHA:
+`b2b6bea29b4496426668ea009528ea372675d6db6adf498d80e2cbc122943960`;
+validation-manifest SHA:
+`69ab423779d77f0f2b4d9ee2c8d8c743f753f269119dba3db9aa6b8bf73fd40f`.
+It consolidates the accepted preparation/router into build-embedded source, keeping
+preparation exactly once and closing originals before creating peer objects/bodies.
+Native PreparedInputs consumes the existing phase Readback predicate/JobIds route
+and exact retained-input recheck into a private description. That predicate is not
+actual manager/loaded-policy acquisition. The description retains checked handles,
+phase ownership and original clock, with fixed finite slot metadata and bounded
+arguments/environment. Its code stub defines the bootstrap only, never initializes
+peers or invokes work. There is no raw-handle export, descriptor remap/inheritance
+change, fork/exec, release, result wire or admission path added.
+
+Bounded offline nonroot Linux/arm64 Rust 1.95 canonical pinned
+`ota run verify --agent --plain --stream` passed with 379 tests and 26 privileged
+tests ignored, plus source consistency checks. The nested subprocess test summary
+is not counted twice. Python 3.13.5 passed 30 synthetic preparation/parity/router/
+closure tests. The isolated missing-close mutant
+`/tmp/ota-principal-transfer-close-negative-20261007-UR3pW8` fails both selected
+ordering/close-failure controls as intended; its source/validation manifests are
+bound by the candidate validation manifest. All three containers were observed
+absent. Packing/ownership positives use test-only nonroot fixtures, not a positive
+production/root-owned input set; no real kernel, permission, Listener, CDLL or NSS
+operation is exercised. The source snapshot retains prior docs; the connected
+current handoff/private documentation/Unreleased projection has a separate review
+packet. MUSE accepted the exact source, retained validation and three connected
+documents as unconnected private source staging, with no P1/P2/P3. The reviewed
+three-doc manifest is
+`12a6e373a45523eccf112390a46184ed65a93471e71f3fd80691473ca71b028d`.
+It verified all entries/nested negative manifests, retained logs and 21 live
+source/Cargo/test hashes, observed all three containers absent and checked the live
+docs/diffs. It did not import/build/rerun target code. This record-only successor
+preserves the frozen source/evidence/docs, including their pending-review wording;
+acceptance clears only the source predecessor, not any runtime/installed gate.
+
+The separately instructed finite metadata/kernel-report source slice is frozen at
+`/Users/bobai/.codex/artifacts/2026-10-07/kernel-report-r4` against unchanged
+Launcher `77478ae9fad170d2484aa4409b0bb3032436a52c` and Core
+`1b868e1036493e0b7042dc88cbd375ce930316a6`.
+Source-manifest SHA:
+`090fd5afd06052f0ad3ccec411b644fc0698319dc207cc02f4cb516bf6fec25e`;
+validation-manifest SHA:
+`6e7e896298a7ccfc74f65b66dc02505e12f74dbb76f64ded9ef0b8d2292f1c82`.
+MUSE cleared the exact inert candidate with no P1/P2/P3, checking all 242 source
+and 37 validation entries, all 76 live Launcher hashes, each compiled-source list,
+the exact mutant deltas and retained assertion failures. MUSE also accepted the
+exact connected private-doc/Unreleased/single-handoff projection with no P1/P2/P3;
+its six-entry manifest is
+`f17537c4cd584685ca6b69f620d8ad92534be290f9f58ba7ed9d367c217a61ba`.
+It checked all three actual deltas/live document hashes and the other 74 unchanged
+Launcher files. This approval-status-only successor preserves the frozen
+pending-review packet and source/validation identities. Acceptance clears this
+source batch only, not runtime/installed gates or commit/push permission.
+
+The finite native JSON metadata preserves exact runner_* roles/module slots 5..9,
+archive slot 10 and canonical numeric IDs/caps. The pure Python projector validates
+the closed synthetic result/limitations and closes the archive before returning
+the 1,024-byte total four-byte/JSON frame; the definition-only stub never calls it.
+Private native KernelReport requires object-only framing, literal string-only
+status/version/ordered leaves, owned IDs and native_composition_complete=false /
+live_authorized=false. MUSE's prior P2 was that derived unit enums also accepted
+object-shaped variants; String decoding followed by finite TryFrom now refuses
+them directly and through coherently length-matched owned-exchange tests for all
+seven leaves. Reported kernel facts are not ObserverTerminal, admission or authority.
+
+The private consuming exchange retains PreparedTransfer/captures and reconciles
+exact phase/installation, pre-cleanup transport, independently supplied completion,
+exact retirement and fresh after-observation under the original 8s/10s ceilings.
+Actual completion/readback/capture acquisition remains unconnected; the test-only
+bridge cannot promote synthetic facts into runtime admission. Normal native/Python
+entries remain inert, with no composition remap/release/fork/exec or real kernels.
+
+Fresh canonical pinned offline nonroot Linux/arm64 Rust 1.95 verification passes
+383 top-level tests, zero failures, 26 privileged ignored (nested 1-pass summary
+excluded); Python 3.13.5 passes 35 synthetic tests. Removing only the three serde
+String attributes reaches the intended schema assertion; removing only the report
+decode reaches both consuming assertions. Both canonical negative runs exit 101,
+not from setup/build/lint, and all source consistency checks pass. SCOOBY observed
+all temporary R4 containers absent. MUSE inspected retained evidence/configuration
+only, with no Docker query or target imports/builds/test execution. The bounded
+nonroot clean pinned-CLI bootstrap alone used network for declared rustup metadata;
+Launcher/tests/mutants were offline. No authority or protected host was installed.
+
+Evidence availability: previous `/tmp/ota-principal-*` execution evidence remains
+unavailable; its identities/review outcomes are historical, not retained proof.
+The private numeric-kernel source predecessor is now recovered in the durable
+`/Users/bobai/.codex/artifacts/2026-10-07/kernel-source-recovery-r1` packet.
+Its eleven-file source manifest exactly reproduces accepted descriptor-kernel R3
+identity `8dba1c3135c71bbe730b9229cd10d8274ebd6e655596680d596a383adefe9780`;
+recovery manifest is
+`ab674e9e656433ac392fbfe0dabbf0159b0b20a2a9786cf237bc559ec8d6d8cd`.
+MUSE independently verified both manifests, all eleven source hashes and the exact
+historical archive anchor, accepting source recovery only with no P1/P2. The P3
+private-document propagation omission is corrected alongside this handoff in a
+successor sidecar; frozen R1 is unchanged. Recorded file changes/static copies
+were interpreted only as data. During recovery, no recovered module was imported or executed;
+old 21/21 logs/container evidence remain unavailable and no fresh derivative/parity
+proof follows from recovery or the golden fixture. The recovered driver's obsolete
+temporary paths must not be executed.
+
+Fresh bounded synthetic revalidation is independently accepted at
+`/Users/bobai/.codex/artifacts/2026-10-07/kernel-synthetic-validation-r7`.
+Driver manifest is
+`a1d632a3498626e296e295a3d8def8e08fccd5ed45dbb1644bf9ea783c3b6188`;
+validation manifest is
+`d28211e62ed0b6b5f7f2798ee3accdd354b796a6b95bdae5fb82f43d80ba153e`.
+The recovered eleven-file positive source still matches historical `8dba1c3...`.
+Canonical pinned Ota `run verify --agent --native --plain --stream` in the bounded
+offline nonroot Linux/arm64 Python 3.13.5 fixture passed 21/21 tests without errors
+or skips. Removing only the three owned-duplicate access checks produced the two
+intended same-inode writable/O_PATH assertion failures in one negative-control
+test; the unmutated different-inode refusal remains. MUSE independently verified
+all 33 driver and 45 validation entries, raw results, containment and exact owned
+container retirement/absence. Both worker records retain
+`native_composition_complete=false`, `live_authorized=false` and explicit
+`not_proved` groups. Acceptance covers synthetic descriptor mechanics and projected
+derivative/kernel/predicate parity only, not actual permission/Listener behavior.
+R1 remains unexecuted; R2-R6 remain frozen unaccepted attempts. R5's task exit0
+without retained child results was not accepted; R6's intended failures were
+rejected by a decoder that also counted Ota's prefixed diagnostic excerpt. R7
+requires exactly two complete raw assertion lines. This is new retained evidence,
+not recovery of the historical missing execution logs.
+
+The composition-specific native carrier/capture design is independently accepted
+as design only at
+`/Users/bobai/.codex/artifacts/2026-10-08/principal-composition-carrier-design-r1`.
+Seven-entry source-manifest identity:
+`2c62fe70e63f6eb849b3cfe64e4d5e639fb042f636e054b398cdc83c5c83ce09`;
+design identity:
+`b1d217c25b10923e9d100b66a8c905eefce883b44faa4cd01c02546b6de6258a`.
+MUSE contributed actor/status-producer advice; non-author RUBY independently
+verified the packet and six live anchors with no P1/P2/P3 design findings.
+The design requires a distinct native pre-exec latch/readback gate, collision-safe
+source slots above10, same-handle transfer, actual interpreter capture/exit and
+separate wrapper/manager outcomes, preserving original start+8s/start+10s limits.
+The reference controller/supervisor/wrapper/interpreter topology is a producer
+requirement, not an installed implementation. Manager-bound descriptor transfer,
+protected native relay acquisition, installed/dynamic closure and actual outer
+completion remain open. No source changes, target imports, tests, processes or
+runtime activation accompany this design acceptance; normal entries remain inert.
+Only this handoff and Launcher private documentation need the design record;
+no Changelog, dependency/pin/Protocol or public-consumer propagation is required.
+
+Uncovered-material-behavior inventory: finite metadata/framing/consuming source
+controls are contract-owned and proved by local declared verification and synthetic
+fixtures only. Actual permission/Listener changes, outer acquisition/readback,
+release/remap/contained interpreter execution, installed/dynamic closure,
+registration/private contents/descendants/providers/selected work are explicitly
+bounded or not_proved; the private report's two false fields retain that boundary.
+No actual kernel/root/installed/hosted/provider gate is closed. Launcher private
+source/tests/docs/Unreleased and this handoff are affected. Dependencies/Cargo/pins/
+Protocol and public commands/spec/schema/JSON/Site/Skills/Examples/Learn/FAQ/Glossary
+are unaffected for this private inactive surface. No commit/push/merge/release,
+root/VM/SSH/protected-install/sign/provider/composition activation occurred.
+Step 7 active/open; Step 8/V12.2 inactive.
+
+Bobai's direct "Yes. Also lets work." on 8 October, following the named source-only
+question, authorizes this narrow implementation; MUSE approved roadmap readiness
+within that grant, not source acceptance or executable verification. Launcher stages
+a fixed native byte-plus-EOF waiting seam under the original monotonic deadline and
+an unconnected owned inner capture outcome, retaining actual interpreter exit,
+pre-cleanup counts/EOF/first cause and inner cleanup separately from wrapper/manager
+facts. The synthetic fixtures are verified only within the bounded offline
+checkpoint below; normal entry remains inert. Production
+hardening/remap, manager-bound transfer and native relay acquisition remain open.
+
+Non-author RUBY accepted the narrow static source at
+`/Users/bobai/.codex/artifacts/2026-10-08/principal-carrier-source-r6`, manifest
+`cc8366033dc65742fddbd39af677ba8634e80a5e4ba078ff8ef0b1f7823da63f`.
+The consuming refusal retains its exchange/raw inner outcome/captures and independent
+outer failure. Late-release and parent/input fixtures now isolate their refusal
+guards; static review does not establish executed mutation discrimination.
+
+One approved offline attempt, validation-r3, failed canonical fmt and stopped before
+compile/lint/tests/mutations. Failed-results manifest:
+`16f7fe5f58afa0725f472b1b728306ca61f6711f1f23d31032c64dac9e9e5939`;
+exact owned container removal and absence are retained. r6 contains all four reported
+manual formatting corrections after r4, independently rechecked by RUBY. validation-r4
+remained unexecuted after MUSE found the omitted fourth hunk. MUSE approved one fresh
+validation-r5 attempt, driver manifest
+`20c4d9f26fbe163671cf584a83d992ab311442be2ab57e47acb05000437614e3`.
+Non-author RUBY accepted its retained evidence with no P1/P2/P3 findings. The
+validation packet is
+`/Users/bobai/.codex/artifacts/2026-10-08/principal-carrier-validation-r5`, manifest
+`5f93f1502c2ba789c8ddab20afd2ba22e8166d8975a9a5aefe9fff1fa332b873`;
+payload manifest is
+`a8a1d35c51a820ba78b1b2171cb60749580781750fddbbfe46daa350653fa810`.
+Canonical nonroot Linux/arm64 `ota run verify --agent --native --plain --stream`
+passed fmt/check/strict Clippy/all-target/all-feature tests: 391 top-level passes,
+zero failures, 26 tests ignored. One nested subprocess pass is not
+double-counted. Latch/exit/clock mutations each exited 101 at exactly their intended
+assertions; all four source copies retained before/after consistency. The records
+named `*-compiled` contain source-input hash readbacks, not executable hashes;
+raw canonical traces separately support compilation/test execution. Actual retained
+Docker exec exited 0 with no timeout/overflow and matching complete byte counts.
+Exact owned container removal returned 0, followed by literal exact-object absence
+on the same daemon. This is local offline source/synthetic evidence only, not
+production descriptor closure, hardening/readback, installed or hosted proof.
+MUSE accepted the focused checkpoint documentation and the technical direction of
+`/Users/bobai/.codex/artifacts/2026-10-08/principal-remap-proposal-r1.md`, SHA-256
+`82be8bbbde374ead6244643ae6c8854eb02a507903ca46ec917f6937c4b9d59a`.
+The subsequently staged and verified increment adds collision-safe composition
+descriptor preparation/remap and a distinct native READY-before-release seam,
+without changing Collector/Observer launch behavior or connecting release/exec/
+readback admission. On 8 October Bobai directly delegated
+bounded active-roadmap slice approval and routine offline verification to MUSE:
+"This is the kind of approval I was request you take over. We have a road map,
+so I believe you can approve the slices too." MUSE explicitly approved this exact
+source-only proposal and one bounded offline nonroot attempt after independent
+source and exact-driver readiness review. This supersedes the pending founder
+question; future source/results still need qualified independent acceptance.
+No root/provider/installed/hosted/controller activation, interpreter execution,
+commit/push/release or Step 8/V12.2 action follows from that delegation.
+The exact source increment is now staged only in Launcher's private process module:
+owned duplicates above FD 10, fixed 0..10 map, identity/access/CLOEXEC checks,
+unrelated descriptor closure and root hardening before READY/latch wait. Existing
+Collector/Observer paths and normal entry remain unchanged. The seam has no
+CheckedInputs/manager-transfer connection or interpreter exec/release writer;
+mechanical descriptor checks are not installed role/digest/readback admission.
+RUBY accepted the exact formatting-only successor source r5, manifest
+`9ea7839c737b7f181c20a409c2f292f08a44ccda1d2c79ed9eb2125f40f642d6`.
+The first remap offline attempt r3 failed at candidate formatting (exit 1), before
+compilation, tests or negative controls; source consistency was retained. Its
+failed-result manifest is
+`af6f952087ff1ca9e26683640c56081b7ad496117d70832fd68f3367c6c2935f`.
+Raw removal returned 0 and exact-container absence returned 1 on the same daemon;
+MUSE reconciled the scoped failure/cleanup evidence, not a successful checkpoint.
+All seven prescribed formatting corrections are applied without semantic changes.
+MUSE held the unexecuted successor driver r4 because its inner manifest guard
+still pinned r3. The driver-only successor r5 corrects that guard and uses a fresh
+container identity, retaining the same source and negative controls; manifest
+`4694a1ea51b06b5145f2c1ac3586b6a69eb9ae8753887982e73d5035347ff81b`.
+MUSE cleared one r5 attempt after guard review, but it stopped before candidate
+verification: read-only preparation had accidentally removed the toolchain's
+executable bits, causing `rustc` permission refusal. Its failed-result manifest is
+`509c6040aee39377cb8fa3310548a25ac1b5248a091f4a59c211c0a7da72cb80`;
+raw exact-container removal returned 0 followed by literal absence on the same
+daemon. This is a preparation failure, not a source-test result. The unexecuted
+r6 driver restores reference read-only permissions while preserving execute bits,
+with all 745 metadata readbacks bound in driver manifest
+`3d5c7eeadf14baa232fe3f9e57fb36df916cf450fc031e47e5dc46c523419a8b`.
+MUSE accepted that permission repair and cleared one r6 attempt. Candidate
+canonical verification passed, and closure-negative reached its intended test
+failures. Flags-negative instead failed strict Clippy on its injected OR pattern;
+the decoder refused to count this as mutation proof. Access/clock controls were
+not reached. At r6, full checkpoint acceptance remained open; its failed-result manifest
+is `5734ab84a10ea6efb187610845e4677aa508c0dd0d5396962ca77c5fab581cab`.
+The prepared r7 successor changed only that mutant's equivalent `3..=5` pattern,
+re-pins both manifest guards and uses a fresh container identity. Driver manifest
+`c846481a3430213f5e4c37eeaa043160c960856b4047e4ba25298ecd20205a37`
+binds payload `6fef9ef8d1d8b681192f7638544389f50c98a69917465a119833ce76c45c19ab`
+and read-only permissions preserving execute bits. Accepted source r5 is unchanged.
+RUBY accepted the narrow mutation delta and MUSE independently cleared exactly
+one r7 offline nonroot attempt. Fresh launch readback verified all 745 bound
+read-only modes and retained all 15 executable files, exact hashes/cwd/closed env;
+that attempt completed with actual host exit 0. The raw candidate canonical lane
+has 401 top-level passes, one nested subprocess observation and 26 ignored tests.
+All four mutants exited 101 at exactly their intended test IDs; all five source
+copies retained consistency. Command stream lengths/hashes and no timeout/overflow
+reconcile, with exact owned retirement retained. Frozen result manifest
+`8ecf116656f2acb725e9558e3859be4b06681256f9d6409325b3848e68738056`
+binds 53 retained files. RUBY independently reviewed the frozen results and MUSE
+accepted the exact bounded offline source/synthetic checkpoint with no findings.
+All ten required carrier/remap candidate test IDs passed; the raw count includes
+one nested subprocess observation that is not an additional top-level test.
+All 16 command records/32 retained streams reconcile, and the five source-input
+inventories match 380 frozen source hashes; these are not executable identity
+proof. Exact container `460fa4dadc14126bd32a163ba0e5809d2820213e4e5f931a2576a94c77950f92`
+matched image/name/attempt ownership, with same-daemon removal 0 and literal
+exact-object absence 1. Earlier remap drivers r1/r2/r4 remain held/unexecuted;
+r3/r5/r6 remain failed, not superseded into successful evidence. No automatic
+retry is authorized. Root posture, actual interpreter exec/CLOEXEC across exec,
+semantic-input admission, privileged readback, manager/native relay, installed/
+hosted/provider authority and integrated production budgets remain not_proved.
+RUBY and MUSE accepted the directly connected checkpoint documentation after a
+narrow historical-tense correction. The next ownership proposal r1 was held for
+a vacuous accepting-baseline risk: unchecked nonroot files cannot pass unchanged
+protected-input recheck. Revised proposal r2 separates common helper mechanics
+from unproved positive production admission/wiring, SHA-256
+`bff4463fc96c9aef3b871b851ecd0950f832d2b2e1e440fddbb83105b739b6cc`.
+RUBY independently challenged that baseline and MUSE approved its bounded private
+source implementation under the standing delegation, not execution.
+That source is now staged: the complete eight-role owner retains optional fixed-map
+duplicates; the real wrapper uses unchanged consuming pre/helper/post recheck.
+Composition-derived UID/GID, installation and original start are checked by the
+same mechanics helper used by explicitly unadmitted dummy fixtures. Canonical
+role/spec validation is reused, with independent test role/object/byte oracles and
+per-invocation cfg(test) post-duplication observation/signal injection. Production
+root predicates and accepted mapper semantics remain unchanged. New ownership,
+identity/role/access/clock and cleanup tests are not_run. RUBY held source r1 for a
+missing cfg(test) `AsFd` import, then accepted the exact two-line repair in source
+r2 with no remaining static findings. Source manifest
+`243f502e4ca3fd96d3860e9c9cbffcdf572735a3cc758d97d6daf97f52662940`
+and review manifest `162eeb24d7400364331c04d1cc5b33850540f5347e96b6c36cb2fc632b622ec8`
+freeze the three sources, baseline diffs and test/mutation plan. MUSE independently
+accepted exact source r2 for the static gate only. The canonical offline candidate
+plus five exact controls are frozen as `principal-input-handoff-validation-r1`:
+driver manifest `5133bfa9b8bdf83f8dd08ebfabc4ad1ec452ab5d5dcbd46f8204580e27396a1e`,
+payload manifest `10a3989ec058dfa7fce5c4357a652349c40a0a78088e92b47a2981ea735e3d55`.
+Static readback reconciles 719 source files, 856 metadata paths, fifteen executable
+files, the three accepted candidate sources and unchanged control tests. RUBY and
+MUSE accepted the static driver and cleared one contained nonroot offline attempt.
+Fresh launch readback matched the exact tuple. That attempt failed at canonical
+candidate formatting: four test-only inputs-source hunks, before compilation or
+tests. All five controls remain not_run. Frozen failed-result manifest
+`db16698368e8b98bdb8a940118d042dbaddf4d86e2b622ceae8cb7d973d8e7ed`
+retains outer session 86308/exit 1, eleven command/twenty-two stream records and
+exact same-daemon container removal 0/literal absence 1. No timeout or output loss
+was observed; the candidate source remained unchanged. RUBY and MUSE independently
+reconciled the failed result and exact cleanup. MUSE approved only the four emitted
+formatting hunks, applied manually after source-identity readback. Corrected source
+r3 is frozen with source manifest
+`0af5451dc68132ad05200d8e72a28ac95ecef01add1e64c020d5b69917e97458`
+and review manifest `52591cd305ad953e4742df7d2c2d2637e2a832f175d4c6b670d6443d77753e4f`.
+RUBY and MUSE confirmed the four exact semantic-neutral hunks and unchanged other
+sources and test plan; static acceptance is not executed verification. Fresh validation r2
+is frozen with driver manifest
+`d0202135e64592a4e27168eabe0afaadef11cc5e8fa1dc6c3bad3651f34d182f`
+and payload `59844f3d3f706aa96fd7bbb02569b0dafc802ce52f7050578e15d82a6d6bcace`.
+All five faults, tests, decoder, containment and caps are retained. The temporary
+review hold closed after RUBY explicitly accepted the exact driver-r2 static delta.
+MUSE reconciled that verdict and cleared one new contained nonroot offline attempt.
+Fresh launch readback matched the manifests, source, metadata, Node and local
+CLI/socket/runtime provenance. That attempt failed: outer session 1105/exit 1,
+candidate canonical verification passed formatting/check/Clippy, then returned 101
+with exactly `transfer_preparation_mechanics_refuse_roles_and_access` failed at
+the channel-retirement POLLERR assertion (inputs line 806). All five controls
+remain not_run. Failed-result manifest
+`9e7ee42a7b041bc6ca4bda5091d4b6fa9bbb1fac84d2984364e0624771a8c77f`
+retains 41 entries, eleven command/twenty-two stream records, source consistency
+and exact same-daemon removal 0/literal absence 1 for the owned container.
+No timeout, output loss or signal was observed. RUBY and MUSE independently
+reconciled the failed phase, raw evidence and exact cleanup, not validation success.
+Both flagged a P2 in the test oracle: immediate pipe EOF/POLLERR assumes process-global
+exclusivity, while sibling fork fixtures can inherit those descriptors before
+their own cleanup. The source establishes an interference path, not the cause of
+this occurrence or absence of a helper leak; the raw failure lacks a fault index.
+The proposed fix preserves identity-qualified owner-local observations and pipe
+retirement assertions in isolated exact single-test subprocesses with bounded
+supervision/retirement and explicit fault diagnostics. MUSE approved preparation
+only of a concrete proposal. `principal-input-isolation-proposal-r1.md` is frozen
+at `20a40dc78d68d6350f7a56453fd082913788cde46954dda90daa782d9b1dc88c`:
+exact single-test routing before fixtures, existing pidfd/WNOWAIT child cleanup,
+owned-group supervision, bounded regular-file output rather than capture-pipe EOF,
+and distinct leaf assertion versus supervisor failure evidence. RUBY held proposal
+r1 for another P2: std::Command pre_exec can block on an internal fork/exec
+handshake before returning the child handle, outside the proposed supervisor.
+Revised proposal r2 is frozen at
+`27a5086449604694247d9948bc4cec37b5ac4a5587b8975c5341ee39406a73ed`:
+prebuilt literal raw-fork/exec leaf launch, immediate exact-PID ownership, existing
+pidfd/WNOWAIT observer and independent session/group verification before group
+retirement. No hidden exec-error handshake or detached launch thread is proposed.
+RUBY and MUSE accepted the corrected launch design at proposal level, but hold r2
+for a second P2: its closed child environment omitted assigned HOME/TMPDIR, leaving
+tempfile creation outside the explicit writable scratch assignment. Proposal r3
+is frozen at `18e6d34b09e87683b7df3c972e290c65d00f4fa140d8bbd6a49a4a776694caf1`:
+private per-leaf 0700 root/home/tmp under the canonical driver's assigned scratch,
+explicit closed HOME/TMPDIR/routing fields and no-link/path/type/owner validation
+before fixtures, with owned tree retention through cleanup and output reconciliation.
+Native CI/other-host portability is not inferred from this offline scratch gate.
+All current assertions, five fault controls, output/cleanup bounds and truthful
+failure classifications remain required. RUBY accepted r3 at proposal level, but
+MUSE holds source staging for a P2: requiring explicit parent TMPDIR changes the
+existing canonical native test prerequisites. Preparation-only proposal r4 is
+frozen at `fe904d697df9ca5a9fab6776c10f682f40bcb4b84aaba640b48272d3383ece61`:
+ordinary parent tempfile selection is preserved;
+its owned root is canonicalized, verified and recorded before fork, with exact
+private HOME/TMPDIR passed to the leaf and no leaf fallback. The offline driver
+still supplies /scratch/tmp and independently reconciles each actual root beneath
+that assigned write plane. No new test/task flag or environment prerequisite,
+launch/clock/cleanup/control change or native-CI success is implied. RUBY accepted
+the exact r4 delta with no findings; its hash and verdict were returned to MUSE.
+The source packet must preserve descriptor/path-object linkage, component-wise
+canonical ancestry rather than string prefixes, and all post-fork error cleanup.
+MUSE independently accepted r4 and granted narrow source staging only for the
+cfg(test) six-leaf isolation supervisor/wrappers, diagnostics, connected record
+decoder/refusal fixtures and private docs/handoff. Source r1 is now frozen:
+all six wrappers precede fixture/channel creation, the fixed raw-fork supervisor
+reuses pidfd/WNOWAIT cleanup, and routing/output/retirement failures are distinct
+from intended semantic assertions. Original production helpers and clock semantics
+remain unchanged. Source manifest
+`7f19776a35fcf360a160bc505cc2a46c61ade047509f69bfd25fce8947594874`
+and review manifest `06adb8c4c8257085eb0926ee88d1dc7eec1ba3ae577fb5198f42656167529d40`
+retain the exact sources, deltas and concrete refusal/decoder plan. RUBY's nonauthor
+static review holds r1 for three P2s: default tempfile root mode does not guarantee
+the required 0700; generic refusal assertions can accept the wrong failure cause;
+and semantic stage labels remain active over unrelated byte/access/channel/foreign
+I/O assertions. MUSE independently challenged the refusal and stage cases and
+granted only narrow source corrections. The staged revision uses atomic Builder
+permissions 0700 with unchanged native location selection; each reserved refusal
+requires its actual cause, exit, counts and route-specific marker/harness evidence,
+including the original timeout observation. Stage transitions precede unrelated
+byte/access/channel/foreign-I/O assertions. Synthetic decoder cross-cases reject
+unrelated refusal and stage substitutions. Corrected source r2 is frozen with
+source manifest `7f1cae539e039eb907694016a26f1021a6fb2f524d6cf8bbcff6e67828931a13`
+and review manifest `88c1bba2adf3d08e055191c391708df1a26900c4e95e3ef8c5c69920d32bcc5e`.
+RUBY independently verified all four source/fourteen review entries and the exact
+corrective deltas, with no remaining P1/P2/P3 in that scope. All three source-r1
+blockers are resolved statically; production helpers, original assertions and
+controls remain unchanged. Fresh live/frozen source readback agrees. MUSE reconciled
+the exact identities, corrective deltas and RUBY verdict, then accepted source r2
+for the private static-source checkpoint only. Formatting/compiler/lint/tests stay
+not_run; the frozen r1 stays immutable and held. MUSE granted preparation only of
+a separately frozen nonroot offline driver/payload: canonical candidate, unchanged
+five semantic mutants and all new causal-refusal/decoder controls. Its independent
+decoder must bind raw parent/leaf names, counts, exits, stages, bytes, hashes,
+actual refusal evidence and cleanup, with raw Unix path decoding and component-wise
+scratch ancestry. Existing containment/time/output/one-attempt bounds are unchanged.
+Driver preparation r1 remains frozen and not_run after an author check caught an
+ambiguous completed-leaf count for failed-control lanes. Successor isolation
+validation r2 is frozen: driver manifest
+`4d0707668e8d85de84defd5b5330eacbf2452126b27137f2af3dda4466a97880`,
+payload manifest `3d57b775b1cef90cb37c4376e252b7cf4eb0f6dd3ad4539d02f5d14416e0bd93`.
+Static readback reconciles 726 source files, 863 metadata paths and fifteen
+executables. Candidate overlays match accepted source r2; all five mutation
+production prefixes match the earlier reviewed packet, and all tests remain
+identical across variants. Independent decoding and prepared synthetic refusal/
+substitution controls are not_run. Result counts distinguish six isolated records
+from six passing candidate leaves or five passing/one assertion-failing mutant
+leaves. Existing runtime file/socket tuple agrees by filesystem readback only;
+no daemon/image query occurred. MUSE's initial static review found no issues but
+explicitly withheld execution pending RUBY's final verdict. RUBY's completed
+independent review holds r2 for a P2: its independent decoder requires empty stderr
+even for intentionally failing --nocapture leaves, where Rust panic diagnostics
+are expected. Empty-stderr synthetic failure samples hide that mismatch. No other
+scoped finding was reported. The exact verdict was returned to MUSE; narrow
+successor preparation was requested to keep bounded complete stderr evidence
+while restricting the empty-stderr rule to successful leaves and adding realistic
+failure-output fixtures. R2 stays frozen and not_run; no execution clearance exists.
+MUSE granted preparation-only r3 correction: successful leaves retain the empty
+stderr rule, while intended assertion leaves require bounded complete panic stderr
+bound to the exact test name, source path and assertion content in addition to their
+already required stage, normal 101, parent failure and cleanup. Stderr alone cannot
+credit a control. R3 is now frozen: driver manifest
+`720c66882892bef7a17dbae3bb2e034ab6c1ef25fa0ff64c06636ff7ef681461`, payload
+manifest `4c4202db0ca2886b99bd1a73083c774e1c99e31097718de8bc611a311866648b`.
+Static rebinding reconciles 726 source files, 863 metadata paths and fifteen
+executables. It has representative nonempty panic fixtures for all five controls
+and negative empty/wrong identity, source, length, hash, cap and refusal cases.
+R2 remains frozen and not_run. RUBY's final r3 review holds the packet for a P2:
+pinned Rust 1.95's default panic hook adds a parenthesized OS thread ID between the
+exact test name and `panicked at`, but r3's representative samples and decoder omit
+it. A P3 also leaves wrong-stage samples rejected by their missing stderr rather
+than the stage mutation. No other scoped finding was reported. The exact repair
+request is with MUSE: parse the pinned header without equating its test-thread TID
+to the child process PID, preserve valid panic stderr while mutating stage and
+recompute the associated raw evidence. R3 stays frozen and not_run. MUSE granted
+narrow r4 preparation: parse the pinned Rust 1.95 header's escaped exact test name,
+positive parenthesized test-thread TID and same-line source location, without
+equating the TID to the child PID. All five fixtures and wrong-name/source cases use
+that form; missing, zero and nonnumeric TIDs are negative cases. Wrong-stage
+fixtures retain valid panic stderr while only their altered stdout evidence is
+recomputed. No source/harness/mutation/runtime, containment, clock or budget change
+is permitted. R4 is frozen: driver manifest
+`65b706db1dbc6353582bf4084648c25495e4491dd3efb7973abafc6b750bf083`, payload
+manifest `b42a8609d256fd255d9e50519384479392aef3ecdf42d4b72d438eae1bc5669c`.
+Static rebinding retains 726 source files, 863 metadata paths and fifteen
+executables. RUBY independently verified all seventeen driver and 726 payload
+entries, accepted the r4 static driver with no P1/P2/P3, and confirmed the payload
+differs from r3 only in the decoder hash; metadata/runtime provenance are identical.
+MUSE subsequently found one coverage gap: r4 did not reject an otherwise-valid
+exact-name/source/assertion panic header with only its parenthesized thread ID
+omitted. R4 remains frozen and not_run. MUSE granted r5 preparation only to add
+that single string to the existing per-control stderr-rejection loop, preserving
+the existing valid stage, exit, challenge, output, cap and cleanup fixture path.
+R5 is frozen with driver manifest
+`c194a75943a1eef467c92ff2d65ceca227ded2fe688461b69d8314e759c19c9e` and
+payload manifest `b934443ada14333ed9dadb5be2671ac9b6d5efc44ef7e744622dda59411aa054`.
+RUBY independently verified all eighteen driver and 726 payload entries, found no
+P1/P2/P3, and confirmed the added sample isolates the missing-TID field across all
+five controls while the valid fixture evidence is retained. The payload differs
+from r4 only in the decoder hash; metadata/runtime provenance are byte-identical.
+MUSE then cleared one exact r5 attempt. Its fresh static identity preflight passed,
+but strict Clippy stopped before any Rust isolation leaf or negative-control lane:
+`principal_adapter_input_test_isolation.rs` discarded `TempDir::keep()`'s must-use
+return under `-D warnings`. The driver consequently recorded candidate exit 101;
+the decoder's canonical-exit refusal is consequential, not the first cause. The
+owned container was removed and its literal absence recorded, but that cleanup does
+not validate the candidate. Frozen results manifest
+`4af6695ff43c0f541e50d444a508fa5af919c5fdcecd91915428f1f4e39e37a0`
+covers 36 raw files; r5 is immutable failed evidence and its attempt is consumed.
+RUBY also found a latent decoder mismatch: actual unchanged `#[path]` wiring emits
+`src/bin/../principal_adapter_inputs.rs`, not the normalized spelling r5 expected.
+MUSE granted preparation only for the one-line `let _ = temporary.keep();` source
+repair and an r6 exact compiled-path matcher/samples that reject the normalized
+spelling. No retry or execution clearance exists.
+Isolation source r3 is frozen with source manifest
+`1337e32e332b82742e82625f6fef8b592a0134bc36cbb354ab003802b30efff8`
+and review manifest `cbf22057fcb400b09a8a11baa120daf5a925bde95ce60c2b570d418b5390f050`.
+It changes only that cfg(test) must-use binding. R6 is separately frozen against
+the r3 source identity: payload manifest
+`63f9e13bae6147740b5c55075473e301a13ca0e5e0daccdf624049779b0bceba`,
+driver manifest `8aa5da2dd34f5519aee603b5e51b5b4d3fc762304627be9f0c8caeccff39a8ab`.
+All six lane copies bind the r3 isolation-source hash. R6 changes only the exact
+compiled panic source spelling and adds the normalized-spelling rejection sample;
+before its separate disposition it had no results directory and was not_run. RUBY found no P1/P2/P3 and MUSE
+accepted source r3 and r6 statically. R6's driver manifest has 21 rows for 20
+unique files because one identical source-delta entry is repeated; the verified
+closure is unchanged and the frozen packet will not be rewritten. MUSE cleared one
+fresh exact r6 offline nonroot attempt after a full parent-side readback. That
+attempt is separately consumptive; no retry, commit, push, release, root, VM,
+installed, hosted or provider action is authorized.
+The r6 attempt is frozen failed evidence with result manifest
+`982095378a17e73581ba09a41d80b0a722f8a04788033564412fea8e7e88205d` covering
+36 raw files. The candidate lane passed: 411 parent passes, six isolated normal-zero
+leaves with expected stages and empty stderr, and nine causal refusals. This is
+bounded source-fixture evidence only. Roles-negative reached its intended slot-five
+object assertion but also had two unrelated failures, so the decoder correctly
+rejected its parent-failure set; UID/GID/clock/retirement lanes did not run. The
+owned r6 container was removed and literal absence recorded, which proves cleanup
+for this attempt but not full validation. Both attempts are consumed. RUBY found
+two source-level P2s requiring a separately authorized decision: an isolation
+supervisor group/session observation order race for fast exits, and an existing
+launch-EOF versus terminal-exit precedence race in the nonroot preexec path.
+MUSE separately approved source preparation only for the cfg(test) isolation
+repair: after the exact pidfd-bound WNOWAIT terminal observation, freshly read
+that still-owned child's process group and session before accepting terminal
+ownership. Previously observed ownership remains available for error retirement;
+missing fresh proof still refuses. The staged helper and two regressions use an
+explicit pipe release to order a pre-setsid observation before real fast success,
+launch refusal, missing-marker exit, and a child that never creates a session.
+No sleeps, retry-to-hit-race, deadline extension or assertion relaxation is added.
+The source-only r4 packet is
+`/Users/bobai/.codex/artifacts/2026-10-08/principal-input-isolation-source-r4`,
+source manifest `f3bc577b7c01354c0e69ce2ecfe882b8cf165e9847f528131cb61b8e387a2dd1`
+(four entries) and review manifest
+`3b31b9dbb2257dff1c016c420a40b8de6fdfd5bc24acfe1d4cb4fca5cf6fb1a7`
+(nine entries). The shared collector and both adjacent adapter source files are
+byte-identical to r3. RUBY held r4 for one P2: its fast-success fixture compared
+setsid's return with fork's child-local zero rather than the actual child PID.
+The live source now compares with getpid; expected exit zero and the fixture's
+ordering/assertions remain unchanged. The corrected frozen source-only successor
+is `/Users/bobai/.codex/artifacts/2026-10-08/principal-input-isolation-source-r5`,
+source manifest `f24301567f16a453bf95d4d965d063b5f675b1d413aa8c79bcfc5739148bdf1b`
+(four entries), review manifest
+`07b79c051755a525fe20c7cf7ec64f355ed673a2352bc2bb92a027718c869423`
+(ten entries). RUBY independently verified every row and the exact one-line
+r4-to-r5 source delta, with no remaining scoped P1/P2/P3. MUSE independently
+verified all r5 manifest rows and accepted that isolated source statically.
+No execution evidence exists for either revision.
+MUSE separately approved shared-collector source preparation with callback/action
+count and private-snapshot qualifications. The staged shared loop requires exact
+retained READY, observed length one and actual EOF before request handoff or
+reconciliation. A terminal child gets a fresh bounded launch read if launch is
+pending; held writers remain pending under the original clock. Bad terminal exit
+classifies only after complete launch. Private launch observed/retained lengths,
+retained byte and EOF are snapshotted at both capture owners before cleanup;
+projected adapter fixtures retain unknown launch facts. Callback pre/post clock
+checks preserve earlier callback refusals and honestly retained action counts.
+Deterministic real-channel/owned-child regressions use a cfg(test) scheduling seam
+on the same loop; no fabricated EOF/exit, sleeps, retries or serialization is added.
+The frozen combined packet is
+`/Users/bobai/.codex/artifacts/2026-10-08/principal-launch-precedence-source-r1`,
+source manifest `a9ef3c826cb33bf33832c77680b66ec1d17421af10fa3d27e2ff23c8371833ad`
+(four entries), review manifest
+`9d7b72fcf9f4383e214ea8f04bf3d0dbb615dd1eebcb77a5a9d313c4f2c63755`
+(17 entries). Inputs and accepted isolation source r5 are byte-identical; adapter
+delta only adds unknown launch facts to a projected test literal. Seven new shared
+tests and the strengthened existing nonroot control are staged, not executed.
+VLAD's independent review and MUSE held r1 for one P2 in the EOF-first fixture:
+constructor return followed pidfd acquisition without observing child descriptor
+closure, so a legal parent-first schedule could read EAGAIN and select Input.
+No scoped production P1 or other P2/P3 was found; this is static review, not a
+runtime result. The narrowly approved correction adds a dedicated child-prepared
+acknowledgement after inherited writer closure. The parent verifies its exact byte
+under the unchanged original fixture deadline before returning, while the child
+still waits for the separate release. Acknowledgement failure retains owned-child
+cleanup. No production precedence or expected Launch assertion is changed.
+r1 remains immutable HOLD. The frozen successor is
+`/Users/bobai/.codex/artifacts/2026-10-08/principal-launch-precedence-source-r2`,
+source manifest `cbc4c9a77ddcfdff7d2d095b2aef5a097b2a3df14bb690e639f481306fb22dcc`
+(four entries), review manifest
+`621f11205ab3b2483d6bfd51fa74efaf4548361f869447829a1ca31ac88f670f`
+(18 entries). Only the test constructor changes; the other three source files,
+private lifecycle docs, Unreleased, Cargo and main match r1 exactly. MUSE has r2
+for focused independent recheck; neither revision has execution evidence.
+VLAD and MUSE closed r2's own-child ordering P2 statically, but held r2 for the
+residual parallel-fork P2 also raised by SCOOBY: ACK does not establish absence
+of a writer inherited by a sibling test fork. No such interleaving is claimed
+as observed in r6. The separately approved narrow correction now waits for
+actual empty STATUS EOF using a distinct preparation Capture/read/poll under
+the same original deadline, only in the EOF-before-exit case, while its child
+remains release-blocked. Production launch Capture stays unpopulated and its
+unchanged hook must independently read real EOF before release/normal7/Launch.
+Assertions, production policy and exact owned-child cleanup are unchanged.
+r1/r2 remain frozen HOLD. The successor is
+`/Users/bobai/.codex/artifacts/2026-10-08/principal-launch-precedence-source-r3`,
+source manifest `d766d7d6abf073feb9a49bbcb44df428dc91ebc3601a014bff66af36b9e46355`
+(four entries), review manifest
+`589fe9093256a436e18b11a7c8a5213fd77ae8023d1289345a5301124aba515e`
+(18 entries). Only order0 test preparation changes from r2; other source/docs,
+Unreleased/Cargo/main match r2 exactly. VLAD's focused independent review found
+no remaining P1/P2/P3 and closed the sibling-writer P2 statically. MUSE verified
+all four source/18 review rows and the exact delta, then accepted frozen r3
+statically. This is not formatter/compiler/test or runtime success.
+At source acceptance, no formatter/compiler/test/driver or other target execution
+was granted; new tests were not_run. MUSE separately cleared parent-only preparation of a frozen offline
+driver/payload successor derived narrowly from reviewed validation r6, bound to
+accepted shared-source-r3 and isolation-source-r5. Strict decoder/mutant failure
+sets, all nine causal refusals, clocks/caps, offline containment/runtime/resources
+and raw capture/cleanup reconciliation must remain unchanged. Preparation did not
+clear invocation or self-test. The frozen successor is
+`/Users/bobai/.codex/artifacts/2026-10-08/principal-input-isolation-validation-r7`,
+driver manifest `dec399c97fa216065f2d722ace1af2b63cbca8b87ff6258815b94f26163b7bf8`
+(25 unique entries), payload manifest
+`2c9033ae51de9c1516acee050265beaa1eabb03c5f4dc3611577bc7a7d362c74`
+(726 entries). Trusted parent hash readback verifies all rows: exactly 36 accepted
+source/private-doc/Unreleased overlays across six lanes; the other 690 payload
+rows, all five input mutants and strict decoder remain unchanged from r6.
+Driver delta is only fresh name/label and derived payload identity; inner driver
+delta is only payload identity. At preparation freeze, no results directory
+existed and r7 was prepared, not_run; its consumed result is recorded below.
+This private, optional, uninstalled/unconnected amendment requires no Protocol,
+pin, public CLI/spec/schema/JSON, Site/Skills/Examples/Learn/FAQ/Glossary propagation.
+SCOOBY sent the bounded one-attempt proposal to MUSE. VLAD's independent read-only
+driver review (turn `01a11c86-6137-7613-922d-354b19c2c68b`) found no P1/P2/P3;
+MUSE independently verified the frozen identities, deltas, permissions and absent
+results. MUSE then separately cleared exactly ONE offline nonroot Linux/arm64
+attempt of this unchanged r7 driver under Bobai's bounded validation delegation.
+The grant includes only its fixed preflights, decoder self-test, six canonical
+agent-admitted verify lanes, raw capture and bounded exact-owned cleanup/recovery.
+Run from r7 with `env -i PATH=/usr/bin:/bin LANG=C LC_ALL=C
+/opt/homebrew/opt/node@24/bin/node /Users/bobai/.codex/artifacts/2026-10-08/principal-input-isolation-validation-r7/run.mjs`.
+Preserve all reviewed image/CLI/socket/daemon/runtime/resource/clock/output pins;
+stop on drift rather than refreshing pins or substituting runtime. Any preflight,
+decoder, build or test failure consumes the attempt. No independent exploratory
+target query, driver/payload edit, limit enlargement, admission bypass or second
+attempt is granted. Next: reconcile frozen raw results and request independent
+RESULT review; `summary.accepted` alone is insufficient. Step7 remains OPEN;
+Step8/V12.2 inactive. This does not clear root/VM/installed/hosted/provider/network,
+commit/push/release or broader authority activation.
+The one r7 attempt is now consumed FAILED. Retained raw results are frozen under
+the packet's `results/`; `results.manifest.sha256` is
+`c329b7984c19a0ac580c8aa774f2f3032fdfe585d0ded4aa91a8feffc36d6950`
+(36 files, 11 command records). Candidate `ota run verify --agent --native`
+failed at `cargo fmt --check`: six unique formatting hunks printed twice (12 raw
+projections), all in the accepted shared
+`principal_observer_process.rs` source. Canonical candidate exit 1 was correctly
+refused by the unchanged decoder (`ValueError: canonical exit`). Decoder synthetic
+self-test passed and `SOURCE_CONSISTENT candidate` records completion of the
+reviewed script's before/after checks. Failed-run scratch manifests were not
+exported, so independent retained scratch lineage is not claimed. Compilation/check,
+Clippy, Rust tests, isolated leaves, causal refusals and all five mutant lanes
+were not_run. Verify retained stdout 16,144 bytes and stderr 607 bytes; all raw
+command stream hashes/counts reconcile without timeout/overflow/signal/failure.
+Attempt `e84693c2-2cde-483f-abe1-32b012c46d7a` owned container
+`b5146a72a664e0c14e0fedf898795b661a651183d07668c53b064c7f38970e2a`:
+creation/configuration/cleanup identity, image and labels reconcile; exact-ID
+removal succeeded and same-daemon inspect returned literal
+`error: no such object: <exact-ID>` with exit 1 and `[]` stdout. Cleanup is proved,
+not candidate acceptance or Step7 closure. No automatic retry is authorized.
+VLAD independently reconciled failed r7 (turn `01a11c94-d17e-7c93-a8fe-8df0ae04bc82`)
+and MUSE independently verified all result/driver/payload rows and exact cleanup.
+r7 is accepted only as reconciled FAILED evidence, not candidate acceptance.
+MUSE separately cleared manual formatting-only repair of the six retained hunks
+in working `principal_observer_process.rs`, after exact accepted-r3 baseline
+equality. Only prescribed reflow/indentation/trailing commas are permitted; all
+literals, conditions, assertions, callback/release/EOF/exit/cleanup/deadline behavior
+and mutant/decoder predicates stay unchanged. Trusted reads/hashes/local metadata
+and diff check only: no formatter/compiler/test/decoder/driver/Docker invocation,
+validation-driver preparation or new attempt is cleared. Next: freeze the source
+successor and obtain independent static review. Do not edit or rerun consumed
+r5/r6/r7 or accepted r3; do not relax fmt, canonical tasks or decoder predicates.
+No Protocol/pin/spec/JSON/Site/Skills/Examples/Learn/FAQ/Glossary propagation is
+required for this private formatting-only repair. The frozen source successor is
+`/Users/bobai/.codex/artifacts/2026-10-08/principal-launch-precedence-source-r4`,
+source manifest `ae4cf2092b8068c2bfbbd1805c243c2d69a6cf77c05d594b01ce5d1862a671db`
+(four rows), review manifest
+`de6ff5a89025c838ba399fc65c76b793cffdd4c39b939c4723e605d8d3096ee0`
+(15 rows). Trusted parent readback reconstructs exactly the six retained raw
+before/after hunks and verifies whole-file equality to the working result. All
+other source and connected files match accepted r3. No formatter or target ran;
+diff checks pass. SCOOBY returns frozen r4 to MUSE for independent static review.
+VLAD's independent r4 review (turn `01a11c9b-c691-70c1-bc58-542a67ea33f6`) found
+no P1/P2 or source-semantic issue; MUSE verified the six exact substitutions and
+all source/review identities, then accepted r4 STATICALLY ONLY. One P3 wording
+correction: r7 did run `rustc --version`; compilation/check, Clippy and tests were
+not reached. Frozen r4/r7 retain their original wording; carry the precise
+correction in the next packet, without rewriting accepted or consumed evidence.
+MUSE separately cleared parent-only preparation of a fresh r8 validation successor
+from frozen r7, staging only accepted r4 process formatting across all six lanes,
+connected handoff wording, fresh names/labels and derived identities/manifests.
+Candidate inputs, five mutants, decoder/self-test bodies, nine causal refusals,
+canonical task paths, cleanup and all runtime/resource/time/output pins stay
+unchanged. No formatter/compiler/version probe/test/decoder/driver/Docker/runtime
+query or invocation is cleared. Do not inherit results or any execution grant.
+The frozen r8 packet is
+`/Users/bobai/.codex/artifacts/2026-10-08/principal-input-isolation-validation-r8`,
+driver manifest `879521cac4dc60efe10133dbbd0ce261668d35272d8e0fe1f2e076d6d3326cd5`
+(26 unique rows), payload manifest
+`a9d4280a7b8d0a2e59419eafdfbf25c54e3e4aa364ca50b2ab0fc914281b7229`
+(726 rows). Trusted parent verifies every row and exactly six r4-formatted process
+overlays; the other 720 payload rows, all input mutants and decoder are r7-identical.
+All 863 permission readback entries match r7; driver changes only names/labels and
+payload hash, inner only payload hash. No results were inherited or produced.
+The new review request carries the version-probe/compilation and retained-scratch
+wording corrections without modifying frozen r4/r7. Preparation only, not_run.
+VLAD's independent r8 DRIVER review (turn `01a11cbd-36da-75a0-87bf-ed3b0b73b16a`)
+found no P1/P2/P3. MUSE independently verified the frozen source/payload/driver
+identities, exact deltas, permissions and absent results, then separately cleared
+exactly ONE unchanged r8 offline nonroot Linux/arm64 attempt under Bobai's bounded
+roadmap delegation. Recheck frozen hashes, permissions and fresh result location
+before invocation; stop on drift. The grant permits only this driver's fixed
+preflights, container operations, decoder self-test, six canonical agent-admitted
+verify lanes, source exports and exact-owned cleanup/literal same-daemon absence.
+All pinned identities, containment and clocks/resources/output limits stay fixed.
+Any preflight/self-test/fmt/build/test/decoder/cleanup failure consumes this grant;
+no extra target query, automatic retry, substitution, edit or admission bypass.
+Entry from r8: `env -i PATH=/usr/bin:/bin LANG=C LC_ALL=C
+/opt/homebrew/opt/node@24/bin/node /Users/bobai/.codex/artifacts/2026-10-08/principal-input-isolation-validation-r8/run.mjs`.
+Next: freeze raw results and reconcile all controls/source/containment/cleanup for
+independent RESULT review; `summary.accepted` alone is insufficient. Step7 OPEN,
+Step8/V12.2 inactive; no root/VM/installed/hosted/provider/network, positive authority
+or wiring, commit/push/release or broader activation is granted.
+The one r8 attempt is consumed FAILED. Frozen raw results at packet `results/`
+have manifest `fe09b6ef9d866e525c0d39bec764da1d84a8c01c87791abf0ace0cb96221825e`
+(36 files, 11 command records). Candidate formatting passed; all-target/all-feature
+compilation/check reached a test-target error: the supervisor `Exchange` literal
+at `src/principal_observer_supervisor.rs:427` cannot construct the type with its
+private cfg(test) `after_launch_read` field missing. Candidate canonical exit101
+was correctly refused by the strict decoder; outer verify exit1, stdout12,264
+bytes/stderr607. Clippy, tests/leaves/causal-refusal cases and five mutants were
+not_run. Decoder synthetic self-test passed; `SOURCE_CONSISTENT candidate` records
+script check completion, not independently retained scratch lineage (not exported).
+All 11 command stream hashes/counts reconcile without timeout/overflow/signal/
+spawn failure. Attempt `7dd999b4-299c-43a7-bffa-895c4fc1b570` owned container
+`51d7db9a0f89ae9b4f3aa84f6184bad34db010f85a2d9c716e8c264ec7a495b7`:
+retained configuration/cleanup exact-ID/image/name/labels and daemon agree;
+exact-ID removal and literal same-daemon absence are supported by raw evidence.
+This is failed validation with cleanup, not Step7 closure. No retry is cleared.
+VLAD independently reviewed failed r8 (turn `01a11cc4-10a0-76a3-893d-6c4c11b0279e`);
+MUSE reconciled all frozen raw/driver/payload records and exact cleanup. No added
+P1/P3; r8 is accepted only as reconciled CONSUMED FAILED evidence. No retained
+failed scratch lineage is claimed. MUSE separately cleared only the two-site
+cfg(test) repair after exact baseline equality: make `after_launch_read` field
+`pub(super)` while retaining its cfg(test), and initialize it to None in the
+existing supervisor test-module fixture. Alias visibility, production initializers,
+hook/call order/defaults/assertions/release/EOF/exit/deadline/cleanup/control/mutant/
+decoder behavior stay unchanged. No new constructor/helper/public surface.
+Next: freeze the prior four shared files plus connected supervisor and exact
+two-site hashes/diffs/constructor inventory for independent STATIC review.
+Trusted parent reads/hashes/local metadata, specified manual edits and diff check
+only: no formatter/compiler/versionprobe/Clippy/test/decoder/driver/Docker/runtime
+query, validation-driver preparation or retry granted. Compilation correctness
+remains unproved. Preserve consumed r8 and accepted r3/r4. First-party public
+surfaces are unaffected by this private cfg(test)-only repair with no production
+layout/behavior change. No root/VM/provider/installed/hosted/network/commit/push/
+release; Step7 OPEN, Step8/V12.2 inactive.
+The frozen repair successor is
+`/Users/bobai/.codex/artifacts/2026-10-08/principal-launch-precedence-source-r5`,
+source manifest `a49fb0a4858961dd9676aa2b4e62d2ac02742eef5534adf8701d74e23f0c0275`
+(five files including connected supervisor), review manifest
+`921175a7a85eba6741b701a01b0749a88931b6844d9334759f6271bf575e2cb1`
+(18 rows). Whole-file reconstruction verifies exactly the two granted substitutions;
+five connected Exchange constructors are retained in the inventory. Other source,
+Cargo/main/private docs/Unreleased remain unchanged. Frozen manifest rows verify
+and both repo diff checks pass. No formatter/compiler/versionprobe/test/driver or
+runtime query was invoked for this source repair. SCOOBY returns r5 to MUSE for
+independent static review. VLAD's r5 review (turn
+`01a11cca-0553-7001-99ae-4602a855dcf5`) found no P1/P2/P3; MUSE verified the
+exact two-site reconstruction, five connected constructors, cfg boundaries and
+source/review identities, then accepted r5 STATICALLY ONLY. Formatting/compilation/
+tests of this repaired source remain unproved. MUSE separately cleared parent-only
+preparation of one fresh r9 validation proposal from frozen consumed r8: overlay
+only accepted r5 process/supervisor in all six lane trees (12 changed rows, 714
+unchanged); do not overwrite the mutant inputs. Keep all decoder/control/task/
+dependency/toolchain/runtime/clock/resource/capture/source-check/cleanup semantics
+unchanged. Only fresh names/labels and derived identities/readbacks/manifests/review
+request may change. No results or attempt clearance is inherited. No formatter/
+compiler/versionprobe/test/decoder/driver/Docker/runtime query or invocation is
+granted. Next: freeze r9 for independent STATIC DRIVER review and separate MUSE
+execution disposition. Stop on drift/extra changes; no automatic retry.
+The fresh frozen proposal is
+`/Users/bobai/.codex/artifacts/2026-10-08/principal-input-isolation-validation-r9`,
+driver manifest `ac544cad8e70cabf35ac645fe62ec3abd4aba08d5f18460909ae203e39de6bf6`
+(26 unique rows), payload manifest
+`3680c652971c28e44a06d3e18e21e352765f58fbe8a4d3ea2e016e5a9a7a72b9`
+(726 rows). Trusted parent verifies every row, exactly 12 accepted process/
+supervisor overlays and 714 unchanged payload rows. All five input mutants,
+decoder and 863 permission readback entries remain r8-identical. Driver delta is
+only fresh names/labels and derived payload hash; inner only derived hash. No
+results exist or were inherited: PREPARED, not_run. SCOOBY sends r9 for independent
+STATIC DRIVER review. VLAD's correlated r9 review (turn
+`01a11cd4-18a2-7b81-a261-4c3fb73397bc`) found no P1/P2/P3; MUSE independently
+verified the identities, 12 overlays/714 unchanged rows, all permission/path
+entries and unchanged control/runtime boundaries. Packet root0700/payload root0755
+still permit trusted-host owner writes; no host-root tamper-resistance is claimed.
+MUSE then separately cleared ONE unchanged r9 offline nonroot Linux/arm64 attempt
+under Bobai's bounded active-roadmap delegation. First recheck all frozen driver/
+payload hashes, permissions and absent results; stop on drift. Only the frozen
+driver's fixed preflights/container operations/decoder self-test/six canonical
+agent-admitted verify lanes/source exports/exact-owned cleanup are permitted.
+All pins/containment/CPU/disk/output/operation/retirement limits stay fixed. Any
+failure consumes this clearance; no exploratory query, automatic retry, fallback,
+edit, limit enlargement, pin/runtime substitution or admission bypass.
+Entry from r9: `env -i PATH=/usr/bin:/bin LANG=C LC_ALL=C
+/opt/homebrew/opt/node@24/bin/node /Users/bobai/.codex/artifacts/2026-10-08/principal-input-isolation-validation-r9/run.mjs`.
+Next: freeze all raw results and return exact controls/source/containment/cleanup
+reconciliation for independent RESULT review. This clears no root/VM/provider/
+installed/hosted/network, positive authority/wiring, commit/push/release or Step7
+closure. Step7 OPEN; Step8/V12.2 inactive.
+The r9 one-attempt clearance is consumed FAILED. Frozen results manifest
+`de7ee01877c5f725821919cdf2383349d491fee771c13b70e1cc06f38c26188b`
+(36 files/11 command records). Candidate formatting, all-target/all-feature check
+and strict Clippy passed; Rust tests reached one failure in
+`principal_observer_process::tests::completed_launch_preserves_bad_terminal_after_real_pending_read`
+at process line1964: actual `Err(Input)`, expected `Err(ChildExit)`. The observer
+test target reports 73 passed/1 failed; other completed target summaries are green.
+Six isolated result records and nine causal-refusal records were emitted, but
+full strict candidate/mutant acceptance is not established. Candidate exit101 was
+correctly refused by the unchanged decoder; no mutant lanes ran. Decoder synthetic
+self-test passed. SOURCE_CONSISTENT is reviewed-script completion only; failed
+scratch lineage was not exported. Verify outerexit1/stdout1,193,558/stderr607;
+all 11 raw stream hashes/counts reconcile without timeout/overflow/signal/spawn
+failure. Attempt `820c9b34-c333-4817-9825-c77e70f81624` exact container
+`a03da4746c1920f9843af69425f8147bdb49fdd57aefdfd8442758561225c3ab`
+has matching retained config/cleanup ownership labels/image/name and same daemon;
+exact-ID removal/literal same-daemon absence reconcile. Cleanup is separately
+supported, not validation acceptance. No retry/repair is automatically authorized.
+VLAD's correlated independent result review (turn
+`01a11cda-ce9c-7860-a6b5-6e27c62852bd`) and MUSE reconcile r9 as FAILED/clearance
+consumed, not validation acceptance. The static P2 is the recurring cfg(test)
+after-launch-read arrangement: it may return Input on a later legitimate pending
+iteration. The raw failure does not retain exact loop/writer-origin tracing; no
+production defect is established by this alone. Hook exit observation uses
+WNOWAIT, not reap; cleanup owns reap. Full driver manifest is
+`ac544cad8e70cabf35ac645fe62ec3abd4aba08d5f18460909ae203e39de6bf6`;
+compact message transcription must not omit its `09`.
+MUSE separately cleared source-only repair after exact five-file r5 baseline
+equality: only cfg(test) hook invocation changes to Option::take/local mut hook;
+add a consumed-hook assertion in the existing completed-launch regression.
+Preserve alias FnMut, hook body/order/first-read guards, ChildExit, actual READY/
+EOF/exit, zero-callback, transport/original-deadline/cleanup assertions, production
+source/constructors/task/decoder/causal-controls/mutants/dependencies/runtime pins.
+Next: freeze source-r6 with exact baseline/diff/manifests and all-three-hook/
+constructor/cfg readbacks for independent STATIC review. Trusted reads/hashes/
+diff/metadata and granted manual edits only; no formatter/compiler/versionprobe/
+import/test/Docker/runtime query, driver preparation/invocation or retry cleared.
+Accepted source and consumed r9 stay untouched. No positive authority/wiring,
+root/installed/hosted/provider/network/commit/push/release or Step7 closure;
+Step7 OPEN, Step8/V12.2 inactive. Public first-party surfaces remain unaffected
+by this private cfg(test)-only seam repair.
+The frozen source successor is
+`/Users/bobai/.codex/artifacts/2026-10-08/principal-launch-precedence-source-r6`,
+source manifest `8af18664cfd7594f8f6123cbd5ab8a2aaad909d2a809f1a0f98be106eb4b2819`
+(five rows), review manifest
+`cf38622fa93afa8e97ec5722697173e450f4613645ba13853e13fbecea4c08f9`
+(16 rows). Exact baseline and whole-file reconstruction verify only the two
+granted substitutions. All three hook bodies/first-read guards and five constructor
+defaults match r5; adjacent source/Cargo/main/private docs/Unreleased unchanged.
+Frozen rows readback-verify and diff checks pass; no formatter/compiler/versionprobe/
+test/runtime target ran for source repair. SCOOBY returns r6 for independent
+STATIC source review. VLAD's independent review (turn
+`01a11ce2-83b4-74a3-9875-ffdd4aba3232`) found no P1/P2/P3; MUSE independently
+verified the exact two substitutions, all hook/constructor/cfg boundaries and
+source/review identities, then accepted r6 STATICALLY ONLY. No dynamic timing or
+writer-origin trace is established. MUSE separately cleared parent-only preparation
+of fresh validation-r10 from consumed frozen r9, overlaying only accepted r6
+process in six lane trees (six changed rows/720 unchanged). Supervisor and all
+candidate/mutant input/control/decoder/task/dependency/toolchain/runtime/capture/
+clock/resource/cleanup semantics stay unchanged. Fresh names/labels and derived
+identities/manifests/readbacks/review request only; no results/attempt inheritance.
+Retain trusted-host owner-writable root and readonly payload/mount boundary;
+no host-root tamper-resistance claim. Trusted parent reads/copies/hashes/diffs/
+metadata/freeze only; no formatter/compiler/versionprobe/import/test/decoder/
+selftest/driver/Docker/runtime query or invocation. Stop on drift/extra delta;
+no pin refresh, substitution, limit enlargement or retry. Next: freeze r10 for
+non-author independent STATIC DRIVER review and separate execution disposition.
+The fresh frozen proposal is
+`/Users/bobai/.codex/artifacts/2026-10-08/principal-input-isolation-validation-r10`,
+driver manifest `ba2d2f466ff002f3860ec4f3eb0dd8b05122a29da01b6b9cc61adb3decd68ae7`
+(26 unique rows), payload manifest
+`87db77b9f90166fcaba5e1903758663e881fae9c60e61bce450645a9dfded357`
+(726 rows). Trusted parent readback verifies all rows, exactly six accepted process
+overlays/720 unchanged rows, candidate five-file equality and untouched mutant
+inputs. Decoder and all 863 permission entries match r9; driver differs only by
+names/labels and payload identity, inner only by identity. No results inherited
+or produced: prepared, not_run. Root owner-write boundary is explicit in the new
+review request. SCOOBY sends r10 for non-author independent STATIC DRIVER review;
+no target invocation, retry or execution clearance follows from preparation.
+VLAD's independent r10 DRIVER review (turn
+`01a11ce7-bf5f-7443-b793-924de186982c`) found no P1/P2/P3. MUSE independently
+verified all hashes/paths/permissions, six accepted overlays/720 unchanged rows,
+control/task/capture/source-export/cleanup equality and pinned local runtime/socket
+metadata. Static readiness is not runtime success or host-root tamper resistance.
+MUSE then separately cleared ONE unchanged r10 nonroot offline Linux/arm64 attempt
+under Bobai's bounded active-roadmap/offline-validation delegation. Recheck exact
+packet hashes/permissions, pinned runtime-file/socket metadata and absent results
+immediately before invocation; stop on drift. Only the frozen driver's fixed
+preflights/container operations/decoder self-test/six canonical agent-admitted
+lanes/source exports/raw capture/exact-owned cleanup are cleared. All original
+identity/containment/resource/clock/output limits remain fixed; any failure consumes
+the clearance, with no extra query, retry, fallback, edit, pin/runtime refresh,
+substitution, limit enlargement or task/admission bypass.
+Entry from r10: `env -i PATH=/usr/bin:/bin LANG=C LC_ALL=C
+/opt/homebrew/opt/node@24/bin/node /Users/bobai/.codex/artifacts/2026-10-08/principal-input-isolation-validation-r10/run.mjs`.
+Complete raw results/source lineage and cleanup were frozen for independent
+RESULT review; `summary.accepted` alone cannot close the gate. Step7 OPEN;
+Step8/V12.2 inactive. No positive authority/wiring, root/VM/installed/hosted/provider/
+production/network, commit/push/release or phase activation is granted.
+The one r10 attempt completed successfully. MUSE accepted its bounded contained
+Linux/arm64 source/synthetic evidence after independent raw reconciliation and
+VLAD's non-author RESULT review (turn `01a11cf5-ee81-7ad1-8381-a3c385e814a9`),
+with no P1/P2 result blockers. This acceptance is not Step 7 closure.
+Frozen raw results manifest
+`502310bd577b6513dc4f89161429f82fd76d54ffa12838a084c03ef99e3b6568`
+(54 files/17 command records/34 streams). Candidate canonical exit0, six passed
+isolated leaves, zero parent failures and 427 parent-pass records (not a claim
+of 427 distinct tests). Each roles/UID/GID/clock/retirement mutant exits101 at
+its sole intended assertion: five passed isolated leaves/one fixture assertion,
+325 parent-pass records/one intended parent failure. Every lane emits six isolated
+records and nine causal refusals; unchanged strict decoder/self-test accepted.
+Candidate formatting/all-target-all-feature check/strict Clippy/test suite passed.
+Verify exit0/stdout7,031,704 bytes/stderr114; all raw command and nested record
+capture hashes/counts reconcile without timeout/overflow/signal/spawn failure.
+Each retained BEFORE source manifest contains 77 files, all matching its exact
+frozen lane payload including mutants. AFTER hashes/diffs were compared by the
+reviewed script and SOURCE_CONSISTENT markers retained; AFTER manifests/diffs are
+not independently exported. Twelve ignored `.idea/` metadata files per lane and
+Git internals are outside these source exports; no repo-global mutation claim.
+Attempt `1b62bd7e-cac8-48ed-ac30-03442e33f96e`, exact owned container
+`607bd3441ebef6466ce50f43c24893d9c02899c46654c94c9d29e41ce0123f17`:
+retained identity/image/name/labels, no-network nonroot containment/limits/readonly
+mounts and reviewed daemon reconcile. Exact-ID removal0 and same-daemon literal
+absence1/[] are supported by raw evidence, separately from candidate acceptance.
+Next: propose the next canonical Step 7 source slice, with named problem,
+dependencies, narrow scope, acceptance criteria, portability and independent
+review plan, for MUSE's separate disposition. No successor implementation,
+preparation, driver, attempt, validation, commit or release is cleared by this
+result; no installed/root/hosted/provider/authority/wiring/production proof or
+Step7 closure. Step7 OPEN; Step8/V12.2 inactive. Consumed failed r5-r9 remain intact.
+Contained candidate compilation, strict Clippy and tests succeeded; full positive
+admission/wiring, root/installed/hosted/provider/production behavior and the other
+named limits remain not_proved. No further tests/build/driver/image/root inspection,
+release/exec connection or installed/hosted/provider activation is authorized by
+this result acceptance.
+MUSE accepted the record-only r10 correction and separately cleared one DESIGN-ONLY
+installed-closure/manager-transfer prerequisite slice. The existing Launcher
+`docs/private-principal-adapter.md` now specifies the input/dependency frontier,
+independent expectation producers, C/S/W/I ownership, same-object transfer,
+refusal/lifetime/retirement and unchanged original clock/resource requirements.
+Frozen review packet
+`/Users/bobai/.codex/artifacts/2026-10-08/principal-installed-input-transfer-design-r1`,
+manifest `08cf572032c334ece9fe4cb1ba8051c276caec59aeab1ac1cbd2dba4bb5eb9ad`
+(eight files), design `e5fbc208fe4f89a3dbbafe952e9cbf2825cbeb8bca4f1de541fb578017a35576`.
+Eight exact read-only source anchors and 15 author-captured scoped pre/post source/
+Cargo/lock/changelog/observer-doc hash pairs agree; MUSE independently checked
+current/AFTER agreement, not contemporaneous BEFORE state or repo-global non-change. The narrow
+document diff's before side is derived by removing the new section, not a separately
+captured pre-edit document. MUSE and non-author VLAD (turn
+`01a11d08-f0f6-75c1-8692-29031e5fab8a`) accepted this as a prerequisite REQUIREMENTS
+CONTRACT only, with no P1/P2/P3 findings, not executable/acquisition design or
+implementation readiness. The frozen packet retains historical pending wording.
+Exact installed transitive closure/private expectation binding, concrete manager
+transfer/native relay acquisition and real archive/tree/closure/Listener budget
+fit remain explicit refusal/open gates, not self-certified admission. No source,
+fixture, Cargo/lock/pin/Protocol/CHANGELOG or public-surface changes; no build/test/
+import, driver/payload preparation, container/root/VM/installed/provider/live action,
+commit/push/release or phase activation. Normal adapter entries remain inert;
+observer observation/IO paths remain uninstalled/unconnected and privileged
+invocation separately gated. Step7 OPEN; Step8/V12.2 inactive.
+Separate MUSE disposition precedes any successor work.
+MUSE separately cleared one expectation-source DESIGN-ONLY increment before any
+manager-route design or carrier wiring. The existing private document now compares
+build-owned finite profile versus independently anchored protected sidecar, recommending
+the former under existing administratively selected installed Launcher authority.
+Independent artifact selection, private/native/runtime roles, installation/phase/
+numeric expectation binding and mutable effective readback are specified as requirements;
+actual artifact values/transitive closure, acquisition and real budget fit remain
+refusal/open. Frozen candidate
+`/Users/bobai/.codex/artifacts/2026-10-08/principal-expectation-source-design-r1`
+has review manifest `49779cb93c1b52cc162ec4b419a9a66ed79887baef617bf910da8fae0bd7cfb2`
+(nine rows) and design `106d991b9e645b31984fc722022d49543051da7f252e315812cc29d068780238`.
+It retains the actual author-captured pre-edit private document, exact two-hunk diff,
+six source-anchor files and 16 author-captured pre/post scoped hashes agreeing.
+Independent VLAD review `01a11d41-0353-7db1-a431-c12bc158b3e9` and MUSE
+disposition accept this binding recommendation only. Exact artifact selection,
+acyclic complete loaded closure and C/S/W mapping, independent mutable readback
+and same-object lifetime, effective namespace/MAC, manager transfer/retirement
+and original-budget fit remain open. The frozen packet's pending-review wording
+is historical; acceptance is not acquisition implementation or readiness.
+No source/call-site/fixture/Cargo/lock/pin/Protocol/public changes or execution;
+design clearance is not implementation or installed authority. Step7 OPEN;
+Step8/V12.2 inactive.
+The carrier design and bounded R7 synthetic
+checkpoint alone did not authorize implementation or validation. Installed/manager/
+native-relay acquisition remains separately gated.
+Keep entry inert and do not remap/release/exec, invoke actual
+kernels or connect admission. External controller/policy/readback, release gating,
+installed/dynamic closure and production composition binding remain open.
+The native contained composition carrier and independently acquired/
+restricted installed input closure still require their own gates.
+Those remain separate source gates; no caller NSS
+fallback, root invocation or installed admission follows from this checkpoint.
+Fresh exact-head macOS canonical CI remains required before merge/release;
+observed normal-binary refusal, later paired commit/pin and clean-build gates
+remain open. A new adapter target requires its own portability assessment; no
+Stage B r4 macOS disposition transfers. Any production root invocation requires
+independently reviewed owned outer resource,
+descendant and cleanup containment first. Launcher source, optional Cargo target,
+private documentation, Unreleased changelog and this handoff are affected.
+Core consumers/pins, Protocol, dependencies/lock, public commands/spec/schema/JSON,
+Site, Skills, Examples, Learn, FAQ and Glossary are unaffected: this is not an
+installed or public feature. Paired reconciliation remains required before a
+later commit/PR. No root invocation, VM, SSH mutation, host installation, signing,
+registration/composition activation, provider action, commit or push was
+authorized or performed. V12.1 Step 7 remains active/open; hosted Linux/X64 proof
+and provider/registration gates remain open, Step 8 and V12.2 inactive. Older
+historical evidence below retains only its original scope.
+
 - branch: `1.6.29-implementation`
 - released baseline: `v1.6.28`
 - development package identity: `v1.6.28`; this branch contains unreleased post-release source
   changes and is not a new release or support claim.
-- current proof gate (2026-10-05): independently review this A8 build/install and cleanup
-  reconciliation, then obtain separate authorization for its publication. The bounded temporary
+- current proof gate (2026-10-06): obtain six successful exact-head source workflows for
+  synchronized Core `1b868e1036493e0b7042dc88cbd375ce930316a6`; no previous-head gate transfers.
+  A8 build/install and cleanup reconciliation was published at Core `c6e29c72` and remains
+  historical bounded evidence, not successor admission. The bounded temporary
   build/staging and exact owned retirement bars are accepted; they are not installed-authority
   or provider proof. The resulting clean published source needs its own re-pin/review and six
   successful exact-head workflows before successor admission. No old-head CI or clean-worktree
