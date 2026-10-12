@@ -482,3 +482,15 @@
   active; a split partner workflow alone does not prove the platform still requires that split.
 - Rule: Own Ota's product-discovery bookkeeping. Separate current confirmed defects, historical
   findings, and widening questions, each with an exact return trigger and `not_proved` boundary.
+
+## 2026-10-12
+
+- Pattern: Multiple independently reviewed source and design increments accumulated in one dirty
+  worktree, making later review, rollback, and exact-delta commit reconstruction unnecessarily
+  difficult.
+- Correction: Once a bounded slice reaches its accepted source, design, validation, or factual
+  closure boundary, commit that exact slice before beginning the next one. Keep validation and
+  runtime limits explicit in the commit message and handoff; a commit does not promote proof.
+- Rule: Do not carry an accepted slice forward as uncommitted work. If older overlapping changes
+  predate this discipline, do not manufacture intermediate history from mixed hunks; first obtain
+  an exact integrated checkpoint disposition, then create one clearly labelled catch-up commit.
