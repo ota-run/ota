@@ -33,6 +33,1568 @@ durable agent workflow belongs in the canonical Ota skill.
 
 ## Active Work
 
+### Lock-Strict Cargo Hydration: Source Checkpoint Accepted / Validation HOLD
+
+Bobai requested work on 2026-10-10 after the independent Cargo follow-on
+recommendation. ONE native source-authoring increment is now selected inside
+V12.1/1.6.29 after MUSE's explicit sequencing exception; owner
+SCOOBY. See `docs/planning/execution-contract-follow-ons/plan.md`, section A,
+and the matching V12.1 planning exception. MUSE accepted the planning exception;
+qualified VLAD planning review `01a1276a-e166-7b23-81f9-3d0b7602f0aa` found no
+P1/P2/P3. Qualified concrete review and MUSE accepted the design/requirements
+amendment and source-only activation. MUSE now accepts the repaired native
+source checkpoint; runtime validation remains HOLD.
+The uncommitted source candidate stages default-false compatibility, bounded
+native Cargo workspace-root metadata selection only at execution, shared plan/
+admission, pre/post samples and retained command status, mandatory acquisition/
+concurrent-mutation not_proved, and explicit locked-backend refusal outside
+direct native Linux/macOS (also excluding Compose/orchestrator wrappers).
+The unconditional concurrent-substitution bar was explicitly amended by MUSE,
+not claimed satisfied. Native/container parity and immutable
+pressure remain OPEN; a native increment alone cannot ship or close Section A.
+First batch includes identity/evidence semantics, not an arguments-only change.
+Prospective pressure target is isolated Core `8926ddb1fc0e4a225059c48375fc6e1185081b1e`;
+offline cache/container digest and exact validation route are NOT_VERIFIED.
+Qualified VLAD concrete design review `01a1276f-d64e-7fc2-8d94-5bf9eca161a6`
+found no P1/P2/P3; MUSE independently reconciled and explicitly activated the
+one end-to-end native source increment, not an argv-only/schema-only result.
+No current-step pressure readiness is inferred. The offline driver must prove
+installed toolchain/cache suffice and enforce network denial; no fictitious
+Rustup offline environment setting is accepted. MUSE disclosed two public
+documentation reads outside the requested local-only review, not runtime or
+validation admission evidence; subsequent review is local-source-qualified.
+Pre/post hashes do not prove absence of ABA substitution during Cargo.
+Source changes include schema/shared argv, generator source, native observations,
+early selected-graph/up refusal, nested preparation evidence, Doctor/preview,
+receipts and sampled replay inputs, manual regressions, Core spec/JSON reference/
+command reference and Unreleased. Fake-Cargo source cases cover unchanged,
+post-drift, nonzero, unavailable-post, missing, malformed, pre-drift and spawn
+failure; NONE executed. Actual Cargo root semantics, metadata waitid/cleanup,
+toolchain-shim auto-install posture and real immutable pressure remain NOT_RUN.
+Qualified first candidate review found a selected-mode admission P1 and partial
+receipt/typed-error retention P2s; MUSE independently found incorrect nested
+refusal attribution. The source repair now uses the resolved execution body and
+one path-aware traversal, retains the exact refused source, and carries original
+typed errors plus completed/in-flight samples through cleanup and existing run/up
+error routing. One shared attachment binds witnessed records and evaluated inputs;
+the narrow private up error wrapper does not create new continuation or authority.
+Connected source review also found that matching Cargo samples could incorrectly
+acquit acquisition. Sampled Cargo kinds now remain narrowing; dependency-resolution
+uncertainty remains explicit even with mixed non-Cargo inputs. Workspace up forwards
+the canonical child repo receipt only when Cargo evidence exists, without flattening
+repo ownership into its outer aggregate. Manual regressions cover selected/unselected
+modes, later nested attribution, partial typed failures/no later prepare or failure
+hook, run/up evidence parity, workspace scope and replay limits; ALL NOT_RUN.
+Uncovered material behavior: historical workspace child execution archival is
+explicitly bounded not_proved by informational machine-readable finding
+OTA_WORKSPACE_CHILD_EXECUTION_ARCHIVE_NOT_PROVED. The current up output retains
+inline repo receipts; a later workspace receipt --archive is only a current-status
+snapshot. Future durable child retention belongs to workspace/receipt ownership;
+no new persistence flow is activated. Qualified repaired-source review
+`01a127b3-cad8-74c1-8a3b-0da7241d6112` confirmed the original three blockers repaired
+at source, then found repeated up invocation identity collisions (P2) and stale
+Section A activation wording (P3). MUSE cleared only their source repair. The new
+candidate derives hierarchical Cargo invocation paths from selected prerequisite
+indices and fixed phases before child receipt construction/archival, preserves
+original typed errors, and refuses ambiguous duplicate Cargo replay pairing.
+Repeated identical/changed occurrence and partial-failure regressions are authored,
+NOT_RUN; the planning introduction now reflects source-only activation. Fresh
+qualified exact-source review `01a127bf-1ea4-7413-8440-d1f07f9d4471` closed those
+two findings at source-review level, with all 17 hashes stable and regressions
+NOT_RUN. MUSE then found a connected P2: skipped Cargo comparison artifacts could
+let surviving non-Cargo inputs overstate final replay assurance. The source
+repair now checks required pairing in the full replay builder, caps hermeticity
+from either side's Cargo observations/inputs and preserves dependency-resolution
+uncertainty. Full mixed-evidence verdict regressions are authored, NOT_RUN;
+qualified VLAD final recheck `01a127c4-b3c7-7af0-8ef9-fb9eaebfdc7f`, final
+`msg_0074fa586a19efbe016acab18315488191bff6e425987ee1a1`, found no remaining
+P1/P2/P3 and all 17 frozen hashes stable. MUSE independently reconciled the
+exact source and accepted this checkpoint in turn
+`01a127c4-b457-7431-a5db-7e1bc9a6b11d`. This closes the source findings only:
+all authored regressions, compilation and execution validation remain NOT_RUN.
+Reviewed HEAD remains `8926ddb1fc0e4a225059c48375fc6e1185081b1e`; changes
+remain uncommitted. The reviewed checkpoint identities below precede this
+record-only handoff update; its current-state hash is not the resulting live hash.
+
+| Reviewed File | SHA-256 |
+| --- | --- |
+| src/schema.rs | 185ec0675e88e281e14c61731d52bfe124c3fa60896f04ce085ebff244d8a11b |
+| src/validator.rs | 2f1987b44dee0cfe4a9593813c22caa8e1bd0905d58e00e07f03fc2e0c079b23 |
+| src/cli/commands/init_starter.rs | 83160484dccbd2e8ab4ebb75240c64a0029d5e1d4691ba5c4d3df88657d59a90 |
+| src/hydration_provenance.rs | 7e289b52447fe3891fa880272a4378b2b55052b1e2cf226bda2e30944a7892a0 |
+| src/runner.rs | 61c80830969d7e87d3700f23a72efb1c9d478b07bd86c99ffd05fa21787a9791 |
+| src/output.rs | cee35277ef05d8b1ce0c2c15f758861a1431f2b1ed973628ea3a58fe01831261 |
+| src/doctor.rs | d7509e856382c5a7af2162975c363a28ab76721f7812e2bb15cda802c344800c |
+| src/cli/commands.rs | f6e4c36de11a261b3b070116f4847fd72dc63aae4f0d48eab9138f09f97c3ca8 |
+| src/cli/commands/workspace_output.rs | 15b63db5bdb36c9404d4ce4097867cfbaa0454a915a9628466bf0ad9b8e6bff9 |
+| src/published_contract_schemas.rs | eeb3ad4425141a47708c7a9f107fabeec0963f4d46ae8036c4de09c44dd52ac3 |
+| docs/ai/current-state.md | d875bc65f6fb043b8ff27245e2bd4208e19c416dd7e6a08b5c7173e965388f95 |
+| docs/planning/execution-contract-follow-ons/plan.md | d79c6d54360609c48d68f59329ad2471e0be1569a50abd2e1f2608b4250cc53d |
+| docs/planning/v12.1/plan.md | ebd1da1c9330289622e57ac52e40c2f27e728a154720e692408033c9b2da7051 |
+| docs/spec/command-reference.md | 6a529442acd17c92a3ef4ef69b7137ffbed46f106be124cc882d0f33d3f50285 |
+| docs/spec/contract-reference.md | 186f22d40b4af520674a4e7b1adeb6ed05307822653f38d4cb46fb408afa25c9 |
+| docs/spec/json-output-reference.md | 960fe913578edef31d9468e80f0abadc1531e5d5c1b686d0c8c9d66b3b7a3c68 |
+| CHANGELOG.md | 7b34c86f5a53f0e2bbe51353ec58d1cc6f99e52aff24555d8e153a6113220d25 |
+
+Trusted textual diff inspection only; no tests, compiler, formatter/generator,
+target evaluation, container, network, SDK/provider operations, VM, spending,
+commit or push. Generated JSON schema files are intentionally not regenerated
+under this authoring gate. Public Site/reference/Learn/FAQ/Glossary, Skills and
+Examples propagation remains OPEN/deferred until the feature is qualified;
+no published claims. Protocol/Launcher/pins are unaffected. Unrelated ROADMAP
+and agent-execution-governance plan edits are preserved outside this slice.
+The prospective offline check route now has a named prerequisite gap:
+satisfied-toolchain provisioning avoidance. Trusted source inspection and VLAD
+review `01a127d2-e1cf-70c0-8904-9ac75f75cfe8` confirm that selected Rust
+`fulfillment: run` invokes the provider install command without first checking
+installed satisfaction. This conflicts with the proposed no-install gate; it
+does not demonstrate that Rustup actually reinstalls or reaches the network.
+The retained older driver source has the same conflict, so repairing candidate
+source alone cannot qualify the executing driver. No new control-source packet
+has been created or invoked; the offline validation route remains HOLD.
+MUSE cleared ONE native Rust readiness SOURCE implementation increment in
+`01a127d7-d01c-70e2-a505-703af25a56e4`, after requiring the bounded-probe and
+ordinary-run outcome/cache amendments now incorporated in Section A of
+`docs/planning/execution-contract-follow-ons/plan.md`. The staged runner checks
+direct native Linux/macOS canonical exact-version Rustup selection, effective
+environment/executable bindings, rustc release/native host, Cargo version and
+required rustfmt/targets before skipping provisioning. Probe source uses exact
+argv, regular bounded sinks, success-before-parse, a 5s per-probe/20s aggregate
+budget with cleanup reserve, and terminal cancellation/child-retirement errors.
+Only positive readiness skips; unknown/ineligible/mismatched ordinary `run`
+preserves authorized provisioning. Skips populate neither provisioning cache
+nor fulfillment actions. Profiles/channels/other components/compiler wrappers
+remain conservatively ineligible. Eleven regression sources cover readiness,
+fallback, same-state invalidation, selection/environment, aggregate budgets,
+timeouts/output/spawn/nonzero/malformed, descendants and isolated lost-child
+ownership; ALL NOT_RUN. Core toolchain/command docs and Unreleased are staged.
+VLAD review `01a127f0-60ce-7b01-8e5d-0a33ffa50d35` found implicit Rustup exclusion
+(P1), pre-final launch-context mismatch (P2) and ambient compiler fixture inheritance
+(P3). Source repairs use canonical default/explicit provider resolution, isolate
+fixture compiler overrides and conservatively gate preparation readiness to
+structured Rust commands in the repo directory without late env/source, input/
+target or native-activation resolution. Nested/unsupported contexts retain
+ordinary provisioning; no early secret/environment activation is introduced.
+Core's declared PATH overlay remains ineligible, so this repair does not by itself
+qualify its offline check. Qualified VLAD R2 recheck
+`01a127f6-bd87-7e30-a7f3-562db8c5be33`, final
+`msg_0074fa586a19efbe016acabe5b6f8081919f0fe601d59fcc34`, closed all three
+findings with no new P1/P2/P3. MUSE independently reconciled and accepted R2
+as a bounded SOURCE checkpoint in `01a127f6-bdf6-7c00-bd6e-86cf4f946324`.
+The six reviewed SHA-256 identities precede this record update (not live hashes):
+runner `059276d7f3bf4d8d97c4157597ff129576d6cb3e2910d4c889fed86109459a37`;
+plan `57dba80a7403cd920073da1d02ffeb69a7dc71cc1625e3b78a851df1489f18de`;
+current-state `02dbf4eebfe627f5f128221a4caa4a6935fb1eca7dbc7998dfc0bd61fbdc006f`;
+command reference `08820dcd3c76d775f53f6ebdc61d771a2fa81284fff4f5e7356cb084ebf1d4b5`;
+contract reference `7788130f8f1958d15cf3b35916c6bebe58fd15d05fd99b23837159bd04b5fb88`;
+Unreleased `c4fd520bcfa1ea16ad091d59d585d57a322f7221aa029b944e7614d5473d3dc6`.
+File metadata/env sampling is ordinary observation, not acquisition or concurrent
+substitution proof; actual Rustup no-auto-install probe behavior is NOT_VERIFIED.
+The 17 accepted Cargo checkpoint identities above remain historical, not hashes
+of the expanded live candidate. NEXT CLEARED by MUSE in
+`01a127fe-0a14-7c83-a1b2-b4af2b2e21ad`: ONE source implementation for Core's
+literal PATH composition, retained acquired-policy handoff and actual final
+same-selection check. The normal CLI preflight already retains loaded/absent/error
+policy; carry that result through private run request/state, with unavailable
+legacy callers kept ineligible. No added policy/source acquisition or global
+snapshot; final resolver order/freshness remains unchanged. Post-final invalidation
+of a provision-skipping witness must fail before task dispatch with original
+attribution/partial evidence, never late provisioning/retry/failure hooks.
+Ordinary fallback remains at preparation. Independent VLAD review then MUSE
+acceptance is required for each new source increment. MUSE accepted the Core PATH
+R2 SOURCE checkpoint after qualified VLAD recheck. Streaming and captured CLI paths project their actual
+preflight result into invocation-owned readiness state without a policy load.
+Literal PATH uses canonical composition/precedence; later normal resolution
+remains fresh. VLAD `01a1281a-2a88-7d62-b981-9b4b7dac446a` found P1 optional
+unselected PATH composition mismatch; R2 now reuses the pure selected-variable
+helper in preparation and final resolution, leaving unselected PATH inherited.
+Full positive coverage separates selected/unselected; drift/precedence/shadow
+negative fixtures explicitly select PATH. Qualified VLAD recheck
+`01a1281c-f107-7f03-8b5e-28ecd8146b9d` found no P1/P2/P3; MUSE independently
+accepted R2 in `01a1281d-854c-7a12-8ecf-58b13e64cd67`. Reviewed R2 hashes are
+historical in Section A's packet table; all runtime/driver gates remain HOLD.
+Skipped witnesses bind cwd/env/launch and installed objects, then
+compare actual final selection and recheck active Rustup within the original
+probe deadline/output budget. Invalidated selection is terminal before body,
+without late provisioning/retry/failure hooks; existing preceding Cargo hydration
+context is retained, not a new generic step-evidence claim. Six additional source
+regressions and a CLI preflight projection assertion are authored; all seventeen
+Rust readiness regressions, compilation and runtime remain NOT_RUN.
+MUSE selected a separate deny-only public policy direction in
+`01a12806-da1b-7b21-bba5-39393db3bae9`:
+`policies.toolchain_fulfillment: {rust: deny}`. ONE source-design refinement is
+recorded in Section A's Rust Fulfillment Restriction subsection; its later
+source activation is recorded below. Canonical rust ownership covers all accepted fulfillment
+sources; absent/empty preserves ordinary behavior/old semantic identities.
+Captured invocation policy narrows before cache/provider dispatch, while exact
+driver/local-pack/launch qualification remains an external validation gate.
+First proposed support is single-repository run plus prerequisites; unsupported
+up/workspace/multi-member and proof lifecycle/runtime routes must refuse upfront,
+not after acquisition, earlier-member effects, activation/authority work,
+artifacts, proof prerequisites/assertions or observers/negative controls.
+A child-only pack cannot prove parent acquisition
+protection. Refusal/output/exit, old-driver and propagation requirements are
+design only. Qualified VLAD R2 review `01a1280f-d34f-7163-b9c6-5fb584b3ba0f`
+found no P1/P2/P3 after correcting proof-parent coverage; MUSE independently
+accepted this design and sequenced the existing Core PATH implementation first.
+Reviewed design hashes remain historical: plan
+`eac68d8d510126e2a1001a767b89841c196cf2f626d9c22ff1ba385919149674`, handoff
+`57efa63d66eb89d4c291942b1365e35c396ad243cf1a3162fcd403ba574bebae`.
+NEXT ACTIVE: MUSE separately activated ONE deny-only SOURCE implementation in
+`01a1281d-854c-7a12-8ecf-58b13e64cd67`, after PATH acceptance. Extend the existing
+acquired projection with rule plus canonical identity/source; no second loader.
+Scope includes before-cache/provider denial, typed attempted=false refusal and
+partial evidence, upfront unsupported parent guards, connected Core outputs/docs
+and NOT_RUN regressions. RUBY authored the policy_pack-only typed Rust/Deny map,
+accessor and five parsing/identity test sources; SCOOBY extended the existing
+retained context with owned restrictions and rederived identity/source/path,
+plus two projection test sources. All are NOT_RUN; complete parent admission
+and public propagation remain incomplete. SCOOBY raised the concrete
+Mise-before-acquisition and replay-before-policy ordering conflict to MUSE;
+MUSE cleared relocation of the existing producer ahead of effects in
+`01a12825-4720-7f93-be5b-50d6d05c85e9`, explicitly accepting earlier policy-load
+error timing and canonical parent workspace acquisition. The connected protected
+secret-delivery exception was explicitly cleared: preserve the existing pure
+Step 6 terminal refusal before policy acquisition/classification, with no
+intervening activation/replay/probes. Its unacquired context stays unavailable,
+never acquired-absent or a Rust policy denial. Task replay preflight now acquires
+before observation and preserves load errors without observing inputs; broader
+entrypoint integration remains incomplete. MUSE's carrier correction in
+`01a1282e-8cfc-74a1-9871-1c29ce5c22d7` recognizes that the public protected
+refusal projection can continue through the existing V4 bridge. Preserve
+canonical invalid/unsupported-carrier refusal before policy loading; valid
+non-activating carrier validation precedes one invocation-policy acquisition.
+A captured Rust deny refuses that restricted carrier route before authority
+activation, with no readiness probe; no-rule continues the existing bridge.
+This restriction does not promote protected effect-policy/provider provenance.
+VLAD design review `01a12884-f776-70d0-81f5-9f4d85da3be8` found no P1/P2/P3;
+MUSE accepted bounded SOURCE implementation of the ordering. Canonical local
+carrier-store selection/validation may precede the gate; full grant evaluation
+must not, because its proof-parent capability path mutates/adopts the descriptor
+and writes a challenge. Final authority/freshness validation remains later.
+Runner before-cache denial, partial-receipt attachment, static
+Doctor declaration, policy-review schema and additional regression sources
+are now authored, but not accepted or executed. Normal Run now retains one
+acquired policy before Mise/replay, with non-activating carrier discovery before
+protected policy acquisition and typed restricted-carrier/proof-parent refusal
+before the full grant evaluator. The protected admission's effect policy remains
+unacquired; invocation restriction acquisition does not promote its provenance.
+Lifecycle/runtime proof parents acquire through the shared producer, refuse a
+captured restriction before replay/artifacts/observers and reuse actual absence
+or presence; runtime Mise follows the guard. Refusal receipts carry prior
+prerequisite/backend/target evidence, typed NOT_RUN fields and denied-task
+attribution; public nested evidence does not duplicate the step graph.
+Qualified concrete VLAD review `01a128af-848f-7b40-b28a-5e2ebbe80cb5` held
+the checkpoint for two P2s: early unsupported-route refusal dropped structured
+policy attribution, and qualifying automatic V4 had no integrated deny/load-error
+Run regression. MUSE cleared their source repair. The candidate now adds distinct route-refusal evidence to requested
+Run receipts and proof admission JSON, using canonical receipt construction with
+execution input observation disabled. This does not acquire protected provenance,
+assert readiness/fulfillment or create typed-effect archival eligibility.
+New actual-path automatic V4 deny/load-error regression sources use a retained
+socket descriptor, unchanged PATH/store bytes, zero capability-acquisition and
+authority-activation counters, no challenge bytes and absent task/state artifacts.
+Serialization/schema regressions retain root/selection/policy attribution and
+reject positive execution or authority fields. All are NOT_RUN. Qualified VLAD
+R2 `01a128ba-ce0d-7333-bda9-00ca408e6886`, final
+`msg_0074fa586a19efbe016acaf0b5226081919dc307913bd14a7c`, found no remaining
+P1/P2/P3 in this narrow checkpoint and closed both P2s at source-review level.
+MUSE independently reconciled all 13 frozen hashes and HEAD and accepted this
+bounded Run/proof admission/refusal source checkpoint in
+`01a128ba-d1c4-7812-a06b-443f046e85b5`. Historical acceptance identities are
+retained in the follow-on plan; they precede this handoff update.
+ACCEPTED CHECKPOINT: ONE Up admission-handoff/selected-local-parent-guard SOURCE
+increment, SCOOBY sole writer. Source now retains successful command admission
+through canonical Up, replay preflight and same-context instance prerequisites.
+All selected local root/member target/admission pairs precede Mise and the first
+target effect; distinct child policy roots remain distinct. MUSE separately
+cleared directly reached in-process runner seams in
+`01a128c7-c39e-7d32-ba20-f11decb8a6c5`: captured/streamed prepare/setup/run/attach,
+dependencies/hooks retain the matching policy projection and separate policy_env.
+This is admission/replay/readiness/restriction retention only: canonical final
+task-environment, selected backend-fulfillment and shared-backend environment
+loaders remain fresh at their established phases. No global full-pack no-reload
+or zero-earlier-effects promise is made for their later failures.
+Restricted dry-run/canary/archive/detach Up refuses before effects, with
+non-observing structured evidence and no typed-effect archive eligibility.
+Refusal previews are declaration only. Canaries/eligible typed archives reuse the
+acquired pack. Ordinary detached children remain separate invocations with fresh
+policy acquisition; parent-snapshot continuity across that process boundary is
+explicitly NOT_PROVED and requires separately reviewed design, not new IPC or
+snapshot files here. NOT_RUN regression sources cover retention after source
+removal/change, actual absence/error, later-member guards, untouched descriptor/
+PATH/no challenge, both in-process modes/declared isolated overlays/dependencies/
+hooks and instance prerequisites under stable valid policy. Separate NOT_RUN
+cases assert fresh-policy load failures before body/hooks, not before all Up effects.
+Qualified VLAD Up R2 `01a128d6-6c99-7472-bd1c-2b57197ce5cf`, final
+`msg_0074fa586a19efbe016acaf7a398548191a9bab58c1469bb54`, found no remaining
+P1/P2/P3 in the bounded repair and closed the three R1 findings by source
+inspection. MUSE independently reconciled the frozen candidate and accepted
+only this bounded source checkpoint. Pre-handoff reviewed identities and the
+ownership/effect map are retained in the follow-on plan. Compilation/tests/runtime,
+public propagation, whole-slice acceptance and bootstrap remain HOLD/OPEN.
+ACCEPTED SOURCE only: narrow workspace-parent SOURCE R2 repair. Qualified
+VLAD R1 `01a12923-b3aa-7871-8d86-8471a83d6e55`, final
+`msg_0074fa586a19efbe016acb0c4815148191877b385ea28f3681`, found P1 portable
+test-helper gating and P2 invalid child env fixture, missing protected workflow
+recipient and empty bare-relative refusal root. MUSE reconciled the frozen R1
+HOLD and cleared only these repairs. Source now uses a portable filesystem/YAML
+helper, Unix gates for shell/FD cases, validated `env.vars` and intended child
+policy-failure assertions, and validated task/workflow applicability. The workspace
+caller alone maps an empty negative root to `.` without changing the envelope
+path, policy identity/source/path, other roots or shared runner. NOT_RUN public
+bare-relative Up/Run coverage retains CWD/FD/PATH and no-acquisition assertions.
+Qualified VLAD R2 `01a1292d-93b4-7492-9c7e-5af0823d5888`, final
+`msg_0074fa586a19efbe016acb0e5095748191afa215c741413e6f`, found no new blockers;
+MUSE independently accepted only SOURCE R2. R1 HOLD/reviewed hashes remain
+historical in the follow-on plan; compilation/tests/schema/runtime are NOT_RUN. MUSE
+accepted DESIGN R2 after qualified VLAD `01a12912-a75a-7912-839a-75af835a9e00`,
+final `msg_0074fa586a19efbe016acb0700182c8191a1969abc34a2bbdc`; the marker P2
+is closed only at DESIGN level. Historical reviewed hashes/map remain in the
+follow-on plan. Source now stages canonical selected-parent acquisition with
+env > ancestor org > actual loaded workspace.policy > observed absence; no
+unrelated default fallback or inherited proof-child absence shortcut. MUSE also
+cleared selected DIRECTORY normalization after env selection, preserving the
+selected basename/file-symlink directory and original output spelling. Generic
+child/proof discovery is unchanged; no process env mutation is introduced.
+Both parent modes guard before progress/channels/workers/mkdir/clone, preserving
+pure local protected-carrier refusal before policy loading. Owned parent policy
+is never substituted for child policy or its inline overlay. Negative parent
+failure output has distinct acquisition/error/unavailable attribution, no synthetic
+child receipt or authority/fulfillment evidence. Connected Core docs/schema/tests
+are staged; RUBY's disjoint two-doc assignment is integrated. NOT_RUN regressions
+cover actual captured JSON jobs=2 / streamed Text jobs=1, marker conflicts, selected
+file/relative/symlink precedence, optional/acquisition-only children, retained
+FD/PATH/no challenge, protected no-load precedence and ordinary child overlay.
+Schema source negatives are failure-branch projection checks, not executed
+whole-document or produced-output conformance. All-local-child upfront admission
+and unknown pre-clone policy remain explicit gaps/limits; final env/backend
+freshness and detached continuity are unchanged. ACTIVE NEXT: ONE integrated
+local-child command-admission preflight/owned-handoff SOURCE checkpoint authorized;
+SOURCE R1 historical HOLD / SOURCE R2 accepted at source level; validation HOLD.
+DESIGN R2 accepted after qualified VLAD
+`01a1293c-ae8f-7593-a4b1-e9533a7e1f08`, final
+`msg_0074fa586a19efbe016acb11b8ccdc8191b2be66f84d7ca52b`, and independent
+MUSE reconciliation. Reviewed historical identities remain in the follow-on plan.
+Canonical plan maps actual present local targets, Run mappings/Up workflow roots,
+separate owned admissions into both modes, required terminal failure before any
+worker/acquisition, optional child-owned WARN/no body, and truthful failing-child
+negative output. DESIGN R1 is historical HOLD: qualified VLAD
+`01a12937-c4d6-73c2-8742-3626530b92d3`, final
+`msg_0074fa586a19efbe016acb10a6794c8191b77643e85bf459eb`, found child failures
+could not borrow parent-only Rust carrier/code/subject schema rules. MUSE granted
+only docs repair. R2 specifies a distinct child_admission branch with actual
+failing-child selection, independent acquisition state, concrete failure kind and
+required/forbidden evidence rules; existing parent failure branches are unchanged.
+Typed policy denial, typed realization unavailability and unsupported-Up Rust
+refusal are distinct. Typed evidence is copied only when its canonical helper
+actually emits it; no invented carrier, identity or archive. Existing parent-level
+protected refusal cannot become optional
+WARN. Run Rust restrictions stay conditional; blanket denial breaks non-Rust/
+satisfied-readiness compatibility. Up/typed terminal failures and load errors are
+the proposed initial bar; conditional readiness denial before all workers remains
+OPEN. An independent-owner acquisition seam must ignore an unrelated inherited
+proof-child marker without changing generic child/proof behavior or duplicating
+the canonical loader/admission; MUSE accepted this bounded design invariant only.
+Acquisition-only/uninspectable policy, later drift,
+final fresh phases and detached continuity remain bounded. Production/tests/schema
+enter only the integrated authorized source write set: policy_pack/effect_orchestration/
+commands/workspace_output, in-file regressions and connected schemas/Core references.
+Workspace stays read-only. MUSE granted a narrow runner.rs exception only for
+pure exhaustive `RunError::variant_name` and portable source assertions, preserving
+the outer wrapper variant; all retained-policy/readiness/dispatch/runtime behavior
+stays read-only. Prior reviewed runner hash is retained in the follow-on plan.
+Independent-child canonical acquisition, both-mode upfront guards, owned target/
+admission worker handoff and disjoint negative output are authored; required initial
+failures stop scheduling, optional child-owned terminal WARN never dispatches.
+Unknown-before-clone and final-policy/body failures use ordinary reports. Run Rust
+deny remains conditional, with no new readiness probe. Regression sources are
+NOT_RUN; RUBY returned and SCOOBY integrated the five-file schema/test/reference
+reservation. The schemas separate parent/child roots and lock failure/acquisition/
+carrier shapes without claiming relational ownership. Constructor source tests
+retain mapped-task/child-root/pack linkage; Up preserves canonical explicit/default
+`workflow@instance` selection through roots, profile adjustment and refusal evidence;
+typed policy and secret admission receive the resolved base workflow identity.
+Projection tests explicitly expose cross-field identity/selection mismatches that
+schema shape alone cannot reject. These are source assertions, not executed proof.
+Required preflight failures may use the negative
+branch only before dispatch; after-clone/final-phase/body failures retain normal
+partial-effect reporting. Qualified SOURCE R1 review
+`01a12a25-bdb9-7923-88e5-47301d66952c`, final
+`msg_0074fa586a19efbe016acb4e24ce5c8191837e2847d98e1fd7`, held one P1:
+passing the instance selector to base-name typed/secret consumers lost exact
+workflow applicability. MUSE independently reconciled and cleared only a narrow
+commands/in-file-test/plan/state SOURCE R2 repair. Explicit/default/omitted selector
+regressions now require the intended workflow-scoped deny rule and workflow-only
+secret refusal before policy acquisition, with no invented decision/carrier.
+All assertions remain NOT_RUN. Qualified SOURCE R2 recheck
+`01a12a2e-74c9-7252-973b-ceb860170658`, final
+`msg_0074fa586a19efbe016acb4fa6456c8191a490d35e0ac6df73`, closed the P1 by
+source inspection with no remaining P1/P2/P3 in the bounded repair. MUSE independently
+reconciled all 17 unchanged packet hashes and accepted SOURCE R2 at Core
+`8926ddb1fc0e4a225059c48375fc6e1185081b1e`. Reviewed source/plan/state identities
+are retained in the follow-on plan. No isolated unused loader checkpoint was accepted.
+The combined offline DESIGN R1 packet is accepted as a HOLD inventory after
+qualified VLAD `01a12a38-8fab-7213-a99a-8de4dfd57cd2`, final
+`msg_0074fa586a19efbe016acb528625f8819183378bd334e7376a`, and MUSE's independent
+HEAD/delta/33-digest reconciliation. No execution-ready packet is claimed.
+DESIGN ACCEPTED: dedicated Linux bootstrap-owner DESIGN R3-R3. Qualified delta
+review `01a12a87-383d-77d2-bb28-ad81d56720c0`, final
+`msg_0074fa586a19efbe016acb66492a5c8191b544a2829c2a2b0e`, and MUSE's independent
+reviewer-turn/HEAD/delta/hash/boundary reconciliation close original interface P1
+at DESIGN level, VLAD's P3 and MUSE's distinct P2. No remaining P1/P2/P3 in this
+bounded design; no source or execution acceptance. Reviewed frozen identities
+are retained in the plan and precede this factual acceptance-only record update.
+SOURCE R3 ACCEPTED / VALIDATION FAILED-STOP: Bobai directly approved implementing the controller,
+unit template and test source, followed by MUSE review, with no builds or infrastructure
+(human message `01a12a91-091c-7b73-b590-bcf792164b2d`, turn
+`01a12a91-08e2-7e60-b314-e8ebba33104f`, independently verified by MUSE).
+Write set is ONLY `.github/ota/build_retained_driver.py`,
+`.github/ota/retained-driver-owner@.service`, `.github/ota/test_build_retained_driver.py`
+and canonical plan/state. R1 was HOLD after qualified VLAD and MUSE source inspection.
+R2 repairs the scratch-search P1 and six connected P2s: transitive link admission,
+success-looking partial publication, terminal raw log draining/retention, reviewed
+HEAD/delta/untracked/complete inventory and self-contained Git provenance, nonblocking
+candidate special-object refusal, and dot/parent path refusal. A single protected
+finalization-candidate carrier PLUS independently observed successful same-generation
+postflight exit is the sole completion predicate; no record alone claims finalized
+success. Outer postflight cleanup/resource closure and driver admission remain separate.
+R2 review confirmed those source repairs but retained two P2s: only Git HEAD labels
+were checked, not object closure, and a mock accessed Linux-only os.P_PIDFD unguarded.
+MUSE cleared one bounded R3 pass: private streaming stdlib-zlib validation of the
+supported loose-object HEAD commit/tree/blob/parent closure, protected real objects/refs
+directories, strict framing/hash/type/compressed EOF and bounded graph/decompression;
+packed/unsupported/exhausted inputs refuse. SHA256 inventory/operator approval remains
+the trust anchor; SHA1 is only legacy Git object consistency. Other Git refs/full
+semantic correctness and installed compatibility are not claimed. Default lifecycle
+and finalization mocks supply their Linux interface explicitly; real descriptors remain gated.
+Qualified non-author VLAD R3 recheck `01a12ac9-3006-79e3-9b6d-7b595adc7719`, final
+`msg_0074fa586a19efbe016acb7768c5808191965630b04ce9370c`, and MUSE substantive
+reconciliation `01a12ac9-33b5-78e1-a56c-b9a274f53d66`, final
+`msg_0074fa586a19efbe016acb78f927188191bea57dd8a2cac125`, close both remaining
+R2 P2s at SOURCE level. No remaining P1/P2/P3 in this bounded review. Frozen
+pre-closure identities are retained in the plan; this update records acceptance only.
+The approved source implementation slice is complete; the one cleared validation attempt
+failed before target checks. No validation gate is accepted.
+Bobai's fresh bounded-validation request (human
+`01a12b8f-b0e6-7ea1-bd66-88e5a37b3fe0`, turn
+`01a12b8f-b0a2-7bf0-a36a-ee5204dcc607`) was independently verified by MUSE.
+MUSE selected preparation of one fresh cached-Linux Python-only packet, not
+the unqualified Darwin route or a renewal of the closed kernel experiment.
+Target: 41 authored methods in eight explicit mock/pure classes, no discovery,
+with both LinuxDescriptorTests omitted, in-memory syntax checks and trusted unit
+text assertions. Mocked production finalization is allowed; operational role
+dispatch, real descriptors/services/kernel actions and builds remain excluded.
+The retained R11 launcher cannot support this packet unchanged: fixed old
+four-input/11-test selection, 65,536-byte member cap versus 73,923-byte controller,
+32 MiB scratch versus proposed 8 MiB, no 10-second CPU limit, and a capture-only
+30-second deadline rather than total creation/test/cleanup. Its exact digest and
+required controls are recorded in the follow-on plan. No compatible reusable
+ordinary launcher was identified in the narrowly inspected retained routes.
+No target import/test, daemon probe, container creation or source adaptation ran.
+MUSE subsequently cleared ONE source-only fixed-purpose R11 adaptation in the
+private `retained-controller-python-validation-r1` packet under
+`/Users/bobai/.codex/artifacts/2026-10-11`; historical R11 remains unchanged.
+R1 parent/bootstrap were source-prepared and frozen for qualified VLAD then
+MUSE review. Both reviewers found three parent P2s: reaping before owned group
+teardown, deadline verdict before final publication, and unguarded retention faults.
+MUSE cleared ONE source-only R2 successor; immutable R1 and candidate remain unchanged.
+Current packet is `retained-controller-python-validation-r3`, parent
+`a6f4b48591a02b8916c0d971ae35ffc9a7b0e39e7d4d9c83eb91139b23109394`,
+unchanged bootstrap `80430be7f07675a860d757168427de138ef55f06ff657eed17e4f5349fb25952`.
+R2 retains the unreaped CLI session leader through group kill, then waits and
+requires bounded group ESRCH without destructive signaling after reaping.
+Qualified VLAD and MUSE closed the three original P2s at SOURCE level. MUSE then
+identified inherited SIGCHLD ignore/autoreap as an additional P2 admission gap;
+R3 actively establishes/verifies SIG_DFL before any Popen, with one synchronous
+reaper and no competing handler. R1/R2 remain immutable. Qualified VLAD R3
+`01a12bd9-b4da-75d2-8bf3-4dd665f5e792`, final
+`msg_0074fa586a19efbe016acbbd1295a0819190b9d814d8deb36d`, and MUSE substantive
+reconciliation accepted this packet at SOURCE level with no remaining P1/P2/P3.
+MUSE cleared ONE exact timed R3 contained Python attempt under the fresh human
+request, mandatory cleanup and independent runtime-evidence review. All frozen
+control/runtime/input/Action/HEAD/delta identities were rechecked before launch.
+The single timed attempt is consumed: parent exit1, trusted tool wall1.426203083s,
+timing real1.52s. After the first read-only cached-image query, process-group
+handling returned PermissionError/EPERM. The exact failed operation/root cause is
+not_proved. No staging/container/bootstrap or candidate import/test ran; all41
+selected methods and target syntax/import checks remain NOT_RUN. The raw image
+query log and sealed attempt/result/copied outer-tool response are retained in
+the R3 packet; hashes, lengths and observations are in the follow-on plan.
+Independent current exact label/name container checks, staging noentry/no-symlink
+and matching query-process checks are absent. However attachment_cleanup_okfalse
+and missing exact child PID/birth evidence leave owned-group teardown NOT_PROVED;
+these absence checks do not mean all cleanup passed. Candidate/Action/HEAD/non-record
+tracked delta are unchanged. Qualified non-author VLAD failure review
+`01a12be3-63fd-79b3-a0b6-f1fb13800dce`, final
+`msg_0074fa586a19efbe016acbbfb97ae88191be7b73a8a65fdfe2`, frozen closure recheck
+`01a12be5-7b68-7bb1-9321-ca529627a2aa`, final
+`msg_0074fa586a19efbe016acbc005517c8191889d879f2a263598`, and MUSE substantive
+reconciliation ACCEPT factual FAILED/STOP closure only. No new closure findings.
+The immutable R3 diagnostic P2 was not repaired by failure closure: its parent
+omits retained child identity/status/phase when group cleanup raises. Source R3
+acceptance is unchanged; validation gate HOLD. R4 source-only closure is below.
+Bobai subsequently approved ONE SOURCE-only diagnostic successor directly in MUSE's
+question `call_ebe4618de2734a6d965170ba7345a909`, answer
+`Approve source-only diagnostics (Recommended)`, human
+`01a12c05-0f13-7a40-8bb1-31e4eed3618d`, turn
+`01a12c05-0edf-7930-933a-c1d2d6232adb`; SCOOBY independently verified the reply.
+This is a new source grant, not revival of R3's consumed execution grant.
+Private validation R4 SOURCE ACCEPTED retains each owned Popen PID/role/ordinal
+before collection, cached return status, explicit birth_identitynot_proved,
+operation phase and separate primary/collection-cleanup/close/final-cleanup errors.
+MUSE cleared the narrow module-level placement of existing finish_group for direct
+mocked regression source, preserving signal/wait/ESRCH/rethrow/deadline behavior.
+Fixed call graph has at most13 launches, under16 recorded-child capacity; diagnostic
+records are bounded32KiB independently from unchanged64KiB captured output.
+Six diagnostic mock cases are source-authored, including sealed-result wiring with
+all group cleanup attempts failing. They and all41 candidate methods remain NOT_RUN.
+Trusted AST-only parsing passed for R4 parent/bootstrap/test source. Frozen hashes
+and lengths are in the plan. Qualified non-author VLAD source review
+`01a12c0d-d66f-7de2-8883-48b8749e99d1`, final
+`msg_0074fa586a19efbe016acbcac2aa908191a38166083d981289`, historical execution
+wording P3 recheck `01a12c10-a661-72b3-8d3a-7d94691c3eae`, final
+`msg_0074fa586a19efbe016acbcafa3ef88191ba45a18d255526d4`, and MUSE substantive
+reconciliation ACCEPT R4 SOURCE ONLY with no remaining P1/P2/P3 in this slice.
+The missing-child-diagnostics P2 is closed AT SOURCE ONLY, not a demonstrated
+runtime repair, native birth attestation, EPERM root cause or historical teardown
+proof. Accepted pre-stamp identities are retained in the plan. This source grant
+is complete; no execution artifacts or runtime work were authorized by that grant.
+R3 failed evidence and bootstrap/candidate/unit/Action remain unchanged. No EPERM
+suppression, native birth discovery, new syscall, probe, test/import execution or retry.
+Bobai's fresh MUSE-chat request to discuss exact bounded R4 validation (human
+`01a12c2d-bbaa-7113-b68a-17ef6222f9ab`, turn
+`01a12c2d-bb89-7f02-a2d4-91d8b4a36665`) authorizes discussion/proposal only;
+SCOOBY independently verified it. ONE unchanged-parent attempt is PROPOSAL
+ACCEPTED / R4 SINGLE-RUN GRANT CONSUMED / FAILED-STOP. Qualified non-author VLAD
+proposal review `01a12c33-da38-7922-9dcf-53bb51b9e49c`, final
+`msg_0074fa586a19efbe016acbd453c93081918f232a299d06bdda`, and MUSE substantive
+reconciliation found no P1/P2/P3. Bobai directly approved MUSE action question
+`call_81d85023fdf64e938404fe5b57447d4b`, answer
+`Approve one R4 attempt (Recommended)`, human
+`01a12c46-7990-79c3-a1c5-86e4c3983d5c`, turn
+`01a12c46-7971-7623-9cda-318a586accd7`; SCOOBY independently verified the reply.
+MUSE relayed exact single-run clearance, no broader work. All frozen proposal/
+runtime/input/HEAD/delta identities were rechecked unchanged before dispatch.
+The exact command ran ONCE: terminal exit1, tool wall0.398876667s, trusted timing
+real0.50/user0.25/sys0.08. Dispatch consumed the grant; absence of
+attempt.json would not authorize retry. R4 retained child88588, ordinal1,
+role docker:image, and three separate EPERM/errno1 failures at os.killpg(SIGKILL)
+in primary, collection_cleanup and final_cleanup phases. Cached returncode is
+null, birth_identitynot_proved and group_absence_observedfalse. The operation is
+observed; OS root cause, actual child terminal status and historical group teardown
+remain NOT_PROVED. Only first image-query stdout was collected; no container,
+staging or bootstrap/candidate import/test ran. All41 candidate methods NOT_RUN;
+six diagnostic cases NOT_SELECTED/NOT_RUN. Sealed R4 attempt/log/result and exact
+copied outer response/independent absence observations are retained with hashes in
+the plan. Combined raw log+outer1665 bytes; result1958 bytes bounds child metadata
+below32KiB. Result remains provisional, with tests_passed/candidate_passed/
+overall_passed/usable_driver false and attachment_cleanup_okfalse.
+cleanup_absent/staged_inputs_absent are true but do not imply group teardown. Independent exact label/name and stage
+checks are currently empty/absent; acquired PID88588 and exact matching query
+process are not observed. Current absence does not repair failed group teardown.
+Qualified non-author VLAD runtime-evidence review
+`01a12c4c-485b-7473-b6a4-ab1cbd702dda`, final
+`msg_0074fa586a19efbe016acbdacd406c8191bec2d527b3dc6bba`, wording-only recheck
+`01a12c4f-fa3a-7e42-8582-bed84a1f1bc9`, final
+`msg_0074fa586a19efbe016acbdb2ae0b48191a0eb2e4e44cbed98`, and MUSE substantive
+reconciliation ACCEPT R4 DIAGNOSTIC OBSERVATION ONLY / factual FAILED-STOP closure.
+Both P3 wording corrections are closed; no P1/P2/P3 within this diagnostic scope.
+MUSE independently checked original native exec evidence against retained copies;
+accepted pre-stamp identities are in the plan. Validation HOLD, no controller/
+41-method acceptance. Child wait/birth/historical group closure and OS root cause
+remain NOT_PROVED. Subsequent ONE read-only source investigation was cleared by
+MUSE in turn `01a12c8a-9f54-72c2-9948-9a563e7bab70` under independently verified
+Bobai 'Lets work' message `01a12c89-efc1-7852-8065-40f86f39bdc2`.
+MUSE accepted SOURCE ASSESSMENT ONLY in turn
+`01a12c91-515e-7ab2-aebf-a9b378f29722`, final
+`msg_0074fa586a19efbe016acbecb980248191a8011c8105d9bc2e`, no P1/P2/P3:
+pinned Apple XNU
+`xnu-11417.101.15` group signalling excludes SZOMB members and its POSIX branch
+can return EPERM with no eligible target. That makes an exited/unreaped group
+a supported hypothesis, NOT the demonstrated R4 root cause. Installed Python
+source confirms returncode is cached; null and stdout EOF do not establish child
+liveness or terminal status. Host kernel/libc mapping, policy denial, native child
+state and historical group closure remain NOT_PROVED. Exact official citations,
+installed source identity and proof recommendation are in the follow-on plan.
+MUSE then cleared ONE canonical docs-only diagnostic proposal covering live,
+exited/unreaped and mixed groups before any implementation. Proposal recorded
+in the follow-on plan; independent VLAD recheck and MUSE reconciliation now
+ACCEPT CORRECTED DESIGN ONLY, no remaining P1/P2/P3 within that scope.
+Installed pyconfig.h declares HAVE_WAITID; this is configuration evidence, not
+runtime availability or enforced containment. Proposed native os.waitid wrapper
+avoids a new helper/FFI ABI. Fixed direct children preserve single-reaper ownership;
+topology differs from R4's new session and cannot diagnose R4 by itself.
+VLAD design HOLD identified inherited-session membership (P1), gate-writer
+ownership (P2) and blocking reaping (P2). MUSE agreed narrow docs-only repairs:
+verified private F session before fork, exact per-role FD closure/_exit, and
+terminal evidence plus budgeted WNOHANG reaping. Qualified recheck
+`01a12c9f-e63f-74f0-bd33-5ff5c8d2326c`, final
+`msg_0074fa586a19efbe016acbeffb5e8c819195dbf90cbc96b561`, and MUSE
+reconciliation `01a12c9f-e6a1-7391-9f25-74e9b3997691` accept the corrected
+DESIGN ONLY. All three findings closed; configured non-author gpt-6.1-sol/high
+independently verified, not provider-attested. Accepted pre-stamp hashes in plan.
+After that closed design slice, Bobai explicitly said 'lets work'
+`01a12f2e-7134-7653-b69b-0c174b527383`; MUSE independently verified it and
+cleared ONE SOURCE-ONLY diagnostic plus mocked-test module in turn
+`01a12f2f-06eb-7e20-835a-2e001f213ba3`. Exactly two private source files are now
+authored/frozen under `/Users/bobai/.codex/artifacts/2026-10-12/owned-group-signal-diagnostic-r1`;
+hashes/lengths/protection and source boundaries are in the follow-on plan.
+Diagnostic e4325252... (20356 bytes) and test source d49fee97... (14575 bytes,
+21 mock methods) are regular/singular bobai:staff0444/non-executable.
+SOURCE CANDIDATE ONLY: NOT_PARSED, not imported/executed; 21 new mocks NOT_RUN.
+VLAD source review `01a12f4f-34ee-7af0-8b9c-80c95d831ae6`, final
+`msg_0074fa586a19efbe016acca1bd6f54819198050554cdebe91e`, is SOURCE HOLD:
+P2 fresh deadline/cancellation admission immediately before fork; P2 native
+core-dump bit must agree with CLD_KILLED/CLD_DUMPED. Exact configured non-author
+gpt-6.1-sol/high independently checked, not provider-attested. MUSE acknowledged
+the HOLD and requires R1 unchanged. MUSE reconciled in turn
+`01a12f6c-94fc-7c03-ae6c-6f1c802596a7`, final
+`msg_0074fa586a19efbe016acca7b849e881919d0e7dff3a2f5cbd`: GO for ONE
+source-only R2 packet under the verified source-authoring grant. Scope: fixed R2
+ROOT, fresh pre-fork admission, callable native WCOREDUMP/exact event-class
+reconciliation, and bounded coarse phase + primary type/errno + separate retention
+failure in the existing <=512-byte outer carrier. The latter is MUSE P3, not a
+VLAD finding. Directly connected mock regressions only; preserve R1 bytes.
+R2 is now authored and frozen source-only at
+`/Users/bobai/.codex/artifacts/2026-10-12/owned-group-signal-diagnostic-r2`.
+`diagnostic.py` is 21,482 bytes / 496 lines / SHA-256
+`fadd4a02cc1edbcd77de1d08ae750e6db8308294b14da26fbc4edb82442f9d42`;
+`test_diagnostic.py` is 20,665 bytes / 393 lines / SHA-256
+`ef5a5429e60486be688d1b718a0680a243d9cea6b8e074924f3e13b378e82c06`
+with 27 authored mock methods. Both are regular, singular, bobai:staff, 0444 and
+non-executable. R1 hashes remain unchanged. R1-to-R2 unified-diff stream hashes are
+`dc799974af5c6e76cb76a9831896f52fef6992ac65d15df1b88df85705a3cf26`
+for the diagnostic and
+`13593ab5d0bf191ff19c39da1810cf7ac3b86099d7076ce8503b312eecdd79ef`
+for the mocks. The source-only repair adds the fixed R2 root, fresh cooperative
+admission immediately before fork, callable native `WCOREDUMP` admission plus
+exact `CLD_KILLED`/`CLD_DUMPED` reconciliation, and bounded coarse primary
+phase/type/errno separated from retention failure in the existing outer carrier.
+Connected mocks cover expiry/interruption during pipe preparation, matching and
+contradictory core indications, unavailable/noncallable primitive, pre-packet
+Refusal/OSError separation, sticky retention-only failure and carrier/cap bounds.
+ALL 27 mocks remain NOT_RUN; the source was not parsed, imported or executed.
+Qualified VLAD read-only R2 review
+`01a12f7d-8402-77b1-8f3b-c38d8d52f47f`, final
+`msg_0074fa586a19efbe016accadd15a8081918088a594755f56dd`, found one P2:
+two execute-path mocks left process-global `os.umask` live, and one P3 stale R1
+mock count. The source-only correction now mocks `os.umask` in both paths and
+labels the current R2 count; no production diagnostic bytes changed. R2 was
+refrozen at the identities above. Qualified VLAD delta recheck
+`01a12f89-4642-7f10-9514-2746af6ab732`, final
+`msg_0074fa586a19efbe016accae8e4d6481919a46b48b60f51e4e`, closed both
+findings with no remaining P1/P2/P3 and returned SOURCE GO for MUSE
+reconciliation only. MUSE substantive reconciliation
+`01a12f8a-bf85-7403-ac3e-9504b3ee6ee6` independently rehashed the frozen
+packet, read both qualified VLAD finals, found no remaining P1/P2/P3 and marked
+the exact R2 packet SOURCE ACCEPTED ONLY. The accepted pre-stamp canonical
+identities were state
+`4241264e0e8e5bd2a274703193123b55cc208140b29807b7d7ef5689a40a0e84`
+and plan `20fd0f4fe63a252f3c6c2da36dbdda3b885f8ab1d7ae23c627ba4388618ea9bd`.
+This closes source review only. Next is read-only identification and freezing of
+an existing contained path for syntax plus exactly 27 R2 mocks. That read-only
+inspection is complete and no unchanged path is suitable. Historical R11 is
+already recorded incompatible. R4 `parent.py` lines 29-33/170 and
+`bootstrap.py` lines 14-64/141-145 hard-bind three Core inputs, eight test
+classes and exactly 41 methods, not the two R2 files/27 methods. Its child-group
+collector at `parent.py` lines 115-145 is also the route that failed on the first
+cached-image query with retained `os.killpg(SIGKILL)` EPERM before container
+creation. Reusing it unchanged cannot establish R2 syntax/mock validation; changing
+bindings/selection or the launcher is new source work. Validation remains HOLD
+pending MUSE selection of the smallest fixed-purpose adaptation. Actual parsing,
+import or test execution needs separately reviewed exact controls and fresh human
+action approval. Native FD/session/wait/limit availability, effective containment,
+parent-loss cleanup and historical R4 root cause remain NOT_PROVED.
+Runtime NO-GO; existing41 controller+6 R4 diagnostic cases remain NOT_RUN;
+validation HOLD; Step7 OPEN/R1 BLOCKED. No controller/R3/R4/product source change,
+AST/parser/test/probe/signal/build/container/VM/infra/spend/commit/push. STOP at
+frozen source review boundary. Any later native signal/runtime action needs
+reviewed exact controls and fresh human action approval.
+Exact command, identities, limits and two outcome
+ceilings are in the follow-on plan. No executable build or preflight probe;
+private diagnostic source staging is distinct from R4 repair. The six parent-diagnostic cases are distinct from the41
+candidate methods and are NOT selected; future contained testing needs a separately
+reviewed fixed binding, not an unsandboxed import or silent suite expansion.
+MUSE then selected one compact DESIGN-ONLY successor in the existing follow-on
+plan. It binds only the two immutable R2 files and a closed 27-name
+`DiagnosticTests` suite; nine separately named/count-bound host collector mocks
+cannot join that target gate. The proposed collector replaces cached
+`Popen.returncode` inference with exact-owned non-reaping `waitid`, one bounded
+signal attempt only for a still-bound live timeout/cancellation, group decisions
+while the leader remains unreaped, and bounded exact-PID/status reconciliation.
+EOF, ECHILD, changed ownership, contradictory status, denied signal and unresolved
+group absence all fail closed under the plan's outcome table. The accepted R4
+containment ceilings are preserved without a different owner, launcher, engine,
+host or larger budget. This is design text only: no successor source exists and
+no parsing/import/test/process/engine action is authorized. Next is qualified
+VLAD read-only DESIGN R1 review, then MUSE reconciliation and a decision on one
+source-only adaptation.
+Qualified VLAD DESIGN R1 review
+`01a12f99-abd1-7010-abea-e905db328e4f`, final
+`msg_0074fa586a19efbe016accb59faa3c81918750ed11c01d6d95`, returned DESIGN
+HOLD with P1/P2. P1: no sound generation-bound group-absence success predicate
+exists while the leader remains unreaped; zombie-group `killpg(..., 0)`/EPERM,
+leader terminal state and post-reap probes cannot prove exact-owned quiescence.
+P2: callable primitive admission must be separated from typed constants and retain
+core-aware terminal reconciliation. The exact R2 binding/27-name selection remains
+sound, but no validation successor implementation is cleared. Next is MUSE
+reconciliation of the named quiescence capability gap; no cleanup weakening,
+EPERM reinterpretation, alternate owner/engine/host or larger budget is allowed.
+MUSE turn `01a12fa6-6065-73a3-be10-29cf75b03d2a` confirms DESIGN HOLD and
+names the gap **generation-bound host-control-group quiescence**. The current
+Darwin plus Docker-CLI contract has no admitted pre-reap absence predicate for all
+members/descendants; exact-leader wait, numeric session/group identity,
+`killpg(..., 0)`, EPERM and post-reap probes do not close it. Callable native
+wait/status/core functions are now explicitly separated in the plan from
+type-int/not-bool selectors, flags and codes; this wording does not prove host
+availability or close P1. A host-helper route would require an admitted stable
+generation owner/handle with independently retained quiescence evidence. A
+fixed-purpose single-process transport to the same pinned local Engine API is
+only a next design hypothesis and needs direct human approval; no socket access,
+design amendment, source, probe or execution is authorized.
+Bobai has now directly approved one design-only Engine-API alternative through
+MUSE question `call_b41280b371f1487b8cfb56fdda83b2cb`. Frozen DESIGN R2 plan/
+state hashes were `9539115136ba0a5b93e298fa10f5627920309f9f061f595aee7c1e6f74194c59` /
+`c15d5d01d2262798b20f6720d2583eed69d5a317907345c3c471ab4f865274e1`.
+The original VLAD review remained incomplete and was superseded. Replacement
+reviewer Aquinas `01a12fde-afc2-75c3-9f69-be97af998ad6`, turn
+`01a12fde-b021-70f2-95e0-a0556b7e1a8e`, final
+`msg_0a529e04e536a801016accc63dab388197ad5611ff3ac14947`, returned DESIGN HOLD
+with four P2s and one P3: late mutation outcomes, attach completion/order, the
+two-socket cleanup handoff, raw framing bounds and operation-count consistency.
+Frozen DESIGN R3 plan/state identities were
+`0a28d43b7db2c0619624a710baffc4bedc99d9df569351d71b3a757b0907dee1` /
+`aae4c8653caf8689f1e476c914546da5696849be497e66d3d63f65360c50b0c1`.
+Aquinas recheck turn `01a12ff0-9ead-7390-98f2-03cecb5d8d64` closed the original
+framing/EOF, two-socket/deadline, parser-bound and readback-slot findings at design
+level, then retained one P2 and one P3: later-attempt blocking was not global to
+every unresolved mutation/cleanup state, and pre-start refusal counts conflated
+pre-attach with attach-established cleanup. DESIGN R4 adds one global retained
+`recovery_required` latch across every possible late effect and corrects the path
+counts to pre-attach <=8 and attach-before-start <=9 without increasing the <=16
+total/two-live-socket ceiling. Frozen R4 plan/state identities were
+`5db5f44777f4f5acf8d022d1f1050b7142e1bbba11609b98b2147c60ed47d646` /
+`6625a5cadef1a84bf754c615e0b56d69110194ba1836c3490b4b4082f6a6f1d8`.
+Aquinas recheck turn `01a12ffb-6c96-73e0-b931-cabd9a0b3aa2` closed the count
+finding and retained two wording conflicts: absence evidence was still presented
+as an alternative to reviewed recovery, and stage retention was unconditional
+after possible completed cleanup. DESIGN R5 makes reviewed exact-attempt recovery
+the only latch-clearing path; absence observations are inputs only. It preserves
+surviving stage objects/identities, retains completed-removal identity/evidence
+instead of claiming an extant stage, and keeps partial/unknown removal unproved.
+Aquinas exact verification turn `01a13006-f8ac-75a0-988a-f8a87aaa8d89`
+returned GO: DESIGN ONLY with no remaining P1/P2/P3 in the exact R5
+clarification delta. MUSE final substantive reconciliation turn
+`01a13005-ae5c-7fa2-9634-677e212593bd` accepted DESIGN R5 ONLY at pre-stamp
+plan/state identities
+`caca888078f05b18538747349c750078eb1466f99814392747efd69a4a2ab3dd` /
+`bf7b761115d22f58da4bb6d5eeb7a7535f87f23bc2525772f553a1a3ba47eec3`.
+This closes the design review chain, not source, validation or runtime. DESIGN R5
+pins
+API v1.51 on the same retained Unix endpoint/Engine/image, replaces Docker CLI
+helpers with one trusted-parent AF_UNIX HTTP transport and makes zero spawned
+host control helpers an architectural invariant. It preserves the immutable R2
+two-file hashes and closed 27-name target, separates transport regressions,
+retains `log-driver=none` with bounded pre-start attach streaming, fixes request/
+response/connection/output limits and exact socket handoff, binds one nonce/name/
+label/container ID, and makes incomplete create/start/delete responses sticky
+unknown outcomes that cannot be repaired by connection close or one empty lookup.
+It reconciles frame-aligned attach EOF separately from wait/terminal inspect and
+fails closed on ambiguity, framing/version mismatch, timeout, parent loss,
+deletion/absence or publication failure. This is design text only: no source,
+socket query, probe, process, Engine action or runtime clearance exists. The old
+CLI design remains HOLD; all 27+41+6 remain NOT_RUN, installed API compatibility
+and parent-loss cleanup remain NOT_PROVED, runtime remains NO-GO, Step 7 remains
+OPEN/R1 BLOCKED, and Step 8/V12.2 remain inactive. No public propagation is
+required because no shipped product, CLI, schema or claim changed.
+Validation HOLD after failed attempt; only bounded retained evidence, read-only
+exact-owned absence checks, review and factual closure remain. Builds, infrastructure,
+commit/push, source fixes or scope expansion are not cleared.
+Result is always provisional/overall_passedfalse/usablefalse; acceptance requires
+independently observed successful timed parent terminal including publication,
+sealed retention and resource absence. Sticky retention errors exit nonzero with
+bounded diagnostics, never an independently accepted visible carrier. Exact timed
+invocation/parse predicates and reviewer history are in the plan. Parent AST
+parsing passed; R3 and R4 parents each executed once and failed pre-target. All
+bootstrap/candidate/test execution remains NOT_RUN. Read-only local facts confirm cached Linux/arm64 image934240a1, pinned
+local OrbStack engine29.4.0/cgroup2 with advertised required limit support;
+actual effective single-process controls are NOT_VERIFIED until an authorized run.
+The packet selects pids1/nproc1, CPU10s, no writable volume/tmpfs, readonly input,
+30-second total budget with5-second cleanup reserve and64KiB shared capture.
+Exact identities/argv/selection/retention limits are in the plan. A Python audit
+tripwire and refusal stubs detect accidental unmocked effects; they are not an
+OS sandbox or a guarantee against arbitrary native code. No builds/infra/spend,
+candidate correction, retry, commit/push or old experiment renewal. Execution STOP.
+All target tests/import/syntax/build/runtime validation NOT_RUN. No build, installation, infrastructure/spend,
+commit/push or activation permission. Existing Action and unrelated dirty source unchanged.
+Controller covers fixed request/producer/manager binding, stopped-child placement,
+UID/capability/FD drop, offline bwrap Cargo launch, recursive worker terminality,
+sealed pending copy and separate manager-bound finalization. Tests are source-authored
+production-function mocks plus explicitly gated Linux descriptor cases, not a
+demonstrated Linux lifecycle matrix. Full installed namespace/manager emergency cleanup,
+cache/toolchain sufficiency, descendant/owner-loss fault matrix and effective budget
+qualification remain OPEN; separate 512 MiB/artifact and metadata budgets NOT_APPROVED.
+The prior R2 HOLD inventory and original undefined-interface P1 are retained in
+the follow-on plan as history, not an active existing-owner-only requirement.
+Bounded discovery closed the fixed kernel experiment and protected Launcher routes
+as incompatible with generic bootstrap under that scope; neither is repurposed.
+Bobai directly approved ONE bounded dedicated Linux controller DESIGN-only scope
+amendment in human message `01a12a69-f758-7ff3-8686-9270f8a4dd70` (MUSE turn
+`01a12a69-f6f6-7ee2-a28a-d74b503b8deb`, question
+`call_GO2z7bQ1oybc9rpsDmQYGC9e`). Controller DESIGN R3 is authored in the
+existing follow-on plan. Qualified VLAD `01a12a7e-c954-7862-a31d-dc93aa1b89b3`,
+final `msg_0074fa586a19efbe016acb64660d08819180dfd09c849552d0`, found no new
+P1/P2 and judged the original interface P1 repaired at DESIGN level, subject to
+MUSE reconciliation. One P3 stale active/write-set summary is repaired in R3-R2
+and closed by qualified recheck `01a12a82-5406-7683-b774-5f94841da8e4`, final
+`msg_0074fa586a19efbe016acb6505b2d0819192029f96e1970687`. MUSE then found a
+distinct P2 design overclaim: read-only admitted config/initial compiler bindings
+do not exclude all descendant commands/config/wrapper-like files. R3-R3 narrows
+guarantees to admitted top-level consultation roots and inspected first-party
+nested metadata launch inputs; all-descendant compiler/config enforcement and
+semantic source-to-binary correctness remain not_proved. No new broker/filter/
+instrumentation or sandbox flow. Source unchanged; runtime NOT_RUN. Fixed operator unit
+starts root build-owner, a separately placed stopped child runs only unprivileged
+contained Cargo, and root postflight independently reconciles PID1/kernel cleanup
+before finalizing protected retention. Request/nonce/producer/unit/child/cgroup/
+candidate identities and protected journal are concrete proposed interfaces, not
+worker JSON authority. Manager emergency cleanup and recursive terminality remain
+required; no installed/runtime support proved. RUBY provided disjoint mechanism/
+negative-control design advice, not independent acceptance. Original P1 is repaired
+at DESIGN level by MUSE final reconciliation; later source authoring approval is recorded above. MUSE explicitly
+refined the seam: operator is the first consumer; Action remains byte-for-byte
+unchanged, optional non-privileged artifact consumption deferred until needed.
+No protected Launcher/provider authority expansion or general attestation service.
+Design/inputs review is complete; no new owner discovery or inventory loop.
+R3 supersedes R2's Action branch and four-file proposal: future source is ONLY
+build_retained_driver.py, retained-driver-owner@.service and
+test_build_retained_driver.py under .github/ota, plus canonical plan/state.
+Source authoring and SOURCE R3 acceptance are recorded above; execution remains
+NOT_CLEARED. Existing Action/default ref-install stays unchanged.
+Complete raw/Git/build/toolchain/cache/config binding,
+pre-compiler containment, nested offline metadata and post-quiescence trusted
+retention remain mandatory. Separate 512 MiB driver cap is PROPOSED NOT_APPROVED;
+human clarification waits for a concrete execution packet, not this design.
+Manifest limits/cache geometry/Linux qualification remain unmet execution gates.
+Prior DESIGN-only first-party bootstrap/provenance checkpoint (historical):
+existing build action and all production/test/helper source remain READ-ONLY
+until concrete design review and MUSE's exact source-write-set decision. Preserve
+ref-build consumers; bind sealed dirty inputs and contain the build itself,
+retaining the exact driver artifact/provenance without global driver replacement
+or release/runtime-attestation claims. Distinguish immutable dependency/toolchain
+payloads from bounded writable Cargo housekeeping, HOME/target/scratch. Freeze
+design for qualified VLAD then substantive MUSE review; missing Linux route/cache
+requires a precise prerequisite request, not a new wrapper or inferred readiness.
+No new product-source slice or execution approval. The first check stays `ota run check --native --agent`
+including setup. Exact repaired driver provenance, sealed inputs, Linux isolation,
+installed toolchain/cache, operator-owned local Rust-deny pack and cleanup remain
+prerequisites, not assumptions. Metadata inspection found only unqualified local
+drivers and Darwin toolchain directories; the existing source-build action installs
+Rust/Cargo without retaining a qualified driver manifest. DESIGN R1 records the
+exact bootstrap/isolation blockers and smallest prerequisite authority in the
+existing follow-on plan. No daemon or toolchain/cache probe ran.
+No compiler/test/formatter/generator/runtime/
+network/provider/VM/spend/commit/push/release/bootstrap clearance. Site command
+cards/sync/reference, Learn/FAQ/Glossary, Skills/Examples propagation remain OPEN;
+Step7 OPEN/R1 BLOCKED and Step8/V12.2 inactive.
+New NOT_RUN source regressions cover untouched proof-parent descriptor/PATH
+under deny/load-error, absent-carrier malformed/remote no-load precedence,
+automatic V4 local selection/stale identity, retained policy after source
+removal, static Doctor/preview limits, output serialization and strict schema
+shapes. Accepted source checkpoints cover Up local root/member/canary ownership,
+selected workspace-parent acquisition and inspectable local-child owned handoff;
+remaining acceptance gaps include conditional readiness before all workers,
+unknown pre-clone policy, full backend/OS/legacy dispatch and final-selection
+failure coverage, broader integration and all execution validation. The broader
+increment is incomplete; no runtime enforcement or commit readiness is claimed.
+No second parser/loader or fabricated snapshot is introduced. SCOOBY owns integration and the canonical plan;
+RUBY returned file ownership. Combined source needs VLAD review then MUSE acceptance;
+material ordering/ownership conflicts must return to MUSE, not be bypassed.
+No compiler/tests/formatter/generator/probes/network/provider/VM/spend/commit/push
+or release is cleared. RUBY returned exact-source findings:
+there is no inspected invocation-bound readiness-conditioned refusal before
+Rust fulfillment dispatch, and no qualified non-release bootstrap-only retained
+driver artifact path. SCOOBY reconciled the runner fallback, agent/provisioning
+policy boundaries and existing source-build action; no source execution occurred.
+The staged source candidate owns static PATH/final-selection binding; conditional provider
+action restriction remains a separate design decision, followed by separately
+authorized first-party driver build/retention and admission. Existing release
+publication is not a shortcut.
+Rendered Site policy/command reference/Learn/FAQ/Glossary, Skills and Examples
+propagation remains OPEN/deferred. The deny map and optional denial JSON are
+source-staged, with manual policy-review/receipt schema edits; no ota.yaml
+contract shape, Protocol/Launcher or pin change is needed for this restriction.
+Bootstrap and the separate no-install refusal mechanism remain NOT_VERIFIED;
+no shim, contract-mode change or direct Cargo bypass is accepted. No source fix
+qualifies the older executing driver. The offline control route remains HOLD.
+Future first execution remains only `ota run check --native --agent`, including
+setup; it executes build scripts/proc macros. Full `ota run test --native --agent`
+is a separate later gate. The proposed 64 MiB `.ota/state` overlay and remaining
+8 GiB-minus-64 MiB scratch preserve immutable source/lock/other policy, but their
+effective PATH, mutable mounts, no-swap, deadline/output and cleanup boundaries
+are NOT_VERIFIED. No-Cargo preflight cannot qualify Cargo cache sufficiency.
+No daemon, container, toolchain/version, Cargo/compiler/tests, network,
+install/refresh, VM/spend, commit/push/release is admitted or executed here.
+Linux validation will not establish Darwin compatibility. Step7 OPEN/R1 BLOCKED,
+native-admission HOLD, Step8/V12.2 inactive; closed experiment unchanged.
+
+### Source-Only Kernel Acquisition Reopening Packet
+
+Bobai explicitly approved ONE source-only preparation on 2026-10-10 after the
+closed spike; MUSE independently verified human message
+`01a126eb-11e5-76a2-a56f-4b84275a1505`. This is a separate preparation slice,
+not revival of consumed execution approvals. Original two-engineering-day
+window unchanged and still available at preparation start. Authoring plus
+trusted read/hash/text/AST inspection only; no target import/evaluation/tests/
+compiler/container/guest/network/VM/provider/spend/commit/push/release.
+Frozen corrected candidate: `/Users/bobai/.codex/artifacts/2026-10-10/kernel-custody-reopen-r13-r2`.
+Nineteen unchanged R11 members, the per-boot hash gate and R12 fixture/shared header;
+22-member runtime manifest SHA
+`1cb6700966e594018d1537d898aaa45f24eedf1f320c691a2b86342d0d84bb34`.
+27-member source manifest SHA
+`f0bdb0608258a58fe752ed72e3993d50bdceafdbe3217af374b36b8366865e9b`;
+all28 files0444, regular/single-link/euid, exact hashes/origins verified.
+Trusted AST parsing of three Python controls and JSON inspection passed; no
+target code evaluated. All12 actual lifecycle cases remain not_proved.
+Qualified VLAD R13 review `01a126f4-4502-7bd1-835f-73e766cd017d` found one P2:
+hashes checked only before the loop, not each boot. R13-R2 adds only the repeated
+build.sha256 gate immediately before QEMU; R13 preserved. Qualified VLAD recheck
+`01a126fb-b47f-72b3-8571-ab3e8364d67c` closes the P2, no P1/P2/P3 in the exact
+delta; source-ready ONLY. MUSE independently reconciled and cleared the missing
+outer-control authoring within the SAME human source-only preparation.
+Frozen corrected companion: `/Users/bobai/.codex/artifacts/2026-10-10/kernel-custody-outer-r13-r3`;
+four-member source manifest SHA
+`089117de71004bfdf7c0f24dc083fb3cd1909bbae36da17559bce0c5a61d4a7d`.
+All five files0444, regular/single-link/euid; trusted AST/JSON/hash inspection
+ONLY. Live grant template is false; no prepared code or provider CLI executed.
+Qualified VLAD/MUSE reconciled five P2s in the original companion (no accepted
+P1/P3): first-contact SSH trust, unguarded setup, leader-only group termination,
+missing boot/birth generations and overstated cleanup after unresolved creation.
+R2 adds authenticated stock guest-attribute host-key bootstrap before SSH,
+guarded setup/unreaped-leader group KILL, controller/child boot-birth identities,
+and terminal-operation admission/unresolved-create HOLD. Original packets preserved;
+qualified R2 reviews accepted four corrections and the failure-group correction,
+but retained one normal-group/readiness P2. R3 observes child exit without reaping,
+finalizes both paths with the unreaped leader as anchor, makes group ambiguity
+sticky HOLD and refuses unsafe readiness polling. Default SIGCHLD/single reaper;
+new waitid/FFI runtime compatibility NOT_PROVED, no calls/tests performed.
+Qualified VLAD R3 review `01a1271f-876c-79e1-9637-ee437e1b4ee2` closes the residual
+P2 at source level, no P1/P2/P3 in the exact delta. MUSE independently reconciled
+R3 and cleared SOURCE readiness only; clarification
+`01a12728-8d6d-7292-8e1d-66b090f5cb1a` retains native Darwin admission HOLD.
+FFI/wait, CLI compatibility and cleanup execution still
+NOT_PROVED; no live grant or candidate/control execution. Environment/time/cost/cleanup
+remain proposals, NOT authority; stale R7 wrappers must not run.
+Frozen no-VM admission planning proposal:
+`/Users/bobai/.codex/artifacts/2026-10-10/kernel-custody-admission-proposal-r13-r2/PLAN.md`,
+SHA `edfa8e44eee0e0b5d8be16c4fafa96ce57162c1fbcca48afc888e4643decfc5d`.
+Qualified VLAD planning review `01a1272e-53f4-76e3-af06-187974910ebd`
+reports no P1/P2/P3; MUSE planning review independently accepted the proposal and
+reconciled qualified VLAD, planning ONLY. Exact dummy harness/
+launcher and trusted fact-query controls are not frozen, so NOT execution-ready.
+First identify/review an existing qualifying native isolation route by bounded
+source-only inspection; retain HOLD if none qualifies within unchanged constraints.
+Only then freeze the exact admission harness, launcher and fact-query controls.
+Next is source preparation for a separately authorized
+no-VM admission gate, NOT a conditional VM request. Cached Linux sandbox may test
+Linux control only; it cannot clear Mac FFI/control. Trusted read-only account/
+image/package/pricing facts require separate human authorization through the
+existing trusted operator path, NOT R3 supervision or target credentials.
+No qualifying existing Darwin isolation route established; no claim none exists.
+Bounded native source inspection found installed sandbox-exec, whose local man
+page (`/usr/share/man/man1/sandbox-exec.1`) describes profile execution and marks
+it deprecated, not an accepted profile/guard enforcing the required aggregate
+resource, isolation and cleanup controls. Apple SDK sys/resource.h rlimit
+constants do not establish those controls. Existing inspected experiment guards
+are Linux cgroup2/bwrap paths, not native Mac admission. No runtime/capability
+probe or sandbox invocation performed. Disposition: SOURCE-PREPARED /
+NATIVE-ADMISSION-HOLD; MUSE independently reconciled the bounded source evidence
+and handoff, no new P1/P2/P3. This source-only preparation is CLOSED with the
+native admission gate retained; it does not pause other authorized workstreams.
+Missing reviewed guard and independently established equivalent isolation,
+aggregate resource and cleanup controls are the stop reason, not deprecation
+alone or a claim of universal Darwin/kernel infeasibility. Do not prepare
+speculative Linux harnesses or collect expiring facts as a native workaround.
+If matching native controls cannot be admitted within the fixed window, HOLD;
+no unsandboxed exception, new platform/install, VM discovery or deadline reset.
+Step7 OPEN, original R1 BLOCKED, Step8/V12.2
+inactive. Old closeout/evidence immutable. Private experiment only; no public
+spec/schema/JSON/CLI/changelog/Site/Skills/Examples/Learn/FAQ/Glossary change.
+
+### Bounded Kernel Outcome Acquisition Experiment
+
+**Disposition: CLOSED / INCONCLUSIVE; kernel acquisition NOT_PROVED.**
+MUSE accepted the narrow R12 compile result and reconciled qualified non-author
+VLAD in `01a12664-b41c-7bf1-ae6c-ff46c87009d5`. No P1/P2/P3 in the scoped
+retained compile/cleanup evidence. Further experimental execution under the
+current grant is STOPPED. This is not evidence of universal infeasibility and
+does not close Step7. Original R1 BLOCKED, Step7 OPEN, Step8/V12.2 inactive.
+MUSE final closeout review `01a1266b-26ec-7172-b81a-5262e91ef2d9` accepted
+the coherent handoff and existing consumer RESULT.md, no P1/P2/P3. Exact reviewed
+RESULT5504B SHA `decbcb0b73be036e1ce471f5e803d4a6488deefb9d40342f3f95b179e4d8b9e4`
+frozen0444, regular/single-link/euid and unchanged digest independently verified.
+This receipt ends the experimental grant; no further execution or proposal.
+
+Bobai approved the private feasibility spike on 2026-10-10 with the original
+two-engineering-day stop; no automatic reset/extension. All four GCP and all
+subsequent single-attempt local approvals are consumed. No retry, fifth VM or
+new kernel-capable attempt is authorized. Routine bounded local decisions were
+delegated to MUSE, not spending/VM/provider/production/release/stop renewal.
+The Discord host `100.77.146.124` is excluded from builds/mutations/heavy tests/
+reboots. No new experimental execution is active; the separate source-only
+preparation above does not revive this closed grant.
+
+**Accepted bounded facts and canonical private records** (under
+`/Users/bobai/.codex/artifacts/2026-10-10`; RESULT.md and raw evidence retained):
+- `kernel-custody-preflight-r11`: Python3.11.2,11 methods/12 synthetic shapes,
+  including current-frame parent-detach refusal. VLAD
+  `01a125fc-c0a8-76d2-b594-6c69863c6a39` and MUSE
+  `01a125fc-c724-7393-8594-71791b16302e` accepted ONLY synthetic/parser evidence.
+- `kernel-custody-c-helper-r11`: seven constructed child-status/CRC groups on
+  native ARM64, not realwaitid/SIGKILL acquisition. Qualified runtime VLAD
+  `01a1261f-559d-7751-94b6-ebc483114d30` and MUSE
+  `01a1261f-5979-7050-ab30-a9d83b9d3731` accepted that narrow scope.
+- `kernel-custody-fixture-compile-r11`: full R11 fixture ARM64 compile-only,
+  NEVER run/exported. Qualified scoped VLAD
+  `01a12636-8503-7723-bab8-4f2e5495f749` and MUSE
+  `01a12632-f25a-7cd1-9921-5c7c72282b40` accepted compile/output-shape only.
+  An unrelated article final was rejected as clearance; R1 marker-byte HOLD
+  remained unexecuted and only corrected R2 ran.
+- `kernel-custody-interop-r12`: actual shared2903B C serializer and pinned
+  Python verifier passed19 synthetic groups:3 constructed positive shapes,
+  2 valid-CRC semantic refusals,71252B max-width wire,4 producer guards and
+  9 wire mutations. Qualified VLAD `01a12659-87ca-7a92-a3ce-657c694b13aa`
+  and MUSE `01a12659-8d45-7a93-94b9-cbeafa40b6dd` accepted ONLY selected
+  synthetic transport/refusals. NO real fixture lifecycle result is proved.
+- `kernel-custody-fixture-consumer-compile-r12`: R12 successor fixture includes
+  the shared header, with unchanged ABI/admission inputs. One exact approved
+  ARM64 compile-only attempt passed. Qualified VLAD
+  `01a12664-a972-7692-b752-9ca55f93e8d6` and MUSE above accepted compile/
+  bounded output-shape/runner-observed identity ONLY. No /helper executable
+  exception; output0400 on private noexec /tmp, NEVER run/exported.
+
+**Latest exact evidence:** consumer attempt `15b75f6845234288ac044c073a1478c7`;
+container `f328decba16a417f4d8c0c82943c3aa0843777fd1841b8ef68cb93bedabe652e`.
+Root/attach/container0, terminal exited/nonrunning/nondead/noOOM/noError; all
+cleanup predicates true. Independently confirmed exactID/UUIDlabel/anchoredname
+absence, stageENOENT and launcher/attachment-by-ID absence by SCOOBY/VLAD/MUSE.
+Regular single-link0444 attempt434B/result2766B/log5624B hashes respectively:
+`d199268a8db9c013c6b1ba9e6a9de4d510f5232a7da8ee097e40e0f4ae7a0c1f`,
+`09d441ddbf6d7648e240e46ff02e2fad88292e28232bc70743b7eac3c17e5cd5`,
+`eb0cd19ed2e4101cdc5301daa88382ae74530cb34365c6cfb8ef57de79241f1d`.
+Frozen eight-member preparation
+`c2c4d5ecdc58eff0746fb5c0745bacd9411ef1e700effdf96687ea4dea0a1a89`;
+four-input manifest
+`d7b5d52f8534c5412b416679cf2f7f63801b5e6722b27b2b5e96cbe5b9e1cea3`.
+Observed fixture707008B SHA
+`8674dfa8c0f7aa5e7a1e410d5417e90e598d3bd9baf9948724083253d35dcfb2`
+coincides prior R11 metadata, NOT independent binary rehash/reproducible-build
+proof. Deleted binaries/wires have only runner-observed retained identities.
+
+**Immutable failed/partial evidence:** `kernel-custody-cloud-r7/RESULT.md` and
+its raw retention remain STOP/partial. X64 fixture/kernel/initramfs built;
+normal/exit emitted PASS markers, not accepted acquired-state cases (exit ROW
+console-corrupted). Reuse child failed EACCES13, then parent incorrectly emitted
+PASS because status was unchecked. Outer rejection stopped CLI1/overall1;
+remaining9 cases never ran, no full results manifest/GO. R10/R11 source repaired
+directory traversal/status/framing and current-frame lineage, but no later
+synthetic/compile result validates those repairs in a live kernel.
+`kernel-custody-preflight-r10/RESULT.md` retains10/11 passed and the genuine
+parent-detach failure; R10 HOLD. R8/R9/R10 frozen packets, prior build failures
+and historical evidence remain unchanged. The earlier escaping P1 was withdrawn,
+not a repair claim; the actual compile R1 marker-byte HOLD is separate.
+
+**Resources:** previous four GCP attempts' owned VM/disks/address/networking
+were deleted; independent six-inventory absence checks retained, private
+operator key removed. Both R12 local capsules/staging/attachments independently
+absent; no experiment resource remains running at these checkpoints. No new
+cloud resources created. Settled billing is unverified, not zero-cost.
+
+**Discriminating next live gate, NOT activated:** an independently reviewed,
+fresh frozen kernel-capable acquisition attempt must run all12 cases fresh
+(normal,exit,reuse,last,dup-refusal,paused,kill-close,late,survivor,
+collector-before,collector-after,overflow) in networkless isolated guests,
+retain bounded intact actual-state frames and outcomes, and independently
+reconcile exact generations/visible lineage/actors/chronology/refusal states.
+SPIKE_FAIL, missing/interleaved/truncated/bad frames, wrong child outcomes,
+late/ambiguous/incomplete evidence or cleanup failure must refuse even with
+PASS. No repair-by-filtering console text or reuse of R7 PASS markers.
+
+Reopening requires a HUMAN decision on one exact kernel-capable environment/
+attempt scope, fresh source/build/packaging/collector identities and qualified
+VLAD/MUSE source clearance, available time within the original stop (or explicit
+human renewal if outside it), and any VM/spend cap/provider deletion deadline.
+Cached/local environment availability is not runtime authority. No current
+approval supplies live execution; the separate source-only candidate above is
+not a VM or budget renewal. Reassess after live evidence, not more synthetic coverage to
+manufacture movement. Even a restricted12-case GO would not prove production
+manager/SCM/eight-input closure or Step7; integration requires its own authority.
+
+**Uncovered-material inventory:** synthetic/parser/transport and named native
+compile/helper scopes above are proved ONLY within their declared experiment.
+Explicitly not_proved: ALL actual fixture lifecycle executions, realwaitid/
+SIGKILL admission, acquired-state authenticity/semantic attestation, full x64/
+packing/guest/kernel matrix, manager/SCM/eight-input/mutator/driver closure,
+unexported collector-before comparisons, original timing parity and installed
+custody/Step7. +8s selected-work ceiling is serialized, not enforced by this
+close-only experiment; proposed late-close control concerns +10s retirement.
+CRC is corruption detection, not origin proof. ParentSIGKILL cleanup, raw wire/
+binary custody and billing settlement are unproved. Production/public runtime,
+pins/CI/provider/credential operations are repo-owned outside this checkpoint,
+unchanged/inactive; no discovered gap is silently promoted to shipped capability.
+No public spec/schema/JSON/CLI/changelog or Site/Skills/Examples/Learn/FAQ/
+Glossary propagation: private inconclusive feasibility closeout. No commit/push.
+
+### Accepted Step 7 Original Table Transition R1 Record
+
+MUSE ACCEPTS R1 ONLY as a BLOCKED source-transition record after qualified
+non-author VLAD `01a12088-7784-7310-8ce9-e39426fc4354`, no P1/P2/P3 content or
+integrity findings. Frozen manifest
+`6fda79462a50ac35c289811958f101ea2594cdca0128ff8e03a9f46de20329b3` (44 rows),
+design `bb63293462cf5241a871a9f31c722bdec4f59a1f27888b691be0ce672a0edd37`;
+pending words below historical. Exclusive-native-async-closer premise REJECTED;
+STOP stock-manager custody route: no further topology/owner/guardian study,
+one-closer result hook or Ota-only report workaround. No demonstrated race or
+universal impossibility. Bobai approved ONE offline/source-only manager-native
+custody/result capability experiment on 2026-10-09, not dependency adoption.
+MUSE rejected the proposed raw-anchor/fixture validator before implementation:
+it would repeat the known missing acquisitions, not supply a concrete producer.
+At R1 acceptance the alternative kernel-dependent primitive was UNASSESSED and
+no implementation was cleared. The bounded 2026-10-10 experimental grant and
+preparation above supersede that historical grant status only; no production
+kernel/manager capability or acquired result is accepted.
+Original table/copy epoch, permitted actors through required completion and an
+independently F-bindable retained outcome for the finite OWNED graph remain
+required. R1 itself supplies no patch/fork/kernel/runtime/root/provider/CI/spend/
+commit clearance; only the explicitly bounded experimental grant above applies.
+Status only; proposal/predecessors and all limits unchanged. Return guards then STOP.
+Step7 OPEN; Step8/V12.2 inactive.
+
+ONE MUSE-cleared original-table/closer epoch source check completed; BLOCKED,
+pending fresh qualified non-author review/MUSE disposition. RAW v257 + Linux
+v6.12 trace distinguishes returning failure (before fatal unshare) from successful
+exec. RUBY `01a1207d-0739-7ce2-aa51-ea9c8c6ffae1` completed the independent
+failed-exec/direct-sweep edge; integrated after exact raw-anchor verification.
+No duplicate study pending. Direct failed PID1 cleanup can freeze/sweep the
+original shared table without CLOSE_RANGE_UNSHARE or original-slot exclusion;
+the result is discarded. Native async closer is NOT the exclusive actor. A
+successful exec can split a shared table: the worker retains OLD table while
+CLOEXEC closes NEW copies. Count-one/no-sharer exec can instead CLOEXEC-close
+the ORIGINAL abandoned slot; last-old-table cleanup is another possible closer.
+Neither source branch nor death/sweep bookkeeping acquires an exact local result.
+No same-slot rebind/wrong-object race or installed/timing proof demonstrated.
+
+Exact missing dependency: independently acquired original table/copy epoch,
+permitted close actor custody through lookup/detachment and required completion,
+retained outcome independently bound by F; all finite OWNED copy/transfer/operation
+obligations remain. New table references are charged; whole-OFD destruction is
+NOT the predicate. Full preexec mutator closure and result/F acquisition absent.
+Recommendation: keep route unavailable and return this dependency; MUSE decides
+the concrete capability/approval needed. No automatic further topology/guardian/
+kernel study, feasible producer, manager patch/fork or runtime selected. Complete
+current freeze/review then STOP; no implementation while custody remains unknown.
+Two docs/evidence and 15 guards/HEADs only; unrelated planning/predecessors stay
+unchanged. No source/test/build/config/pin/Protocol/public/live/CI/spend/commit.
+All original8s/10s/Observer5s1s, costs, four death stages/seven faults, firstfailure/
+UNKNOWN I/W preserved. Spec/schema/JSON/changelog, Site/Skills/Examples/Learn/FAQ/
+Glossary unaffected: private source record, no public behavior/claim. Adapter
+inert; Observer uninstalled/unconnected. Step7 OPEN; Step8/V12.2 inactive.
+
+### Accepted Step 7 Native Manager Copy Custody R1 Record
+
+MUSE accepts native-custody R1 ONLY as a BLOCKED source-only record after
+qualified VLAD `01a12075-3eec-73c1-b3e5-8568a902ea37`, no P1/P2/P3 content or
+integrity findings. `01a12070-709e-7312-bca9-e286d2a7c499` unrelated final is NOT
+review evidence; `01a12074-2781-7f93-b2fc-79f4ca658f15` content-only/incomplete
+is NOT qualified closure. Frozen manifest
+`aeebefbcda19951f33b2a1d5d7761f8cfdf6c3c53f9fc19558d9e8ed5b63235b` (49 rows),
+design `1604d00b005698147166253e963ff8a5d7deb9c346a7de761cac69cc4156fd3c`;
+pending words historical. No custody/result/F/installed/timing proof. MUSE clears
+ONE targeted original-table/closer epoch source check, no implementation. Same
+two docs/evidence and limits; Step7 OPEN; Step8/V12.2 inactive.
+
+ONE MUSE-cleared bounded v257 source-native ownership/exclusion check completed;
+result BLOCKED, pending fresh non-author review/MUSE disposition. Native adoption,
+borrow/shallow cleanup, distinct serialization duplicates and one async handoff
+are distinguished, not token-based proof. Reload/reexec release the original
+through old-unit destruction, not continuity of the restored duplicate. Cancellation
+is not close completion; errors can retain earlier adopted copies. Exact uncovered
+class: pending CLONE_FILES closer/original-table epoch and competing close/rebind
+actors through manager teardown/reexec. No actual wrong-object close demonstrated;
+actor closure, bound result/F acquisition and installed/timing proof remain absent.
+RUBY technical completion `01a12065-6fad-7710-a7d8-6f7084a1b2eb` integrated after
+checking raw anchors; unrelated prior outreach final is not technical evidence.
+No feasible manager change/runtime/private-table/guardian/lock selected. Return
+frozen result; MUSE decides one targeted original-table/closer transition check
+or holds route blocked. No implementation while custody unknown. Same two docs/
+evidence, 15 guards and HEADs; unrelated planning/predecessors preserved. No source/
+test/build/config/pin/Protocol/public/live/CI/spending/commit; all original clocks,
+costs/faults/firstfailure/unknownI/W unchanged. Public propagation unaffected:
+private source-feasibility record only. Step7 OPEN; Step8/V12.2 inactive.
+
+### Accepted Step 7 Exact Manager-Owned Local Close R2 Record
+
+MUSE accepts local-close R2 ONLY as a BLOCKED dependency record after qualified
+non-author VLAD `01a12059-a73c-7c80-af64-8e1fda2b37d1`, no NEW P1/P2/P3.
+R1P1 unsupported feasibility is withdrawn, NOT a solved custody mechanism;
+concrete exclusion/producer/result/F acquisition and installed/timing proof remain
+missing. R1P2 raw anchor corrected; R1 NOT ACCEPTED preserved. Frozen R2 manifest
+`99c4049174856af1ced58b9750a44eb72d7c972465bdb733732ee30add6eed8c` (31 rows),
+design `d5b04fa28ed742cb4f0290db9a887966d0710336ae9dafba81c8d8a0296191bd`;
+pending words historical, not a candidate or upstream commitment. Status-only;
+proposal/limits/predecessors unchanged. Return guard then stop; no successor
+clearance. Step7 OPEN; Step8/V12.2 inactive.
+
+MUSE clears ONE R2 documentation/evidence repair: one already manager-owned
+donation copy for one admitted S invocation, from native release/async closer
+through actual LOCAL close completion to independently admitted F reconciliation.
+Local-close R1 NOT ACCEPTED: qualified VLAD
+`01a1204f-35f9-7a01-8fb0-8b94c63b6ddf`, confirmed
+`01a12051-a7e8-7893-b2c2-0e85ced699a1`, found P1 (exclusion stopped before
+FD lookup/detachment), P2 (shifted raw adoption anchor), noP3. R1 stays immutable.
+No implementation clearance. Earlier accepted dependency R2 remains BLOCKED
+record-only; whole-OFD destruction is not required. Local R2 decision BLOCKED:
+concrete shared-table custody/exclusion through lookup/detachment, conservatively
+through return, is NOT acquired by a token or future admission. No feasible
+upstream result is claimed. Producer/result/F acquisition stays absent. Correct
+v257 raw adoption750-791/dup784; exact raw source retained. No patch/runtime/hook.
+RUBY mapping `01a12047-20b0-74d3-ad2c-58f306d45c06` confirms consumer owners,
+not producer/F admission. Fresh frozen non-author review then MUSE disposition
+required. Remaining copies/transfers/continuations/resources remain not_proved;
+one local outcome cannot close Step7. Preserve four death stages/seven faults,
+first failure/unknown I/W, original8s/10s/Observer5s/1s and all charged costs.
+Decision pending review: one separately bounded internal concrete-custody
+feasibility slice or hold this route blocked; no sponsorship/external commitment
+inferred. No Ota-local ACK workaround/private-fork/kernel-escalation default.
+Two docs/evidence only: no source/test/build/config/pin/Protocol/public/live/CI/
+spending/commit/push/merge/release. Source guards/HEADs/predecessors/unrelated
+planning edits retained. Public surfaces unaffected: private design only.
+Step7 OPEN; Step8/V12.2 inactive. No successor work before MUSE disposition.
+
+### Accepted Step 7 Manager Completion Dependency R2 Record
+
+Active R2: ONE documentation-only ownership-scope repair. R1 is NOT ACCEPTED:
+qualified VLAD `01a1201a-b142-7901-bae8-3a6fd39f5d2f` found one P2, no P1/P3,
+for substituting whole-OFD destruction for the inherited finite owned-retirement
+bar. Preserve physical completion; distinguish outside same-OFD aliases from
+owned copies/transfers/kernel operations and escaped custody. No duplicate RUBY
+study, kernel research or successor. Focused R2 review/MUSE disposition completed
+as BLOCKED-only acceptance below; no successor clearance.
+Historical R1 manifest `bb6fe5b3e53916771a58e1cb43294041be977ff2b4f095e5f5d727d0082c5bdf`,
+design `d042776f55c98d7c92b3b77dfecfb4d06a5bff4733ca67e3556f24933d80c788`;
+pending words are historical, not acceptance. Actual R2 BEFORE private
+`e2d1bd40e5c24b083993f13d65f99cbe259bb8f6b3dac698cf50ab14b7b0dc4f`, Core
+`3c529dfd1158048116d731a04d8177855648de05196f746a0a95f241a1f8f339`.
+
+MUSE accepted the predecessor status guard and cleared ONE missing-dependency
+CONTRACT/FEASIBILITY design slice under standing bounded-roadmap delegation.
+Evaluate one exact manager-level finite donation-retirement completion mechanism,
+prefer an existing supported versioned capability; if absent, specify the minimum
+proposed upstream capability and its actual kernel completion dependency. No
+extra owner/journal, kernel instrumentation or custom manager fork is selected.
+Identity/receipt fields do not establish physical completion.
+
+SCOOBY owns this handoff and Launcher `docs/private-principal-adapter.md` only.
+RUBY may do ONE non-overlapping primary/source producer-completion check. Checklist:
+record scope; bind finite birth/copy/transfer/close lifecycle to admitted producers
+and kernel completion; distinguish shipped APIs from proposal; retain independent
+F binding, four death stages/seven faults, original clocks and all incremental
+costs; recommend one decision with deployment/maintenance/portability limits;
+freeze actual BEFORE/diffs/AFTER and 15 source guards; fresh qualified non-author
+VLAD review then MUSE disposition. End EXISTING-SUPPORTED-PRIMITIVE,
+UPSTREAM-MANAGER-CAPABILITY-REQUIRED or BLOCKED; stop at unsupported acquisition or
+unapproved trust/requirement/resource/daemon/fork/instrumentation commitment.
+
+Read-only primary/source research and two docs/evidence only: no source/enums/
+serialization/fixtures/tests/builds/drivers/configuration/pins/Protocol/public
+changes, runtime/artifact selection, patch/instrumentation, unit/VM/container/
+root/installed/hosted/provider/CI action, spending, external/upstream messages,
+commit/push/merge/release or transport. Predecessor packets and unrelated planning
+edits stay untouched. Actual BEFORE private
+`9342207d8b1e506c75b8541cbd028af3ee66e87bf4e848be0f3637bccb966348`, Core
+`dd89f0c60220acd3d1af8ea49c8d1e9e6a8e37706b78ac4f68dfbf19b939724e`.
+Step 7 OPEN, completion BLOCKED; Step 8/V12.2 inactive.
+
+R2 decision proposal: **BLOCKED**, accepted by MUSE ONLY as a finite custody/
+owned-operation-acquisition record after qualified non-author VLAD
+`01a12030-4866-7ac2-9e4e-d3104151af07`, with no P1/P2/P3 for this exact R2 and
+explicit closure of R1's P2. R1 remains NOT ACCEPTED historical. Frozen R2 packet
+`/Users/bobai/.codex/artifacts/2026-10-09/principal-manager-completion-dependency-design-r2`,
+manifest `1cb645400859fbf8a2c6491b4261a8ef8473e9a547109aec925a0a7f725110e4`
+(39 rows), design `1d8c5772070b8024d9b0b5d217c39ea111e4bdbdf2ad7eefb0c2429a086420d9`:
+pending words remain historical. Exact continuity/diffs/AFTERs, retained anchors,
+15 unchanged guards and HEADs verified; qualified review closed the scope finding,
+not the acquisition gap. No working mechanism/candidate acceptance. Actual finite
+custody/physical owned-operation completion, installed/account/MAC admission,
+resource retirement and original timing/accounting fit remain unproved. No
+source/test/build/config/pin/public/Protocol/CI/spending/commit, runtime/kernel/
+trust/requirement/resource change or successor clearance. Only acceptance/
+provenance changed; predecessors/unrelated edits preserved. Return the status
+guard to MUSE then stop. Step 7 OPEN; Step 8/V12.2 inactive.
+ONE proposed upstream manager finite donation-retirement transaction is evaluated,
+not a shipped API/selected patch. Native generation-scoped birth/copy/transfer/
+reexec/close custody, independently authenticated F binding and partial-failure
+ceilings are specified as required acquisition, not supplied by receipt fields.
+The private repair cites the exact inherited owned-handle/channel/resource bar
+and classifies originals, recipients, manager/observer copies, transfers/queues/
+in-flight/reexec/async close and relevant owned kernel operations by custody and
+actual required completion. These acquisitions remain not_proved. Independently
+outside aliases may hold the same OFD; they grant no foreign closure authority
+and do not by themselves prevent completed owned close/drop operations. Required
+exclusive admission, if unavailable, yields refusal/not_proved; escaped owned
+copies cannot be relabeled outside. Whole-OFD final cleanup is not a universal
+completion gate. A local bound acknowledgement may establish one actual operation,
+not the full finite graph; payload/intent/absence/EOF/UnitRemoved still cannot
+substitute for required physical completion and independently bound evidence.
+
+The proposal keeps four C-death stages/seven faults, all incremental tracking/
+worker/kernel/F costs, original clocks, first failure and unknown I/W. It separates
+shipped API/source limits from proposed upstream responsibility and names exact
+kernel completion points without selecting instrumentation/patches. No claim
+about other versions/installed support/impossibility. Recommend no implementation
+around missing scoped acquisition; after accepted R2 MUSE decides the smallest
+supported dependency. No kernel work or requirement reconsideration follows from
+R1's unjustified whole-OFD condition, and no successor is authorized here.
+Closure/account/MAC, resource/profile and actual fit proof remain open. Private
+planning only: public Site/Skills/Examples/Learn/FAQ/Glossary/spec/schema/JSON/
+CHANGELOG/Protocol unaffected. No external/upstream messages or downstream work.
+RUBY's R1 producer-edge check `01a1200f-3b91-7162-b110-37a2a48aea27` retains its
+accurate kernel facts, not acceptance of the overbroad predicate. No repeat study.
+
+### Accepted Administrative Recovery Extension Design
+
+MUSE verified the predecessor acceptance-status guard and cleared ONE successor
+DESIGN/FEASIBILITY-only proposal under standing bounded-roadmap delegation.
+Use the existing protected Launcher installation/recovery boundary as the reuse
+anchor, not an already sufficient or selected final owner. Establish finite
+independent admission and pre-creation custody, exact intent/manager epoch/job/
+invocation/reference/handle identities, distinct enforcement/observation/durable
+evidence after C death, and physical donated-handle close-completion acquisition.
+UnitRemoved, NoSuchUnit, cleared bookkeeping, status and EOF alone are insufficient.
+Retain four C-death stages, seven fault rows, first failure and unknown I/W facts.
+All new control/watch/recording actors, handles and costs count against unchanged
+aggregate limits and original start+8s/+10s clocks, even outside the attempt's
+lifetime/failure domain. No off-clock recovery or resource exemption is cleared.
+
+SCOOBY owns only this handoff and Launcher `docs/private-principal-adapter.md`.
+RUBY may make ONE non-overlapping read-only primary/source primitive check.
+Checklist: record scope; examine finite acquisition/physical-close mechanism;
+write one concrete bounded proposal or exact blocker; freeze actual BEFORE/diffs/
+AFTER and 15 unchanged source guards; obtain fresh qualified non-author VLAD
+findings-first review, then MUSE disposition. DESIGN-CANDIDATE requires a defensible
+mechanism for every edge, with installed behavior/timing/resource fit unproved.
+Otherwise BLOCKED with the missing primitive and smallest decision; stop rather
+than add topology. A new daemon, manager patch, requirement/trust expansion or
+resource exemption requires separate disposition.
+
+No code/enums/serialization/fixtures/tests/builds/drivers/configuration/pins/
+Protocol/public edits, runtime/artifact selection, unit/VM/container/root/
+installed/hosted/provider/CI operations, spending, commit/push/merge/release or
+downstream transport. Preserve MUSE's unrelated dirty planning files and all older
+immutable packets. Fresh parent evidence only. Step 7 OPEN and completion BLOCKED;
+Step 8/V12.2 inactive. Actual accepted-status BEFORE hashes: private
+`fe3b054b1c18b91aa6ecfc1edf38710912deb9cd8853d02eb136d8472ed2fdf5`, Core
+`aa93ad915a5fc71563d5168c702862de1a7bcd0697c1c498389150172426fb84`.
+
+Proposal result: **BLOCKED**, accepted by MUSE only as a coherent dependency-design
+record after qualified non-author VLAD review
+`01a12001-5618-7581-969e-825b006d7877`, with no P1/P2/P3 for this exact objective/packet.
+One concrete installation-owned F responsibility extension reuses protected
+admission/intent/recovery, not a selected new actor: independent pre-creation
+arming, manager epoch/job/invocation custody, original-clock enforcement,
+independent final observations and protected evidence. C/R death does not require
+a watcher chain; F/manager loss remains failure/UNKNOWN and no replay. Every new
+F cost/handle remains accounted even outside the retired aggregate. All four
+C-death stages and seven faults retain first cause/missing I/W outcomes.
+
+Exact missing dependency: independently acquired finite manager-donation/copy
+identity and physical-close completion, including reexec/transfer/deferred-close
+and observer comparison references. kcmp compares supplied slots, pidfd_getfd
+duplicates an OFD, and proc fd entries are current snapshots, not that receipt.
+UnitRemoved/EOF/bookkeeping do not close the edge. The private proposal gives
+mechanisms/limits for each duty and stops at this dependency, not an impossibility
+claim or proof of installed support. No implementation around an unobservable
+edge. Recommend a separately bounded plan-owner decision on that manager/kernel
+acquisition dependency; patch/instrumentation/trust expansion or operator-recovery
+requirement relaxation is not selected/cleared. Artifact/closure/account/MAC,
+resource/profile enforcement and real 8s/10s/aggregate fit remain open. No public
+surface changes; Site/Skills/Examples/Learn/FAQ/Glossary/schema/JSON/Protocol and
+CHANGELOG unaffected by this private design-only proposal.
+RUBY's completed same primitive check `01a11ffb-3c59-7760-bd59-e2e9d1000e84`
+agrees on NOT_PROVED: Linux v6.12 slot removal precedes close processing;
+alias removal/closer completion/final OFD retirement stay distinct. Ordinary close
+uses `__fput_sync`, not universally deferred cleanup. Its earlier unrelated
+outreach final `01a11ff6-5422-7180-ba43-cf1b29440157` was rejected as evidence.
+
+Frozen packet
+`/Users/bobai/.codex/artifacts/2026-10-09/principal-administrative-recovery-extension-design-r1`,
+manifest `39db89fac885007b4c57859b070c413217849b7e4d209e4a90854f7b2c3ef886`
+(45 rows), design `73de41bc91e149cc110854113b0de4f7c42589be5e0f77393c69c383cf40a4a4`:
+pending words remain historical. MUSE verified actual BEFOREs/live AFTERs, exact
+diff bodies, 15 equal live source guards and retained primary evidence; VLAD
+independently reviewed the exact objective/packet and proof boundaries. Acceptance
+does not select an implementation candidate/owner/artifact/runtime, assert
+impossibility/source vulnerability/installed proof, or clear patch/instrumentation/
+trust/resource exemption, requirement relaxation, implementation/live/test/build/
+configuration/pins/public/Protocol/CI/spending/commit/transport. Closure/account/
+MAC, profile/resource enforcement and original 8s/10s fit remain open. Only
+acceptance/provenance changed; predecessors and unrelated planning edits preserved.
+Step 7 OPEN; Step 8/V12.2 inactive. Stop for the separately bounded missing-
+dependency decision after MUSE verifies the returned acceptance-status guard.
+
+### Accepted Final-Retirement Owner Assessment
+
+MUSE cleared ONE successor DESIGN-ONLY/read-only assessment under Bobai's standing
+bounded-roadmap delegation: determine whether an already independently admitted
+administrative manager/recovery owner outside the attempt can enforce and
+independently observe R's exact terminal/service-reference retirement and final
+aggregate/resource/profile closure after C dies. Assess whether that owner
+actually exists; PID1/root/admin names or a proposed report are not admission.
+No per-attempt watcher chain or completion-requirement relaxation is authorized.
+
+SCOOBY owns the assessment and only this handoff plus Launcher
+`docs/private-principal-adapter.md`. RUBY may do ONE non-overlapping read-only
+current-source/primary versioned API primitive check. No code/fixtures/enums/
+serialization/constructors/tests/builds/drivers, configuration/pins/public edits,
+unit creation/VM/container/root/installed/hosted/provider/CI operations, spending,
+commit/push/merge/release or runtime/artifact selection. Preserve MUSE's unrelated
+dirty planning files. Parent-created evidence packets only are allowed.
+
+Acceptance: unchanged completion/fault assumptions, distinct enforcement/
+observation/durable-evidence owners and finite acquired trust/handle graph;
+exact invocation/job/reference/donated-FD/cgroup lifetimes and original clocks;
+C death before creation/during arming/after release/during retirement; compact
+failure table for C, R, both, manager/owner loss/reexec, lost replies, foreign
+resources and expiry; unchanged aggregate resource/8s/10s limits and no invented
+fit. Missing I/W facts stay unknown and first cause stays failure. End with
+FEASIBLE-CANDIDATE, BLOCKED or NO FEASIBLE EXISTING OWNER, one recommendation and
+smallest decision. Operator recovery/refusal is a separate plan-owner requirement
+option, not equivalent proof or approved weakening. Stop if no owner meets the bar.
+
+Freeze actual accepted-status BEFOREs, narrow diffs/full AFTER, necessary exact
+source/upstream anchors, 11 source guards and immutable manifest. R1/R2 packets
+remain untouched. Fresh qualified non-author VLAD review precedes MUSE disposition
+or dependent work. This clearance permits assessment, not owner selection or
+implementation; Step 7 OPEN and Step 8/V12.2 inactive.
+
+Assessment accepted by MUSE as a bounded NEGATIVE current-architecture/acquisition-
+gap assessment only after qualified non-author VLAD review
+`01a11fe0-3c40-7662-8da4-b1bf75fc54c6`, with no P1/P2/P3 findings:
+**NO FEASIBLE EXISTING OWNER** demonstrated for the unchanged complete C-death
+retirement bar in the examined current architecture. Protected Launcher recovery
+handles durable recorded child scopes, not private R service/jobs/references/
+aggregate/profile/handle retirement or original-clock crash triggering. Root
+custody capture copies a COMPLETE-triggered bundle, not those live facts. PID1
+and RefUnit/GC APIs do not independently close the ownership/evidence edge.
+RUBY's one read-only primitive check identifies a further concrete v257 limit:
+manager donated-FD cleanup uses asynchronous close; UnitRemoved/NoSuchUnit or
+cleared bookkeeping is not physical close-completion evidence. This is a wider
+private completion gap, not a defect asserted against existing scoped behavior
+or an installed-version claim. No live installation was examined.
+
+The private assessment gives actual versus missing trust graphs, C-death stages,
+finite failure inventory and unchanged-resource/8s/10s boundaries. Missing I/W
+statuses remain unknown; no watcher chain, self-attestation, renewed clock or
+foreign cleanup. Recommended smallest next plan-owner decision: whether to
+authorize a concrete installation-owned administrative recovery responsibility
+extension, reusing the existing Launcher recovery boundary only if independently
+admitted, with exact manager-close/terminal/aggregate evidence and original-clock
+fault policy. No such topology or source work is selected/cleared. Operator
+recovery with failure/UNKNOWN is an explicit alternative requirements decision,
+not equivalent proof or an approved weakening. Stop downstream transport until
+this ownership gap has disposition. Same two private/canonical docs only; no
+public surfaces affected. Frozen packet
+`/Users/bobai/.codex/artifacts/2026-10-09/principal-final-retirement-owner-assessment-r1`,
+manifest `aad3e1ef0ec667cad14990c76c30637d7271a23291f2b99dfd7149eed1dc01db`
+(30 rows), assessment `3f97049788cbe187bf1a8ef3417f717777f1bac132d2728845d60adb5161372b`:
+pending words remain historical. Exact BEFORE/diffs/AFTER, 15 equal source guards,
+eight local anchors (839 lines), five upstream anchors (321 lines) and five raw
+official v257 files reconciled. Earlier unrelated VLAD final
+`01a11fd6-f075-7800-9955-62384928ae26` was rejected, not disposition/article authority.
+Acceptance is not impossibility or an existing-scope defect. Completion remains
+BLOCKED; no owner/topology/artifact selection, changed failure requirement,
+physical-close/timing/resource proof, implementation/source-only/live/commit
+clearance. Stop for the separately bounded recovery-extension DESIGN disposition;
+no dependent work begins here. Predecessors/unrelated planning edits preserved.
+
+### Accepted Blocked Manager-Owner Feasibility Proposal
+
+Bobai asked to keep going. MUSE cleared ONE concrete DESIGN/FEASIBILITY proposal,
+not source implementation, for Launcher's native manager-composition owner.
+Only Launcher `docs/private-principal-adapter.md` and this handoff may change.
+No source/fixtures/workflow/configuration/pins/Protocol, build/test/driver,
+container/VM/root/manager/provider/live action, commit/push/merge/release or
+positive constructor is authorized. MUSE-owned dirty planning files stay excluded.
+
+SCOOBY proposes direct `StartTransientUnit` `ExtraFileDescriptors` donation to a
+new per-attempt native S service, preserving all eight checked input objects;
+S retains the separate Observer and hands only interpreter/modules/archive to
+its independently selected W child. Production listener/boot activation and W/I
+FD 3/4/5..10 remain unchanged. The proposal specifies two finite private channels,
+original clocks, independent S/job/invocation completion and a new finite native
+R guardian outside the killed work subtree but charged to the aggregate attempt.
+R is proposed owned work-subtree cleanup after C death, not an existing actor
+or proof of complete C-crash retirement. R cannot independently observe its own
+terminal service/reference retirement or final aggregate emptiness; those remain
+unknown/operator recovery after C death even if R survives.
+
+RUBY's read-only official API/version check establishes upstream v257 support
+for direct donation, not v255 support or installed capability. Donated stdin is
+supported in both, but subsequent SCM_RIGHTS bypasses PID1 for the eight inputs
+and needs an explicit requirements decision. Names/PIDs/FD numbers and worker
+result packets are not authority. Manager-held duplicate lifetimes and shared
+socket shutdown/actual EOF require their own later proof.
+
+The full path is **feasibility BLOCKED**, not implementation/activation ready:
+the v257-capable manager/client/bus support and additional R owner need disposition;
+artifacts/full acyclic closure/private profile/numeric accounts/effective MAC,
+same-object acquisition and manager-reference/readback lifecycle are unselected.
+Real archive/tree/Listener work, journal/manager/IO/cleanup costs and aggregate
+R/S resource use are not measured against unchanged start+8s/+10s and Observer
+5s/1s bounds. A timer is not hard-real-time retirement proof. C death, manager
+loss or simultaneous C/R death needs independent surviving enforcement or explicit
+plan-owner failure-requirement disposition, not a success claim.
+
+R1 was rejected: fresh VLAD review `01a11e95-d383-7190-baa9-e2a45323391b`
+and MUSE found two P1 contradictions. R2 distinguishes actual pre-release W READY,
+release-input frame/EOF, post-release launch-status EOF and S-result shutdown/EOF;
+it marks R's own terminal/reference and final aggregate retirement unknown after
+C death. Live prerequisite shorthand is corrected; frozen predecessors untouched.
+MUSE accepted R2 as a repaired, explicitly BLOCKED feasibility proposal/gap
+disclosure only after fresh non-author VLAD review
+`01a11e9f-dcca-7411-b08a-0d6e282c698f`, with no P1/P2/P3 in the focused delta.
+Packet `/Users/bobai/.codex/artifacts/2026-10-09/principal-manager-owner-feasibility-design-r2`,
+manifest `31946e74bd7aeac8909065019c9e390cf07de87ff4067e0db4f5603d57fa1235`
+(17 rows), design `39bac9a000cc0465ff74d33b8104217f5d0620554b7a3be274aa44387225e710`:
+actual BEFORE=R1 AFTER, both narrow diffs/AFTER, 11 equal source guards and seven
+source anchors (2,082 lines) reconciled. Frozen pending words and rejected R1
+remain unchanged. Acceptance selects no v257/R topology or relaxed requirement.
+Complete independent retirement after C death is still unsatisfied and is the
+architecture blocker before downstream serialization. A later source-only seam
+is NOT cleared: closed roles/enums/bitmaps/sequences remain unspecified. Stop for
+next-slice disposition; no systemd calls or positive constructor is authorized.
+Step 7 stays OPEN; Step 8/V12.2 inactive. Site/Skills/Examples/Learn/FAQ/Glossary,
+public commands/schema/JSON and consumer pins are unaffected by private planning.
+
+### Accepted Predecessor: Manager-Transfer Gap Analysis
+
+The accepted existing-route analysis found neither listener/boot activation nor
+stopped-child PID scopes currently demonstrate complete same-object C/S/W handoff,
+independent S service completion and outer retirement. MUSE and non-author VLAD
+review `01a11dc8-0ee4-7521-a2a0-8e1841feb467` accepted gap analysis/prerequisite
+requirements ONLY with no P1/P2/P3, not feasibility or route selection. The new
+proposal above has a separate scope clearance; no implementation is implied.
+The earlier unrelated reviewer reply was rejected. The accepted review packet is
+`/Users/bobai/.codex/artifacts/2026-10-08/principal-manager-transfer-design-r1`;
+manifest `e96fa42fdfc8a4c1ac32b0c7f213ffa4bfac3f638d4b851d71c0e96f1c915b47`
+(17 rows), design `9c2e0c2aec7b39d79f1c576d46a53d391a4c230f223056c726014b271733f5ef`.
+It retains actual pre-edit documents, complete narrow diffs and seven exact source
+anchor files (2,150 lines); all 11 scoped pre/post source hashes match. Frozen
+pending wording remains historical. Hosted CI readback was verified by SCOOBY
+and MUSE, not VLAD. The accepted source/acquisition/clock requirements and proof
+limits remain unchanged and are retained below and in the private document.
+
 ### Paired Step 7 Source Publication Checkpoint: 8 October 2026
 
 Bobai authorized committing and pushing the accepted private source checkpoint
@@ -45,8 +1607,13 @@ disposition, not as implementation readiness or installed authority. MUSE-owned 
 `docs/planning/agent-execution-governance-core/plan.md` changes are excluded from
 this checkpoint. Core's production workflow Launcher pin remains
 `aa55319fa88f14e96b47e3fa9d08a0940fae5456`; it is not replaced by the private
-staging revision. Fresh exact-head CI remains required before merge/release, and
-installed/root/hosted/provider proof and Step 7 completion remain open.
+staging revision. Core's six exact-head checks completed successfully at
+`8926ddb1fc0e4a225059c48375fc6e1185081b1e`, including Release Gate
+`37843348131`. Launcher has no exact-head run at `60c22cf9b2e8aa5897b56430bf27a038fd7b919a`:
+its CI triggers only on pull requests or pushes to main, not this implementation
+branch. Launcher exact-head CI is unproved/open before merge/release, not a failed
+or pending run; no PR, workflow change or dispatch is authorized here.
+Installed/root/hosted/provider proof and Step 7 completion remain open.
 The private adapter's normal entry remains unconditional no-IO refusal. The
 observer has guarded observation/IO paths, not an inert stub; it remains
 uninstalled/unconnected with privileged invocation separately gated.
@@ -64,9 +1631,10 @@ That independently reviewed ancestry-only synchronization includes main
 development tree. Main's inert registration stubs and stub-only test remain
 main-owned; a future development-to-main merge must separately reconcile them.
 The carried handoff and Launcher source were not included in that ancestry merge;
-they belong to this separate publication checkpoint. Fresh exact-head CI for
-the published Launcher and Core commits is pending. No prior exact-head CI or
-live admission transfers to either new build identity.
+they belong to this separate publication checkpoint. Core source checks at the
+published handoff revision passed; Launcher exact-head CI remains open as above.
+No prior exact-head CI or live admission transfers to either new build identity,
+and these source checks do not establish installed execution or Step 7 closure.
 
 MUSE independently accepted the exact source and sandboxed canonical Linux/arm64
 verification: 231 top-level tests passed, none failed, 26 privileged tests remained

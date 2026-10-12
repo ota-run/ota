@@ -1091,6 +1091,7 @@ fn detect_prepare_from_run(
                 medium: TaskDependencyHydrationMedium::PackageDependencies,
                 source: TaskDependencyHydrationSourceSpec::Cargo(TaskCargoHydrationSourceSpec {
                     cwd: String::from("."),
+                    locked: false,
                     compose: None,
                 }),
                 targets: Vec::new(),
@@ -3061,6 +3062,7 @@ pub(crate) fn starter_pack_contract(config: StarterPackConfig, root: &Path) -> D
                     "Hydrate Cargo dependencies for the repo.",
                     TaskDependencyHydrationSourceSpec::Cargo(TaskCargoHydrationSourceSpec {
                         cwd: String::from("."),
+                        locked: false,
                         compose: None,
                     }),
                     "rust",

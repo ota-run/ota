@@ -852,6 +852,32 @@ Rules:
 - `fulfillment.mode: run` allows selected `ota run` / workflow `ota up` execution paths to
   provision the declared toolchain on the run path; use it only when the selected repo path should
   let ota own fulfillment through the declared source
+- Source candidate, not yet runtime-qualified: direct native Linux/macOS canonical Rustup
+  fulfillment may skip provisioning only after positive observations bind the exact version,
+  active Rustup selection, effective executables/environment and required targets/components.
+  This first increment supports no components or `rustfmt`; profile-bearing, channel,
+  other-component, compiler-wrapper and non-native selections retain ordinary fulfillment.
+  Failed/unknown observations also retain already-authorized `run` fulfillment without a
+  readiness claim; interruption or failed owned-child retirement stops continuation.
+  A skip records no fulfillment command and is not cached as completed provisioning.
+  The initial skip is further restricted to structured Rust commands in the repository
+  directory, without dynamic declared environment/source, input/target or native-activation
+  resolution. A single non-secret PATH requirement with fixed absolute prepend/append
+  entries and no default/allowed values may compose the retained acquired policy base
+  using the same resolver selection, precedence and PATH composer. Optional unselected
+  PATH remains inherited; no implicit requirement or overlay is introduced.
+  Absent policy is an acquired
+  result, not an unavailable legacy context or load error; no early policy/source load
+  is added. Normal final resolution remains fresh. Its actual environment/executable
+  and active Rustup selection must still match within the original bounded probe
+  budget or dispatch fails terminally, with no late provisioning/retry/failure hook.
+  Other launch contexts remain unknown; readiness at the repository root
+  cannot satisfy a nested command's Rustup selection. Implicit canonical Rustup and
+  explicit `source: rustup` use the same provider resolution; alternative sources do not.
+  Observations do not establish executable acquisition, concurrent-substitution safety,
+  escaped-descendant retirement or offline/no-install enforcement. Diagnose-only `none`
+  remains unchanged. For example, an already-selected exact Rust toolchain can avoid an
+  unnecessary install invocation, but this is not a general network-denial guarantee.
 - `fulfillment.source` is optional when the toolchain uses its canonical shipped fulfillment path
 - `fulfillment.source: mise` is the current non-canonical supported source for repos whose selected
   path is mediated by `mise`
@@ -2455,6 +2481,10 @@ Task-effect rules:
     - `prepare.source.wrapper`: optional explicit wrapper ownership; when `true`, ota runs `./gradlew dependencies`, otherwise it runs `gradle dependencies`
     - `prepare.source.kind: cargo`
     - `prepare.source.cwd`: required repo-relative working directory for the `cargo fetch` invocation
+    - `prepare.source.locked`: opt-in boolean, default `false` (unreleased source increment).
+      Absent/false retains `cargo fetch`; true selects `cargo fetch --locked`. The current source
+      increment admits only direct native Linux/macOS, not container, remote, Compose or
+      orchestrator-wrapped execution. Native/container parity and validation remain open.
     - `prepare.source.kind: dotnet_restore`
     - `prepare.source.cwd`: required repo-relative working directory for the `dotnet restore` invocation
     - `prepare.source.config_file`: optional repo-relative NuGet config passed as `dotnet restore --configfile <path>`
@@ -2516,6 +2546,19 @@ Task-effect rules:
 - `prepare.source.kind: maven` currently executes the narrow canonical Maven hydration lane: `./mvnw -q dependency:resolve` or `./mvnw -q dependency:go-offline` when wrapper-owned, otherwise `mvn -q dependency:resolve` or `mvn -q dependency:go-offline`
 - `prepare.source.kind: gradle` currently executes the narrow canonical Gradle hydration lane: `./gradlew dependencies` when wrapper-owned, otherwise `gradle dependencies`
 - `prepare.source.kind: cargo` currently executes the narrow canonical Cargo hydration lane: `cargo fetch`
+  - In the unreleased locked source increment, execution first uses Cargo's `locate-project
+    --workspace --manifest-path <selected-cwd>/Cargo.toml --message-format json` to select the
+    workspace lock root, including member cwd. The selected cwd includes the task's execution cwd.
+    Validation, Doctor and preview do not run this command or require a discovered lockfile.
+  - Before fetch, the member manifest, root manifest and root `Cargo.lock` must be in-repository
+    regular single-link files without symlinked components; each observation is limited to 16 MiB.
+    Path, object identity and raw-byte SHA-256 are rechecked immediately before dispatch, then
+    sampled after Cargo returns, including nonzero exits. Missing, unavailable or changed samples
+    refuse or fail hydration; the actual Cargo status remains distinct from the hydration verdict.
+  - Records always carry `acquisition: not_proved` and `concurrent_mutation: not_proved`.
+    Matched samples do not prove which bytes Cargo opened, exclude restored ABA substitution,
+    authenticate registry packages, or establish offline/hermetic resolution or agent authority.
+    There is no fallback to a guessed member lockfile or an unlocked command.
 - `prepare.source.kind: dotnet_restore` currently executes the narrow canonical .NET hydration lane:
   - `dotnet restore`
   - optional `--configfile <path>` when `prepare.source.config_file` is declared

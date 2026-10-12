@@ -80,6 +80,9 @@
         "code": { "type": "string" },
         "error": { "type": "string" },
         "execution_started": { "const": false },
+        "toolchain_fulfillment_route_refusal": {
+          "$ref": "./receipt.json#/$defs/toolchainFulfillmentPolicyRouteRefusal"
+        },
         "preflight": {
           "$ref": "./run-preview.json#/$defs/replayInputIdentityFailure/properties/preflight"
         },
@@ -94,6 +97,13 @@
         }
       },
       "allOf": [
+        {
+          "if": { "required": ["toolchain_fulfillment_route_refusal"] },
+          "then": {
+            "properties": { "code": { "const": "toolchain_fulfillment_policy_route_unsupported" } },
+            "not": { "required": ["secret_delivery_admission"] }
+          }
+        },
         {
           "if": { "required": ["secret_delivery_admission"] },
           "then": {

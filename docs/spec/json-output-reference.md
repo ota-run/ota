@@ -2698,6 +2698,11 @@ Each task may also include additive `prepare` when the resolved task body is fir
 instead of shell `run` / `script`. Sequence prepares keep a nested `steps[]` tree, while
 dependency-hydration prepares expose structural fields such as `medium`, `source_kind`, `cwd`,
 `manager`, and `mode`.
+The unreleased locked Cargo source increment adds `prepare.cargo_lock` only for
+`source.locked: true`: `locked`, `root_resolution: not_proved`, `acquisition: not_proved`,
+`concurrent_mutation: not_proved`, and the planned `metadata_command` argv. This is authored
+posture, not a resolved workspace root or evidence that Cargo ran. Absent/false preserves the
+legacy summary without this object. Validation and native/container parity remain open.
 Each task may also include additive `effects` when the contract declares durable repo writes
 (`writes`), workspace/sibling writes (`workspace_writes`), a connectivity dependency (`network`),
 an optional network lane classification (`network_kind`), or out-of-repo mutation
@@ -4578,6 +4583,118 @@ selected workflow name as additive `workflow`.
 
 ## `ota workspace run --json`
 
+### Source-Staged Parent Admission Failure
+
+Workspace up/run parent refusal has a distinct final failure envelope, not a
+synthetic execution roll-up. Example applicable policy load failure:
+
+```json
+{
+  "ok": false,
+  "path": "/abs/path/to/custom.workspace.yaml",
+  "task": "ci",
+  "code": "workspace_parent_policy_load_failed",
+  "error": "workspace parent policy could not be loaded before acquisition or execution",
+  "parent_admission": {
+    "route": "workspace.run",
+    "policy_acquisition": "error",
+    "execution_started": false,
+    "attempted": false
+  }
+}
+```
+
+For workspace up, omit `task` and use route `workspace.up`. Pure protected-carrier
+refusal uses code `workspace_parent_protected_admission_unavailable` and acquisition
+`unavailable`, never acquired absence. A captured nonempty Rust denial uses
+`toolchain_fulfillment_policy_route_unsupported`, acquisition `acquired_present`,
+and the existing `toolchain_fulfillment_route_refusal` carrier nested inside
+`parent_admission`. Its root is the selected workspace directory; selection is
+the workspace task verb for Run, with no invented child workflow. Policy identity,
+source and path belong only to the successfully acquired refusal pack.
+
+These failures contain no `summary`, `repos`, `receipt` or artifact routing and
+persist no receipt. False attempted/execution_started describes the refused parent
+route, not zero-network policy acquisition. Streamed text uses the same guard;
+JSON streaming remains unsupported. Tests/runtime/public propagation remain open.
+
+### Source-Staged Local-Child Admission Failure
+
+The source-staged local-child preflight candidate adds a separate negative branch for an
+inspectable required child refused before dispatch. It does not replace the parent branch
+or an ordinary partial-execution report. Illustrative invalid mapped task:
+
+```json
+{
+  "ok": false,
+  "path": "/abs/path/to/custom.workspace.yaml",
+  "task": "ci",
+  "code": "workspace_child_admission_refused",
+  "error": "task `missing-check` is not defined in ota.yaml",
+  "child_admission": {
+    "route": "workspace.run",
+    "execution_started": false,
+    "attempted": false,
+    "selected_child": {
+      "name": "api",
+      "path": "/abs/path/to/api",
+      "contract_path": "/abs/path/to/api/ota.yaml",
+      "selected_task": null,
+      "selected_workflow": null,
+      "requested_selector": "missing-check"
+    },
+    "policy_acquisition": "unavailable",
+    "failure": {
+      "kind": "selection_invalid",
+      "error_variant": "UnknownTask",
+      "message": "task `missing-check` is not defined in ota.yaml"
+    }
+  }
+}
+```
+
+Run reports the resolved repo-local task, not the outer workspace verb, once selection
+succeeds. Up omits outer `task`, uses route `workspace.up`, keeps selected task null and
+retains the actual workflow selector, including `workflow@instance`. Unresolved selection
+retains `requested_selector` instead of inventing a resolved subject. `error` and
+`failure.message` preserve the canonical error; `error_variant` names the actual RunError
+variant or the canonical load/validation/String error type. Optional `stage` and `code`
+describe only an actual returned stage/code.
+
+| Failure kind | Acquisition | Evidence boundary |
+| --- | --- | --- |
+| `contract_invalid`, `selection_invalid`, `protected_unavailable` | `unavailable` | No policy metadata, decision or denial carrier |
+| `policy_load_failed`, `policy_identity_failed` | `error` | No successful policy attribution or denial carrier |
+| `typed_policy_denied` | `acquired_present` or observed `acquired_absent` | `EffectPolicyDenied` and actual decision; typed carrier only if the existing helper emits it, never a Rust carrier |
+| `typed_realization_unavailable` | `acquired_present` or observed `acquired_absent` | Actual typed-admission `FileActionFailed`, optional actual decision, no invented denial code/carrier |
+| `unsupported_route` | `acquired_present` | Up-only `ToolchainFulfillmentPolicyRouteUnsupported` and actual child Rust-route carrier |
+| `admission_error` | `unavailable`, `acquired_present` or observed `acquired_absent` | Exact other canonical error; decision only when produced after acquisition, no invented carrier |
+
+Only `acquired_present` includes `policy: {identity, source, path}`. Identity is canonical
+`sha256:<64 lowercase hex>`; source is `env_override`, `repo_policy` or `workspace_policy`.
+Absence means independent acquisition successfully returned no pack; it is not a load error,
+unknown pre-clone policy or inherited-marker shortcut. Empty packs remain present.
+
+The child Up Rust carrier's route is **`up`**, not `workspace.up`; root, workflow selector,
+identity, source and path must belong to this child and its owned pack. A coarse policy denial
+does not acquire typed-refusal evidence. Realization failure stays distinct from denial even
+if an available decision has aggregate deny. No policy-snapshot/refusal archive is added.
+
+Parent/child failure branches are mutually exclusive and contain no `receipt`, `repos`,
+`summary`, artifact routing or success/attempt/archive fields. The false booleans describe
+refused dispatch, not zero policy-network activity or zero earlier policy acquisition.
+Optional child refusal remains a terminal WARN/exclusion in ordinary reporting; failures
+after acquisition/dispatch retain ordinary partial-effect reporting.
+
+Schemas constrain shape, kind/state combinations and required/forbidden evidence. They cannot
+prove cross-field equality of child root, mapped task, workflow or pack identity/source/path,
+nor that a helper actually produced evidence. Those are Rust-constructor regression gates.
+The authored negative-branch tests are **NOT_RUN source projections**, not executed complete
+published-schema or produced-output conformance. Runtime, public propagation and those
+conformance gates remain open; this section is not a shipped guarantee.
+
+### Ordinary Execution Report
+
 ```json
 {
   "ok": true,
@@ -5683,6 +5800,68 @@ The nested `receipt` object can also include:
   not evaluated inputs. The nested summary reports subjects, records, and divergent subjects so
   consumers can distinguish stable query identity from observed variation without over-reading it
   as a current-run replay decision.
+- The unreleased Rust fulfillment restriction source increment adds optional
+  `witnessed_observations.toolchain_fulfillment_denial`: reason
+  `toolchain_fulfillment_policy_denied`, root/refused task, dependency relation and
+  generation, selected backend/OS/provider/version/components/targets, canonical
+  policy identity/source/path, unknown/unsatisfied readiness, `attempted: false`
+  and `fulfillment: not_run`. Completed prerequisites stay in canonical receipt
+  steps rather than a duplicated nested graph. Protected/proof-parent route
+  refusal is instead `toolchain_fulfillment_policy_route_unsupported`, with a
+  distinct `witnessed_observations.toolchain_fulfillment_route_refusal` carrier
+  in the requested Run receipt. Proof admission failure JSON carries the same
+  object at `toolchain_fulfillment_route_refusal`. It retains route, invocation
+  root, selected task/workflow, canonical policy identity/source/path,
+  `execution_started: false`, `attempted: false` and `outcome: not_run`.
+  Receipt construction does not load policy, sample replay inputs, probe
+  runtimes or activate authority. It is not fulfillment, installed readiness,
+  protected authority or typed-effect refusal archival evidence. Absent evidence
+  leaves legacy witnessed-observation output unchanged. Integration/review and
+  validation remain open; this source increment is not shipped.
+- The unreleased locked Cargo source increment adds `witnessed_observations.cargo_hydration[]`
+  for selected locked prepares. Each record identifies `task`, optional `invocation_path`,
+  `generation`, nested
+  `prepare_path`, authored task-relative `cwd`, optional repository-relative `selected_cwd`,
+  `locked`, optional `before`/`after`, optional actual `command_exit_code`, typed `outcome`, and
+  optional `observation_error`. Both `acquisition` and `concurrent_mutation` remain `not_proved`
+  even for `unchanged_at_samples`. Samples contain `member_manifest`, `root_manifest` and
+  `lockfile`, each with repository-relative `path`, raw-byte SHA-256 `identity`, sampled Unix
+  `object_identity`, and `size`. Command exit zero plus post-run drift is failed hydration, not
+  a passing lock assertion. An execution error without an observed status leaves the actual
+  command status absent; it does not invent an exit or prove the command never started.
+  Outcomes are `missing_lockfile`, `unsupported_root`, `unsupported_backend`,
+  `identity_changed_before_execution`, `drift_after_execution`, `observation_unavailable`,
+  and `unchanged_at_samples`. Unsupported locked plans carry no file sample or command status.
+  Retained pre-dispatch samples also become `evaluated_inputs[]` of class
+  `declared_dependency_resolution`, with occurrence/role/path-qualified IDs and kinds
+  `cargo_member_manifest`, `cargo_root_manifest`, `cargo_lockfile`. The `invocation_path` is command/repo-scoped,
+  derived from selected prerequisite indices and fixed preparation/setup/run/attach phases
+  before receipt attachment or archival. Standalone run uses the omitted empty root path;
+  task `generation` and nested `prepare_path` remain independent runner identities. These
+  structured IDs distinguish repeated identical samples without claiming execution started.
+  Attachment preserves assigned identities and is idempotent. Ambiguous duplicate legacy
+  Cargo input keys are not paired using a first match or invented historical occurrence order.
+  Missing/ambiguous required Cargo pairing makes final replay `replay_unavailable`, not
+  verified or fabricated named drift. Cargo observations/inputs on either side prevent a
+  hermetic verdict even when no Cargo artifact survives comparison; dependency-resolution
+  uncertainty is retained in final replay output, including mixed acquitting non-Cargo inputs.
+  No current or post-run file hash reconstructs historical input. Replay compares these sampled inputs and authored
+  lock posture; it does not prove exact acquisition or absence of concurrent/ABA mutation.
+  Matching Cargo sample kinds remain `narrowing`, never `acquitting`, in receipt comparison.
+  Cargo acquisition keeps `dependency_resolution` as a hidden-input candidate, including
+  mixed Cargo/non-Cargo evidence. Typed errors retain prior and in-flight samples without
+  inventing command status or a completed task step. `ota up` retains the same records on
+  successful, nonzero and typed-failure paths. Workspace up carries a canonical child repo
+  `repos[].receipt` only when Cargo evidence exists, keeping both evaluated inputs and
+  witnessed observations under that repo's contract; its outer receipt remains an aggregate.
+  Cargo-bearing workspace repo reports add informational finding
+  `OTA_WORKSPACE_CHILD_EXECUTION_ARCHIVE_NOT_PROVED`: these child receipts are inline in this
+  output, not automatically persisted. A later `ota workspace receipt --archive` creates a
+  current-status snapshot and cannot recover this execution. An `inspect` artifact route of
+  kind `workspace_inline_child_receipt` describes `repos[].receipt` without a fictitious
+  filesystem `path` or recovery `command`. Legacy no-Cargo reports omit the child carrier
+  and retain their existing routing. Historical child archival remains `not_proved`.
+  The new witnessed array is omitted when empty, preserving legacy receipt compatibility.
 - a typed `evaluated_inputs[]` `hydration_provenance` record when `ota up` selects a structured
   hydration lane with source posture. Its runner-derived nested detail keeps contract-declared
   source posture separate from the resolved execution-time identity. For uv local-project hydration
@@ -6464,6 +6643,10 @@ Removed repo-level mutation flags return `code: "detect_legacy_mutation_removed"
 They refuse before repository access. Rewrite/removal intentionally has no replacement carrier.
 
 ## `ota workspace up --json`
+
+The staged [parent admission failure](#source-staged-parent-admission-failure)
+is also supported here, with route `workspace.up` and no `task`. Ordinary reports
+below retain their existing shape; parent-only admission is not all-child proof.
 
 ```json
 {

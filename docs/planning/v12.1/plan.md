@@ -41,6 +41,23 @@ unauthorized.
 
 ## Activation Gates
 
+### Independent Cargo Follow-On Planning
+
+On 2026-10-10 Bobai requested work on the recommended lock-strict Cargo
+hydration follow-on while Step 7 remains open. This names ONLY scoped planning
+of [follow-on A](../execution-contract-follow-ons/plan.md#a-lock-strict-cargo-hydration)
+as an independent exception. Qualified non-author VLAD concrete design review
+and MUSE reconciliation accepted the compatibility, selected-lock-root,
+sampling/proof-boundary amendment, propagation and test design. MUSE explicitly
+activated ONE end-to-end native source-authoring increment as a narrow
+exception to current-step/pressure-ready ordering, not a finding that Step 7
+is pressure-ready. Runtime validation and generated artifacts remain HOLD;
+native/container parity and immutable pressure are still completion gates.
+SCOOBY owns planning. It does not close or relax Step 7/R1/native admission,
+reopen the closed kernel experiment, activate Step 8/V12.2 or other follow-ons,
+or authorize runtime validation, experiments, infrastructure, provider operations,
+commit/push/merge/release. It is not a second active product version.
+
 V12.1 may be activated only after:
 
 - V11.7 has completed its authority, transaction-lifetime, cleanup, archive, and pressure bar;

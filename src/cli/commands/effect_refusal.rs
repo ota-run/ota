@@ -81,6 +81,7 @@ fn effect_refusal_canary_command(
     task_names: &[String],
     workflow_name: Option<&str>,
     format: OutputFormat,
+    retained_policy: Option<Option<&LoadedOrgPolicyPack>>,
 ) -> CommandOutput {
     let resolved = match crate::effect_refusal_canary::resolve_effect_refusal_challenge(
         contract,
@@ -119,14 +120,15 @@ fn effect_refusal_canary_command(
             return render_effect_refusal_canary_result(format, &outcome);
         }
     };
-    let decision = match typed_effect_policy_decision(
-        contract,
-        contract_path,
-        workflow_name,
-        task_names.first().map(String::as_str).unwrap_or_default(),
-        &closure,
-        None,
-    ) {
+    let selected_task = task_names.first().map(String::as_str).unwrap_or_default();
+    let decision = match match retained_policy {
+        Some(policy) => typed_effect_policy_decision_from_loaded_policy(
+            contract, workflow_name, selected_task, &closure, policy, None,
+        ),
+        None => typed_effect_policy_decision(
+            contract, contract_path, workflow_name, selected_task, &closure, None,
+        ),
+    } {
         Ok(decision) => decision,
         Err(error) => {
             let outcome = crate::effect_refusal_canary::unevaluated_effect_refusal_canary(
@@ -197,6 +199,7 @@ pub(super) fn run_effect_refusal_canary_command(
         std::slice::from_ref(&task_name),
         None,
         format,
+        None,
     )
 }
 
@@ -212,6 +215,7 @@ pub(super) fn up_effect_refusal_canary_command(
     grant: Option<&str>,
     sandbox_target: Option<&str>,
     format: OutputFormat,
+    retained_policy: Option<&LoadedOrgPolicyPack>,
 ) -> CommandOutput {
     let Some((selected_name, _)) = target.contract.selected_workflow(Some(workflow_name)) else {
         return CommandOutput::failure_with_code(
@@ -249,6 +253,7 @@ pub(super) fn up_effect_refusal_canary_command(
         &task_names,
         Some(selected_name),
         format,
+        Some(retained_policy),
     )
 }
 

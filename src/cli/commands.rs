@@ -99,9 +99,11 @@ use crate::doctor::{
     finding_targets_remote_backend, provisioning_installability_finding, resolve_command_path,
 };
 use crate::effect_orchestration::{
-    CommandTypedEffectAdmission, TypedEffectAdmission, admit_command_typed_effect_closure,
+    CommandTypedEffectAdmission, TypedEffectAdmission, admit_command_execution_closure,
+    admit_command_typed_effect_closure,
     admit_typed_effect_closure_from_loaded_policy, build_typed_effect_closure_admission,
     command_secret_delivery_refusal, selected_execution_closure_invocations,
+    refuse_unsupported_toolchain_fulfillment_policy_route,
     typed_effect_admission_refusal, typed_effect_closure_applies, typed_effect_policy_decision,
     typed_effect_policy_decision_from_loaded_policy, typed_effect_policy_refusal_evidence,
 };
@@ -239,7 +241,6 @@ use crate::runner::{
     resolve_task_env_details_for_task, resolve_task_env_details_for_task_with_policy,
     resolve_task_env_details_with_policy, run_streaming_command_with_loader,
     run_task_captured_with_args_with_overrides_with_policy,
-    run_task_with_args_with_overrides_and_stream_capture,
     run_task_with_progress_and_args_and_overrides_with_policy, selected_task_context_for_backend,
     selected_workflow_compose_services_started_by_proof,
     task_surface_host_readiness_probe_for_backend,
@@ -332,6 +333,12 @@ const OTA_SKILL_RAW_BASE_URL: &str =
     "https://raw.githubusercontent.com/ota-run/skills/main/skills/ota";
 
 thread_local! {
+    #[cfg(test)]
+    static TEST_CROSSING_AUTHORITY_ACTIVATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    #[cfg(test)]
+    static TEST_PROOF_PARENT_CAPABILITY_ACQUISITIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    #[cfg(test)]
+    static TEST_WORKSPACE_PARENT_EFFECTS: std::cell::Cell<(usize, usize, usize)> = const { std::cell::Cell::new((0, 0, 0)) };
     static EFFECT_GOVERNANCE_OVERRIDE_CONTEXT: RefCell<EffectGovernanceOverrides> =
         RefCell::new(EffectGovernanceOverrides::default());
 }
@@ -3488,7 +3495,7 @@ pub fn proof_lifecycle_with_grant(
             origin: String::from("lifecycle_assertion"),
         });
     }
-    let typed_effect_admission = match admit_command_typed_effect_closure(
+    let typed_effect_admission = match admit_command_execution_closure(
         &contract,
         &target.contract_path,
         Some(workflow_key),
@@ -3502,6 +3509,7 @@ pub fn proof_lifecycle_with_grant(
                 format,
                 "ota proof lifecycle",
                 &target.contract_path,
+                Some(workflow_key),
                 *error,
             );
         }
@@ -3515,11 +3523,19 @@ pub fn proof_lifecycle_with_grant(
             &typed_effect_admission.secret_delivery.projection,
         );
     }
+    if let Err(error) = refuse_unsupported_toolchain_fulfillment_policy_route(
+        typed_effect_admission.loaded_policy.as_ref(), "proof lifecycle",
+    ) {
+        return proof_typed_effect_admission_failure_output(
+            format, "ota proof lifecycle", &target.contract_path, Some(workflow_key), *error,
+        );
+    }
     if let Some(error) = typed_effect_admission_refusal(&typed_effect_admission.typed) {
         return proof_typed_effect_admission_failure_output(
             format,
             "ota proof lifecycle",
             &target.contract_path,
+            Some(workflow_key),
             error,
         );
     }
@@ -3549,11 +3565,12 @@ pub fn proof_lifecycle_with_grant(
             );
         }
     };
-    let typed_policy_observed = typed_effect_admission.is_typed();
+    let typed_policy_observed = typed_effect_admission.policy_acquired;
     let CommandTypedEffectAdmission {
         typed: typed_effect_admission,
         secret_delivery: _,
         loaded_policy,
+        ..
     } = typed_effect_admission;
     let replay_input_preflight = workflow_replay_input_preflight_for_plan_with_retained_policy(
         &contract,
@@ -4084,7 +4101,6 @@ pub fn proof_runtime_with_grant(
     format: OutputFormat,
     debug: bool,
 ) -> CommandOutput {
-    activate_mise_paths_for_current_process();
     let ready_timeout = match ready_timeout {
         Some(value) => match parse_readiness_duration_spec(value) {
             Some(duration) => Some(duration),
@@ -4222,7 +4238,7 @@ pub fn proof_runtime_with_grant(
                         origin: String::from("negative_control"),
                     });
                 }
-                let command_admission = match admit_command_typed_effect_closure(
+                let command_admission = match admit_command_execution_closure(
                     contract,
                     &target.contract_path,
                     effective_workflow_selector.as_deref(),
@@ -4236,6 +4252,7 @@ pub fn proof_runtime_with_grant(
                             format,
                             "ota proof runtime",
                             &target.contract_path,
+                            effective_workflow_selector.as_deref(),
                             *error,
                         );
                     }
@@ -4249,18 +4266,30 @@ pub fn proof_runtime_with_grant(
                         &command_admission.secret_delivery.projection,
                     );
                 }
+                if let Err(error) = refuse_unsupported_toolchain_fulfillment_policy_route(
+                    command_admission.loaded_policy.as_ref(), "proof runtime",
+                ) {
+                    return proof_typed_effect_admission_failure_output(
+                        format, "ota proof runtime", &target.contract_path,
+                        effective_workflow_selector.as_deref(), *error,
+                    );
+                }
+                activate_mise_paths_for_current_process();
                 if let Some(error) = typed_effect_admission_refusal(&command_admission.typed) {
                     return proof_typed_effect_admission_failure_output(
                         format,
                         "ota proof runtime",
                         &target.contract_path,
+                        effective_workflow_selector.as_deref(),
                         error,
                     );
                 }
+                let retained_policy_acquired = command_admission.policy_acquired;
                 let CommandTypedEffectAdmission {
                     typed: _,
                     secret_delivery: _,
                     loaded_policy: retained_effect_policy,
+                    ..
                 } = command_admission;
                 let mut additional_roots = selected_seam_observations
                     .iter()
@@ -4299,15 +4328,17 @@ pub fn proof_runtime_with_grant(
                             &target.contract_path,
                             workflow_name,
                             proof_plan,
-                            retained_effect_policy.is_some(),
+                            retained_policy_acquired,
                             retained_effect_policy,
                         )
                     } else {
-                        workflow_replay_input_preflight(
+                        workflow_replay_input_preflight_with_retained_policy(
                             contract,
                             &target.contract_path,
                             effective_workflow_selector.as_deref(),
                             overrides,
+                            retained_policy_acquired,
+                            retained_effect_policy,
                         )
                     };
                 if let Err(failure) = evaluate_replay_input_admission(
@@ -6174,6 +6205,14 @@ fn execution_plan_error(error: &RunError) -> String {
 }
 
 fn execution_option_admission_finding(error: &RunError) -> Option<Finding> {
+    if let RunError::LockedCargoHydrationRefused { .. } = error {
+        return Some(Finding::identified(
+            "OTA_CARGO_LOCK_UNSUPPORTED_BACKEND", "execution", "repo_contract",
+            FindingSeverity::Error, "Locked Cargo hydration is unsupported on the selected execution path",
+            execution_plan_error(error),
+            "select a direct native Linux/macOS lane without Compose or an orchestrator; no fetch, container or provisioning may start for this unsupported locked lane",
+        ));
+    }
     let (code, summary, flag) = match error {
         RunError::UnsupportedTaskModeOverride { .. } => (
             "OTA_EXECUTION_OPTION_UNSUPPORTED_MODE",
@@ -17246,6 +17285,8 @@ fn current_parent_process_id() -> Result<u32, String> {
 #[cfg(unix)]
 fn load_proof_parent_authority_capability() -> Result<Option<ProofParentAuthorityCapability>, String>
 {
+    #[cfg(test)]
+    TEST_PROOF_PARENT_CAPABILITY_ACQUISITIONS.with(|count| count.set(count.get() + 1));
     if let Some(capability) = ACTIVE_PROOF_PARENT_AUTHORITY.with(|active| active.borrow().clone()) {
         return Ok(Some(capability));
     }
@@ -17649,6 +17690,8 @@ fn activate_crossing_authority_plan(
     repo_root: &Path,
     plan: CrossingAuthorityPlan,
 ) -> Result<(ActiveCrossingGrantGuard, ActiveCrossingTransactionGuard), GrantAdmissionError> {
+    #[cfg(test)]
+    TEST_CROSSING_AUTHORITY_ACTIVATIONS.with(|count| count.set(count.get() + 1));
     match plan {
         CrossingAuthorityPlan::PreboundFile(admission) => {
             let transaction =
@@ -21358,7 +21401,6 @@ pub(crate) fn run_command_with_agent_reason_and_grant_and_effect_canary(
     stream: bool,
     persist_logs: bool,
 ) -> CommandOutput {
-    activate_mise_paths_for_current_process();
     if dry_run && stream {
         return finalize_debug(
             CommandOutput::failure_with_code(
@@ -22233,6 +22275,11 @@ struct TaskReplayInputPreflight {
 }
 
 impl TaskReplayInputPreflight {
+    fn retained_run_policy_context(&self) -> crate::runner::RetainedRunPolicyContext {
+        crate::runner::RetainedRunPolicyContext::from_acquired(
+            self.loaded_policy.as_ref(), self.policy_load_error.as_deref(),
+        )
+    }
     fn doctor_policy_snapshot(&self) -> DoctorPolicySnapshot<'_> {
         DoctorPolicySnapshot {
             loaded: self.loaded_policy.as_ref(),
@@ -22368,6 +22415,8 @@ struct ProofTypedEffectAdmissionFailure {
     code: String,
     error: String,
     execution_started: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    toolchain_fulfillment_route_refusal: Option<crate::runner::ToolchainFulfillmentPolicyRouteRefusal>,
 }
 
 #[derive(Serialize)]
@@ -22384,22 +22433,29 @@ fn proof_typed_effect_admission_failure_output(
     format: OutputFormat,
     command: &str,
     contract_path: &Path,
+    selected_workflow: Option<&str>,
     error: RunError,
 ) -> CommandOutput {
-    let code = if matches!(error, RunError::EffectPolicyDenied { .. }) {
-        String::from("OTA_EFFECT_POLICY_DENIED")
-    } else {
-        String::from("typed_effect_admission_refused")
+    let route_refusal = error.toolchain_policy_route_refusal(contract_path, None, selected_workflow);
+    let code = match &error {
+        RunError::EffectPolicyDenied { .. } => String::from("OTA_EFFECT_POLICY_DENIED"),
+        RunError::ToolchainFulfillmentPolicyRouteUnsupported { .. } =>
+            String::from("toolchain_fulfillment_policy_route_unsupported"),
+        _ => String::from("typed_effect_admission_refused"),
     };
     let error = render_run_error(error);
     match format {
-        OutputFormat::Text => CommandOutput::failure(stylize_text_failure(command, &error)),
+        OutputFormat::Text => {
+            let detail = route_refusal.as_ref().map(render_toolchain_route_refusal_text).unwrap_or_default();
+            CommandOutput::failure(stylize_text_failure(command, &format!("{error}{detail}")))
+        },
         OutputFormat::Json => CommandOutput::failure(to_json(&ProofTypedEffectAdmissionFailure {
             ok: false,
             path: compact_contract_path(contract_path),
             code,
             error,
             execution_started: false,
+            toolchain_fulfillment_route_refusal: route_refusal,
         })),
     }
 }
@@ -22573,21 +22629,40 @@ fn workflow_replay_input_preflight(
     workflow_name: Option<&str>,
     overrides: ExecutionOverrides,
 ) -> TaskReplayInputPreflight {
+    workflow_replay_input_preflight_with_retained_policy(
+        contract, contract_path, workflow_name, overrides, false, None,
+    )
+}
+
+fn workflow_replay_input_preflight_with_retained_policy(
+    contract: &Contract,
+    contract_path: &Path,
+    workflow_name: Option<&str>,
+    overrides: ExecutionOverrides,
+    policy_observed: bool,
+    retained_policy: Option<LoadedOrgPolicyPack>,
+) -> TaskReplayInputPreflight {
     let selected_plan =
         plan_workflow_execution_structure_with_overrides(contract, workflow_name, overrides).ok();
     let selected_closure = selected_plan
         .as_ref()
         .map(crate::runner::RunPlan::selected_task_names)
         .unwrap_or_default();
-    let observations = observe_replay_inputs_for_selected_closure(
-        contract,
-        contract_path.parent().unwrap_or_else(|| Path::new(".")),
-        selected_closure.clone(),
-    );
-    let (loaded_policy, policy_load_error) = match load_org_policy_pack_auto_details(contract_path)
-    {
-        Ok(policy) => (policy, None),
-        Err(error) => (None, Some(error.to_string())),
+    let (loaded_policy, policy_load_error) = if policy_observed {
+        (retained_policy, None)
+    } else {
+        match load_org_policy_pack_auto_details(contract_path) {
+            Ok(policy) => (policy, None),
+            Err(error) => (None, Some(error.to_string())),
+        }
+    };
+    let observations = if policy_load_error.is_none() {
+        observe_replay_inputs_for_selected_closure(
+            contract, contract_path.parent().unwrap_or_else(|| Path::new(".")),
+            selected_closure.clone(),
+        )
+    } else {
+        ReplayInputPolicyObservations::new()
     };
     let policy = loaded_policy.as_ref().and_then(|loaded| {
         let subject = selected_workflow_replay_policy_subject(contract, workflow_name)?;
@@ -22632,11 +22707,6 @@ fn workflow_replay_input_preflight_for_plan_with_retained_policy(
     retained_policy: Option<LoadedOrgPolicyPack>,
 ) -> TaskReplayInputPreflight {
     let closure = selected_plan.selected_task_names();
-    let observations = observe_replay_inputs_for_selected_closure(
-        contract,
-        contract_path.parent().unwrap_or_else(|| Path::new(".")),
-        closure.clone(),
-    );
     let (loaded_policy, policy_load_error) = if policy_observed {
         (retained_policy, None)
     } else {
@@ -22644,6 +22714,13 @@ fn workflow_replay_input_preflight_for_plan_with_retained_policy(
             Ok(policy) => (policy, None),
             Err(error) => (None, Some(error.to_string())),
         }
+    };
+    let observations = if policy_load_error.is_none() {
+        observe_replay_inputs_for_selected_closure(
+            contract, contract_path.parent().unwrap_or_else(|| Path::new(".")), closure.clone(),
+        )
+    } else {
+        ReplayInputPolicyObservations::new()
     };
     let policy = loaded_policy.as_ref().map(|loaded| {
         evaluate_replay_input_policy_for_plan_with_observations(
@@ -22696,11 +22773,6 @@ fn task_replay_input_preflight_with_retained_policy(
         .as_ref()
         .map(crate::runner::RunPlan::selected_task_names)
         .unwrap_or_else(|| vec![task_name.to_string()]);
-    let observations = observe_replay_inputs_for_selected_closure(
-        contract,
-        contract_path.parent().unwrap_or_else(|| Path::new(".")),
-        selected_closure.clone(),
-    );
     let (loaded_policy, policy_load_error) = if policy_observed {
         (retained_policy, None)
     } else {
@@ -22708,6 +22780,15 @@ fn task_replay_input_preflight_with_retained_policy(
             Ok(policy) => (policy, None),
             Err(error) => (None, Some(error.to_string())),
         }
+    };
+    let observations = if policy_load_error.is_none() {
+        observe_replay_inputs_for_selected_closure(
+            contract,
+            contract_path.parent().unwrap_or_else(|| Path::new(".")),
+            selected_closure.clone(),
+        )
+    } else {
+        ReplayInputPolicyObservations::new()
     };
     let policy = loaded_policy.as_ref().and_then(|loaded| {
         let subject = ReplayInputPolicySubject::Task(task_name);
@@ -23363,6 +23444,7 @@ fn up_refusal_canary_command(
     workflow_name: &str,
     overrides: ExecutionOverrides,
     format: OutputFormat,
+    loaded_policy: Option<&LoadedOrgPolicyPack>,
 ) -> CommandOutput {
     let Some((selected_name, _)) = target.contract.selected_workflow(Some(workflow_name)) else {
         return CommandOutput::failure_with_code(
@@ -23378,14 +23460,9 @@ fn up_refusal_canary_command(
             2,
         );
     }
-    let (loaded_policy, policy_load_error) =
-        match load_org_policy_pack_auto_details(&target.contract_path) {
-            Ok(policy) => (policy, None),
-            Err(error) => (None, Some(error.to_string())),
-        };
     let policy_snapshot = DoctorPolicySnapshot {
-        loaded: loaded_policy.as_ref(),
-        load_error: policy_load_error.as_deref(),
+        loaded: loaded_policy,
+        load_error: None,
     };
     let admission = selected_up_agent_task_names(
         &target.contract,
@@ -23740,6 +23817,7 @@ fn render_run_preview_target(
         typed: typed_effect_admission,
         secret_delivery: _,
         loaded_policy,
+        ..
     } = typed_effect_admission;
     let effect_policy_decision = typed_effect_admission.policy_decision.clone();
     let declared_only_effect_refusal = typed_effect_admission_refusal(&typed_effect_admission)
@@ -23961,6 +24039,9 @@ fn render_run_preview_target(
             };
             plan.effect_application_plans =
                 typed_effect_admission.closure.application_plans.clone();
+            append_toolchain_fulfillment_policy_preview(
+                &mut plan, replay_input_preflight.loaded_policy.as_ref(),
+            );
             plan.effect_policy_decision = effect_policy_decision.clone();
             let summary = DoctorSummary {
                 verdict: DoctorVerdict::NotReady,
@@ -24109,6 +24190,9 @@ fn render_run_preview_target(
         )
     };
     plan.effect_application_plans = typed_effect_admission.closure.application_plans;
+    append_toolchain_fulfillment_policy_preview(
+        &mut plan, replay_input_preflight.loaded_policy.as_ref(),
+    );
     plan.effect_policy_decision = effect_policy_decision;
     let preconditions_report = run_preview_preconditions_report(
         &target.contract,
@@ -24830,6 +24914,20 @@ fn run_preview_execution_primary_blocker(
         next,
         provenance: Some(String::from("execution")),
         provenance_key: None,
+    }
+}
+
+fn append_toolchain_fulfillment_policy_preview(
+    plan: &mut RunPreviewPlan,
+    loaded_policy: Option<&LoadedOrgPolicyPack>,
+) {
+    if let Some(policy) = loaded_policy.filter(|policy| {
+        policy.pack.denies_toolchain_fulfillment("rust")
+    }) {
+        plan.notes.push(format!(
+            "policy `{}` ({}) denies Rust fulfillment: unknown or unsatisfied readiness refuses before cache/provider dispatch; this preview establishes no installed readiness or fulfillment permission",
+            policy.path.display(), policy.source.as_str(),
+        ));
     }
 }
 
@@ -34984,7 +35082,6 @@ pub(crate) fn up_with_agent_reason_and_grant_and_effect_canary(
     detach: bool,
     ready_timeout: Option<&str>,
 ) -> CommandOutput {
-    activate_mise_paths_for_current_process();
     if let Some(duplicate) = duplicate_member(members) {
         return finalize_debug(
             CommandOutput::failure_with_code(
@@ -35186,6 +35283,32 @@ pub(crate) fn up_with_agent_reason_and_grant_and_effect_canary(
         finalize_debug(
             match load_and_validate_target(&resolved_path, single_member) {
                 Ok(target) if members.is_empty() || members.len() == 1 => {
+                    let special_refusal_route = expect_effect_refusal.is_some()
+                        || expect_refusal || archive_effect_refusal;
+                    let command_admission = match prepare_up_frontend_admission(
+                        &target, overrides, workflow_name, agent, dry_run,
+                        special_refusal_route, format, show_receipt,
+                    ) {
+                        Ok(admission) => admission,
+                        Err(output) => return output,
+                    };
+                    let mut prepared_members = Vec::new();
+                    if !special_refusal_route && members.is_empty()
+                        && target.contract_path == resolved_path
+                        && let Some(workspace) = target.contract.workspace.as_ref()
+                        && workspace.workspace_type == crate::schema::RepoWorkspaceType::Monorepo
+                    {
+                        for member in &workspace.members {
+                            let (member_target, admission) = match prepare_up_local_member(
+                                &resolved_path, member, overrides, workflow_name,
+                                agent, dry_run, format, show_receipt,
+                            ) {
+                                Ok(prepared) => prepared,
+                                Err(output) => return output,
+                            };
+                            prepared_members.push((member.clone(), member_target, admission));
+                        }
+                    }
                     if let Some(canary_id) = expect_effect_refusal {
                         return match workflow_name {
                             Some(workflow_name) => up_effect_refusal_canary_command(
@@ -35199,6 +35322,7 @@ pub(crate) fn up_with_agent_reason_and_grant_and_effect_canary(
                                 grant,
                                 sandbox_target,
                                 format,
+                                command_admission.loaded_policy.as_ref(),
                             ),
                             None => CommandOutput::failure_with_code(
                                 String::from(
@@ -35211,7 +35335,10 @@ pub(crate) fn up_with_agent_reason_and_grant_and_effect_canary(
                     if expect_refusal {
                         return match workflow_name {
                             Some(workflow_name) => {
-                                up_refusal_canary_command(&target, workflow_name, overrides, format)
+                                up_refusal_canary_command(
+                                    &target, workflow_name, overrides, format,
+                                    command_admission.loaded_policy.as_ref(),
+                                )
                             }
                             None => CommandOutput::failure_with_code(
                                 String::from(
@@ -35222,7 +35349,7 @@ pub(crate) fn up_with_agent_reason_and_grant_and_effect_canary(
                         };
                     }
                     if archive_effect_refusal {
-                        let result = match typed_effect_up_pre_execution_result(
+                        let result = match typed_effect_up_pre_execution_result_from_admission(
                             &target.contract,
                             &target.contract_path,
                             overrides,
@@ -35230,6 +35357,7 @@ pub(crate) fn up_with_agent_reason_and_grant_and_effect_canary(
                             agent,
                             false,
                             true,
+                            &command_admission,
                         ) {
                             Ok(Some(result)) => result,
                             Ok(None) => {
@@ -35299,6 +35427,7 @@ pub(crate) fn up_with_agent_reason_and_grant_and_effect_canary(
                             exit_code: if result.ok { 0 } else { 1 },
                         };
                     }
+                    activate_mise_paths_for_current_process();
                     if members.is_empty()
                         && target.contract_path == resolved_path
                         && target.contract.workspace.as_ref().is_some_and(|workspace| {
@@ -35314,7 +35443,7 @@ pub(crate) fn up_with_agent_reason_and_grant_and_effect_canary(
                             );
                         }
                         let mut root_result =
-                            match execute_repo_up_with_behavior_with_agent_and_grant(
+                            match execute_repo_up_with_admission_and_grant(
                                 &target.contract,
                                 &target.contract_path,
                                 overrides,
@@ -35329,9 +35458,11 @@ pub(crate) fn up_with_agent_reason_and_grant_and_effect_canary(
                                 execution_mode,
                                 run_behavior_preference,
                                 ready_timeout,
+                                command_admission,
                             ) {
                                 Ok(result) => result,
-                                Err(error) => return CommandOutput::failure(error),
+                                Err(error) => return up_error_output(error, &target.contract,
+                                    &target.contract_path, workflow_name, overrides, format, show_receipt),
                             };
                         attach_crossing_to_up_result(
                             &mut root_result,
@@ -35350,54 +35481,9 @@ pub(crate) fn up_with_agent_reason_and_grant_and_effect_canary(
                         )];
                         let mut member_results = Vec::new();
 
-                        if let Some(workspace) = target.contract.workspace.as_ref() {
-                            for member in &workspace.members {
-                                let member_target =
-                                    match load_and_validate_target(&resolved_path, Some(member)) {
-                                        Ok(target) => target,
-                                        Err(ContractProblem::Validation(errors)) => {
-                                            return match format {
-                                                OutputFormat::Text => {
-                                                    CommandOutput::failure(errors.to_string())
-                                                }
-                                                OutputFormat::Json => CommandOutput::failure(
-                                                    to_json(&ValidateFailure {
-                                                        summary: None,
-                                                        ok: false,
-                                                        path: &path_display,
-                                                        errors: errors
-                                                            .errors()
-                                                            .iter()
-                                                            .map(ToString::to_string)
-                                                            .collect(),
-                                                        error: None,
-                                                        warnings: Vec::new(),
-                                                        warning_details: Vec::new(),
-                                                    }),
-                                                ),
-                                            };
-                                        }
-                                        Err(ContractProblem::Load(error)) => {
-                                            return match format {
-                                                OutputFormat::Text => {
-                                                    CommandOutput::failure(error.to_string())
-                                                }
-                                                OutputFormat::Json => CommandOutput::failure(
-                                                    to_json(&ValidateFailure {
-                                                        summary: None,
-                                                        ok: false,
-                                                        path: &path_display,
-                                                        errors: Vec::new(),
-                                                        error: Some(error.to_string()),
-                                                        warnings: Vec::new(),
-                                                        warning_details: Vec::new(),
-                                                    }),
-                                                ),
-                                            };
-                                        }
-                                    };
+                            for (member, member_target, member_admission) in prepared_members {
                                 let mut member_result =
-                                    match execute_repo_up_with_behavior_with_agent_and_grant(
+                                    match execute_repo_up_with_admission_and_grant(
                                         &member_target.contract,
                                         &member_target.contract_path,
                                         overrides,
@@ -35412,9 +35498,11 @@ pub(crate) fn up_with_agent_reason_and_grant_and_effect_canary(
                                         execution_mode,
                                         run_behavior_preference,
                                         ready_timeout,
+                                        member_admission,
                                     ) {
                                         Ok(result) => result,
-                                        Err(error) => return CommandOutput::failure(error),
+                                        Err(error) => return up_error_output(error, &member_target.contract,
+                                            &member_target.contract_path, workflow_name, overrides, format, show_receipt),
                                     };
                                 attach_crossing_to_up_result(
                                     &mut member_result,
@@ -35437,9 +35525,8 @@ pub(crate) fn up_with_agent_reason_and_grant_and_effect_canary(
                                     show_receipt,
                                 ));
                                 member_results
-                                    .push(up_member_result_json_value(member, &member_result));
+                                    .push(up_member_result_json_value(&member, &member_result));
                             }
-                        }
 
                         match format {
                             OutputFormat::Text => CommandOutput {
@@ -35474,7 +35561,7 @@ pub(crate) fn up_with_agent_reason_and_grant_and_effect_canary(
                             }
                             None => None,
                         };
-                        match execute_repo_up_with_behavior_with_agent_and_grant(
+                        match execute_repo_up_with_admission_and_grant(
                             &target.contract,
                             &target.contract_path,
                             overrides,
@@ -35489,6 +35576,7 @@ pub(crate) fn up_with_agent_reason_and_grant_and_effect_canary(
                             execution_mode,
                             run_behavior_preference,
                             ready_timeout,
+                            command_admission,
                         ) {
                             Ok(mut result) => {
                                 if let Err(error) = attach_repo_contract_snapshot_to_receipt(
@@ -35541,60 +35629,29 @@ pub(crate) fn up_with_agent_reason_and_grant_and_effect_canary(
                                     )
                                 }
                             }
-                            Err(error) => CommandOutput::failure(error),
+                            Err(error) => up_error_output(error, &target.contract,
+                                &target.contract_path, workflow_name, overrides, format, show_receipt),
                         }
                     }
                 }
                 Ok(_) => {
+                    let mut prepared_members = Vec::new();
+                    for member in members {
+                        let (target, admission) = match prepare_up_local_member(
+                            &resolved_path, member, overrides, workflow_name,
+                            agent, dry_run, format, show_receipt,
+                        ) {
+                            Ok(prepared) => prepared,
+                            Err(output) => return output,
+                        };
+                        prepared_members.push((member.clone(), target, admission));
+                    }
+                    activate_mise_paths_for_current_process();
                     let mut overall_ok = true;
                     let mut text_sections = Vec::new();
                     let mut member_results = Vec::new();
-                    for member in members {
-                        let target =
-                            match load_and_validate_target(&resolved_path, Some(member.as_str())) {
-                                Ok(target) => target,
-                                Err(ContractProblem::Validation(errors)) => {
-                                    return match format {
-                                        OutputFormat::Text => {
-                                            CommandOutput::failure(errors.to_string())
-                                        }
-                                        OutputFormat::Json => {
-                                            CommandOutput::failure(to_json(&ValidateFailure {
-                                                summary: None,
-                                                ok: false,
-                                                path: &path_display,
-                                                errors: errors
-                                                    .errors()
-                                                    .iter()
-                                                    .map(ToString::to_string)
-                                                    .collect(),
-                                                error: None,
-                                                warnings: Vec::new(),
-                                                warning_details: Vec::new(),
-                                            }))
-                                        }
-                                    };
-                                }
-                                Err(ContractProblem::Load(error)) => {
-                                    return match format {
-                                        OutputFormat::Text => {
-                                            CommandOutput::failure(error.to_string())
-                                        }
-                                        OutputFormat::Json => {
-                                            CommandOutput::failure(to_json(&ValidateFailure {
-                                                summary: None,
-                                                ok: false,
-                                                path: &path_display,
-                                                errors: Vec::new(),
-                                                error: Some(error.to_string()),
-                                                warnings: Vec::new(),
-                                                warning_details: Vec::new(),
-                                            }))
-                                        }
-                                    };
-                                }
-                            };
-                        let mut result = match execute_repo_up_with_behavior_with_agent_and_grant(
+                    for (member, target, admission) in prepared_members {
+                        let mut result = match execute_repo_up_with_admission_and_grant(
                             &target.contract,
                             &target.contract_path,
                             overrides,
@@ -35609,9 +35666,11 @@ pub(crate) fn up_with_agent_reason_and_grant_and_effect_canary(
                             execution_mode,
                             run_behavior_preference,
                             ready_timeout,
+                            admission,
                         ) {
                             Ok(result) => result,
-                            Err(error) => return CommandOutput::failure(error),
+                            Err(error) => return up_error_output(error, &target.contract,
+                                &target.contract_path, workflow_name, overrides, format, show_receipt),
                         };
                         attach_crossing_to_up_result(
                             &mut result,
@@ -35630,7 +35689,7 @@ pub(crate) fn up_with_agent_reason_and_grant_and_effect_canary(
                             &result,
                             show_receipt,
                         ));
-                        member_results.push(up_member_result_json_value(member, &result));
+                        member_results.push(up_member_result_json_value(&member, &result));
                     }
 
                     match format {
@@ -39122,6 +39181,10 @@ pub fn workspace_validate(
                     warning_details: Vec::new(),
                 })),
             },
+            Err(WorkspaceProblem::Admission(failure)) =>
+                render_workspace_parent_admission_failure(&failure, format),
+            Err(WorkspaceProblem::ChildAdmission(failure)) =>
+                render_workspace_child_admission_failure(&failure, format),
             Err(WorkspaceProblem::Validation(errors)) => match format {
                 OutputFormat::Text => CommandOutput::failure(render_workspace_validate_failure(
                     &resolved_path,
@@ -41440,6 +41503,10 @@ pub fn workspace_doctor(
                     },
                 }
             }
+            Err(WorkspaceProblem::Admission(failure)) =>
+                render_workspace_parent_admission_failure(&failure, format),
+            Err(WorkspaceProblem::ChildAdmission(failure)) =>
+                render_workspace_child_admission_failure(&failure, format),
             Err(WorkspaceProblem::Validation(errors)) => match format {
                 OutputFormat::Text => invalid_workspace_contract_output(
                     "WORKSPACE DOCTOR",
@@ -41563,6 +41630,10 @@ pub fn workspace_explain(
                     },
                 }
             }
+            Err(WorkspaceProblem::Admission(failure)) =>
+                render_workspace_parent_admission_failure(&failure, format),
+            Err(WorkspaceProblem::ChildAdmission(failure)) =>
+                render_workspace_child_admission_failure(&failure, format),
             Err(WorkspaceProblem::Validation(errors)) => match format {
                 OutputFormat::Text => invalid_workspace_contract_output(
                     "WORKSPACE EXPLAIN",
@@ -41685,6 +41756,10 @@ pub fn workspace_check(
                     },
                 }
             }
+            Err(WorkspaceProblem::Admission(failure)) =>
+                render_workspace_parent_admission_failure(&failure, format),
+            Err(WorkspaceProblem::ChildAdmission(failure)) =>
+                render_workspace_child_admission_failure(&failure, format),
             Err(WorkspaceProblem::Validation(errors)) => match format {
                 OutputFormat::Text => invalid_workspace_contract_output(
                     "WORKSPACE CHECK",
@@ -41816,6 +41891,10 @@ pub fn workspace_up(
             stream,
         ) {
             Ok(report) => render_workspace_up(&compact_path_display, &report, format, show_receipt),
+            Err(WorkspaceProblem::Admission(failure)) =>
+                render_workspace_parent_admission_failure(&failure, format),
+            Err(WorkspaceProblem::ChildAdmission(failure)) =>
+                render_workspace_child_admission_failure(&failure, format),
             Err(WorkspaceProblem::Validation(errors)) => match format {
                 OutputFormat::Text => invalid_workspace_contract_output(
                     "WORKSPACE UP",
@@ -41963,6 +42042,10 @@ pub fn workspace_refresh(
             Ok(report) => {
                 render_workspace_refresh(&compact_path_display, &report, format, show_receipt)
             }
+            Err(WorkspaceProblem::Admission(failure)) =>
+                render_workspace_parent_admission_failure(&failure, format),
+            Err(WorkspaceProblem::ChildAdmission(failure)) =>
+                render_workspace_child_admission_failure(&failure, format),
             Err(WorkspaceProblem::Validation(errors)) => match format {
                 OutputFormat::Text => invalid_workspace_contract_output(
                     "WORKSPACE REFRESH",
@@ -42065,6 +42148,10 @@ pub fn workspace_diff(
             },
         ) {
             Ok(report) => render_workspace_diff(&compact_path_display, &report, format),
+            Err(WorkspaceProblem::Admission(failure)) =>
+                render_workspace_parent_admission_failure(&failure, format),
+            Err(WorkspaceProblem::ChildAdmission(failure)) =>
+                render_workspace_child_admission_failure(&failure, format),
             Err(WorkspaceProblem::Validation(errors)) => match format {
                 OutputFormat::Text => invalid_workspace_contract_output(
                     "WORKSPACE DIFF",
@@ -42167,6 +42254,10 @@ pub fn workspace_status(
             },
         ) {
             Ok(report) => render_workspace_status(&compact_path_display, &report, format),
+            Err(WorkspaceProblem::Admission(failure)) =>
+                render_workspace_parent_admission_failure(&failure, format),
+            Err(WorkspaceProblem::ChildAdmission(failure)) =>
+                render_workspace_child_admission_failure(&failure, format),
             Err(WorkspaceProblem::Validation(errors)) => match format {
                 OutputFormat::Text => invalid_workspace_contract_output(
                     "WORKSPACE STATUS",
@@ -42344,6 +42435,10 @@ pub fn workspace_receipt(
                 report.archive_path = archive_path;
                 render_workspace_receipt(&compact_path_display, &report, format)
             }
+            Err(WorkspaceProblem::Admission(failure)) =>
+                render_workspace_parent_admission_failure(&failure, format),
+            Err(WorkspaceProblem::ChildAdmission(failure)) =>
+                render_workspace_child_admission_failure(&failure, format),
             Err(WorkspaceProblem::Validation(errors)) => match format {
                 OutputFormat::Text => invalid_workspace_contract_output(
                     "WORKSPACE RECEIPT",
@@ -42480,6 +42575,10 @@ pub fn workspace_run(
             Ok(report) => {
                 render_workspace_run(task, &compact_path_display, &report, format, show_receipt)
             }
+            Err(WorkspaceProblem::Admission(failure)) =>
+                render_workspace_parent_admission_failure(&failure, format),
+            Err(WorkspaceProblem::ChildAdmission(failure)) =>
+                render_workspace_child_admission_failure(&failure, format),
             Err(WorkspaceProblem::Validation(errors)) => match format {
                 OutputFormat::Text => invalid_workspace_contract_output(
                     "WORKSPACE RUN",
@@ -50353,6 +50452,8 @@ fn attach_repo_contract_snapshot_to_receipt(
 fn build_up_replay_execution(report: RepoReceiptDiffReport) -> UpReplayExecution {
     let summary = &report.summary;
     let comparison = &summary.comparison;
+    let has_cargo_evidence = receipt_diff_has_cargo_evidence(&report);
+    let cargo_pairing_available = cargo_replay_pairing_available(&report);
     let matched_artifacts = comparison
         .artifact_trust
         .iter()
@@ -50423,6 +50524,14 @@ fn build_up_replay_execution(report: RepoReceiptDiffReport) -> UpReplayExecution
                 "one or more replay-grade inputs changed between the archived baseline and the current execution",
             ),
         )
+    } else if !cargo_pairing_available {
+        (
+            ReceiptDiffReplayPostureKind::ReplayUnavailable,
+            None,
+            String::from(
+                "required Cargo occurrences could not be uniquely compared; missing or ambiguous samples do not establish replay or named drift",
+            ),
+        )
     } else if findings_drifted {
         (
             ReceiptDiffReplayPostureKind::ReplayFailed,
@@ -50445,13 +50554,17 @@ fn build_up_replay_execution(report: RepoReceiptDiffReport) -> UpReplayExecution
         (
             ReceiptDiffReplayPostureKind::ReplayVerified,
             None,
-            String::from(
+            if has_cargo_evidence { String::from(
+                "the selected lane reproduced the archived witness with uniquely paired Cargo samples; acquisition and concurrent mutation remain not_proved",
+            ) } else { String::from(
                 "the selected lane reproduced the archived witness against the same named contract and captured replay inputs",
-            ),
+            ) },
         )
     };
     let hermeticity = if posture == ReceiptDiffReplayPostureKind::ReplayUnavailable {
         ReceiptDiffReplayHermeticity::Unassessed
+    } else if has_cargo_evidence {
+        ReceiptDiffReplayHermeticity::PartlyAmbient
     } else if matched_artifacts
         .iter()
         .all(|artifact| artifact.trust_role == ReceiptDiffArtifactTrustRole::Acquitting)
@@ -50515,6 +50628,49 @@ fn build_up_replay_execution(report: RepoReceiptDiffReport) -> UpReplayExecution
     }
 }
 
+fn receipt_diff_has_cargo_evidence(report: &RepoReceiptDiffReport) -> bool {
+    !report.baseline.witnessed_observations.cargo_hydration.is_empty()
+        || !report.current.witnessed_observations.cargo_hydration.is_empty()
+        || report.baseline.evaluated_inputs.iter().chain(&report.current.evaluated_inputs)
+            .any(|input| is_cargo_sample_kind(&input.kind))
+}
+
+fn cargo_replay_pairing_available(report: &RepoReceiptDiffReport) -> bool {
+    let baseline = &report.baseline.evaluated_inputs;
+    let current = &report.current.evaluated_inputs;
+    for input in baseline.iter().chain(current).filter(|input| is_cargo_sample_kind(&input.kind)) {
+        let same_key = |other: &&ExecutionReceiptEvaluatedInput| {
+            other.id == input.id && other.kind == input.kind && other.input_class == input.input_class
+        };
+        if baseline.iter().filter(same_key).count() != 1
+            || current.iter().filter(same_key).count() != 1
+        {
+            return false;
+        }
+    }
+    for (records, inputs) in [
+        (&report.baseline.witnessed_observations.cargo_hydration, baseline),
+        (&report.current.witnessed_observations.cargo_hydration, current),
+    ] {
+        if records.iter().any(|record| record.before.is_none()) {
+            return false;
+        }
+        let expected = cargo_hydration_evaluated_inputs(records);
+        for sample in &expected {
+            let same_key = |input: &&ExecutionReceiptEvaluatedInput| {
+                input.id == sample.id && input.kind == sample.kind && input.input_class == sample.input_class
+            };
+            if expected.iter().filter(same_key).count() != 1
+                || inputs.iter().filter(same_key).count() != 1
+                || !inputs.iter().any(|input| same_key(&input) && input.identity == sample.identity)
+            {
+                return false;
+            }
+        }
+    }
+    true
+}
+
 // This first carrier is intentionally narrow: receipts already archive immutable semantic
 // contract snapshots, so a matching hash can acquit contract-truth drift only. It says nothing
 // about dependency, environment, runtime, or external-world input classes not yet captured.
@@ -50543,6 +50699,18 @@ fn receipt_diff_artifact_trust(
         });
     }
     for baseline in baseline_inputs {
+        if is_cargo_sample_kind(&baseline.kind) {
+            let same_key = |input: &&ExecutionReceiptEvaluatedInput| {
+                input.id == baseline.id && input.kind == baseline.kind
+                    && input.input_class == baseline.input_class
+            };
+            // Old unscoped repeated samples cannot be paired by inventing occurrence order.
+            if baseline_inputs.iter().filter(same_key).count() != 1
+                || current_inputs.iter().filter(same_key).count() != 1
+            {
+                continue;
+            }
+        }
         let Some(current) = current_inputs.iter().find(|current| {
             current.id == baseline.id
                 && current.kind == baseline.kind
@@ -50562,7 +50730,9 @@ fn receipt_diff_artifact_trust(
             // A local project also needs its declared lockfile and clean source identities: a
             // resolved package index alone cannot pin editable project content for replay.
             ReplayInputClass::DeclaredDependencyResolution => {
-                if baseline
+                if is_cargo_sample_kind(&baseline.kind) {
+                    ReceiptDiffArtifactTrustRole::Narrowing
+                } else if baseline
                     .hydration_provenance
                     .as_ref()
                     .is_some_and(hydration_provenance_is_replay_acquitting)
@@ -50617,6 +50787,10 @@ fn receipt_diff_artifact_trust(
         });
     }
     artifacts
+}
+
+fn is_cargo_sample_kind(kind: &str) -> bool {
+    matches!(kind, "cargo_member_manifest" | "cargo_root_manifest" | "cargo_lockfile")
 }
 
 fn hydration_provenance_is_replay_acquitting(
@@ -54404,8 +54578,11 @@ fn collect_prepare_field_paths(
                         fields.push(format!("{prefix}.source.wrapper"));
                     }
                 }
-                TaskDependencyHydrationSourceSpec::Cargo(_source) => {
+                TaskDependencyHydrationSourceSpec::Cargo(source) => {
                     fields.push(format!("{prefix}.source.cwd"));
+                    if source.locked {
+                        fields.push(format!("{prefix}.source.locked"));
+                    }
                 }
                 TaskDependencyHydrationSourceSpec::DotnetRestore(_source) => {
                     fields.push(format!("{prefix}.source.cwd"));
@@ -57266,6 +57443,10 @@ fn render_task_action_text(action: &crate::output::TaskActionSummary<'_>) -> Str
 }
 
 fn render_task_prepare_text(prepare: &crate::output::TaskPrepareSummary<'_>) -> String {
+    if prepare.cargo_lock.is_some() {
+        return format!("cargo fetch --locked in {}; root_resolution=not_proved until execution; acquisition=not_proved, concurrent_mutation=not_proved",
+            prepare.cwd.unwrap_or("."));
+    }
     match prepare.kind {
         "sequence" => {
             let steps = prepare
@@ -57361,6 +57542,10 @@ fn render_workspace_task_launch_text(launch: &WorkspaceTaskLaunchSummary) -> Str
 }
 
 fn render_workspace_task_prepare_text(prepare: &WorkspaceTaskPrepareSummary) -> String {
+    if prepare.cargo_lock.is_some() {
+        return format!("cargo fetch --locked in {}; root_resolution=not_proved until execution; acquisition=not_proved, concurrent_mutation=not_proved",
+            prepare.cwd.as_deref().unwrap_or("."));
+    }
     match prepare.kind {
         "sequence" => {
             let steps = prepare
@@ -65042,6 +65227,454 @@ impl Drop for PlainModeGuard {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn cargo_receipt_uses_admitted_samples_not_post_run_bytes() {
+        use crate::hydration_provenance::{CargoFileObservation, CargoHydrationEvidence, CargoLockObservation, CargoLockOutcome};
+        let file = |path: &str, identity: &str| CargoFileObservation {
+            path: path.to_string(), identity: identity.to_string(),
+            object_identity: String::from("unix:1:2"), size: 10,
+        };
+        let mut record = CargoHydrationEvidence::pending("setup", "member");
+        record.generation = 2;
+        record.prepare_path = vec![1, 0];
+        record.before = Some(CargoLockObservation {
+            member_manifest: file("member/Cargo.toml", "member-before"),
+            root_manifest: file("Cargo.toml", "root-before"),
+            lockfile: file("Cargo.lock", "lock-before"),
+        });
+        let mut after = record.before.clone().unwrap();
+        after.lockfile.identity = String::from("lock-after");
+        record.observe_command_completion(0, Ok(after));
+        assert_eq!(record.outcome, CargoLockOutcome::DriftAfterExecution);
+        let inputs = super::cargo_hydration_evaluated_inputs(&[record.clone()]);
+        assert_eq!(inputs.len(), 3);
+        assert!(inputs.iter().all(|input| input.input_class == crate::output::ReplayInputClass::DeclaredDependencyResolution));
+        assert!(inputs.iter().any(|input| input.kind == "cargo_lockfile" && input.identity == "lock-before"));
+        assert!(!inputs.iter().any(|input| input.identity == "lock-after"));
+        record.generation += 1;
+        let next = super::cargo_hydration_evaluated_inputs(&[record]);
+        assert_ne!(inputs[0].id, next[0].id);
+        assert!(super::cargo_hydration_evaluated_inputs(&[
+            CargoHydrationEvidence::pending("missing", "."),
+        ]).is_empty());
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn cargo_refusal_retains_the_later_nested_occurrence_without_samples() {
+        let contract: crate::schema::Contract = serde_yaml::from_str(r#"
+version: 1
+project: { name: cargo-refusal }
+tasks:
+  setup:
+    prepare:
+      kind: sequence
+      steps:
+        - kind: dependency_hydration
+          medium: package_dependencies
+          source: { kind: cargo, cwd: first, locked: true }
+        - kind: sequence
+          steps:
+            - kind: dependency_hydration
+              medium: package_dependencies
+              source:
+                kind: cargo
+                cwd: rejected
+                locked: true
+                compose: { kind: run, service: app }
+"#).unwrap();
+        let record = super::cargo_unsupported_observation(&contract, "setup",
+            crate::runner::ExecutionOverrides { backend: Some(crate::schema::Backend::Native), ..Default::default() }).unwrap();
+        assert_eq!(record.cwd, "rejected");
+        assert_eq!(record.prepare_path, vec![1, 0]);
+        assert!(record.selected_cwd.is_none());
+        assert!(record.before.is_none() && record.after.is_none());
+        assert_eq!(record.command_exit_code, None);
+        assert!(super::cargo_hydration_evaluated_inputs(&[record]).is_empty());
+    }
+
+    #[test]
+    fn cargo_samples_never_acquit_acquisition_or_close_hidden_dependency_inputs() {
+        use crate::output::{ExecutionReceiptEvaluatedInput, ReceiptDiffArtifactComparison,
+            ReceiptDiffArtifactTrustRole, ReceiptDiffReplayHermeticity, ReplayInputClass, UpReplayFailureKind};
+        let input = |kind: &str| ExecutionReceiptEvaluatedInput {
+            id: format!("sample:{kind}"), kind: kind.to_string(),
+            input_class: ReplayInputClass::DeclaredDependencyResolution,
+            identity: String::from("before"), expected_identity: None,
+            execution_started: None, hydration_provenance: None, artifact_lineage: None,
+        };
+        let samples = vec![input("cargo_member_manifest"), input("cargo_root_manifest"), input("cargo_lockfile")];
+        let trust = super::receipt_diff_artifact_trust(None, None, &samples, &samples);
+        assert_eq!(trust.len(), 3);
+        assert!(trust.iter().all(|artifact| artifact.trust_role == ReceiptDiffArtifactTrustRole::Narrowing
+            && artifact.comparison == ReceiptDiffArtifactComparison::Matched));
+        let mut report = sample_up_replay_report(trust.clone(), true, true, 0, 0, Some(false), false);
+        report.baseline.evaluated_inputs = samples.clone();
+        report.current.evaluated_inputs = samples.clone();
+        assert_ne!(super::build_up_replay_execution(report).hermeticity, ReceiptDiffReplayHermeticity::Hermetic);
+        let mut changed = samples.clone();
+        changed[2].identity = String::from("after");
+        let drift = super::receipt_diff_artifact_trust(None, None, &samples, &changed);
+        assert_eq!(drift[2].kind, "cargo_lockfile");
+        assert_eq!(drift[2].comparison, ReceiptDiffArtifactComparison::Changed);
+        assert_eq!(drift[2].trust_role, ReceiptDiffArtifactTrustRole::Narrowing);
+        let legacy = input("lockfile");
+        let legacy_trust = super::receipt_diff_artifact_trust(None, None,
+            std::slice::from_ref(&legacy), std::slice::from_ref(&legacy));
+        assert_eq!(legacy_trust[0].trust_role, ReceiptDiffArtifactTrustRole::Acquitting);
+        for mixed in [false, true] {
+            let mut report = sample_up_replay_report(trust.clone(), true, false, 1, 0, Some(false), false);
+            report.baseline.evaluated_inputs = samples.clone();
+            report.current.evaluated_inputs = samples.clone();
+            if mixed {
+                report.summary.comparison.artifact_trust.extend(legacy_trust.clone());
+                report.baseline.evaluated_inputs.push(legacy.clone());
+                report.current.evaluated_inputs.push(legacy.clone());
+            }
+            let candidates = super::replay_hidden_input_candidates(&report, Some(UpReplayFailureKind::HiddenInputSuspicion));
+            assert!(candidates.iter().any(|candidate| candidate == "dependency_resolution"));
+        }
+    }
+
+    #[test]
+    fn run_and_up_share_cargo_receipt_attachment_including_typed_failures() {
+        use crate::hydration_provenance::{CargoFileObservation, CargoHydrationEvidence, CargoLockObservation};
+        use crate::runner::{ExecutedTaskStep, ExecutionOverrides, RunError, TaskExecutionRelation};
+        let contract: crate::schema::Contract = serde_yaml::from_str("version: 1\nproject: {name: cargo-receipt}\ntasks:\n  setup: {run: echo setup}\n").unwrap();
+        let path = std::path::Path::new("missing/ota.yaml");
+        let file = |path: &str| CargoFileObservation {
+            path: path.to_string(), identity: format!("sample:{path}"),
+            object_identity: String::from("unix:1:2"), size: 10,
+        };
+        let mut record = CargoHydrationEvidence::pending("setup", "member");
+        record.generation = 2;
+        record.prepare_path = vec![1, 0];
+        record.before = Some(CargoLockObservation {
+            member_manifest: file("member/Cargo.toml"), root_manifest: file("Cargo.toml"),
+            lockfile: file("Cargo.lock"),
+        });
+        for (actual_exit, drift) in [(0, false), (17, false), (0, true)] {
+            let mut record = record.clone();
+            let mut after = record.before.clone().unwrap();
+            if drift { after.lockfile.identity = String::from("changed"); }
+            let exit_code = record.observe_command_completion(actual_exit, Ok(after));
+            let steps = vec![ExecutedTaskStep {
+                name: String::from("setup"), exit_code,
+                relation: TaskExecutionRelation::Requested, generation: 2,
+                execution_note: None, cargo_hydration: vec![record.clone()],
+            }];
+            let run = super::run_execution_receipt(&contract, path, ExecutionOverrides::default(),
+                "setup", None, &steps, &[], &[], exit_code, exit_code == 0, None, None, None);
+            let mut up = super::repo_execution_receipt_with_overrides(path, &contract,
+                super::PhaseExecutionContext::default(), if exit_code == 0 { "READY" } else { "FAILED" },
+                "setup", None, None, Some("setup"), &[], Some(exit_code), None, None);
+            super::append_up_executed_task_steps(&mut up, &steps);
+            super::attach_cargo_hydration_to_receipt(&mut up, &[record.clone()]);
+            assert_eq!(up.witnessed_observations.cargo_hydration, run.witnessed_observations.cargo_hydration);
+            let cargo_inputs = |receipt: &crate::output::ExecutionReceipt| receipt.evaluated_inputs.iter()
+                .filter(|input| input.kind.starts_with("cargo_")).cloned().collect::<Vec<_>>();
+            assert_eq!(cargo_inputs(&up), cargo_inputs(&run));
+            assert_eq!(cargo_inputs(&up).len(), 3);
+            assert_eq!(up.witnessed_observations.cargo_hydration[0].command_exit_code, Some(actual_exit));
+        }
+        let cause = RunError::SpawnFailed {
+            task: String::from("setup"), source: std::io::Error::other("fixture spawn failure"),
+        };
+        let message = super::render_up_run_error(path, ExecutionOverrides::default(), false, cause);
+        let error = super::retained_up_run_error(path, ExecutionOverrides::default(), false,
+            RunError::CargoHydrationContext {
+                cause: Box::new(RunError::SpawnFailed {
+                    task: String::from("setup"), source: std::io::Error::other("fixture spawn failure"),
+                }), observations: vec![record.clone()],
+            });
+        assert_eq!(error.message, message);
+        assert_eq!(error.cargo_hydration, vec![record.clone()]);
+        let output = super::up_error_output(error, &contract, path, None, ExecutionOverrides::default(),
+            crate::output::OutputFormat::Json, false);
+        assert_eq!(output.exit_code, 1);
+        let value: serde_json::Value = serde_json::from_str(output.stderr.as_deref().unwrap()).unwrap();
+        assert_eq!(value["error"], message);
+        assert_eq!(value["receipt"]["witnessed_observations"]["cargo_hydration"][0]["generation"], 2);
+        assert_eq!(value["receipt"]["witnessed_observations"]["cargo_hydration"][0]["prepare_path"], serde_json::json!([1, 0]));
+        assert!(value["receipt"]["witnessed_observations"]["cargo_hydration"][0].get("command_exit_code").is_none());
+        let mut grant = super::crossing_execution_up_failure_result(&contract, path, None,
+            ExecutionOverrides::default(), message.clone());
+        super::attach_cargo_hydration_to_receipt(&mut grant.receipt, &[record.clone()]);
+        assert_eq!(grant.receipt.failure_origin.as_deref(), Some("crossing_execution_failed_before_receipt"));
+        assert_eq!(grant.receipt.witnessed_observations.cargo_hydration, vec![record.clone()]);
+        let downstream = super::RepoUpError { message: String::from("archive failed"), cargo_hydration: vec![record] };
+        assert_eq!(downstream.to_string(), "archive failed");
+        let legacy = super::up_error_output(String::from("legacy failure").into(), &contract, path, None,
+            ExecutionOverrides::default(), crate::output::OutputFormat::Json, false);
+        assert_eq!(legacy.stderr.as_deref(), Some("legacy failure"));
+    }
+
+    #[test]
+    fn cargo_invocations_remain_distinct_across_up_prerequisites_phases_and_failures() {
+        use crate::hydration_provenance::{CargoFileObservation, CargoHydrationEvidence, CargoLockObservation};
+        use crate::output::{ReceiptDiffArtifactComparison, ReceiptDiffArtifactTrustRole};
+        use crate::runner::{ExecutedTaskStep, ExecutionOverrides, RunError, TaskExecutionRelation};
+        let contract: crate::schema::Contract = serde_yaml::from_str(
+            "version: 1\nproject: {name: cargo-occurrences}\ntasks:\n  setup: {run: echo setup}\n",
+        ).unwrap();
+        let path = std::path::Path::new("missing/ota.yaml");
+        let file = |path: &str| CargoFileObservation {
+            path: path.to_string(), identity: format!("sample:{path}"),
+            object_identity: String::from("unix:1:2"), size: 10,
+        };
+        let mut record = CargoHydrationEvidence::pending("setup", "member");
+        record.prepare_path = vec![1, 0];
+        record.before = Some(CargoLockObservation {
+            member_manifest: file("member/Cargo.toml"), root_manifest: file("Cargo.toml"),
+            lockfile: file("Cargo.lock"),
+        });
+        record.observe_command_completion(0, Ok(record.before.clone().unwrap()));
+        let legacy_json = serde_json::to_value(&record).unwrap();
+        assert!(legacy_json.get("invocation_path").is_none());
+        assert_eq!(serde_json::from_value::<CargoHydrationEvidence>(legacy_json).unwrap(), record);
+        let outcome = |record: CargoHydrationEvidence| super::CommandRunResult {
+            exit_code: 0, executed_tasks: vec![String::from("setup")],
+            task_steps: vec![ExecutedTaskStep {
+                name: String::from("setup"), exit_code: 0,
+                relation: TaskExecutionRelation::Requested, generation: 0,
+                execution_note: None, cargo_hydration: vec![record],
+            }],
+            stdout: String::new(), stderr: String::new(), target: None,
+            runtime: None, service_termination: None, fulfilled_toolchains: Vec::new(),
+            host_service_cleanup: Vec::new(),
+        };
+        let prefix = super::cargo_invocation_path(&[], "prerequisite", Some(0));
+        let nested_prefix = super::cargo_invocation_path(&prefix, "prerequisite", Some(1));
+        let invocations = [
+            super::cargo_invocation_path(&prefix, "setup", None),
+            super::cargo_invocation_path(&nested_prefix, "setup", None),
+            super::cargo_invocation_path(&[], "setup", None),
+            super::cargo_invocation_path(&[], "run", None),
+            super::cargo_invocation_path(&[], "prepare", None),
+            super::cargo_invocation_path(&[], "attach", None),
+        ];
+        assert_eq!(invocations[1], vec!["prerequisite", "0", "prerequisite", "1", "setup"]);
+        for changed in [false, true] {
+            let mut retained = Vec::new();
+            let mut steps = Vec::new();
+            for (index, invocation) in invocations.iter().enumerate() {
+                let mut sample = record.clone();
+                if changed && index == 1 {
+                    sample.before.as_mut().unwrap().lockfile.identity = String::from("second-lock");
+                }
+                let result = super::retain_up_cargo_result(Ok(outcome(sample)), &mut retained, invocation).unwrap();
+                assert_eq!(result.task_steps[0].cargo_hydration[0].invocation_path, *invocation);
+                steps.extend(result.task_steps);
+            }
+            let mut receipt = super::repo_execution_receipt_with_overrides(path, &contract,
+                super::PhaseExecutionContext::default(), "READY", "setup", None, None,
+                Some("setup"), &[], Some(0), None, None);
+            super::append_up_executed_task_steps(&mut receipt, &steps);
+            super::attach_cargo_hydration_to_receipt(&mut receipt, &retained);
+            assert_eq!(receipt.witnessed_observations.cargo_hydration.len(), invocations.len());
+            let inputs = receipt.evaluated_inputs.iter().filter(|input| super::is_cargo_sample_kind(&input.kind))
+                .cloned().collect::<Vec<_>>();
+            assert_eq!(inputs.len(), invocations.len() * 3);
+            assert_eq!(inputs.iter().map(|input| &input.id).collect::<std::collections::BTreeSet<_>>().len(), inputs.len());
+            let before = serde_json::to_value(&receipt).unwrap();
+            super::attach_cargo_hydration_to_receipt(&mut receipt, &retained);
+            assert_eq!(serde_json::to_value(&receipt).unwrap(), before);
+            let mut reversed = inputs.clone();
+            reversed.reverse();
+            let matched = super::receipt_diff_artifact_trust(None, None, &inputs, &reversed);
+            assert_eq!(matched.len(), inputs.len());
+            assert!(matched.iter().all(|artifact| artifact.comparison == ReceiptDiffArtifactComparison::Matched
+                && artifact.trust_role == ReceiptDiffArtifactTrustRole::Narrowing));
+            let changed_id = super::cargo_hydration_evaluated_inputs(&retained[1..2]).into_iter()
+                .find(|input| input.kind == "cargo_lockfile").unwrap().id;
+            reversed.iter_mut().find(|input| input.id == changed_id).unwrap().identity = String::from("replay-drift");
+            let drift = super::receipt_diff_artifact_trust(None, None, &inputs, &reversed);
+            assert_eq!(drift.iter().filter(|artifact| artifact.comparison == ReceiptDiffArtifactComparison::Changed).count(), 1);
+            assert_eq!(drift.iter().find(|artifact| artifact.comparison == ReceiptDiffArtifactComparison::Changed).unwrap().id, changed_id);
+        }
+        for failure_path in [&invocations[1], &invocations[3]] {
+            let mut retained = Vec::new();
+            super::retain_up_cargo_result(Ok(outcome(record.clone())), &mut retained, &invocations[0]).unwrap();
+            let cause = RunError::SpawnFailed {
+                task: String::from("setup"), source: std::io::Error::other("later child/phase spawn failure"),
+            };
+            let message = cause.to_string();
+            let mut failed = record.clone();
+            failed.command_exit_code = None;
+            let result = super::retain_up_cargo_result(Err(RunError::CargoHydrationContext {
+                cause: Box::new(cause), observations: vec![failed],
+            }), &mut retained, failure_path);
+            let error = result.err().unwrap();
+            assert_eq!(error.to_string(), message);
+            let (cause, partial) = error.into_cargo_context();
+            assert!(matches!(cause, RunError::SpawnFailed { .. }));
+            assert_eq!(partial[0].invocation_path, *failure_path);
+            assert!(partial[0].command_exit_code.is_none());
+            retained.extend(partial);
+            let receipt = super::cargo_up_failure_receipt(&super::RepoUpError {
+                message, cargo_hydration: retained,
+            }, &contract, path, None, ExecutionOverrides::default());
+            assert_eq!(receipt.witnessed_observations.cargo_hydration.len(), 2);
+            assert_eq!(receipt.evaluated_inputs.iter().filter(|input| super::is_cargo_sample_kind(&input.kind)).count(), 6);
+            assert!(receipt.steps.iter().all(|step| step.task.is_none() && step.exit_code.is_none()));
+        }
+        let ambiguous = super::cargo_hydration_evaluated_inputs(&[record.clone(), record]);
+        assert!(super::receipt_diff_artifact_trust(None, None, &ambiguous, &ambiguous).is_empty());
+        let unique = ambiguous[..3].to_vec();
+        assert!(super::receipt_diff_artifact_trust(None, None, &unique, &ambiguous).is_empty());
+        assert!(super::receipt_diff_artifact_trust(None, None, &ambiguous, &unique).is_empty());
+    }
+
+    #[test]
+    fn cargo_replay_verdict_retains_uncertainty_when_other_dependencies_acquit() {
+        use crate::hydration_provenance::{CargoFileObservation, CargoHydrationEvidence, CargoLockObservation};
+        use crate::output::{ExecutionReceiptEvaluatedInput, ReceiptDiffReplayHermeticity,
+            ReceiptDiffReplayPostureKind, ReplayInputClass, UpReplayFailureKind};
+        let input = |kind: &str| ExecutionReceiptEvaluatedInput {
+            id: format!("sample:{kind}"), kind: kind.to_string(),
+            input_class: ReplayInputClass::DeclaredDependencyResolution,
+            identity: String::from("before"), expected_identity: None,
+            execution_started: None, hydration_provenance: None, artifact_lineage: None,
+        };
+        let cargo = input("cargo_lockfile");
+        let legacy = input("lockfile");
+        for case in 0..8 {
+            let mut baseline = vec![legacy.clone(), cargo.clone()];
+            let mut current = baseline.clone();
+            match case {
+                0 => baseline.push(cargo.clone()),
+                1 => current.push(cargo.clone()),
+                2 => { baseline.pop(); },
+                3 => { current.pop(); },
+                4 | 5 => { baseline.pop(); current.pop(); },
+                7 => current[1].identity = String::from("changed"),
+                _ => (),
+            }
+            let artifacts = super::receipt_diff_artifact_trust(None, None, &baseline, &current);
+            let mut report = sample_up_replay_report(artifacts, true, true, 0, 0, Some(false), false);
+            report.baseline.evaluated_inputs = baseline;
+            report.current.evaluated_inputs = current;
+            if case == 4 || case == 5 {
+                let mut record = CargoHydrationEvidence::pending("setup", "member");
+                if case == 4 {
+                    let file = |path: &str| CargoFileObservation {
+                        path: path.to_string(), identity: String::from("before"),
+                        object_identity: String::from("unix:1:2"), size: 10,
+                    };
+                    record.before = Some(CargoLockObservation {
+                        member_manifest: file("member/Cargo.toml"), root_manifest: file("Cargo.toml"),
+                        lockfile: file("Cargo.lock"),
+                    });
+                }
+                report.baseline.witnessed_observations.cargo_hydration.push(record.clone());
+                report.current.witnessed_observations.cargo_hydration.push(record);
+            }
+            let replay = super::build_up_replay_execution(report);
+            assert_ne!(replay.hermeticity, ReceiptDiffReplayHermeticity::Hermetic, "case {case}");
+            assert!(replay.hidden_input_candidates.iter().any(|candidate| candidate == "dependency_resolution"));
+            if case < 6 {
+                assert_eq!(replay.posture, ReceiptDiffReplayPostureKind::ReplayUnavailable, "case {case}");
+                assert!(replay.failure_kind.is_none());
+                assert!(replay.reason.contains("uniquely compared"));
+            } else if case == 6 {
+                assert_eq!(replay.posture, ReceiptDiffReplayPostureKind::ReplayVerified);
+                assert_eq!(replay.hermeticity, ReceiptDiffReplayHermeticity::PartlyAmbient);
+                assert!(replay.reason.contains("not_proved"));
+            } else {
+                assert_eq!(replay.posture, ReceiptDiffReplayPostureKind::ReplayFailed);
+                assert_eq!(replay.failure_kind, Some(UpReplayFailureKind::NamedInputDrift));
+            }
+        }
+        let artifacts = super::receipt_diff_artifact_trust(None, None,
+            std::slice::from_ref(&legacy), std::slice::from_ref(&legacy));
+        let replay = super::build_up_replay_execution(sample_up_replay_report(artifacts, true, true, 0, 0, Some(false), false));
+        assert_eq!(replay.posture, ReceiptDiffReplayPostureKind::ReplayVerified);
+        assert_eq!(replay.hermeticity, ReceiptDiffReplayHermeticity::Hermetic);
+    }
+
+    #[test]
+    fn workspace_cargo_receipts_keep_repo_scope_and_historical_archive_limit() {
+        use crate::hydration_provenance::{CargoFileObservation, CargoHydrationEvidence, CargoLockObservation};
+        use crate::output::{OutputFormat, WorkspaceRepoUpReport};
+        let contract: crate::schema::Contract = serde_yaml::from_str("version: 1\nproject: {name: cargo-workspace}\ntasks:\n  setup: {run: echo setup}\n").unwrap();
+        let file = |path: &str| CargoFileObservation {
+            path: path.to_string(), identity: format!("sample:{path}"),
+            object_identity: String::from("unix:1:2"), size: 10,
+        };
+        let make_repo = |name: &str, actual_exit: Option<i32>| {
+            let path = std::path::PathBuf::from(format!("missing/{name}/ota.yaml"));
+            let mut record = CargoHydrationEvidence::pending("setup", "member");
+            record.generation = 2;
+            record.prepare_path = vec![1, 0];
+            record.before = Some(CargoLockObservation {
+                member_manifest: file("member/Cargo.toml"), root_manifest: file("Cargo.toml"),
+                lockfile: file("Cargo.lock"),
+            });
+            if let Some(exit_code) = actual_exit {
+                record.observe_command_completion(exit_code, Ok(record.before.clone().unwrap()));
+            }
+            let mut receipt = if let Some(exit_code) = actual_exit {
+                super::repo_execution_receipt_with_overrides(&path, &contract,
+                    super::PhaseExecutionContext::default(), if exit_code == 0 { "READY" } else { "FAILED" },
+                    "setup", None, None, Some("setup"), &[], Some(exit_code), None, None)
+            } else {
+                super::cargo_up_failure_receipt(&super::RepoUpError {
+                    message: String::from("fixture failure"), cargo_hydration: vec![record.clone()],
+                }, &contract, &path, None, Default::default())
+            };
+            super::attach_cargo_hydration_to_receipt(&mut receipt, &[record]);
+            let mut repo = WorkspaceRepoUpReport {
+                receipt: Some(Box::new(receipt)), name: name.to_string(), path: format!("missing/{name}"),
+                contract_path: path.display().to_string(), workflow: None, required: true,
+                ok: actual_exit == Some(0), status: String::from(if actual_exit == Some(0) { "READY" } else { "FAILED" }), phase: String::from("setup"),
+                findings: Vec::new(), source_url: None, source_ref: None, service: None,
+                service_command: None, task: Some(String::from("setup")), task_command: None,
+                exit_code: actual_exit, stdout: None, stderr: None, env_sources: Vec::new(),
+                next: None, next_steps: Vec::new(),
+            };
+            super::annotate_workspace_cargo_receipt(&mut repo);
+            repo
+        };
+        let repos = vec![make_repo("one", Some(0)), make_repo("two", Some(17)), make_repo("three", None)];
+        for repo in &repos {
+            let receipt = repo.receipt.as_deref().unwrap();
+            assert_eq!(receipt.contract, repo.contract_path);
+            assert_eq!(receipt.scope, "repo");
+            assert_eq!(receipt.witnessed_observations.cargo_hydration[0].prepare_path, vec![1, 0]);
+            assert_eq!(receipt.witnessed_observations.cargo_hydration[0].generation, 2);
+            assert_eq!(receipt.witnessed_observations.cargo_hydration[0].command_exit_code, repo.exit_code);
+            assert_eq!(receipt.evaluated_inputs.iter().filter(|input| input.kind.starts_with("cargo_")).count(), 3);
+            assert!(repo.findings.iter().any(|finding| finding.severity == crate::doctor::FindingSeverity::Info
+                && finding.identity.as_ref().is_some_and(|identity| identity.code == "OTA_WORKSPACE_CHILD_EXECUTION_ARCHIVE_NOT_PROVED")));
+        }
+        let identity = super::repo_contract_identity(&contract);
+        let aggregate = super::workspace_up_receipt(std::path::Path::new("missing/ota.workspace.yaml"), &identity, "fixture", &repos);
+        assert!(aggregate.evaluated_inputs.is_empty());
+        assert!(aggregate.witnessed_observations.cargo_hydration.is_empty());
+        let report = super::WorkspaceUpReport { ok: false, receipt: aggregate, repos, dry_run: false };
+        let json = super::workspace_output::render_workspace_up("missing/ota.workspace.yaml", &report, OutputFormat::Json, true);
+        let value: serde_json::Value = serde_json::from_str(&json.stdout).unwrap();
+        assert_ne!(value["repos"][0]["receipt"]["contract"], value["repos"][1]["receipt"]["contract"]);
+        assert_eq!(value["repos"][0]["receipt"]["evaluated_inputs"][0]["id"], value["repos"][1]["receipt"]["evaluated_inputs"][0]["id"]);
+        let inline = value["artifact_routing"].as_array().unwrap().iter()
+            .find(|route| route["kind"] == "workspace_inline_child_receipt").unwrap();
+        assert_eq!(inline["role"], "inspect");
+        assert!(inline.get("path").is_none() && inline.get("command").is_none());
+        assert!(value["artifact_routing"].as_array().unwrap().iter().all(|route| route["role"] != "not_proved"));
+        let text = super::workspace_output::render_workspace_up("missing/ota.workspace.yaml", &report, OutputFormat::Text, true);
+        assert!(text.stdout.contains("cannot recover this execution evidence"));
+        let mut legacy = make_repo("legacy", Some(0));
+        legacy.receipt = None;
+        legacy.findings.clear();
+        super::annotate_workspace_cargo_receipt(&mut legacy);
+        assert!(legacy.findings.is_empty());
+        assert!(serde_json::to_value(&legacy).unwrap().get("receipt").is_none());
+        let status = super::WorkspaceStatusReport { repos: Vec::new(), next: None, next_steps: Vec::new() };
+        let later = super::workspace_status_receipt(std::path::Path::new("missing/ota.workspace.yaml"), &identity, "fixture", &status);
+        assert!(later.evaluated_inputs.is_empty());
+        assert!(later.witnessed_observations.cargo_hydration.is_empty());
+    }
+
     use crate::crossing::{
         CrossingProofInvocation, CrossingProofTransactionSelection, crossing_scope_for_workflow,
     };
@@ -65054,9 +65687,8 @@ mod tests {
     use std::io::{Read, Write};
     use std::net::TcpListener;
 
-    fn selected_secret_delivery_admission()
-    -> crate::secret_delivery_admission::SecretDeliveryCommandAdmission {
-        let contract: crate::schema::Contract = serde_yaml::from_str(
+    fn selected_secret_delivery_contract() -> crate::schema::Contract {
+        serde_yaml::from_str(
             r#"
 version: 1
 metadata:
@@ -65096,7 +65728,12 @@ secret_requirements:
       capability: segmented_process_environment
 "#,
         )
-        .expect("secret-delivery contract");
+        .expect("secret-delivery contract")
+    }
+
+    fn selected_secret_delivery_admission()
+    -> crate::secret_delivery_admission::SecretDeliveryCommandAdmission {
+        let contract = selected_secret_delivery_contract();
         let roots = [crate::effect_policy::EffectPolicyInvocation {
             task: String::from("publish"),
             origin: String::from("run"),
@@ -65105,6 +65742,1413 @@ secret_requirements:
             &contract, None, &roots, &roots,
         )
         .expect("secret-delivery admission")
+    }
+
+    struct RestrictionAdmissionEnvironment(Vec<(&'static str, Option<std::ffi::OsString>)>);
+
+    impl RestrictionAdmissionEnvironment {
+        fn new(policy: &std::ffi::OsStr, proof_parent: Option<&str>) -> Self {
+            let names = ["OTA_POLICY", crate::policy_pack::OTA_POLICY_COMMAND_SNAPSHOT_ABSENT_ENV,
+                super::PROOF_PARENT_AUTHORITY_FD_ENV, "PATH", "OTA_UP_RETAINED_TEST"];
+            let previous = names.into_iter().map(|name| (name, env::var_os(name))).collect();
+            unsafe {
+                env::set_var("OTA_POLICY", policy);
+                env::remove_var(crate::policy_pack::OTA_POLICY_COMMAND_SNAPSHOT_ABSENT_ENV);
+                env::remove_var("OTA_UP_RETAINED_TEST");
+                if let Some(fd) = proof_parent {
+                    env::set_var(super::PROOF_PARENT_AUTHORITY_FD_ENV, fd);
+                } else {
+                    env::remove_var(super::PROOF_PARENT_AUTHORITY_FD_ENV);
+                }
+            }
+            Self(previous)
+        }
+    }
+
+    impl Drop for RestrictionAdmissionEnvironment {
+        fn drop(&mut self) {
+            for (name, value) in &self.0 {
+                unsafe {
+                    match value {
+                        Some(value) => env::set_var(name, value),
+                        None => env::remove_var(name),
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn run_restricted_proof_parent_refuses_before_descriptor_adoption_and_replay() {
+        let _lock = crate::test_support::env_mutex_lock();
+        let directory = tempfile::tempdir().unwrap();
+        let policy = directory.path().join("policy.yaml");
+        let _environment = RestrictionAdmissionEnvironment::new(policy.as_os_str(), Some("-1"));
+        let initial_path = env::var_os("PATH");
+        let contract: crate::schema::Contract = serde_yaml::from_str(
+            "version: 1\nproject: {name: restricted-run}\ntasks:\n  check:\n    safe_for_agent: true\n    command: {exe: sh, args: ['-c', 'touch task-must-not-run']}\n",
+        ).unwrap();
+        for agent in [false, true] {
+            for (contents, reason) in [
+                ("policies: {toolchain_fulfillment: {rust: deny}}", "toolchain_fulfillment_policy_route_unsupported"),
+                ("policies: {toolchain_fulfillment: {rust: allow}}", "could not be loaded before admission"),
+            ] {
+                fs::write(&policy, contents).unwrap();
+                let result = super::run_single_contract_target(
+                    "check", ExecutionOverrides::default(), None,
+                    super::LoadedContractTarget { contract: contract.clone(), contract_path: directory.path().join("ota.yaml") },
+                    &[], &[], agent, None, None, None, false, false, false, false,
+                );
+                let failure = result.expect_err("restriction/load error must precede invalid FD adoption");
+                assert!(strip_ansi_codes(&failure.message).contains(reason), "{}", failure.message);
+                assert_eq!(failure.exit_code, 1);
+                assert_eq!(env::var(super::PROOF_PARENT_AUTHORITY_FD_ENV).unwrap(), "-1");
+                assert_eq!(env::var_os("PATH"), initial_path);
+                assert!(!directory.path().join("task-must-not-run").exists());
+                assert!(!directory.path().join(".ota").exists());
+            }
+        }
+    }
+
+    #[test]
+    fn run_preflight_and_preview_reuse_owned_policy_after_source_removal() {
+        let _lock = crate::test_support::env_mutex_lock();
+        let directory = tempfile::tempdir().unwrap();
+        let policy_path = directory.path().join("policy.yaml");
+        let _environment = RestrictionAdmissionEnvironment::new(policy_path.as_os_str(), None);
+        fs::write(&policy_path, "policies: {toolchain_fulfillment: {rust: deny}}").unwrap();
+        let contract: crate::schema::Contract = serde_yaml::from_str(
+            "version: 1\nproject: {name: policy-retention}\ntasks:\n  check:\n    command: {exe: sh, args: ['-c', 'true']}\n",
+        ).unwrap();
+        let contract_path = directory.path().join("ota.yaml");
+        let roots = [crate::effect_policy::EffectPolicyInvocation {
+            task: String::from("check"), origin: String::from("run"),
+        }];
+        let admission = crate::effect_orchestration::admit_command_execution_closure(
+            &contract, &contract_path, None, &roots, ExecutionOverrides::default(), None,
+        ).unwrap();
+        assert!(admission.policy_acquired);
+        fs::remove_file(&policy_path).unwrap();
+        let preflight = super::task_replay_input_preflight_with_retained_policy(
+            &contract, &contract_path, "check", ExecutionOverrides::default(),
+            admission.policy_acquired, admission.loaded_policy,
+        );
+        assert!(preflight.policy_load_error.is_none());
+        assert!(preflight.loaded_policy.as_ref().unwrap().pack.denies_toolchain_fulfillment("rust"));
+        let mut preview = crate::output::RunPreviewPlan::default();
+        super::append_toolchain_fulfillment_policy_preview(&mut preview, preflight.loaded_policy.as_ref());
+        assert_eq!(preview.notes.len(), 1);
+        assert!(preview.notes[0].contains("establishes no installed readiness"));
+        assert!(preview.actions.is_empty());
+    }
+
+    fn workspace_parent_fixture(directory: &Path) -> PathBuf {
+        let local = directory.join("local");
+        fs::create_dir_all(&local).unwrap();
+        fs::write(local.join("ota.yaml"),
+            "version: 1\nproject: {name: local}\ntasks:\n  ci:\n    run: touch must-not-run\nworkflows:\n  default: ci\n  ci: {setup: {task: ci}}\n",
+        ).unwrap();
+        let path = directory.join("selected.workspace.yaml");
+        fs::write(&path,
+            "version: 1\nworkspace: {name: parent, policy: policy.yaml}\nrepos:\n  local: {path: local, required: false}\n  acquired:\n    path: missing-parent/acquired\n    required: false\n    source: {git: ./nonexistent-source}\n",
+        ).unwrap();
+        path
+    }
+
+    fn workspace_parent_public_output(path: &Path, task: Option<&str>, stream: bool) -> crate::output::CommandOutput {
+        let format = if stream { crate::output::OutputFormat::Text } else { crate::output::OutputFormat::Json };
+        match task {
+            None => super::workspace_up(None, Some(path), if stream { 1 } else { 2 },
+                false, stream, true, format, false, true),
+            Some(task) => super::workspace_run(task, None, Some(path), if stream { 1 } else { 2 },
+                stream, true, format, false, true, &[]),
+        }
+    }
+
+    fn workspace_local_children_fixture(directory: &Path, optional: bool, missing: bool) -> PathBuf {
+        for (name, task) in [("a-valid", "ci"), ("z-child", "verify")] {
+            let root = directory.join(name);
+            fs::create_dir_all(&root).unwrap();
+            fs::write(root.join("ota.yaml"), format!(
+                "version: 1\nproject: {{name: {name}}}\ntasks:\n  {task}:\n    run: touch body-ran\nworkflows:\n  default: lane\n  lane: {{setup: {{task: {task}}}}}\n",
+            )).unwrap();
+            let target = super::load_and_validate_target(&root.join("ota.yaml"), None).unwrap();
+            assert!(target.contract.tasks.contains_key(task));
+            assert_eq!(target.contract.selected_workflow(Some("lane")).unwrap().0, "lane");
+        }
+        let path = directory.join("children.workspace.yaml");
+        let acquisition = if missing {
+            "  missing:\n    path: absent-parent/missing\n    required: false\n    depends_on: [z-child]\n    source: {git: ./must-not-clone}\n"
+        } else { "" };
+        fs::write(&path, format!(
+            "version: 1\nworkspace: {{name: independent-children}}\nrepos:\n  a-valid: {{path: a-valid, required: true, workflow: lane}}\n  z-child:\n    path: z-child\n    required: {}\n    workflow: lane\n    tasks: {{ci: {{task: verify}}}}\n{acquisition}", !optional,
+        )).unwrap();
+        super::load_and_validate_workspace(&path).unwrap_or_else(|_| panic!("workspace fixture must be valid"));
+        path
+    }
+
+    fn workspace_typed_child_fixture(root: &Path, declared_only: bool) {
+        use sha2::{Digest, Sha256};
+        fs::create_dir_all(root.join("migrations")).unwrap();
+        let bytes = b"create table workspace_child (id integer);\n";
+        fs::write(root.join("migrations/001.sql"), bytes).unwrap();
+        let manifest = serde_json::json!({
+            "schema_version": 1, "root": "migrations",
+            "files": [{"path": "001.sql", "identity": format!("sha256:{:x}", Sha256::digest(bytes))}],
+        });
+        let mut identity_bytes = b"ota.schema-migration-manifest.v1\0".to_vec();
+        identity_bytes.extend(serde_jcs::to_vec(&manifest).unwrap());
+        let identity = format!("sha256:{:x}", Sha256::digest(identity_bytes));
+        let realization = if declared_only { "run: touch body-ran" }
+            else { "action: {kind: database_schema_mutation, effect: migration}" };
+        fs::write(root.join("ota.yaml"), format!(
+            "version: 1\nproject: {{name: typed-child}}\nresource_bindings:\n  primary:\n    kind: database\n    provider: postgresql\n    namespace: {{authority: dns:example.org, environment: production}}\neffect_definitions:\n  migration:\n    kind: database_schema_mutation\n    action: apply_migration_set\n    resource: {{engine: postgresql, target_ref: primary, schema: public}}\n    bounds:\n      migration_set: {{root: migrations, content_identity: {identity}}}\n      start_state: any_within_set\ntasks:\n  verify:\n    {realization}\n    effects: {{declared: [migration]}}\nworkflows:\n  default: lane\n  lane: {{run: {{task: verify}}}}\n",
+        )).unwrap();
+        super::load_and_validate_target(&root.join("ota.yaml"), None).unwrap();
+    }
+
+    #[test]
+    fn workspace_typed_child_failure_uses_actual_cause_and_matching_evidence() {
+        let _lock = crate::test_support::env_mutex_lock();
+        let deny = "policies:\n  effects:\n    mode: compatibility\n    typed:\n      rules:\n        - id: deny_migration\n          selector:\n            kind: database_schema_mutation\n            actions: [apply_migration_set]\n            resource:\n              match: exact\n              engine: postgresql\n              namespace: {authority: dns:example.org, environment: production}\n              schema: public\n          decision: deny\n";
+        for (declared_only, policy, kind) in [
+            (false, Some(deny), "typed_policy_denied"),
+            (false, Some("policies: {effects: {mode: compatibility}}"), "typed_realization_unavailable"),
+            (true, Some(deny), "typed_realization_unavailable"),
+        ] {
+            let directory = tempfile::tempdir().unwrap();
+            let path = workspace_local_children_fixture(directory.path(), false, true);
+            let child = directory.path().join("z-child");
+            workspace_typed_child_fixture(&child, declared_only);
+            fs::create_dir_all(child.join(".ota")).unwrap();
+            let policy_path = child.join(".ota/org-policy.yaml");
+            if let Some(policy) = policy { fs::write(&policy_path, policy).unwrap(); }
+            let _environment = RestrictionAdmissionEnvironment::new(policy_path.as_os_str(), None);
+            unsafe {
+                env::remove_var("OTA_POLICY");
+                env::set_var(crate::policy_pack::OTA_POLICY_COMMAND_SNAPSHOT_ABSENT_ENV, "1");
+            }
+            for task in [None, Some("ci")] {
+                super::TEST_WORKSPACE_PARENT_EFFECTS.with(|count| count.set((0, 0, 0)));
+                let output = workspace_parent_public_output(&path, task, false);
+                assert_eq!(output.exit_code, 1, "{}", output.stdout);
+                let json: serde_json::Value = serde_json::from_str(&output.stdout).unwrap();
+                let admission = &json["child_admission"];
+                let failure = &admission["failure"];
+                assert_eq!(failure["kind"], kind, "{}", output.stdout);
+                assert_eq!(admission["selected_child"]["name"], "z-child");
+                assert_eq!(admission["policy_acquisition"], "acquired_present");
+                assert!(failure.get("toolchain_fulfillment_route_refusal").is_none());
+                if kind == "typed_policy_denied" {
+                    assert_eq!(failure["error_variant"], "EffectPolicyDenied");
+                    assert_eq!(failure["policy_decision"]["aggregate_decision"], "deny");
+                    let evidence = &failure["typed_effect_policy_refusal"];
+                    assert_eq!(evidence["policy_decision"], failure["policy_decision"]);
+                    assert!(evidence.get("policy_snapshot_archive").is_none());
+                    assert!(evidence.get("refusal_archive_path").is_none());
+                } else {
+                    assert_eq!(failure["error_variant"], "FileActionFailed");
+                    assert!(failure.get("typed_effect_policy_refusal").is_none());
+                    assert!(failure.get("code").is_none());
+                }
+                super::TEST_WORKSPACE_PARENT_EFFECTS.with(|count| assert_eq!(count.get(), (0, 0, 0)));
+                assert!(!directory.path().join("a-valid/body-ran").exists());
+                assert!(!directory.path().join("absent-parent").exists());
+                assert!(!child.join("body-ran").exists());
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn workspace_required_late_child_admission_refuses_before_every_dispatch_mode() {
+        use std::os::fd::AsRawFd;
+        use std::os::unix::net::UnixStream;
+        let _lock = crate::test_support::env_mutex_lock();
+        let directory = tempfile::tempdir().unwrap();
+        let path = workspace_local_children_fixture(directory.path(), false, true);
+        let child = directory.path().join("z-child");
+        fs::create_dir_all(child.join(".ota")).unwrap();
+        let policy_path = child.join(".ota/org-policy.yaml");
+        let (parent, mut peer) = UnixStream::pair().unwrap();
+        peer.set_nonblocking(true).unwrap();
+        let fd = parent.as_raw_fd();
+        let fd_text = fd.to_string();
+        let _environment = RestrictionAdmissionEnvironment::new(policy_path.as_os_str(), Some(&fd_text));
+        unsafe {
+            env::remove_var("OTA_POLICY");
+            env::set_var(crate::policy_pack::OTA_POLICY_COMMAND_SNAPSHOT_ABSENT_ENV, "1");
+        }
+        let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
+        let initial_path = env::var_os("PATH");
+        for (task, policy, kind, acquisition) in [
+            (None, "policies: {toolchain_fulfillment: {rust: deny}}", "unsupported_route", "acquired_present"),
+            (Some("ci"), "policies: [", "policy_load_failed", "error"),
+        ] {
+            fs::write(&policy_path, policy).unwrap();
+            for stream in [false, true] {
+                super::TEST_WORKSPACE_PARENT_EFFECTS.with(|count| count.set((0, 0, 0)));
+                super::TEST_PROOF_PARENT_CAPABILITY_ACQUISITIONS.with(|count| count.set(0));
+                super::TEST_CROSSING_AUTHORITY_ACTIVATIONS.with(|count| count.set(0));
+                let output = workspace_parent_public_output(&path, task, stream);
+                assert_eq!(output.exit_code, 1, "{}", output.stdout);
+                if stream {
+                    let text = strip_ansi_codes(&output.stdout);
+                    assert!(text.contains("Child admission refused: z-child"), "{text}");
+                    assert!(text.contains(kind), "{text}");
+                    assert!(text.contains(acquisition), "{text}");
+                } else {
+                    let json: serde_json::Value = serde_json::from_str(&output.stdout).unwrap();
+                    assert_eq!(json["code"], "workspace_child_admission_refused");
+                    assert_eq!(json["path"], path.display().to_string());
+                    let admission = &json["child_admission"];
+                    let subject = &admission["selected_child"];
+                    assert_eq!(subject["name"], "z-child");
+                    assert_eq!(subject["path"], child.display().to_string());
+                    assert_eq!(subject["contract_path"], child.join("ota.yaml").display().to_string());
+                    assert_eq!(subject["selected_task"], if task.is_some() { serde_json::json!("verify") } else { serde_json::Value::Null });
+                    assert_eq!(subject["selected_workflow"], if task.is_none() { serde_json::json!("lane") } else { serde_json::Value::Null });
+                    assert_eq!(admission["policy_acquisition"], acquisition);
+                    assert_eq!(admission["failure"]["kind"], kind);
+                    assert_eq!(admission["attempted"], false);
+                    assert_eq!(admission["execution_started"], false);
+                    for key in ["parent_admission", "receipt", "repos", "summary", "artifact_routing"] {
+                        assert!(json.get(key).is_none());
+                    }
+                    if task.is_none() {
+                        let carrier = &admission["failure"]["toolchain_fulfillment_route_refusal"];
+                        assert_eq!(carrier["route"], "up");
+                        assert_eq!(carrier["root"], child.display().to_string());
+                        assert_eq!(carrier["selected_task"], serde_json::Value::Null);
+                        assert_eq!(carrier["selected_workflow"], "lane");
+                        assert_eq!(carrier["policy_identity"], admission["policy"]["identity"]);
+                        assert_eq!(carrier["policy_source"], admission["policy"]["source"]);
+                        assert_eq!(carrier["policy_path"], admission["policy"]["path"]);
+                    } else {
+                        assert!(admission.get("policy").is_none());
+                        assert!(admission["failure"].get("toolchain_fulfillment_route_refusal").is_none());
+                        assert_eq!(admission["failure"]["error_variant"], "FileActionFailed");
+                    }
+                }
+                super::TEST_WORKSPACE_PARENT_EFFECTS.with(|count| assert_eq!(count.get(), (0, 0, 0)));
+                super::TEST_PROOF_PARENT_CAPABILITY_ACQUISITIONS.with(|count| assert_eq!(count.get(), 0));
+                super::TEST_CROSSING_AUTHORITY_ACTIVATIONS.with(|count| assert_eq!(count.get(), 0));
+                assert_eq!(unsafe { libc::fcntl(fd, libc::F_GETFD) }, flags);
+                assert_eq!(env::var_os("PATH"), initial_path);
+                assert_eq!(peer.read(&mut [0_u8; 1]).unwrap_err().kind(), std::io::ErrorKind::WouldBlock);
+                assert_eq!(env::var(crate::policy_pack::OTA_POLICY_COMMAND_SNAPSHOT_ABSENT_ENV).unwrap(), "1");
+                assert!(!directory.path().join("a-valid/body-ran").exists());
+                assert!(!child.join("body-ran").exists());
+                assert!(!directory.path().join("absent-parent").exists());
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn workspace_optional_child_terminal_is_warn_without_worker_or_body() {
+        let _lock = crate::test_support::env_mutex_lock();
+        for stream in [false, true] {
+            for task in [None, Some("ci")] {
+                let directory = tempfile::tempdir().unwrap();
+                let path = workspace_local_children_fixture(directory.path(), true, false);
+                let child = directory.path().join("z-child");
+                fs::create_dir_all(child.join(".ota")).unwrap();
+                let policy_path = child.join(".ota/org-policy.yaml");
+                fs::write(&policy_path, "policies: [").unwrap();
+                let _environment = RestrictionAdmissionEnvironment::new(policy_path.as_os_str(), None);
+                unsafe { env::remove_var("OTA_POLICY"); }
+                super::TEST_WORKSPACE_PARENT_EFFECTS.with(|count| count.set((0, 0, 0)));
+                let output = workspace_parent_public_output(&path, task, stream);
+                assert_eq!(output.exit_code, 0, "{}", output.stdout);
+                if !stream {
+                    let json: serde_json::Value = serde_json::from_str(&output.stdout).unwrap();
+                    assert!(json.get("child_admission").is_none());
+                    let failed = json["repos"].as_array().unwrap().iter().find(|repo| repo["name"] == "z-child").unwrap();
+                    assert_eq!(failed["status"], "WARN");
+                    assert!(failed["exit_code"].is_null());
+                    assert!(failed["stdout"].is_null());
+                    assert!(failed["findings"][0]["why"].as_str().unwrap().contains("failed to parse policy pack"));
+                    super::TEST_WORKSPACE_PARENT_EFFECTS.with(|count| assert_eq!(count.get().1, 1));
+                }
+                assert!(directory.path().join("a-valid/body-ran").exists());
+                assert!(!child.join("body-ran").exists());
+            }
+        }
+    }
+
+    #[test]
+    fn workspace_child_unavailable_selection_and_absence_are_not_policy_errors() {
+        let _lock = crate::test_support::env_mutex_lock();
+        let directory = tempfile::tempdir().unwrap();
+        let path = workspace_local_children_fixture(directory.path(), false, false);
+        let _environment = RestrictionAdmissionEnvironment::new(directory.path().join("unused").as_os_str(), None);
+        unsafe {
+            env::remove_var("OTA_POLICY");
+            env::set_var(crate::policy_pack::OTA_POLICY_COMMAND_SNAPSHOT_ABSENT_ENV, "1");
+        }
+        let workspace = crate::workspace::load_workspace_contract(&path).unwrap();
+        let refs = crate::workspace::ordered_workspace_repo_refs(&path, &workspace).unwrap();
+        let prepared = super::prepare_workspace_child(&path, &refs[1], Some("ci"))
+            .unwrap_or_else(|failure| panic!("{}", failure.failure.message));
+        assert!(prepared.admission.policy_acquired);
+        assert!(prepared.admission.loaded_policy.is_none());
+        for (task, workflow) in [(Some("missing"), None), (None, Some("missing"))] {
+            let mut repo = refs[1].clone();
+            if let Some(workflow) = workflow { repo.workflow = Some(workflow.to_string()); }
+            let failure = super::prepare_workspace_child(&path, &repo, task).err().unwrap();
+            assert_eq!(failure.failure.kind, "selection_invalid");
+            assert!(matches!(failure.policy_acquisition, super::WorkspaceChildPolicyAcquisition::Unavailable));
+            assert_eq!(failure.selected_child.requested_selector.as_deref(), Some("missing"));
+            assert!(failure.selected_child.selected_task.is_none());
+            assert!(failure.selected_child.selected_workflow.is_none());
+            assert!(failure.policy.is_none());
+        }
+        fs::remove_file(&refs[1].contract_path).unwrap();
+        let failure = super::prepare_workspace_child(&path, &refs[1], Some("ci")).err().unwrap();
+        assert_eq!(failure.failure.kind, "contract_invalid");
+        assert!(matches!(failure.policy_acquisition, super::WorkspaceChildPolicyAcquisition::Unavailable));
+        assert!(failure.policy.is_none());
+    }
+
+    #[test]
+    fn workspace_child_up_preserves_canonical_explicit_and_default_instance_selection() {
+        let _lock = crate::test_support::env_mutex_lock();
+        let directory = tempfile::tempdir().unwrap();
+        let path = workspace_local_children_fixture(directory.path(), false, false);
+        let policy_path = directory.path().join("child-policy.yaml");
+        let _environment = RestrictionAdmissionEnvironment::new(policy_path.as_os_str(), None);
+        fs::write(&policy_path, "policies: {toolchain_fulfillment: {rust: deny}}").unwrap();
+        let child_path = directory.path().join("z-child/ota.yaml");
+        fs::write(&child_path, r#"
+version: 1
+project: {name: child-instances}
+tasks:
+  verify: {run: 'touch body-ran'}
+workflows:
+  default: lane
+  lane:
+    setup: {task: verify}
+    instances:
+      default: base
+      base: {}
+      selected:
+        env: {INSTANCE_SELECTION: selected}
+"#).unwrap();
+        super::load_and_validate_target(&child_path, None).unwrap();
+        let workspace = crate::workspace::load_workspace_contract(&path).unwrap();
+        let refs = crate::workspace::ordered_workspace_repo_refs(&path, &workspace).unwrap();
+        for (requested, resolved) in [(Some("lane@selected"), "lane@selected"), (Some("lane"), "lane@base"), (None, "lane@base")] {
+            let mut repo = refs[1].clone();
+            repo.workflow = requested.map(str::to_string);
+            let failure = super::prepare_workspace_child(&path, &repo, None).err().unwrap();
+            assert_eq!(failure.failure.kind, "unsupported_route");
+            assert_eq!(failure.selected_child.selected_workflow.as_deref(), Some(resolved));
+            let carrier = serde_json::to_value(failure.failure.toolchain_fulfillment_route_refusal.as_ref().unwrap()).unwrap();
+            assert_eq!(carrier["selected_workflow"], resolved);
+            assert_eq!(carrier["root"], repo.path.display().to_string());
+            assert_eq!(carrier["policy_identity"], failure.policy.as_ref().unwrap().identity);
+            assert!(failure.selected_child.requested_selector.is_none());
+            assert!(!repo.path.join("body-ran").exists());
+        }
+    }
+
+    #[test]
+    fn workspace_child_instance_admission_matches_the_base_workflow_typed_rule() {
+        let _lock = crate::test_support::env_mutex_lock();
+        let directory = tempfile::tempdir().unwrap();
+        let path = workspace_local_children_fixture(directory.path(), false, false);
+        let child = directory.path().join("z-child");
+        workspace_typed_child_fixture(&child, false);
+        let child_path = child.join("ota.yaml");
+        let mut contract: serde_yaml::Value = serde_yaml::from_str(&fs::read_to_string(&child_path).unwrap()).unwrap();
+        contract["workflows"] = serde_yaml::from_str::<serde_yaml::Value>(
+            "default: lane\nlane:\n  run: {task: verify}\n  instances:\n    default: base\n    base: {}\n    selected:\n      env: {INSTANCE_SELECTION: selected}\n",
+        ).unwrap();
+        fs::write(&child_path, serde_yaml::to_string(&contract).unwrap()).unwrap();
+        let target = super::load_and_validate_target(&child_path, None).unwrap();
+        fs::create_dir_all(child.join(".ota")).unwrap();
+        let policy_path = child.join(".ota/org-policy.yaml");
+        fs::write(&policy_path, "policies:\n  effects:\n    mode: compatibility\n    typed:\n      rules:\n        - id: deny_selected_lane\n          selector:\n            kind: database_schema_mutation\n            actions: [apply_migration_set]\n            workflows: [lane]\n            resource:\n              match: exact\n              engine: postgresql\n              namespace: {authority: dns:example.org, environment: production}\n              schema: public\n          decision: deny\n").unwrap();
+        let _environment = RestrictionAdmissionEnvironment::new(policy_path.as_os_str(), None);
+        unsafe {
+            env::remove_var("OTA_POLICY");
+            env::set_var(crate::policy_pack::OTA_POLICY_COMMAND_SNAPSHOT_ABSENT_ENV, "1");
+        }
+        let workspace = crate::workspace::load_workspace_contract(&path).unwrap();
+        let refs = crate::workspace::ordered_workspace_repo_refs(&path, &workspace).unwrap();
+        for (requested, resolved) in [(Some("lane@selected"), "lane@selected"), (Some("lane"), "lane@base"), (None, "lane@base")] {
+            let mut repo = refs[1].clone();
+            repo.workflow = requested.map(str::to_string);
+            let failure = super::prepare_workspace_child(&path, &repo, None).err().unwrap();
+            assert_eq!(failure.failure.kind, "typed_policy_denied");
+            assert_eq!(failure.failure.error_variant, "EffectPolicyDenied");
+            assert_eq!(failure.selected_child.selected_workflow.as_deref(), Some(resolved));
+            assert_eq!(failure.selected_child.path, child.display().to_string());
+            assert_eq!(failure.policy.as_ref().unwrap().path, policy_path.display().to_string());
+            let decision = failure.failure.policy_decision.as_ref().unwrap();
+            assert!(decision.explicit_typed_deny);
+            assert!(decision.effects.iter().any(|effect| effect.applicable_rules.iter().any(|rule| rule.id == "deny_selected_lane")));
+            let adjusted = super::contract_adjusted_for_selected_workflow_env_profile(&target.contract, Some(resolved)).unwrap();
+            if resolved == "lane@selected" {
+                assert_eq!(adjusted.tasks["verify"].env["INSTANCE_SELECTION"], "selected");
+            }
+            let roots = super::selected_workflow_phase_task_roots(&target.contract, Some(resolved));
+            let expected = crate::effect_orchestration::admit_independent_child_execution_closure(
+                &adjusted, &target.contract_path, Some("lane"), &roots,
+                ExecutionOverrides::default(), Some(&super::current_effect_governance_overrides()),
+            ).unwrap();
+            assert_eq!(Some(decision), expected.typed.policy_decision.as_ref());
+            assert_eq!(&failure.failure.typed_effect_policy_refusal.as_ref().unwrap().policy_decision, decision);
+            assert!(failure.failure.toolchain_fulfillment_route_refusal.is_none());
+            assert!(!child.join("body-ran").exists());
+        }
+    }
+
+    #[test]
+    fn workspace_child_instances_preserve_workflow_only_secret_refusal_before_policy() {
+        let _lock = crate::test_support::env_mutex_lock();
+        let directory = tempfile::tempdir().unwrap();
+        let path = workspace_local_children_fixture(directory.path(), true, false);
+        let child = directory.path().join("z-child");
+        let mut contract = serde_yaml::to_value(selected_secret_delivery_contract()).unwrap();
+        contract["workflows"] = serde_yaml::from_str::<serde_yaml::Value>(
+            "default: lane\nlane:\n  setup: {task: publish}\n  instances:\n    default: base\n    base: {}\n    selected: {}\n",
+        ).unwrap();
+        let recipients = &mut contract["secret_requirements"]["release_token"]["recipients"];
+        recipients["tasks"] = serde_yaml::from_str::<serde_yaml::Value>("[]").unwrap();
+        recipients["workflows"] = serde_yaml::from_str::<serde_yaml::Value>("[lane]").unwrap();
+        fs::write(child.join("ota.yaml"), serde_yaml::to_string(&contract).unwrap().replace("publish", "verify")).unwrap();
+        super::load_and_validate_target(&child.join("ota.yaml"), None).unwrap();
+        let policy_path = directory.path().join("must-not-load.yaml");
+        fs::write(&policy_path, "policies: [").unwrap();
+        let _environment = RestrictionAdmissionEnvironment::new(policy_path.as_os_str(), None);
+        unsafe { env::set_var(crate::policy_pack::OTA_POLICY_COMMAND_SNAPSHOT_ABSENT_ENV, "1"); }
+        let workspace = crate::workspace::load_workspace_contract(&path).unwrap();
+        let refs = crate::workspace::ordered_workspace_repo_refs(&path, &workspace).unwrap();
+        for (requested, resolved) in [(Some("lane@selected"), "lane@selected"), (Some("lane"), "lane@base"), (None, "lane@base")] {
+            let mut repo = refs[1].clone();
+            repo.workflow = requested.map(str::to_string);
+            let failure = super::prepare_workspace_child(&path, &repo, None).err().unwrap();
+            assert_eq!(failure.failure.kind, "protected_unavailable");
+            assert!(matches!(failure.policy_acquisition, super::WorkspaceChildPolicyAcquisition::Unavailable));
+            assert_eq!(failure.selected_child.selected_workflow.as_deref(), Some(resolved));
+            assert!(failure.policy.is_none());
+            assert!(failure.failure.policy_decision.is_none());
+            assert!(failure.failure.typed_effect_policy_refusal.is_none());
+            assert!(failure.failure.toolchain_fulfillment_route_refusal.is_none());
+            assert!(!child.join("should-not-exist").exists());
+        }
+    }
+
+    #[test]
+    fn workspace_prepared_child_retains_its_own_policy_and_acquisition_unknowns() {
+        let _lock = crate::test_support::env_mutex_lock();
+        let directory = tempfile::tempdir().unwrap();
+        let path = workspace_local_children_fixture(directory.path(), false, true);
+        let _environment = RestrictionAdmissionEnvironment::new(directory.path().join("unused").as_os_str(), None);
+        unsafe {
+            env::remove_var("OTA_POLICY");
+            env::set_var(crate::policy_pack::OTA_POLICY_COMMAND_SNAPSHOT_ABSENT_ENV, "1");
+        }
+        for (name, value) in [("a-valid", "first"), ("z-child", "second")] {
+            fs::create_dir_all(directory.path().join(name).join(".ota")).unwrap();
+            fs::write(directory.path().join(name).join(".ota/org-policy.yaml"),
+                format!("policies: {{env: {{values: {{CHILD_VALUE: {value}}}}}}}"),
+            ).unwrap();
+        }
+        let workspace = crate::workspace::load_workspace_contract(&path).unwrap();
+        let refs = crate::workspace::ordered_workspace_repo_refs(&path, &workspace).unwrap();
+        let prepared = super::prepare_workspace_children(&path, refs, Some("ci"))
+            .unwrap_or_else(|_| panic!("valid child source must admit"));
+        for child in &prepared {
+            match &child.admission {
+                super::WorkspaceChildAdmission::Prepared(target) => {
+                    let policy = target.admission.loaded_policy.as_ref().unwrap();
+                    assert_eq!(target.target.contract_path, child.contract_path);
+                    assert_eq!(policy.path, child.path.join(".ota/org-policy.yaml"));
+                    assert_eq!(policy.pack.env_values()["CHILD_VALUE"], if child.name == "a-valid" { "first" } else { "second" });
+                    fs::remove_file(&policy.path).unwrap();
+                    assert!(matches!(crate::runner::RetainedRunPolicyContext::from_acquired(Some(policy), None),
+                        crate::runner::RetainedRunPolicyContext::AcquiredPresent(_)));
+                }
+                super::WorkspaceChildAdmission::UnknownBeforeAcquisition => {
+                    assert_eq!(child.name, "missing");
+                    assert!(!child.path.exists());
+                }
+                super::WorkspaceChildAdmission::Refused(_) => panic!("valid source cannot become optional refusal"),
+            }
+        }
+        // This owns admission/projection only, not final environment freshness or post-clone admission.
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn workspace_late_optional_protected_child_remains_parent_terminal_before_policy() {
+        let _lock = crate::test_support::env_mutex_lock();
+        let directory = tempfile::tempdir().unwrap();
+        let path = workspace_local_children_fixture(directory.path(), true, true);
+        let child = directory.path().join("z-child");
+        let mut contract = serde_yaml::to_value(selected_secret_delivery_contract()).unwrap();
+        contract["workflows"] = serde_yaml::from_str::<serde_yaml::Value>(
+            "default: lane\nlane: {setup: {task: publish}}\n",
+        ).unwrap();
+        contract["secret_requirements"]["release_token"]["recipients"]["workflows"] =
+            serde_yaml::from_str::<serde_yaml::Value>("[lane]").unwrap();
+        fs::write(child.join("ota.yaml"), serde_yaml::to_string(&contract).unwrap().replace("publish", "verify")).unwrap();
+        let target = super::load_and_validate_target(&child.join("ota.yaml"), None).unwrap();
+        let policy_path = directory.path().join("malformed.yaml");
+        fs::write(&policy_path, "policies: [").unwrap();
+        for source in [policy_path.as_os_str(), std::ffi::OsStr::new("http://127.0.0.1:1/must-not-fetch")] {
+            let _environment = RestrictionAdmissionEnvironment::new(source, Some("-1"));
+            for stream in [false, true] {
+                for task in [None, Some("ci")] {
+                    let roots = if task.is_some() {
+                        vec![crate::effect_policy::EffectPolicyInvocation { task: String::from("verify"), origin: String::from("task") }]
+                    } else { super::selected_workflow_phase_task_roots(&target.contract, Some("lane")) };
+                    assert!(crate::secret_delivery_admission::secret_delivery_applies_to_selected_subject(
+                        &target.contract, task.is_none().then_some("lane"), &roots,
+                    ).unwrap());
+                    super::TEST_WORKSPACE_PARENT_EFFECTS.with(|count| count.set((0, 0, 0)));
+                    super::TEST_PROOF_PARENT_CAPABILITY_ACQUISITIONS.with(|count| count.set(0));
+                    let output = workspace_parent_public_output(&path, task, stream);
+                    assert_eq!(output.exit_code, 1, "{}", output.stdout);
+                    if !stream {
+                        let json: serde_json::Value = serde_json::from_str(&output.stdout).unwrap();
+                        assert_eq!(json["parent_admission"]["policy_acquisition"], "unavailable");
+                        assert!(json.get("child_admission").is_none());
+                    } else { assert!(strip_ansi_codes(&output.stdout).contains("Parent admission refused")); }
+                    super::TEST_WORKSPACE_PARENT_EFFECTS.with(|count| assert_eq!(count.get(), (0, 0, 0)));
+                    super::TEST_PROOF_PARENT_CAPABILITY_ACQUISITIONS.with(|count| assert_eq!(count.get(), 0));
+                    assert!(!directory.path().join("a-valid/body-ran").exists());
+                    assert!(!directory.path().join("absent-parent").exists());
+                }
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn workspace_final_policy_failure_is_ordinary_child_report_after_preparation() {
+        let _lock = crate::test_support::env_mutex_lock();
+        for mode in [super::RepoExecutionMode::Capture, super::RepoExecutionMode::Stream] {
+            for task in [None, Some("ci")] {
+                let directory = tempfile::tempdir().unwrap();
+                let path = workspace_local_children_fixture(directory.path(), false, false);
+                let workspace = crate::workspace::load_workspace_contract(&path).unwrap();
+                let refs = crate::workspace::ordered_workspace_repo_refs(&path, &workspace).unwrap();
+                let repo = refs[1].clone();
+                fs::create_dir_all(repo.path.join(".ota")).unwrap();
+                let policy_path = repo.path.join(".ota/org-policy.yaml");
+                fs::write(&policy_path, "policies: {}").unwrap();
+                let _environment = RestrictionAdmissionEnvironment::new(policy_path.as_os_str(), None);
+                unsafe { env::remove_var("OTA_POLICY"); }
+                let prepared = super::prepare_workspace_child(&path, &repo, task).unwrap_or_else(|failure| panic!("{}", failure.failure.message));
+                fs::write(&policy_path, "policies: [").unwrap();
+                let child = super::PreparedWorkspaceChild { repo, admission: super::WorkspaceChildAdmission::Prepared(Box::new(prepared)) };
+                let (ok, findings) = if let Some(task) = task {
+                    let report = super::run_prepared_workspace_repo_task(child, task, &[], mode, &path);
+                    (report.ok, report.findings)
+                } else {
+                    let report = super::run_prepared_workspace_repo_up(child, mode, &path);
+                    (report.ok, report.findings)
+                };
+                assert!(!ok);
+                assert!(findings.iter().any(|finding| finding.why.contains("failed to parse policy pack")));
+                assert!(!directory.path().join("z-child/body-ran").exists());
+                // This is a normal post-dispatch report, not a negative no-prior-effects envelope.
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn workspace_parent_denial_and_errors_precede_all_modes_and_acquisition_with_inherited_marker() {
+        use std::os::fd::AsRawFd;
+        use std::os::unix::net::UnixStream;
+        let _lock = crate::test_support::env_mutex_lock();
+        let directory = tempfile::tempdir().unwrap();
+        let path = workspace_parent_fixture(directory.path());
+        let policy = directory.path().join("policy.yaml");
+        let org_directory = directory.path().join(".ota");
+        let org_policy = org_directory.join("org-policy.yaml");
+        let (parent, mut peer) = UnixStream::pair().unwrap();
+        peer.set_nonblocking(true).unwrap();
+        let fd = parent.as_raw_fd();
+        let fd_text = fd.to_string();
+        let _environment = RestrictionAdmissionEnvironment::new(policy.as_os_str(), Some(&fd_text));
+        let initial_path = env::var_os("PATH");
+        let initial_flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
+        assert_ne!(env::current_dir().unwrap(), directory.path());
+        unsafe { env::set_var(crate::policy_pack::OTA_POLICY_COMMAND_SNAPSHOT_ABSENT_ENV, "1"); }
+        for (source, expected_source) in [("env", "env_override"), ("org", "repo_policy"), ("selected", "workspace_policy")] {
+            if org_directory.exists() { fs::remove_dir_all(&org_directory).unwrap(); }
+            unsafe {
+                if source == "env" { env::set_var("OTA_POLICY", &policy); }
+                else { env::remove_var("OTA_POLICY"); }
+            }
+            let selected_policy = if source == "org" {
+                fs::create_dir_all(&org_directory).unwrap();
+                &org_policy
+            } else { &policy };
+            for contents in [Some("policies: {toolchain_fulfillment: {rust: deny}}"),
+                Some("policies: ["), Some("policies: {toolchain_fulfillment: {rust: allow}}"), None] {
+                if let Some(contents) = contents { fs::write(selected_policy, contents).unwrap(); }
+                else if selected_policy.exists() { fs::remove_file(selected_policy).unwrap(); }
+                // A missing org file is not an applicable source: select a missing pointer instead.
+                if source == "org" && contents.is_none() { continue; }
+                for stream in [false, true] {
+                    for task in [None, Some("ci")] {
+                        super::TEST_WORKSPACE_PARENT_EFFECTS.with(|count| count.set((0, 0, 0)));
+                        super::TEST_CROSSING_AUTHORITY_ACTIVATIONS.with(|count| count.set(0));
+                        super::TEST_PROOF_PARENT_CAPABILITY_ACQUISITIONS.with(|count| count.set(0));
+                        let output = workspace_parent_public_output(&path, task, stream);
+                        assert_eq!(output.exit_code, 1, "{}", output.stdout);
+                        if stream {
+                            let text = strip_ansi_codes(&output.stdout);
+                            assert!(text.contains("Parent admission refused"));
+                            assert!(text.contains(if contents.is_some_and(|value| value.contains("rust: deny")) {
+                                "Policy acquisition: acquired_present"
+                            } else { "Policy acquisition: error" }));
+                        } else {
+                            let json: serde_json::Value = serde_json::from_str(&output.stdout).unwrap();
+                            let admission = &json["parent_admission"];
+                            assert_eq!(json["path"], path.display().to_string());
+                            assert_eq!(admission["route"], if task.is_some() { "workspace.run" } else { "workspace.up" });
+                            assert_eq!(admission["attempted"], false);
+                            assert_eq!(admission["execution_started"], false);
+                            for field in ["receipt", "repos", "summary", "artifact_routing"] { assert!(json.get(field).is_none()); }
+                            if contents.is_some_and(|value| value.contains("rust: deny")) {
+                                let refusal = &admission["toolchain_fulfillment_route_refusal"];
+                                assert_eq!(admission["policy_acquisition"], "acquired_present");
+                                assert_eq!(refusal["policy_source"], expected_source);
+                                assert_eq!(refusal["root"], directory.path().display().to_string());
+                                assert_eq!(refusal["selected_task"], serde_json::to_value(task).unwrap());
+                                assert!(refusal["selected_workflow"].is_null());
+                                assert_eq!(refusal["outcome"], "not_run");
+                                assert!(refusal["policy_identity"].as_str().unwrap().starts_with("sha256:"));
+                            } else {
+                                assert_eq!(admission["policy_acquisition"], "error");
+                                assert!(admission.get("toolchain_fulfillment_route_refusal").is_none());
+                            }
+                        }
+                        super::TEST_WORKSPACE_PARENT_EFFECTS.with(|count| assert_eq!(count.get(), (0, 0, 0)));
+                        assert_eq!(unsafe { libc::fcntl(fd, libc::F_GETFD) }, initial_flags);
+                        assert_eq!(env::var_os("PATH"), initial_path);
+                        assert_eq!(env::var(super::PROOF_PARENT_AUTHORITY_FD_ENV).unwrap(), fd_text);
+                        assert_eq!(env::var(crate::policy_pack::OTA_POLICY_COMMAND_SNAPSHOT_ABSENT_ENV).unwrap(), "1");
+                        assert_eq!(peer.read(&mut [0_u8; 1]).unwrap_err().kind(), std::io::ErrorKind::WouldBlock);
+                        super::TEST_CROSSING_AUTHORITY_ACTIVATIONS.with(|count| assert_eq!(count.get(), 0));
+                        super::TEST_PROOF_PARENT_CAPABILITY_ACQUISITIONS.with(|count| assert_eq!(count.get(), 0));
+                        assert!(!directory.path().join("missing-parent").exists());
+                        assert!(!directory.path().join("local/must-not-run").exists());
+                        assert!(!directory.path().join("local/.ota").exists());
+                    }
+                }
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn workspace_parent_protected_refusal_precedes_remote_or_invalid_policy() {
+        use std::os::fd::AsRawFd;
+        use std::os::unix::net::UnixStream;
+        let _lock = crate::test_support::env_mutex_lock();
+        let directory = tempfile::tempdir().unwrap();
+        let path = workspace_parent_fixture(directory.path());
+        let mut contract = serde_yaml::to_value(selected_secret_delivery_contract()).unwrap();
+        contract["workflows"] = serde_yaml::from_str::<serde_yaml::Value>(
+            "default: ci\nci: {setup: {task: ci}}\n",
+        ).unwrap();
+        contract["secret_requirements"]["release_token"]["recipients"]["workflows"] =
+            serde_yaml::from_str::<serde_yaml::Value>("[ci]").unwrap();
+        let yaml = serde_yaml::to_string(&contract).unwrap().replace("publish", "ci");
+        let contract_path = directory.path().join("local/ota.yaml");
+        fs::write(&contract_path, yaml).unwrap();
+        let target = super::load_and_validate_target(&contract_path, None).unwrap();
+        for workflow in [None, Some("ci")] {
+            let roots = if workflow.is_some() {
+                super::selected_workflow_phase_task_roots(&target.contract, workflow)
+            } else {
+                vec![crate::effect_policy::EffectPolicyInvocation {
+                    task: String::from("ci"), origin: String::from("task"),
+                }]
+            };
+            assert!(crate::secret_delivery_admission::secret_delivery_applies_to_selected_subject(
+                &target.contract, workflow, &roots,
+            ).unwrap());
+        }
+        let policy = directory.path().join("policy.yaml");
+        let (parent, mut peer) = UnixStream::pair().unwrap();
+        peer.set_nonblocking(true).unwrap();
+        let fd = parent.as_raw_fd();
+        let fd_text = fd.to_string();
+        let _environment = RestrictionAdmissionEnvironment::new(policy.as_os_str(), Some(&fd_text));
+        let initial_flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
+        let initial_path = env::var_os("PATH");
+        for source in [policy.display().to_string(), String::from("http://127.0.0.1:1/must-not-fetch")] {
+            unsafe { env::set_var("OTA_POLICY", &source); }
+            fs::write(&policy, "policies: [").unwrap();
+            for stream in [false, true] {
+                for task in [None, Some("ci")] {
+                    super::TEST_WORKSPACE_PARENT_EFFECTS.with(|count| count.set((0, 0, 0)));
+                    super::TEST_CROSSING_AUTHORITY_ACTIVATIONS.with(|count| count.set(0));
+                    super::TEST_PROOF_PARENT_CAPABILITY_ACQUISITIONS.with(|count| count.set(0));
+                    let output = workspace_parent_public_output(&path, task, stream);
+                    assert_eq!(output.exit_code, 1);
+                    if stream {
+                        assert!(strip_ansi_codes(&output.stdout).contains("Policy acquisition: unavailable"));
+                    } else {
+                        let json: serde_json::Value = serde_json::from_str(&output.stdout).unwrap();
+                        assert_eq!(json["parent_admission"]["policy_acquisition"], "unavailable", "{}", output.stdout);
+                        assert!(json["parent_admission"].get("toolchain_fulfillment_route_refusal").is_none());
+                    }
+                    super::TEST_WORKSPACE_PARENT_EFFECTS.with(|count| assert_eq!(count.get(), (0, 0, 0)));
+                    super::TEST_CROSSING_AUTHORITY_ACTIVATIONS.with(|count| assert_eq!(count.get(), 0));
+                    super::TEST_PROOF_PARENT_CAPABILITY_ACQUISITIONS.with(|count| assert_eq!(count.get(), 0));
+                    assert_eq!(env::var(super::PROOF_PARENT_AUTHORITY_FD_ENV).unwrap(), fd_text);
+                    assert_eq!(unsafe { libc::fcntl(fd, libc::F_GETFD) }, initial_flags);
+                    assert_eq!(env::var_os("PATH"), initial_path);
+                    assert_eq!(peer.read(&mut [0_u8; 1]).unwrap_err().kind(), std::io::ErrorKind::WouldBlock);
+                    assert!(!directory.path().join("missing-parent").exists());
+                    assert!(!directory.path().join("local/should-not-exist").exists());
+                }
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn workspace_parent_absence_does_not_replace_local_child_policy_or_inline_overlay() {
+        let _lock = crate::test_support::env_mutex_lock();
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("custom.yaml");
+        let local = directory.path().join("local");
+        fs::create_dir_all(local.join(".ota")).unwrap();
+        fs::write(&path,
+            "version: 1\nworkspace: {name: independent}\npolicies:\n  env:\n    values: {OTA_UP_RETAINED_TEST: overlay}\nrepos:\n  local: {path: local, required: true}\n",
+        ).unwrap();
+        fs::write(local.join("ota.yaml"), r#"
+version: 1
+project: {name: independent-child}
+env:
+  vars:
+    OTA_UP_RETAINED_TEST: {required: true}
+tasks:
+  ci:
+    run: |
+      printf '%s' "$OTA_UP_RETAINED_TEST" > result
+workflows:
+  default: ci
+  ci: {setup: {task: ci}}
+"#).unwrap();
+        let target = super::load_and_validate_target(&local.join("ota.yaml"), None).unwrap();
+        assert!(target.contract.env.vars["OTA_UP_RETAINED_TEST"].required);
+        assert!(target.contract.tasks.contains_key("ci"));
+        let policy = local.join(".ota/org-policy.yaml");
+        let _environment = RestrictionAdmissionEnvironment::new(policy.as_os_str(), None);
+        unsafe { env::remove_var("OTA_POLICY"); }
+        let workspace = crate::workspace::load_workspace_contract(&path).unwrap();
+        assert!(crate::policy_pack::load_selected_workspace_policy_pack_details(&path, &workspace).unwrap().is_none());
+        for stream in [false, true] {
+            for task in [None, Some("ci")] {
+                fs::write(&policy, if task.is_none() {
+                    "policies: {toolchain_fulfillment: {rust: deny}}"
+                } else { "policies: [" }).unwrap();
+                let output = workspace_parent_public_output(&path, task, stream);
+                assert_eq!(output.exit_code, 1, "{}", output.stdout);
+                let expected_failure = if task.is_none() {
+                    "toolchain_fulfillment_policy_route_unsupported"
+                } else { "failed to parse policy pack" };
+                if stream {
+                    let text = strip_ansi_codes(&output.stdout);
+                    assert!(text.contains(expected_failure), "{text}");
+                    assert!(text.contains("org-policy.yaml"), "{text}");
+                    assert!(!text.contains("Unreadable repo contract"), "{text}");
+                } else {
+                    let json: serde_json::Value = serde_json::from_str(&output.stdout).unwrap();
+                    assert!(json.get("parent_admission").is_none());
+                    let admission = &json["child_admission"];
+                    assert_eq!(admission["selected_child"]["name"], "local");
+                    assert!(json.get("repos").is_none());
+                    assert!(admission["failure"]["message"].as_str().is_some_and(|why| {
+                        why.contains(expected_failure) && why.contains("org-policy.yaml")
+                    }), "{}", output.stdout);
+                    if task.is_none() {
+                        assert_eq!(admission["failure"]["code"], "toolchain_fulfillment_policy_route_unsupported");
+                    }
+                }
+                assert!(!local.join("result").exists());
+            }
+            for task in [None, Some("ci")] {
+                fs::write(&policy, if task.is_some() {
+                    "policies: {toolchain_fulfillment: {rust: deny}}"
+                } else { "policies: {}" }).unwrap();
+                let output = workspace_parent_public_output(&path, task, stream);
+                assert_eq!(output.exit_code, 0, "{}", output.stdout);
+                assert_eq!(fs::read_to_string(local.join("result")).unwrap(), "overlay");
+                fs::remove_file(local.join("result")).unwrap();
+            }
+        }
+        // Initial required child refusals precede dispatch; final policy phases remain fresh.
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn workspace_parent_bare_relative_refusal_retains_selected_path_and_nonempty_root() {
+        use std::os::fd::AsRawFd;
+        use std::os::unix::net::UnixStream;
+        let _env_lock = crate::test_support::env_mutex_lock();
+        let _cwd_lock = crate::test_support::cwd_mutex_lock();
+        let directory = tempfile::tempdir().unwrap();
+        let absolute_path = workspace_parent_fixture(directory.path());
+        let path = Path::new(absolute_path.file_name().unwrap());
+        let policy = directory.path().join("policy.yaml");
+        fs::write(&policy, "policies: {toolchain_fulfillment: {rust: deny}}").unwrap();
+        let (parent, mut peer) = UnixStream::pair().unwrap();
+        peer.set_nonblocking(true).unwrap();
+        let fd = parent.as_raw_fd();
+        let fd_text = fd.to_string();
+        let _environment = RestrictionAdmissionEnvironment::new(policy.as_os_str(), Some(&fd_text));
+        let initial_path = env::var_os("PATH");
+        let initial_flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
+        struct CurrentDirectory(PathBuf);
+        impl Drop for CurrentDirectory {
+            fn drop(&mut self) { env::set_current_dir(&self.0).unwrap(); }
+        }
+        let _restore_cwd = CurrentDirectory(env::current_dir().unwrap());
+        env::set_current_dir(directory.path()).unwrap();
+        for stream in [false, true] {
+            for task in [None, Some("ci")] {
+                super::TEST_WORKSPACE_PARENT_EFFECTS.with(|count| count.set((0, 0, 0)));
+                super::TEST_CROSSING_AUTHORITY_ACTIVATIONS.with(|count| count.set(0));
+                super::TEST_PROOF_PARENT_CAPABILITY_ACQUISITIONS.with(|count| count.set(0));
+                let output = workspace_parent_public_output(path, task, stream);
+                assert_eq!(output.exit_code, 1, "{}", output.stdout);
+                if stream {
+                    let text = strip_ansi_codes(&output.stdout);
+                    assert!(text.contains("selected.workspace.yaml"), "{text}");
+                    assert!(text.contains("toolchain_fulfillment_policy_route_unsupported"), "{text}");
+                    assert!(text.contains("Root: ."), "{text}");
+                } else {
+                    let json: serde_json::Value = serde_json::from_str(&output.stdout).unwrap();
+                    assert_eq!(json["path"], "selected.workspace.yaml");
+                    assert_eq!(json["code"], "toolchain_fulfillment_policy_route_unsupported");
+                    assert_eq!(json["parent_admission"]["policy_acquisition"], "acquired_present");
+                    let refusal = &json["parent_admission"]["toolchain_fulfillment_route_refusal"];
+                    assert_eq!(refusal["root"], ".");
+                    assert_eq!(refusal["policy_source"], "env_override");
+                    assert_eq!(refusal["policy_path"], fs::canonicalize(&policy).unwrap().display().to_string());
+                    assert!(refusal["policy_identity"].as_str().unwrap().starts_with("sha256:"));
+                    assert_eq!(refusal["attempted"], false);
+                    assert_eq!(refusal["execution_started"], false);
+                    assert_eq!(refusal["selected_task"], serde_json::to_value(task).unwrap());
+                    assert!(refusal["selected_workflow"].is_null());
+                }
+                super::TEST_WORKSPACE_PARENT_EFFECTS.with(|count| assert_eq!(count.get(), (0, 0, 0)));
+                super::TEST_CROSSING_AUTHORITY_ACTIVATIONS.with(|count| assert_eq!(count.get(), 0));
+                super::TEST_PROOF_PARENT_CAPABILITY_ACQUISITIONS.with(|count| assert_eq!(count.get(), 0));
+                assert_eq!(unsafe { libc::fcntl(fd, libc::F_GETFD) }, initial_flags);
+                assert_eq!(env::var_os("PATH"), initial_path);
+                assert_eq!(env::var(super::PROOF_PARENT_AUTHORITY_FD_ENV).unwrap(), fd_text);
+                assert_eq!(peer.read(&mut [0_u8; 1]).unwrap_err().kind(), std::io::ErrorKind::WouldBlock);
+                assert!(!directory.path().join("missing-parent").exists());
+                assert!(!directory.path().join("local/must-not-run").exists());
+                assert!(!directory.path().join("local/.ota").exists());
+            }
+        }
+    }
+
+    #[test]
+    fn workspace_parent_shape_and_stream_job_validation_stay_before_policy_acquisition() {
+        let _lock = crate::test_support::env_mutex_lock();
+        let directory = tempfile::tempdir().unwrap();
+        let path = workspace_parent_fixture(directory.path());
+        let _environment = RestrictionAdmissionEnvironment::new(std::ffi::OsStr::new("missing-policy"), None);
+        fs::write(&path, "version: 1\nworkspace: {name: empty, policy: ''}\nrepos: {}\n").unwrap();
+        for task in [None, Some("ci")] {
+            super::TEST_WORKSPACE_PARENT_EFFECTS.with(|count| count.set((0, 0, 0)));
+            let output = workspace_parent_public_output(&path, task, false);
+            assert_eq!(output.exit_code, 1);
+            let json: serde_json::Value = serde_json::from_str(&output.stdout).unwrap();
+            assert!(json.get("parent_admission").is_none());
+            assert!(json["errors"].as_array().unwrap().iter().any(|error| error.as_str().unwrap().contains("policy")));
+            super::TEST_WORKSPACE_PARENT_EFFECTS.with(|count| assert_eq!(count.get(), (0, 0, 0)));
+        }
+        let output = super::workspace_up(None, Some(&path), 2, false, true, true,
+            crate::output::OutputFormat::Text, false, false);
+        assert_eq!(output.exit_code, 2);
+        assert!(output.stdout.contains("--jobs 1"));
+        // Capture uses jobs > 1; streaming intentionally retains its jobs=1 contract.
+    }
+
+    #[test]
+    fn up_restriction_and_load_error_precede_parent_adoption_and_all_special_routes() {
+        use std::io::Read;
+        use std::os::fd::AsRawFd;
+        use std::os::unix::net::UnixStream;
+        let _lock = crate::test_support::env_mutex_lock();
+        let directory = tempfile::tempdir().unwrap();
+        let contract_path = directory.path().join("ota.yaml");
+        fs::write(&contract_path,
+            "version: 1\nproject: {name: up-admission}\ntasks:\n  check:\n    safe_for_agent: true\n    run: touch must-not-run\nworkflows:\n  default: ci\n  ci:\n    setup: {task: check}\n",
+        ).unwrap();
+        let policy = directory.path().join("policy.yaml");
+        let (parent, mut peer) = UnixStream::pair().unwrap();
+        peer.set_nonblocking(true).unwrap();
+        let descriptor = parent.as_raw_fd();
+        let fd_text = descriptor.to_string();
+        let _environment = RestrictionAdmissionEnvironment::new(policy.as_os_str(), Some(&fd_text));
+        let initial_flags = unsafe { libc::fcntl(descriptor, libc::F_GETFD) };
+        let initial_path = env::var_os("PATH");
+        for (contents, route_refusal) in [
+            ("policies: {toolchain_fulfillment: {rust: deny}}", true),
+            ("policies: {toolchain_fulfillment: {rust: allow}}", false),
+        ] {
+            fs::write(&policy, contents).unwrap();
+            for agent in [false, true] {
+                for (dry_run, expect_refusal, effect_canary, archive, detach) in [
+                    (false, false, None, false, false), (true, false, None, false, false),
+                    (false, true, None, false, false), (false, false, Some("canary"), false, false),
+                    (false, false, None, true, false), (false, false, None, false, true),
+                ] {
+                    super::TEST_CROSSING_AUTHORITY_ACTIVATIONS.with(|count| count.set(0));
+                    super::TEST_PROOF_PARENT_CAPABILITY_ACQUISITIONS.with(|count| count.set(0));
+                    let output = super::up_with_agent_reason_and_grant_and_effect_canary(
+                        None, Some(&contract_path), ExecutionOverrides::default(), &[], &[], Some("ci"),
+                        agent, expect_refusal, effect_canary, archive, None, None, None,
+                        crate::output::OutputFormat::Json, false, dry_run, false, true,
+                        None, false, detach, None,
+                    );
+                    assert_eq!(output.exit_code, 1, "{}", output.stdout);
+                    let json: serde_json::Value = serde_json::from_str(&output.stdout).unwrap();
+                    assert_eq!(json["phase"], "admission");
+                    let receipt = &json["receipt"];
+                    assert!(receipt.get("crossing").is_none());
+                    assert!(receipt.get("typed_effect_policy_refusal").is_none());
+                    assert!(receipt.get("replay_input_policy").is_none());
+                    if route_refusal {
+                        let evidence = &receipt["witnessed_observations"]["toolchain_fulfillment_route_refusal"];
+                        assert_eq!(evidence["route"], "up");
+                        assert_eq!(evidence["selected_workflow"], "ci");
+                        assert_eq!(evidence["attempted"], false);
+                        assert_eq!(evidence["execution_started"], false);
+                        assert_eq!(evidence["outcome"], "not_run");
+                    } else {
+                        assert!(receipt["witnessed_observations"].get("toolchain_fulfillment_route_refusal").is_none());
+                    }
+                    assert_eq!(unsafe { libc::fcntl(descriptor, libc::F_GETFD) }, initial_flags);
+                    assert_eq!(env::var_os("PATH"), initial_path);
+                    assert_eq!(env::var(super::PROOF_PARENT_AUTHORITY_FD_ENV).unwrap(), fd_text);
+                    assert_eq!(peer.read(&mut [0_u8; 1]).unwrap_err().kind(), std::io::ErrorKind::WouldBlock);
+                    assert_eq!(super::TEST_CROSSING_AUTHORITY_ACTIVATIONS.with(|count| count.get()), 0);
+                    assert_eq!(super::TEST_PROOF_PARENT_CAPABILITY_ACQUISITIONS.with(|count| count.get()), 0);
+                    assert!(!directory.path().join("must-not-run").exists());
+                    assert!(!directory.path().join(".ota").exists());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn up_later_member_policy_cannot_follow_root_or_earlier_member_effects() {
+        let _lock = crate::test_support::env_mutex_lock();
+        let directory = tempfile::tempdir().unwrap();
+        let _environment = RestrictionAdmissionEnvironment::new(std::ffi::OsStr::new("unused"), Some("-1"));
+        unsafe { env::remove_var("OTA_POLICY"); }
+        let root_contract = directory.path().join("ota.yaml");
+        let body = "tasks:\n  check:\n    safe_for_agent: true\n    run: touch must-not-run\nworkflows:\n  default: ci\n  ci:\n    setup: {task: check}\n";
+        fs::write(&root_contract, format!(
+            "version: 1\nproject: {{name: root}}\nworkspace:\n  type: monorepo\n  members: [first, later]\n{body}",
+        )).unwrap();
+        for member in ["first", "later"] {
+            fs::create_dir(directory.path().join(member)).unwrap();
+            fs::write(directory.path().join(member).join("ota.yaml"), format!(
+                "version: 1\nproject: {{name: {member}}}\n{body}",
+            )).unwrap();
+        }
+        let policy_root = directory.path().join("later/.ota");
+        fs::create_dir(&policy_root).unwrap();
+        let policy = policy_root.join("org-policy.yaml");
+        let initial_path = env::var_os("PATH");
+        for contents in [
+            "policies: {toolchain_fulfillment: {rust: deny}}",
+            "policies: {toolchain_fulfillment: {rust: allow}}",
+        ] {
+            fs::write(&policy, contents).unwrap();
+            for members in [Vec::new(), vec![String::from("first"), String::from("later")]] {
+                let output = super::up(
+                    None, Some(&root_contract), ExecutionOverrides::default(), &[], &members, Some("ci"),
+                    crate::output::OutputFormat::Json, false, false, false, true, false, false, None,
+                );
+                assert_eq!(output.exit_code, 1, "{}", output.stdout);
+                let json: serde_json::Value = serde_json::from_str(&output.stdout).unwrap();
+                assert_eq!(json["phase"], "admission");
+                if contents.contains("rust: deny") {
+                    let evidence = &json["receipt"]["witnessed_observations"]["toolchain_fulfillment_route_refusal"];
+                    assert_eq!(evidence["root"], directory.path().join("later").display().to_string());
+                    assert_eq!(evidence["policy_source"], "repo_policy");
+                }
+                assert_eq!(env::var_os("PATH"), initial_path);
+                for root in [directory.path().to_path_buf(), directory.path().join("first"), directory.path().join("later")] {
+                    assert!(!root.join("must-not-run").exists());
+                    assert!(!root.join(".ota/state").exists());
+                }
+                assert!(!directory.path().join(".ota").exists());
+                assert!(!directory.path().join("first/.ota").exists());
+                assert_eq!(fs::read_to_string(&policy).unwrap(), contents);
+            }
+        }
+    }
+
+    #[test]
+    fn up_owned_admission_retains_no_rule_and_actual_absence_across_source_change() {
+        let _lock = crate::test_support::env_mutex_lock();
+        let directory = tempfile::tempdir().unwrap();
+        let policy = directory.path().join("policy.yaml");
+        let _environment = RestrictionAdmissionEnvironment::new(policy.as_os_str(), None);
+        let contract: crate::schema::Contract = serde_yaml::from_str(
+            "version: 1\nproject: {name: up-retention}\ntasks:\n  check: {run: 'true'}\nworkflows:\n  default: ci\n  ci:\n    setup: {task: check}\n",
+        ).unwrap();
+        let contract_path = directory.path().join("ota.yaml");
+        fs::write(&policy, "policies: {}").unwrap();
+        let owned = super::acquire_up_command_admission(&contract, &contract_path, ExecutionOverrides::default(), Some("ci")).unwrap();
+        assert!(owned.policy_acquired);
+        let identity = owned.loaded_policy.as_ref().unwrap().source_identity.clone();
+        fs::remove_file(&policy).unwrap();
+        let preflight = super::workflow_replay_input_preflight_with_retained_policy(
+            &contract, &contract_path, Some("ci"), ExecutionOverrides::default(), owned.policy_acquired, owned.loaded_policy,
+        );
+        assert!(preflight.policy_load_error.is_none());
+        assert_eq!(preflight.loaded_policy.as_ref().unwrap().source_identity, identity);
+        unsafe { env::remove_var("OTA_POLICY"); }
+        let absent = super::acquire_up_command_admission(&contract, &contract_path, ExecutionOverrides::default(), Some("ci")).unwrap();
+        assert!(absent.policy_acquired && absent.loaded_policy.is_none());
+        unsafe { env::set_var("OTA_POLICY", &policy); }
+        fs::write(&policy, "policies: {toolchain_fulfillment: {rust: deny}}").unwrap();
+        let retained_absence = super::workflow_replay_input_preflight_with_retained_policy(
+            &contract, &contract_path, Some("ci"), ExecutionOverrides::default(), absent.policy_acquired, absent.loaded_policy,
+        );
+        assert!(retained_absence.policy_load_error.is_none());
+        assert!(retained_absence.loaded_policy.is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn up_in_process_dispatch_retains_policy_overlay_in_both_modes_and_hooks() {
+        let _lock = crate::test_support::env_mutex_lock();
+        for mode in [super::RepoExecutionMode::Capture, super::RepoExecutionMode::Stream] {
+            let directory = tempfile::tempdir().unwrap();
+            let policy = directory.path().join("policy.yaml");
+            let _environment = RestrictionAdmissionEnvironment::new(policy.as_os_str(), None);
+            fs::write(&policy, "policies: {env: {values: {OTA_UP_RETAINED_TEST: base-value}}}").unwrap();
+            let contract: crate::schema::Contract = serde_yaml::from_str(r#"
+version: 1
+project: {name: up-retained-overlay}
+env:
+  vars:
+    OTA_UP_RETAINED_TEST: {required: true}
+tasks:
+  check:
+    safe_for_agent: true
+    deps: [dependency]
+    run: printf '%s\n' "$OTA_UP_RETAINED_TEST" >> observed
+    after_success: [hook]
+  dependency:
+    safe_for_agent: true
+    run: printf '%s\n' "$OTA_UP_RETAINED_TEST" >> observed
+  hook:
+    safe_for_agent: true
+    run: printf '%s\n' "$OTA_UP_RETAINED_TEST" >> observed
+workflows:
+  default: ci
+  ci:
+    setup: {task: check}
+"#).unwrap();
+            let contract_path = directory.path().join("ota.yaml");
+            let admission = super::acquire_up_command_admission(
+                &contract, &contract_path, ExecutionOverrides::default(), Some("ci"),
+            ).unwrap();
+            let overlay = BTreeMap::from([(String::from("OTA_UP_RETAINED_TEST"), String::from("retained-overlay"))]);
+            let outcome = super::run_up_task(
+                &contract, &contract_path, "check", ExecutionOverrides::default(),
+                Some(&overlay), mode, true,
+                crate::runner::RetainedRunPolicyContext::from_acquired(admission.loaded_policy.as_ref(), None),
+            ).unwrap();
+            assert_eq!(outcome.exit_code, 0);
+            assert_eq!(fs::read_to_string(directory.path().join("observed")).unwrap(), "retained-overlay\nretained-overlay\nretained-overlay\n");
+            assert!(outcome.fulfilled_toolchains.is_empty());
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn up_recursive_instance_prerequisite_reuses_the_matching_owned_policy() {
+        let _lock = crate::test_support::env_mutex_lock();
+        let directory = tempfile::tempdir().unwrap();
+        let policy = directory.path().join("policy.yaml");
+        let _environment = RestrictionAdmissionEnvironment::new(policy.as_os_str(), None);
+        fs::write(&policy, "policies: {env: {values: {OTA_UP_RETAINED_TEST: base-value}}}").unwrap();
+        let contract: crate::schema::Contract = serde_yaml::from_str(r#"
+version: 1
+project: {name: up-retained-prerequisite}
+env:
+  vars:
+    OTA_UP_RETAINED_TEST: {required: true}
+tasks:
+  setup:
+    safe_for_agent: true
+    run: printf '%s\n' "$OTA_UP_RETAINED_TEST" >> observed
+workflows:
+  default: app
+  app:
+    setup: {task: setup}
+    instances:
+      default: ws0
+      ws0: {}
+      ws1:
+        topology:
+          requires_instances: [ws0]
+"#).unwrap();
+        let contract_path = directory.path().join("ota.yaml");
+        let prepared = super::prepare_up_command_admission(
+            &contract, &contract_path, ExecutionOverrides::default(), Some("app@ws1"), true, false,
+        ).unwrap();
+        let admission = match prepared {
+            Ok(admission) => admission,
+            Err(result) => panic!("ordinary no-rule admission refused: {}", result.phase),
+        };
+        let overlay = BTreeMap::from([(String::from("OTA_UP_RETAINED_TEST"), String::from("prerequisite-overlay"))]);
+        let result = super::execute_repo_up_with_admission_and_grant(
+            &contract, &contract_path, ExecutionOverrides::default(), Some("app@ws1"), &[],
+            true, None, None, None, Some(&overlay), false, super::RepoExecutionMode::Capture,
+            super::UpRunBehaviorPreference::Auto, None, admission,
+        ).unwrap();
+        assert!(result.ok, "{:?}", result.report.findings);
+        let observations = fs::read_to_string(directory.path().join("observed")).unwrap();
+        assert_eq!(observations, "prerequisite-overlay\nprerequisite-overlay\n");
+        assert!(result.receipt.crossing.is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn up_final_environment_policy_failure_refuses_before_body_and_hooks() {
+        let _lock = crate::test_support::env_mutex_lock();
+        for mode in [super::RepoExecutionMode::Capture, super::RepoExecutionMode::Stream] {
+            for replacement in [None, Some("policies: ["), Some("policies: {toolchain_fulfillment: {rust: allow}}")]
+            {
+                let directory = tempfile::tempdir().unwrap();
+                let policy = directory.path().join("policy.yaml");
+                let _environment = RestrictionAdmissionEnvironment::new(policy.as_os_str(), None);
+                fs::write(&policy, "policies: {}").unwrap();
+                let contract: crate::schema::Contract = serde_yaml::from_str(r#"
+version: 1
+project: {name: up-fresh-environment-refusal}
+tasks:
+  check:
+    safe_for_agent: true
+    run: touch body-must-not-run
+    after_success: [success]
+    after_failure: [failure]
+    after_always: [always]
+  success: {safe_for_agent: true, run: 'touch success-must-not-run'}
+  failure: {safe_for_agent: true, run: 'touch failure-must-not-run'}
+  always: {safe_for_agent: true, run: 'touch always-must-not-run'}
+workflows:
+  default: ci
+  ci:
+    setup: {task: check}
+"#).unwrap();
+                let contract_path = directory.path().join("ota.yaml");
+                let admission = super::acquire_up_command_admission(
+                    &contract, &contract_path, ExecutionOverrides::default(), Some("ci"),
+                ).unwrap();
+                match replacement {
+                    Some(contents) => fs::write(&policy, contents).unwrap(),
+                    None => fs::remove_file(&policy).unwrap(),
+                }
+                let outcome = super::run_up_task(
+                    &contract, &contract_path, "check", ExecutionOverrides::default(), None, mode, true,
+                    crate::runner::RetainedRunPolicyContext::from_acquired(admission.loaded_policy.as_ref(), None),
+                );
+                assert!(matches!(outcome, Err(crate::runner::RunError::InvalidPolicyPack { .. })));
+                for marker in ["body-must-not-run", "success-must-not-run", "failure-must-not-run", "always-must-not-run"] {
+                    assert!(!directory.path().join(marker).exists());
+                }
+                // Runner startup may already have occurred; this proves no body/hook execution,
+                // not zero prior Up effects or zero fresh policy acquisitions.
+            }
+        }
+    }
+
+    #[test]
+    fn protected_run_without_carrier_keeps_zero_policy_load_precedence() {
+        let _lock = crate::test_support::env_mutex_lock();
+        let directory = tempfile::tempdir().unwrap();
+        let policy = directory.path().join("malformed-policy.yaml");
+        fs::write(&policy, "policies: {toolchain_fulfillment: {rust: allow}}").unwrap();
+        for source in [policy.as_os_str(), std::ffi::OsStr::new("http://127.0.0.1:1/must-not-fetch")] {
+            let _environment = RestrictionAdmissionEnvironment::new(source, Some("-1"));
+            let initial_path = env::var_os("PATH");
+            let result = super::run_single_contract_target(
+                "publish", ExecutionOverrides::default(), None,
+                super::LoadedContractTarget { contract: selected_secret_delivery_contract(), contract_path: directory.path().join("ota.yaml") },
+                &[], &[], false, None, None, None, false, false, false, false,
+            );
+            let failure = result.expect_err("no carrier must remain the canonical pure refusal");
+            assert!(strip_ansi_codes(&failure.message).contains("exact systemd V4 broker carrier"));
+            assert!(!failure.message.contains("policy could not be loaded"));
+            assert_eq!(env::var(super::PROOF_PARENT_AUTHORITY_FD_ENV).unwrap(), "-1");
+            assert_eq!(env::var_os("PATH"), initial_path);
+            assert!(!directory.path().join(".ota").exists());
+        }
+    }
+
+    #[test]
+    fn local_carrier_selection_accepts_automatic_v4_but_rejects_stale_identity() {
+        let authority = tempfile::tempdir().unwrap();
+        let repository = tempfile::tempdir().unwrap();
+        let prebound_path = authority.path().join("absent-prebound.json");
+        let _prebound = crate::crossing_authority::TestSystemTrustStoreGuard::install(prebound_path);
+        let broker_path = authority.path().join("broker.json");
+        let _broker = crate::crossing_authority::TestBrokerTrustStoreGuard::install(broker_path.clone());
+        let (binding, _, _) = crate::crossing_authority::tests::broker_binding_v3_with_signing_keys();
+        let mut contract = selected_secret_delivery_contract();
+        contract.governance.crossing_authority = Some(crate::schema::CrossingAuthoritySpec {
+            authority_id: binding.authority_id.clone(),
+        });
+        let mut store = crate::crossing_authority::BrokerAuthorityStore {
+            schema_version: 1, bindings: vec![binding],
+        };
+        fs::write(&broker_path, serde_json::to_vec(&store).unwrap()).unwrap();
+        let admission = selected_secret_delivery_admission();
+        super::enforce_secret_delivery_local_carrier_boundary(
+            &contract, &repository.path().join("ota.yaml"), &admission, None,
+        ).expect("absence of --grant must not imply absence of automatic V4 binding");
+        store.bindings[0].identity = format!("sha256:{}", "0".repeat(64));
+        fs::write(&broker_path, serde_json::to_vec(&store).unwrap()).unwrap();
+        assert!(super::enforce_secret_delivery_local_carrier_boundary(
+            &contract, &repository.path().join("ota.yaml"), &admission, None,
+        ).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn protected_run_automatic_v4_refuses_deny_and_load_error_before_authority() {
+        use std::io::Read;
+        use std::os::fd::AsRawFd;
+        use std::os::unix::net::UnixStream;
+        let _lock = crate::test_support::env_mutex_lock();
+        let authority = tempfile::tempdir().unwrap();
+        let repository = tempfile::tempdir().unwrap();
+        let prebound_path = authority.path().join("absent-prebound.json");
+        let _prebound = crate::crossing_authority::TestSystemTrustStoreGuard::install(prebound_path.clone());
+        let broker_path = authority.path().join("broker.json");
+        let _broker = crate::crossing_authority::TestBrokerTrustStoreGuard::install(broker_path.clone());
+        let (binding, _, _) = crate::crossing_authority::tests::broker_binding_v3_with_signing_keys();
+        let mut contract = selected_secret_delivery_contract();
+        contract.governance.crossing_authority = Some(crate::schema::CrossingAuthoritySpec {
+            authority_id: binding.authority_id.clone(),
+        });
+        let store = crate::crossing_authority::BrokerAuthorityStore { schema_version: 1, bindings: vec![binding] };
+        let store_bytes = serde_json::to_vec(&store).unwrap();
+        fs::write(&broker_path, &store_bytes).unwrap();
+        let policy = repository.path().join("policy.yaml");
+        let contract_path = repository.path().join("ota.yaml");
+        let (capability, mut peer) = UnixStream::pair().unwrap();
+        peer.set_nonblocking(true).unwrap();
+        let fd = capability.as_raw_fd();
+        let original_flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
+        assert!(original_flags >= 0);
+        let raw_fd = fd.to_string();
+        let _environment = RestrictionAdmissionEnvironment::new(policy.as_os_str(), Some(&raw_fd));
+        let original_path = env::var_os("PATH");
+        assert!(!super::active_crossing_transaction_is_pending());
+        assert!(super::ACTIVE_PROOF_PARENT_AUTHORITY.with(|active| active.borrow().is_none()));
+        super::TEST_CROSSING_AUTHORITY_ACTIVATIONS.with(|count| count.set(0));
+        super::TEST_PROOF_PARENT_CAPABILITY_ACQUISITIONS.with(|count| count.set(0));
+        for agent in [false, true] {
+            for deny in [true, false] {
+                let contents = if deny {
+                    "policies: {toolchain_fulfillment: {rust: deny}}"
+                } else { "policies: {toolchain_fulfillment: {rust: allow}}" };
+                fs::write(&policy, contents).unwrap();
+                let failure = super::run_single_contract_target(
+                    "publish", ExecutionOverrides::default(), None,
+                    super::LoadedContractTarget { contract: contract.clone(), contract_path: contract_path.clone() },
+                    &[], &[], agent, None, None, None, true, false, false, false,
+                ).expect_err("automatic qualifying V4 must reach policy denial/error before authority");
+                let message = strip_ansi_codes(&failure.message);
+                assert_eq!(failure.exit_code, 1);
+                if deny {
+                    let pack: crate::policy_pack::OrgPolicyPack = serde_yaml::from_str(contents).unwrap();
+                    let identity = crate::semantic_identity::semantic_contract_identity(&pack).unwrap();
+                    let receipt = strip_ansi_codes(failure.receipt.as_deref().expect("requested refusal receipt"));
+                    assert!(message.contains("toolchain_fulfillment_policy_route_unsupported"), "{message}");
+                    for expected in [identity.as_str(), "Policy Source: env_override", "Selected Task: publish",
+                        "Execution Started: false", "Attempted: false", "Outcome: not_run"] {
+                        assert!(receipt.contains(expected), "missing {expected}: {receipt}");
+                    }
+                    assert!(receipt.contains(policy.to_str().unwrap()));
+                    assert!(failure.summary.is_some());
+                } else {
+                    assert!(message.contains("invocation policy could not be loaded before protected activation"), "{message}");
+                    assert!(!message.contains("exact systemd V4 broker carrier"));
+                }
+                assert_eq!(env::var(super::PROOF_PARENT_AUTHORITY_FD_ENV).unwrap(), raw_fd);
+                assert_eq!(env::var_os("PATH"), original_path);
+                assert_eq!(unsafe { libc::fcntl(fd, libc::F_GETFD) }, original_flags);
+                assert_eq!(peer.read(&mut [0u8; 1]).unwrap_err().kind(), std::io::ErrorKind::WouldBlock);
+                super::TEST_CROSSING_AUTHORITY_ACTIVATIONS.with(|count| assert_eq!(count.get(), 0));
+                super::TEST_PROOF_PARENT_CAPABILITY_ACQUISITIONS.with(|count| assert_eq!(count.get(), 0));
+                assert!(!super::active_crossing_transaction_is_pending());
+                assert!(super::ACTIVE_PROOF_PARENT_AUTHORITY.with(|active| active.borrow().is_none()));
+                assert!(!repository.path().join("should-not-exist").exists());
+                assert!(!repository.path().join(".ota").exists());
+                assert!(!prebound_path.exists());
+                assert_eq!(fs::read(&broker_path).unwrap(), store_bytes);
+            }
+        }
+    }
+
+    #[test]
+    fn toolchain_route_refusal_receipt_and_proof_json_retain_distinct_attribution() {
+        let directory = tempfile::tempdir().unwrap();
+        let contract_path = directory.path().join("ota.yaml");
+        let policy_path = directory.path().join("removed-policy.yaml");
+        let identity = format!("sha256:{}", "a".repeat(64));
+        let error = || crate::runner::RunError::ToolchainFulfillmentPolicyRouteUnsupported {
+            route: String::from("protected run"), policy_identity: identity.clone(),
+            policy_source: crate::policy_pack::PolicyPackSource::EnvOverride,
+            policy_path: policy_path.display().to_string(),
+        };
+        let receipt = super::toolchain_route_refusal_receipt(
+            &selected_secret_delivery_contract(), &contract_path, "publish", &error(),
+        );
+        let json = serde_json::to_value(&receipt).unwrap();
+        let evidence = &json["witnessed_observations"]["toolchain_fulfillment_route_refusal"];
+        assert_eq!(evidence["selected_task"], "publish");
+        assert_eq!(evidence["policy_identity"], identity);
+        assert_eq!(evidence["policy_source"], "env_override");
+        assert_eq!(evidence["root"], directory.path().to_str().unwrap());
+        assert_eq!(evidence["execution_started"], false);
+        assert_eq!(evidence["attempted"], false);
+        assert_eq!(evidence["outcome"], "not_run");
+        assert!(json["witnessed_observations"].get("toolchain_fulfillment_denial").is_none());
+        for field in ["crossing", "typed_effect_policy_refusal", "replay_input_policy", "evaluated_inputs",
+            "env_sources", "workflow_env_artifacts", "native_prerequisites", "toolchains", "dependency_steps"] {
+            assert!(json.get(field).is_none(), "must not invent {field}");
+        }
+        assert!(!directory.path().join(".ota").exists());
+        let output = super::proof_typed_effect_admission_failure_output(
+            crate::output::OutputFormat::Json, "ota proof lifecycle", &contract_path, Some("ci"), error(),
+        );
+        let proof: serde_json::Value = serde_json::from_str(output.stderr.as_deref().unwrap()).unwrap();
+        assert_eq!(proof["toolchain_fulfillment_route_refusal"]["selected_workflow"], "ci");
+        assert_eq!(proof["toolchain_fulfillment_route_refusal"]["policy_identity"], identity);
+        assert_eq!(proof["execution_started"], false);
+        assert!(proof.get("secret_delivery_admission").is_none());
     }
 
     #[test]
@@ -66383,6 +68427,8 @@ policies:
             ExecutionOverrides::default(),
         );
 
+        assert!(matches!(preflight.retained_run_policy_context(),
+            crate::runner::RetainedRunPolicyContext::AcquiredPresent(_)));
         let success = super::run_single_contract_target_captured(
             "mutate",
             ExecutionOverrides::default(),
@@ -74189,9 +76235,11 @@ tasks:
             launch: None,
             action: None,
             prepare: Some(crate::output::TaskPrepareSummary {
+                cargo_lock: None,
                 kind: "sequence",
                 steps: vec![
                     crate::output::TaskPrepareSummary {
+                        cargo_lock: None,
                         kind: "dependency_hydration",
                         steps: Vec::new(),
                         medium: Some("package_dependencies"),
@@ -74221,6 +76269,7 @@ tasks:
                         compose: None,
                     },
                     crate::output::TaskPrepareSummary {
+                        cargo_lock: None,
                         kind: "dependency_hydration",
                         steps: Vec::new(),
                         medium: Some("package_dependencies"),
@@ -74342,6 +76391,7 @@ tasks:
             launch: None,
             action: None,
             prepare: Some(crate::output::TaskPrepareSummary {
+                cargo_lock: None,
                 kind: "dependency_hydration",
                 steps: Vec::new(),
                 medium: Some("package_dependencies"),
@@ -74413,6 +76463,7 @@ tasks:
             launch: None,
             action: None,
             prepare: Some(crate::output::TaskPrepareSummary {
+                cargo_lock: None,
                 kind: "dependency_hydration",
                 steps: Vec::new(),
                 medium: Some("package_dependencies"),
@@ -74506,6 +76557,7 @@ tasks:
             launch: None,
             action: None,
             prepare: Some(crate::output::TaskPrepareSummary {
+                cargo_lock: None,
                 kind: "dependency_hydration",
                 steps: Vec::new(),
                 medium: Some("package_dependencies"),
@@ -74590,6 +76642,7 @@ tasks:
             launch: None,
             action: None,
             prepare: Some(crate::output::TaskPrepareSummary {
+                cargo_lock: None,
                 kind: "dependency_hydration",
                 steps: Vec::new(),
                 medium: Some("package_dependencies"),
@@ -74676,6 +76729,7 @@ tasks:
             launch: None,
             action: None,
             prepare: Some(crate::output::TaskPrepareSummary {
+                cargo_lock: None,
                 kind: "dependency_hydration",
                 steps: Vec::new(),
                 medium: Some("package_dependencies"),
@@ -74778,6 +76832,7 @@ tasks:
             launch: None,
             action: None,
             prepare: Some(crate::output::TaskPrepareSummary {
+                cargo_lock: None,
                 kind: "dependency_hydration",
                 steps: Vec::new(),
                 medium: Some("package_dependencies"),
@@ -74881,6 +76936,7 @@ tasks:
             launch: None,
             action: None,
             prepare: Some(crate::output::TaskPrepareSummary {
+                cargo_lock: None,
                 kind: "tool_bootstrap",
                 steps: Vec::new(),
                 medium: None,
@@ -74967,6 +77023,7 @@ tasks:
             launch: None,
             action: None,
             prepare: Some(crate::output::TaskPrepareSummary {
+                cargo_lock: None,
                 kind: "tool_bootstrap",
                 steps: Vec::new(),
                 medium: None,
@@ -75053,6 +77110,7 @@ tasks:
             launch: None,
             action: None,
             prepare: Some(crate::output::TaskPrepareSummary {
+                cargo_lock: None,
                 kind: "tool_bootstrap",
                 steps: Vec::new(),
                 medium: None,
@@ -75139,6 +77197,7 @@ tasks:
             launch: None,
             action: None,
             prepare: Some(crate::output::TaskPrepareSummary {
+                cargo_lock: None,
                 kind: "tool_bootstrap",
                 steps: Vec::new(),
                 medium: None,
@@ -75941,6 +78000,7 @@ workflows:
                     launch: None,
                     action: None,
                     prepare: Some(crate::output::WorkspaceTaskPrepareSummary {
+                        cargo_lock: None,
                         kind: "dependency_hydration",
                         steps: Vec::new(),
                         medium: Some("package_dependencies"),
@@ -83311,6 +85371,7 @@ tasks:
             "deploy",
             None,
             &[ExecutedTaskStep {
+                cargo_hydration: Vec::new(),
                 name: String::from("deploy"),
                 exit_code: 0,
                 relation: TaskExecutionRelation::Requested,
@@ -86993,6 +89054,7 @@ tasks:
             "build",
             None,
             &[ExecutedTaskStep {
+                cargo_hydration: Vec::new(),
                 name: String::from("build"),
                 exit_code: 0,
                 relation: TaskExecutionRelation::Requested,
@@ -96987,6 +99049,7 @@ tasks:
             "test",
             None,
             &[ExecutedTaskStep {
+                cargo_hydration: Vec::new(),
                 name: String::from("test"),
                 exit_code: 0,
                 relation: TaskExecutionRelation::Requested,
@@ -97052,6 +99115,7 @@ tasks:
             "test",
             None,
             &[ExecutedTaskStep {
+                cargo_hydration: Vec::new(),
                 name: String::from("test"),
                 exit_code: 0,
                 relation: TaskExecutionRelation::Requested,
@@ -97128,6 +99192,7 @@ tasks:
             "test",
             None,
             &[ExecutedTaskStep {
+                cargo_hydration: Vec::new(),
                 name: String::from("test"),
                 exit_code: 0,
                 relation: TaskExecutionRelation::Requested,
@@ -97214,6 +99279,7 @@ tasks:
             "verify",
             None,
             &[ExecutedTaskStep {
+                cargo_hydration: Vec::new(),
                 name: String::from("verify"),
                 exit_code: 0,
                 relation: TaskExecutionRelation::Requested,
@@ -97278,6 +99344,7 @@ tasks:
             "fail",
             None,
             &[ExecutedTaskStep {
+                cargo_hydration: Vec::new(),
                 name: String::from("fail"),
                 exit_code: 127,
                 relation: TaskExecutionRelation::Requested,
@@ -97334,6 +99401,7 @@ tasks:
             "dev",
             None,
             &[ExecutedTaskStep {
+                cargo_hydration: Vec::new(),
                 name: String::from("dev"),
                 exit_code: 0,
                 relation: TaskExecutionRelation::Requested,
@@ -97387,6 +99455,7 @@ tasks:
             "test",
             None,
             &[ExecutedTaskStep {
+                cargo_hydration: Vec::new(),
                 name: String::from("test"),
                 exit_code: 0,
                 relation: TaskExecutionRelation::Requested,
@@ -97448,6 +99517,7 @@ tasks:
             "dev",
             None,
             &[ExecutedTaskStep {
+                cargo_hydration: Vec::new(),
                 name: String::from("dev"),
                 exit_code: 0,
                 relation: TaskExecutionRelation::Requested,
@@ -97498,6 +99568,7 @@ tasks:
             "dev",
             None,
             &[ExecutedTaskStep {
+                cargo_hydration: Vec::new(),
                 name: String::from("dev"),
                 exit_code: 0,
                 relation: TaskExecutionRelation::Requested,
@@ -97543,6 +99614,7 @@ tasks:
             "sandbox",
             None,
             &[ExecutedTaskStep {
+                cargo_hydration: Vec::new(),
                 name: String::from("sandbox"),
                 exit_code: 0,
                 relation: TaskExecutionRelation::Requested,
@@ -97616,6 +99688,7 @@ tasks:
             "sandbox",
             None,
             &[ExecutedTaskStep {
+                cargo_hydration: Vec::new(),
                 name: String::from("sandbox"),
                 exit_code: 0,
                 relation: TaskExecutionRelation::Requested,
@@ -97679,6 +99752,7 @@ tasks:
             "sandbox",
             None,
             &[ExecutedTaskStep {
+                cargo_hydration: Vec::new(),
                 name: String::from("sandbox"),
                 exit_code: 0,
                 relation: TaskExecutionRelation::Requested,
@@ -97783,6 +99857,7 @@ tasks:
             "ci",
             None,
             &[ExecutedTaskStep {
+                cargo_hydration: Vec::new(),
                 name: String::from("sandbox"),
                 exit_code: 0,
                 relation: TaskExecutionRelation::DependsOn {
@@ -97846,6 +99921,7 @@ tasks:
             "build",
             None,
             &[ExecutedTaskStep {
+                cargo_hydration: Vec::new(),
                 name: String::from("typecheck"),
                 exit_code: 9,
                 relation: TaskExecutionRelation::DependsOn {
@@ -97892,6 +99968,7 @@ tasks:
             "build",
             None,
             &[ExecutedTaskStep {
+                cargo_hydration: Vec::new(),
                 name: String::from("notify"),
                 exit_code: 1,
                 relation: TaskExecutionRelation::AfterSuccess {
@@ -97918,6 +99995,7 @@ tasks:
     #[test]
     fn execution_receipt_step_detail_keeps_dependency_relation_when_note_exists() {
         let step = ExecutedTaskStep {
+            cargo_hydration: Vec::new(),
             name: String::from("sandbox"),
             exit_code: 0,
             relation: TaskExecutionRelation::DependsOn {
@@ -97973,6 +100051,7 @@ tasks:
             "test",
             None,
             &[ExecutedTaskStep {
+                cargo_hydration: Vec::new(),
                 name: String::from("test"),
                 exit_code: 0,
                 relation: TaskExecutionRelation::Requested,
@@ -98004,6 +100083,7 @@ tasks:
             "test",
             None,
             &[ExecutedTaskStep {
+                cargo_hydration: Vec::new(),
                 name: String::from("test"),
                 exit_code: 0,
                 relation: TaskExecutionRelation::Requested,
@@ -98046,6 +100126,7 @@ tasks:
             "test",
             None,
             &[ExecutedTaskStep {
+                cargo_hydration: Vec::new(),
                 name: String::from("test"),
                 exit_code: 0,
                 relation: TaskExecutionRelation::Requested,
@@ -98125,6 +100206,7 @@ tasks:
             "dev",
             None,
             &[ExecutedTaskStep {
+                cargo_hydration: Vec::new(),
                 name: String::from("dev"),
                 exit_code: 0,
                 relation: TaskExecutionRelation::Requested,
@@ -98181,6 +100263,7 @@ tasks:
             "test",
             None,
             &[ExecutedTaskStep {
+                cargo_hydration: Vec::new(),
                 name: String::from("test"),
                 exit_code: 0,
                 relation: TaskExecutionRelation::Requested,
@@ -98273,6 +100356,7 @@ tasks:
             None,
             &[
                 ExecutedTaskStep {
+                    cargo_hydration: Vec::new(),
                     name: String::from("version:bump"),
                     exit_code: 0,
                     relation: TaskExecutionRelation::Requested,
@@ -98280,6 +100364,7 @@ tasks:
                     execution_note: None,
                 },
                 ExecutedTaskStep {
+                    cargo_hydration: Vec::new(),
                     name: String::from("build"),
                     exit_code: 0,
                     relation: TaskExecutionRelation::AfterSuccess {
@@ -98289,6 +100374,7 @@ tasks:
                     execution_note: None,
                 },
                 ExecutedTaskStep {
+                    cargo_hydration: Vec::new(),
                     name: String::from("setup"),
                     exit_code: 0,
                     relation: TaskExecutionRelation::DependsOn {
@@ -98343,6 +100429,7 @@ tasks:
             "ci",
             None,
             &[ExecutedTaskStep {
+                cargo_hydration: Vec::new(),
                 name: String::from("sandbox"),
                 exit_code: 0,
                 relation: TaskExecutionRelation::AfterSuccess {
@@ -100369,6 +102456,7 @@ tasks:
             "dev",
             None,
             &[ExecutedTaskStep {
+                cargo_hydration: Vec::new(),
                 name: String::from("dev"),
                 exit_code: 130,
                 relation: TaskExecutionRelation::Requested,
@@ -102937,6 +105025,7 @@ tasks:
             "dev",
             None,
             &[ExecutedTaskStep {
+                cargo_hydration: Vec::new(),
                 name: String::from("dev"),
                 exit_code: 130,
                 relation: TaskExecutionRelation::Requested,
@@ -105540,6 +107629,7 @@ tasks:
             "setup",
             None,
             &[ExecutedTaskStep {
+                cargo_hydration: Vec::new(),
                 name: String::from("setup"),
                 exit_code: 0,
                 relation: TaskExecutionRelation::Requested,
@@ -105639,6 +107729,7 @@ policies:
             "setup",
             None,
             &[ExecutedTaskStep {
+                cargo_hydration: Vec::new(),
                 name: String::from("setup"),
                 exit_code: 0,
                 relation: TaskExecutionRelation::Requested,
@@ -112512,17 +114603,59 @@ fn run_single_contract_target(
 ) -> Result<String, RunCommandFailure> {
     let details_footer = task_use_details_footer(Some(&target.contract_path), member);
     let selected_task_name = canonical_declared_task_name(&target.contract, task_name);
-    let typed_effect_admission = enforce_typed_effect_pre_execution_boundary(
+    let mut typed_effect_admission = enforce_typed_effect_pre_execution_boundary(
         &target.contract,
         &target.contract_path,
         selected_task_name.as_str(),
         overrides,
     )?;
-    let typed_policy_observed = typed_effect_admission.is_typed();
+    if typed_effect_admission.secret_delivery.refuses_execution() {
+        // Only protected store discovery/validation is allowed here. The full grant evaluator
+        // can adopt a proof-parent FD and write a challenge, so it must stay below policy.
+        enforce_secret_delivery_local_carrier_boundary(
+            &target.contract,
+            &target.contract_path,
+            &typed_effect_admission.secret_delivery,
+            grant,
+        )?;
+        typed_effect_admission.loaded_policy =
+            load_org_policy_pack_auto_details(&target.contract_path).map_err(|error| {
+                RunCommandFailure {
+                    message: stylize_text_failure("ota run", &format!(
+                        "invocation policy could not be loaded before protected activation: {error}"
+                    )),
+                    summary: None, exit_code: 1, receipt: None,
+                }
+            })?;
+        typed_effect_admission.policy_acquired = true;
+    }
+    let proof_parent_carrier_present = env::var_os(PROOF_PARENT_AUTHORITY_FD_ENV).is_some()
+        || ACTIVE_PROOF_PARENT_AUTHORITY.with(|active| active.borrow().is_some());
+    let safety = task_effective_safety_with_overrides(
+        &target.contract, selected_task_name.as_str(), overrides,
+    );
+    let crossing_required = target.contract.governance.crossing_authority.is_some()
+        && evaluate_crossing_requirement(
+            Some(safety.effective_safe), false, &safety.unsafe_closure_tasks, "task",
+        ).required != Some(false);
+    if typed_effect_admission.secret_delivery.refuses_execution()
+        || proof_parent_carrier_present || crossing_required
+    {
+        refuse_unsupported_toolchain_fulfillment_policy_route(
+            typed_effect_admission.loaded_policy.as_ref(),
+            "run with protected crossing or proof-parent authority",
+        ).map_err(|error| toolchain_route_run_refusal(
+            &target.contract, &target.contract_path, selected_task_name.as_str(),
+            show_receipt, *error,
+        ))?;
+    }
+    activate_mise_paths_for_current_process();
+    let typed_policy_observed = typed_effect_admission.policy_acquired;
     let CommandTypedEffectAdmission {
         typed: typed_effect_admission,
         secret_delivery: secret_delivery_admission,
         loaded_policy,
+        ..
     } = typed_effect_admission;
     let replay_input_preflight = task_replay_input_preflight_with_retained_policy(
         &target.contract,
@@ -112859,7 +114992,7 @@ fn enforce_typed_effect_pre_execution_boundary(
         task: task_name.to_string(),
         origin: String::from("run"),
     }];
-    let admission = admit_command_typed_effect_closure(
+    let admission = admit_command_execution_closure(
         contract,
         contract_path,
         None,
@@ -113026,17 +115159,11 @@ fn enforce_secret_delivery_crossing_carrier_boundary(
     if !admission.refuses_execution() {
         return Ok(());
     }
-    let supported = matches!(
-        crossing,
-        Some(CrossingAuthorityPlan::AuthorityBroker {
-            binding: crate::crossing_authority::BrokerAuthorityBinding {
-                attestation: crate::crossing_authority::BrokerAttestationBinding::V3(attestation),
-                ..
-            },
-            ..
-        }) if attestation.systemd_launcher_profile_id
-            == ota_authority_protocol::SYSTEMD_LAUNCHER_PROFILE_ID_V4
-    );
+    let supported = crossing.is_some_and(|crossing| match crossing {
+        CrossingAuthorityPlan::AuthorityBroker { binding, .. } =>
+            secret_delivery_v4_carrier_supported(binding),
+        CrossingAuthorityPlan::PreboundFile(_) => false,
+    });
     if supported {
         return Ok(());
     }
@@ -113049,6 +115176,40 @@ fn enforce_secret_delivery_crossing_carrier_boundary(
         exit_code: 1,
         receipt: None,
     })
+}
+
+fn secret_delivery_v4_carrier_supported(
+    binding: &crate::crossing_authority::BrokerAuthorityBinding,
+) -> bool {
+    matches!(&binding.attestation,
+        crate::crossing_authority::BrokerAttestationBinding::V3(attestation)
+            if attestation.systemd_launcher_profile_id
+                == ota_authority_protocol::SYSTEMD_LAUNCHER_PROFILE_ID_V4)
+}
+
+fn enforce_secret_delivery_local_carrier_boundary(
+    contract: &Contract,
+    contract_path: &Path,
+    admission: &crate::secret_delivery_admission::SecretDeliveryCommandAdmission,
+    grant: Option<&str>,
+) -> Result<(), RunCommandFailure> {
+    if !admission.refuses_execution() {
+        return Ok(());
+    }
+    let supported = contract.governance.crossing_authority.as_ref().is_some_and(|authority| {
+        if grant.is_some_and(|grant| grant != authority.authority_id.trim()) {
+            return false;
+        }
+        matches!(crate::crossing_authority::select_crossing_authority_binding(
+            contract_working_dir(contract_path), &authority.authority_id,
+        ), Ok(crate::crossing_authority::SelectedCrossingAuthorityBinding::AuthorityBroker(binding))
+            if secret_delivery_v4_carrier_supported(&binding))
+    });
+    if supported {
+        Ok(())
+    } else {
+        enforce_secret_delivery_crossing_carrier_boundary(admission, None)
+    }
 }
 
 fn selected_workflow_phase_task_roots(
@@ -114810,7 +116971,7 @@ fn run_single_contract_target_streaming(
     } else {
         None
     };
-    match run_task_with_args_with_overrides_and_stream_capture(
+    match crate::runner::run_task_with_args_with_overrides_and_stream_capture_with_retained_policy(
         &target.contract,
         &target.contract_path,
         task_name.as_str(),
@@ -114819,6 +116980,7 @@ fn run_single_contract_target_streaming(
         capture_output,
         live_log,
         terminal_passthrough,
+        replay_input_preflight.retained_run_policy_context(),
     ) {
         Ok(outcome) if outcome.exit_code == 0 => {
             let log_capture = if prepared_logs.capture.logs.is_some() {
@@ -115016,6 +117178,7 @@ fn run_single_contract_target_streaming(
                 member,
                 persist_logs,
             );
+            let (error, cargo_hydration) = error.into_cargo_context();
             let next_note = run_error_receipt_note(
                 &target.contract,
                 &target.contract_path,
@@ -115045,10 +117208,10 @@ fn run_single_contract_target_streaming(
                 overrides,
                 task_name.as_str(),
                 member,
-                &[],
-                &[],
-                &[],
-                &[],
+                error.toolchain_denial_steps(),
+                error.toolchain_policy_denial().map_or(&[], |evidence| evidence.preceding_target_resolutions.as_slice()),
+                error.toolchain_policy_denial().map_or(&[], |evidence| evidence.preceding_backend_fulfillments.as_slice()),
+                error.toolchain_policy_denial().map_or(&[], |evidence| evidence.preceding_shared_local_backends.as_slice()),
                 &[],
                 error_backend_fulfillment,
                 &[],
@@ -115063,6 +117226,8 @@ fn run_single_contract_target_streaming(
             receipt.replay_input_policy = replay_input_policy;
             attach_witnessed_observations(&mut receipt, &witnessed_observations);
             receipt.blocked = run_error_receipt_blocked_entries(&error);
+            attach_cargo_hydration_to_receipt(&mut receipt, &cargo_hydration);
+            attach_toolchain_fulfillment_denial_to_receipt(&mut receipt, &error);
             attach_task_crossing_to_receipt(
                 &mut receipt,
                 &target.contract,
@@ -115195,13 +117360,13 @@ fn run_single_contract_target_captured(
         exit_code: 1,
         receipt: None,
     })?;
-    match run_task_captured_with_args_with_overrides_with_policy(
+    match crate::runner::run_task_captured_with_args_with_overrides_with_retained_policy(
         &target.contract,
         &target.contract_path,
         task_name.as_str(),
         task_inputs,
         overrides,
-        None,
+        replay_input_preflight.retained_run_policy_context(),
     ) {
         Ok(outcome) if outcome.exit_code == 0 => {
             let log_capture = capture_durable_run_logs(
@@ -115401,6 +117566,7 @@ fn run_single_contract_target_captured(
                 &error_detail,
                 persist_logs,
             );
+            let (error, cargo_hydration) = error.into_cargo_context();
             let next_note = run_error_receipt_note(
                 &target.contract,
                 &target.contract_path,
@@ -115430,10 +117596,10 @@ fn run_single_contract_target_captured(
                 overrides,
                 task_name.as_str(),
                 member,
-                &[],
-                &[],
-                &[],
-                &[],
+                error.toolchain_denial_steps(),
+                error.toolchain_policy_denial().map_or(&[], |evidence| evidence.preceding_target_resolutions.as_slice()),
+                error.toolchain_policy_denial().map_or(&[], |evidence| evidence.preceding_backend_fulfillments.as_slice()),
+                error.toolchain_policy_denial().map_or(&[], |evidence| evidence.preceding_shared_local_backends.as_slice()),
                 &[],
                 error_backend_fulfillment,
                 &[],
@@ -115448,6 +117614,8 @@ fn run_single_contract_target_captured(
             receipt.replay_input_policy = replay_input_policy;
             attach_witnessed_observations(&mut receipt, &witnessed_observations);
             receipt.blocked = run_error_receipt_blocked_entries(&error);
+            attach_cargo_hydration_to_receipt(&mut receipt, &cargo_hydration);
+            attach_toolchain_fulfillment_denial_to_receipt(&mut receipt, &error);
             attach_task_crossing_to_receipt(
                 &mut receipt,
                 &target.contract,
@@ -118945,6 +121113,18 @@ fn render_run_structured_error_text(
                 format!("rerun `{}`", rerun_stream_command),
             ],
         ),
+        RunError::ToolchainFulfillmentPolicyDenied { task, toolchain, evidence } => (
+            String::from("Toolchain fulfillment denied by policy"),
+            vec![
+                format!("task `{task}` selected toolchain `{toolchain}` via `{}`", evidence.provider),
+                format!("policy `{}` ({}) denies fulfillment", evidence.policy_identity,
+                    evidence.policy_source.as_str()),
+                format!("readiness {}; fulfillment not_run; attempted=false", evidence.readiness),
+            ],
+            vec![String::from(
+                "use an independently prepared matching toolchain or ask the policy owner to review the restriction; no automatic fulfillment was attempted",
+            )],
+        ),
         RunError::ToolchainFulfillmentFailed {
             task,
             toolchain,
@@ -118963,7 +121143,7 @@ fn render_run_structured_error_text(
                     format!("task `{task}` selected toolchain `{toolchain}`"),
                     summary.allowance_clause,
                     format!(
-                        "{}; provisioning attempt failed: {details}",
+                        "{}; fulfillment did not complete: {details}",
                         summary.requirement_clause
                     ),
                 ],
@@ -120057,6 +122237,15 @@ fn repo_execution_conflict_has_legacy_service_owner(
 
 fn run_error_receipt_blocked_entries(error: &RunError) -> Vec<String> {
     match error {
+        RunError::ToolchainFulfillmentPolicyDenied { task, .. } => {
+            vec![format!("toolchain_fulfillment_policy_denied:rust:{task}")]
+        }
+        RunError::ToolchainFulfillmentPolicyRouteUnsupported { route, .. } => {
+            vec![format!("toolchain_fulfillment_policy_route_unsupported:{route}")]
+        }
+        RunError::LockedCargoHydrationRefused { task, .. } => {
+            vec![format!("cargo_lock_refused:unsupported_backend:{task}")]
+        }
         RunError::RepoExecutionConflict { reasons, .. } => reasons
             .iter()
             .map(|reason| {
@@ -121070,7 +123259,9 @@ fn replay_hidden_input_candidates(
     failure_kind: Option<UpReplayFailureKind>,
 ) -> Vec<String> {
     if failure_kind != Some(UpReplayFailureKind::HiddenInputSuspicion) {
-        return Vec::new();
+        return if receipt_diff_has_cargo_evidence(report) {
+            vec![String::from("dependency_resolution")]
+        } else { Vec::new() };
     }
     let artifacts = &report.summary.comparison.artifact_trust;
     let has_class = |target: ReplayInputClass| {
@@ -121078,7 +123269,9 @@ fn replay_hidden_input_candidates(
             .iter()
             .any(|artifact| artifact.input_classes.contains(&target))
     };
-    let has_dependency_resolution = has_class(ReplayInputClass::DeclaredDependencyResolution);
+    let has_cargo_samples = receipt_diff_has_cargo_evidence(report);
+    let has_dependency_resolution = !has_cargo_samples
+        && has_class(ReplayInputClass::DeclaredDependencyResolution);
     let has_runtime_identity = has_class(ReplayInputClass::SelectedRuntimeVersion)
         || has_class(ReplayInputClass::SelectedRuntimeArtifact);
     let has_presentation_profile = has_class(ReplayInputClass::ExecutionPresentationProfile);
@@ -121238,6 +123431,9 @@ fn capture_witnessed_observations_before_execution(
         }
     }
     Ok(ExecutionReceiptWitnessedObservations {
+        toolchain_fulfillment_route_refusal: None,
+        toolchain_fulfillment_denial: None,
+        cargo_hydration: Vec::new(),
         query_traces: query_traces.into_values().collect(),
         replay_baseline_recordings: Vec::new(),
         sandbox_application: None,
@@ -121627,6 +123823,7 @@ fn attach_witnessed_observations(
     receipt: &mut ExecutionReceipt,
     captured: &ExecutionReceiptWitnessedObservations,
 ) {
+    attach_cargo_hydration_to_receipt(receipt, &captured.cargo_hydration);
     receipt
         .witnessed_observations
         .query_traces
@@ -122661,8 +124858,13 @@ fn run_execution_receipt_with_shared(
         policy_snapshot,
         selected_plan.as_ref(),
     );
-
-    ExecutionReceipt {
+    let mut cargo_hydration = executed_steps.iter()
+        .flat_map(|step| step.cargo_hydration.iter().cloned())
+        .collect::<Vec<_>>();
+    if cargo_hydration.is_empty() {
+        cargo_hydration.extend(cargo_unsupported_observation(contract, task_name, overrides));
+    }
+    let mut receipt = ExecutionReceipt {
         ok,
         path: contract_path.display().to_string(),
         scope: String::from("repo"),
@@ -122672,7 +124874,7 @@ fn run_execution_receipt_with_shared(
         contract_snapshot_ref: None,
         assumption_set_hash: None,
         evaluated_inputs,
-        witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
+        witnessed_observations: ExecutionReceiptWitnessedObservations::default(),
         crossing: None,
         refusal: None,
         typed_effect_policy_refusal: None,
@@ -122732,7 +124934,81 @@ fn run_execution_receipt_with_shared(
             not_ready_count: None,
         },
         next,
+    };
+    attach_cargo_hydration_to_receipt(&mut receipt, &cargo_hydration);
+    receipt
+}
+
+fn cargo_unsupported_observation(
+    contract: &Contract,
+    task_name: &str,
+    overrides: ExecutionOverrides,
+) -> Option<crate::hydration_provenance::CargoHydrationEvidence> {
+    let Err(RunError::LockedCargoHydrationRefused { task, cwd, prepare_path, .. }) =
+        crate::runner::plan_task_execution_with_overrides(contract, task_name, overrides)
+    else { return None; };
+    let mut evidence = crate::hydration_provenance::CargoHydrationEvidence::pending(&task, &cwd);
+    evidence.prepare_path = prepare_path;
+    evidence.outcome = crate::hydration_provenance::CargoLockOutcome::UnsupportedBackend;
+    Some(evidence)
+}
+
+fn attach_toolchain_fulfillment_denial_to_receipt(receipt: &mut ExecutionReceipt, error: &RunError) {
+    if let RunError::ToolchainFulfillmentPolicyDenied { evidence, .. } = error {
+        receipt.witnessed_observations.toolchain_fulfillment_denial = Some((**evidence).clone());
+        receipt.failed_task = Some(evidence.task.clone());
+        receipt.failed_dependency = evidence.root_task.as_ref()
+            .filter(|root| *root != &evidence.task).map(|_| evidence.task.clone());
+        receipt.failure_origin = Some(evidence.reason.clone());
     }
+}
+
+fn attach_cargo_hydration_to_receipt(
+    receipt: &mut ExecutionReceipt,
+    records: &[crate::hydration_provenance::CargoHydrationEvidence],
+) {
+    for record in records {
+        if !receipt.witnessed_observations.cargo_hydration.contains(record) {
+            receipt.witnessed_observations.cargo_hydration.push(record.clone());
+        }
+    }
+    for input in cargo_hydration_evaluated_inputs(records) {
+        if !receipt.evaluated_inputs.iter().any(|existing| existing == &input) {
+            receipt.evaluated_inputs.push(input);
+        }
+    }
+    receipt.evaluated_inputs.sort_by(|left, right| left.id.cmp(&right.id));
+}
+
+fn cargo_hydration_evaluated_inputs(
+    records: &[crate::hydration_provenance::CargoHydrationEvidence],
+) -> Vec<crate::output::ExecutionReceiptEvaluatedInput> {
+    let mut inputs = Vec::new();
+    for record in records {
+        let Some(before) = record.before.as_ref() else { continue; };
+        for (role, observed) in [
+            ("member_manifest", &before.member_manifest),
+            ("root_manifest", &before.root_manifest),
+            ("lockfile", &before.lockfile),
+        ] {
+            // Retain the admitted sample; never reconstruct an input from post-run files.
+            let key = serde_json::json!([
+                record.invocation_path, record.task, record.generation,
+                record.prepare_path, role, observed.path,
+            ]);
+            inputs.push(crate::output::ExecutionReceiptEvaluatedInput {
+                id: format!("hydration:cargo:{key}"),
+                kind: format!("cargo_{role}"),
+                input_class: ReplayInputClass::DeclaredDependencyResolution,
+                identity: observed.identity.clone(),
+                expected_identity: None,
+                execution_started: None,
+                hydration_provenance: None,
+                artifact_lineage: None,
+            });
+        }
+    }
+    inputs
 }
 
 fn execution_receipt_step_detail(step: &ExecutedTaskStep, requested_task: &str) -> Option<String> {
@@ -122807,6 +125083,43 @@ fn execution_receipt_step_relation(
         TaskExecutionRelation::AfterSuccess { parent } => ("after_success", Some(parent.as_str())),
         TaskExecutionRelation::AfterFailure { parent } => ("after_failure", Some(parent.as_str())),
         TaskExecutionRelation::AfterAlways { parent } => ("after_always", Some(parent.as_str())),
+    }
+}
+
+fn toolchain_route_refusal_receipt(
+    contract: &Contract,
+    contract_path: &Path,
+    task_name: &str,
+    error: &RunError,
+) -> ExecutionReceipt {
+    let mut receipt = repo_execution_receipt_with_observation_mode(
+        contract_path, contract, PhaseExecutionContext::default(), "BLOCKED", "admission",
+        None, None, Some(task_name), &[], None,
+        Some(String::from("inspect the captured policy; this route does not support Rust fulfillment restrictions")),
+        None, None, false,
+    );
+    receipt.witnessed_observations.toolchain_fulfillment_route_refusal =
+        error.toolchain_policy_route_refusal(contract_path, Some(task_name), None);
+    receipt.failure_origin = Some(String::from("toolchain_fulfillment_policy_route_unsupported"));
+    receipt.failed_task = Some(task_name.to_string());
+    receipt.blocked.push(String::from("toolchain_fulfillment_policy_route_unsupported"));
+    refresh_execution_receipt_status(&mut receipt);
+    receipt
+}
+
+fn toolchain_route_run_refusal(
+    contract: &Contract,
+    contract_path: &Path,
+    task_name: &str,
+    show_receipt: bool,
+    error: RunError,
+) -> RunCommandFailure {
+    let receipt = toolchain_route_refusal_receipt(contract, contract_path, task_name, &error);
+    RunCommandFailure {
+        message: stylize_text_failure("ota run", &render_run_error(error)),
+        summary: Some(render_execution_receipt_summary_block(&receipt, Some(task_name), "RUN SUMMARY")),
+        exit_code: 1,
+        receipt: show_receipt.then(|| render_execution_receipt_text(&receipt)),
     }
 }
 
@@ -131247,6 +133560,26 @@ fn setup_failure_output_label(stderr: &str) -> &'static str {
     }
 }
 
+fn render_toolchain_route_refusal_text(refusal: &crate::runner::ToolchainFulfillmentPolicyRouteRefusal) -> String {
+    let mut text = format!("\n\n{}", paint_section_title("Toolchain Route Refusal"));
+    for (label, value) in [
+        ("Reason:", refusal.reason.clone()),
+        ("Route:", refusal.route.clone()),
+        ("Root:", refusal.root.display().to_string()),
+        ("Selected Task:", refusal.selected_task.clone().unwrap_or_else(|| String::from("none"))),
+        ("Selected Workflow:", refusal.selected_workflow.clone().unwrap_or_else(|| String::from("none"))),
+        ("Policy Identity:", refusal.policy_identity.clone()),
+        ("Policy Source:", refusal.policy_source.as_str().to_string()),
+        ("Policy Path:", refusal.policy_path.display().to_string()),
+        ("Execution Started:", refusal.execution_started.to_string()),
+        ("Attempted:", refusal.attempted.to_string()),
+        ("Outcome:", refusal.outcome.clone()),
+    ] {
+        text.push_str(&format!("\n{} {value}", paint_key(label)));
+    }
+    text
+}
+
 fn render_execution_receipt_text(receipt: &ExecutionReceipt) -> String {
     let mut stdout = String::from("\n\n");
     if !receipt.steps.is_empty() {
@@ -131320,6 +133653,9 @@ fn render_execution_receipt_text(receipt: &ExecutionReceipt) -> String {
             paint_key("Failure Origin:"),
             failure_origin
         ));
+    }
+    if let Some(refusal) = receipt.witnessed_observations.toolchain_fulfillment_route_refusal.as_ref() {
+        stdout.push_str(&render_toolchain_route_refusal_text(refusal));
     }
     if let Some(refusal) = receipt.refusal.as_ref() {
         stdout.push_str(&format!("\n\n{}", paint_section_title("Refusal Evidence")));
@@ -133401,6 +135737,96 @@ struct CommandRunResult {
     host_service_cleanup: Vec<crate::runner::HostServiceCleanupEvidence>,
 }
 
+#[derive(Debug)]
+struct RepoUpError {
+    message: String,
+    cargo_hydration: Vec<crate::hydration_provenance::CargoHydrationEvidence>,
+}
+
+impl From<String> for RepoUpError {
+    fn from(message: String) -> Self {
+        Self { message, cargo_hydration: Vec::new() }
+    }
+}
+
+impl std::fmt::Display for RepoUpError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+fn up_error_output(
+    error: RepoUpError,
+    contract: &Contract,
+    path: &Path,
+    workflow_name: Option<&str>,
+    overrides: ExecutionOverrides,
+    format: OutputFormat,
+    show_receipt: bool,
+) -> CommandOutput {
+    if error.cargo_hydration.is_empty() {
+        return CommandOutput::failure(error.message);
+    }
+    let receipt = cargo_up_failure_receipt(&error, contract, path, workflow_name, overrides);
+    match format {
+        OutputFormat::Json => CommandOutput::failure(to_json_value(json!({
+            "ok": false, "error": error.message, "receipt": receipt,
+        }))),
+        OutputFormat::Text => CommandOutput::failure(if show_receipt {
+            format!("{}\n{}", error.message, render_execution_receipt_text(&receipt))
+        } else { error.message }),
+    }
+}
+
+fn cargo_up_failure_receipt(
+    error: &RepoUpError,
+    contract: &Contract,
+    path: &Path,
+    workflow_name: Option<&str>,
+    overrides: ExecutionOverrides,
+) -> ExecutionReceipt {
+    let mut receipt = repo_execution_receipt_with_overrides(
+        path, contract, PhaseExecutionContext::default(), "FAILED", "execution",
+        workflow_name, None, None, &[], None, None, Some(overrides),
+    );
+    attach_cargo_hydration_to_receipt(&mut receipt, &error.cargo_hydration);
+    receipt.summary.error_count = 1;
+    receipt
+}
+
+fn retain_up_cargo_result(
+    mut result: Result<CommandRunResult, RunError>,
+    records: &mut Vec<crate::hydration_provenance::CargoHydrationEvidence>,
+    invocation_path: &[String],
+) -> Result<CommandRunResult, RunError> {
+    if let Ok(outcome) = &mut result {
+        for record in outcome.task_steps.iter_mut().flat_map(|step| &mut step.cargo_hydration) {
+            record.invocation_path = invocation_path.to_vec();
+        }
+    }
+    if let Ok(outcome) = &result {
+        records.extend(outcome.task_steps.iter().flat_map(|step| step.cargo_hydration.iter().cloned()));
+    }
+    result.map_err(|error| {
+        let (cause, mut observations) = error.into_cargo_context();
+        for record in &mut observations {
+            record.invocation_path = invocation_path.to_vec();
+        }
+        if observations.is_empty() { cause } else {
+            RunError::CargoHydrationContext { cause: Box::new(cause), observations }
+        }
+    })
+}
+
+fn cargo_invocation_path(parent: &[String], phase: &str, occurrence: Option<usize>) -> Vec<String> {
+    let mut path = parent.to_vec();
+    path.push(phase.to_string());
+    if let Some(occurrence) = occurrence {
+        path.push(occurrence.to_string());
+    }
+    path
+}
+
 fn append_up_executed_task_steps(receipt: &mut ExecutionReceipt, task_steps: &[ExecutedTaskStep]) {
     for task_step in task_steps {
         let mut receipt_step = execution_receipt_step(
@@ -133423,6 +135849,9 @@ fn append_up_executed_task_steps(receipt: &mut ExecutionReceipt, task_steps: &[E
         receipt.steps.push(receipt_step);
     }
     receipt.summary.step_count = receipt.steps.len();
+    let records = task_steps.iter().flat_map(|step| step.cargo_hydration.iter().cloned())
+        .collect::<Vec<_>>();
+    attach_cargo_hydration_to_receipt(receipt, &records);
 }
 
 #[derive(Debug, Clone, Default)]
@@ -134169,9 +136598,32 @@ fn repo_execution_receipt_with_overrides_and_policy_snapshot(
     execution_overrides: Option<ExecutionOverrides>,
     policy_snapshot: Option<DoctorPolicySnapshot<'_>>,
 ) -> ExecutionReceipt {
+    repo_execution_receipt_with_observation_mode(
+        path, contract, context, status, phase, workflow_name, service, task,
+        findings, exit_code, next, execution_overrides, policy_snapshot, true,
+    )
+}
+
+// Admission refusals must not probe runtimes or re-read execution inputs to fill a receipt.
+fn repo_execution_receipt_with_observation_mode(
+    path: &Path,
+    contract: &Contract,
+    context: PhaseExecutionContext,
+    status: &str,
+    phase: &str,
+    workflow_name: Option<&str>,
+    service: Option<&str>,
+    task: Option<&str>,
+    findings: &[Finding],
+    exit_code: Option<i32>,
+    next: Option<String>,
+    execution_overrides: Option<ExecutionOverrides>,
+    policy_snapshot: Option<DoctorPolicySnapshot<'_>>,
+    observe_execution_inputs: bool,
+) -> ExecutionReceipt {
     let execution_backend = phase_execution_backend(&context).unwrap_or(Backend::Native);
     let receipt_overrides = execution_overrides.unwrap_or_default();
-    let selected_plan = task
+    let selected_plan = observe_execution_inputs.then(|| task
         .and_then(|task_name| {
             crate::runner::plan_task_execution_with_overrides(
                 contract,
@@ -134187,11 +136639,11 @@ fn repo_execution_receipt_with_overrides_and_policy_snapshot(
                 receipt_overrides,
             )
             .ok()
-        });
+        })).flatten();
     let effective_task_env = task
         .and_then(|task_name| contract.tasks.get(task_name))
         .map(|task| task.env_for_backend(contract.execution.as_ref(), execution_backend));
-    let env_details = selected_plan
+    let env_details = if observe_execution_inputs { selected_plan
         .as_ref()
         .and_then(|plan| resolve_run_plan_env_details_with_policy(contract, path, plan, None).ok())
         .unwrap_or_else(|| {
@@ -134207,8 +136659,10 @@ fn repo_execution_receipt_with_overrides_and_policy_snapshot(
                 resolve_task_env_details(contract, path, effective_task_env.as_ref())
             })
             .unwrap_or_default()
-        });
-    let declared_sources = load_declared_env_sources(contract, path);
+        }) } else { BTreeMap::new() };
+    let declared_sources = if observe_execution_inputs {
+        load_declared_env_sources(contract, path)
+    } else { Vec::new() };
     let detail = service
         .map(|service| format!("service `{service}`"))
         .or_else(|| task.map(|task| format!("task `{task}`")));
@@ -134222,20 +136676,21 @@ fn repo_execution_receipt_with_overrides_and_policy_snapshot(
     ));
     let ok = status == "READY" && exit_code.unwrap_or(0) == 0;
     let receipt_status = aggregate_execution_summary_status(ok, &steps, &[]);
-    let native_prerequisites = receipt_native_prerequisites(
+    let native_prerequisites = if observe_execution_inputs { receipt_native_prerequisites(
         contract,
         task,
         execution_backend,
         current_requirement_platform(),
         phase != "preview" && phase != "readiness",
-    );
-    let toolchains = task
+    ) } else { Vec::new() };
+    let toolchains = if observe_execution_inputs { task
         .map(|task_name| {
             selected_task_toolchain_summaries(contract, task_name, ExecutionOverrides::default())
         })
-        .unwrap_or_else(|| fallback_toolchain_summaries_for_backend(contract, execution_backend));
+        .unwrap_or_else(|| fallback_toolchain_summaries_for_backend(contract, execution_backend))
+    } else { Vec::new() };
     let toolchain_names = toolchain_summary_names(&toolchains);
-    let evaluated_inputs = receipt_evaluated_inputs_with_policy_snapshot(
+    let evaluated_inputs = if observe_execution_inputs { receipt_evaluated_inputs_with_policy_snapshot(
         contract,
         path,
         selected_plan
@@ -134245,8 +136700,8 @@ fn repo_execution_receipt_with_overrides_and_policy_snapshot(
         receipt_overrides,
         policy_snapshot,
         selected_plan.as_ref(),
-    );
-    ExecutionReceipt {
+    ) } else { Vec::new() };
+    let mut receipt = ExecutionReceipt {
         ok,
         path: path.display().to_string(),
         scope: String::from("repo"),
@@ -134256,7 +136711,7 @@ fn repo_execution_receipt_with_overrides_and_policy_snapshot(
         contract_snapshot_ref: None,
         assumption_set_hash: None,
         evaluated_inputs,
-        witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
+        witnessed_observations: ExecutionReceiptWitnessedObservations::default(),
         crossing: None,
         refusal: None,
         typed_effect_policy_refusal: None,
@@ -134282,12 +136737,12 @@ fn repo_execution_receipt_with_overrides_and_policy_snapshot(
             .iter()
             .map(|(name, value)| receipt_env_source_entry(name, value, &declared_sources))
             .collect(),
-        workflow_env_artifacts: selected_workflow_env_profile_rendered_artifact_entries(
+        workflow_env_artifacts: if observe_execution_inputs { selected_workflow_env_profile_rendered_artifact_entries(
             contract,
             path,
             workflow_name,
             receipt_overrides,
-        ),
+        ) } else { Vec::new() },
         native_prerequisites,
         toolchains,
         runtime: None,
@@ -134303,7 +136758,9 @@ fn repo_execution_receipt_with_overrides_and_policy_snapshot(
             &toolchain_names,
             policy_snapshot,
         ),
-        dependency_steps: planned_dependency_steps_for_task(contract, task, execution_overrides),
+        dependency_steps: if observe_execution_inputs {
+            planned_dependency_steps_for_task(contract, task, execution_overrides)
+        } else { Vec::new() },
         steps,
         status: Some(receipt_status),
         failed_task: None,
@@ -134312,7 +136769,13 @@ fn repo_execution_receipt_with_overrides_and_policy_snapshot(
         blocked: Vec::new(),
         summary: execution_receipt_summary(findings, 1, None, None, None),
         next,
+    };
+    if observe_execution_inputs {
+        let observations = task.and_then(|name| cargo_unsupported_observation(contract, name, receipt_overrides))
+            .into_iter().collect::<Vec<_>>();
+        attach_cargo_hydration_to_receipt(&mut receipt, &observations);
     }
+    receipt
 }
 
 fn phase_execution_backend(context: &PhaseExecutionContext) -> Option<Backend> {
@@ -135648,6 +138111,11 @@ fn acquire_workspace_repo(
     repo: &WorkspaceRepoRef,
     mode: RepoExecutionMode,
 ) -> Result<CommandRunResult, String> {
+    #[cfg(test)]
+    TEST_WORKSPACE_PARENT_EFFECTS.with(|count| {
+        let (progress, workers, acquisitions) = count.get();
+        count.set((progress, workers, acquisitions + 1));
+    });
     if !workspace_repo_needs_acquisition(repo) {
         return Ok(CommandRunResult {
             exit_code: 0,
@@ -137897,6 +140365,7 @@ fn run_up_task(
     policy_env: Option<&BTreeMap<String, String>>,
     mode: RepoExecutionMode,
     agent: bool,
+    retained_policy: crate::runner::RetainedRunPolicyContext,
 ) -> Result<CommandRunResult, RunError> {
     match mode {
         RepoExecutionMode::Stream => {
@@ -137922,7 +140391,7 @@ fn run_up_task(
                             )
                         })
                     });
-            run_task_with_progress_and_args_and_overrides_with_policy(
+            crate::runner::run_task_with_progress_and_args_and_overrides_with_policy_context(
                 contract,
                 resolved_path,
                 task_name,
@@ -137933,6 +140402,7 @@ fn run_up_task(
                 None,
                 terminal_passthrough,
                 policy_env,
+                retained_policy,
             )
         }
         .map(|outcome| CommandRunResult {
@@ -137948,13 +140418,14 @@ fn run_up_task(
             host_service_cleanup: outcome.host_service_cleanup,
         })
         .map_err(|error| error),
-        RepoExecutionMode::Capture => run_task_captured_with_args_with_overrides_with_policy(
+        RepoExecutionMode::Capture => crate::runner::run_task_captured_with_args_with_overrides_with_policy_context(
             contract,
             resolved_path,
             task_name,
             &[],
             overrides,
             policy_env,
+            retained_policy,
         )
         .map(|outcome| CommandRunResult {
             exit_code: outcome.exit_code,
@@ -140142,7 +142613,7 @@ fn execute_repo_up(
     policy_env: Option<&BTreeMap<String, String>>,
     dry_run: bool,
     mode: RepoExecutionMode,
-) -> Result<RepoUpResult, String> {
+) -> Result<RepoUpResult, RepoUpError> {
     execute_repo_up_with_behavior(
         contract,
         resolved_path,
@@ -140166,7 +142637,7 @@ fn execute_repo_up_with_behavior(
     mode: RepoExecutionMode,
     run_behavior_preference: UpRunBehaviorPreference,
     ready_timeout: Option<Duration>,
-) -> Result<RepoUpResult, String> {
+) -> Result<RepoUpResult, RepoUpError> {
     execute_repo_up_with_behavior_with_agent(
         contract,
         resolved_path,
@@ -140182,6 +142653,7 @@ fn execute_repo_up_with_behavior(
     )
 }
 
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 fn execute_repo_up_with_behavior_with_agent_and_grant(
     contract: &Contract,
@@ -140198,20 +142670,43 @@ fn execute_repo_up_with_behavior_with_agent_and_grant(
     mode: RepoExecutionMode,
     run_behavior_preference: UpRunBehaviorPreference,
     ready_timeout: Option<Duration>,
-) -> Result<RepoUpResult, String> {
-    if let Some(result) = typed_effect_up_pre_execution_result(
+) -> Result<RepoUpResult, RepoUpError> {
+    let admission = match prepare_up_command_admission(
         contract,
         resolved_path,
         overrides,
         workflow_name,
         agent,
         dry_run,
-        false,
+    )? {
+        Ok(admission) => admission,
+        Err(result) => return Ok(*result),
+    };
+    execute_repo_up_with_admission_and_grant(
+        contract, resolved_path, overrides, workflow_name, effect_overrides, agent,
+        grant, reason, sandbox_target, policy_env, dry_run, mode,
+        run_behavior_preference, ready_timeout, admission,
     )
-    .map_err(|error| error.to_string())?
-    {
-        return Ok(result);
-    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn execute_repo_up_with_admission_and_grant(
+    contract: &Contract,
+    resolved_path: &Path,
+    overrides: ExecutionOverrides,
+    workflow_name: Option<&str>,
+    effect_overrides: &[String],
+    agent: bool,
+    grant: Option<&str>,
+    reason: Option<&str>,
+    sandbox_target: Option<&str>,
+    policy_env: Option<&BTreeMap<String, String>>,
+    dry_run: bool,
+    mode: RepoExecutionMode,
+    run_behavior_preference: UpRunBehaviorPreference,
+    ready_timeout: Option<Duration>,
+    admission: CommandTypedEffectAdmission,
+) -> Result<RepoUpResult, RepoUpError> {
     let grant_admission = match evaluate_workflow_crossing_grant(
         contract,
         resolved_path,
@@ -140281,16 +142776,18 @@ fn execute_repo_up_with_behavior_with_agent_and_grant(
             run_behavior_preference,
             ready_timeout,
             true,
+            &[],
+            admission.loaded_policy,
             &mut activate_crossing_authority,
         ) {
             Ok(result) => result,
-            Err(error) if has_grant_admission => crossing_execution_up_failure_result(
-                contract,
-                resolved_path,
-                workflow_name,
-                overrides,
-                error,
-            ),
+            Err(error) if has_grant_admission => {
+                let mut result = crossing_execution_up_failure_result(
+                    contract, resolved_path, workflow_name, overrides, error.message,
+                );
+                attach_cargo_hydration_to_receipt(&mut result.receipt, &error.cargo_hydration);
+                result
+            }
             Err(error) => return Err(error),
         },
     );
@@ -140330,7 +142827,10 @@ fn execute_repo_up_with_behavior_with_agent_and_grant(
             &mut result.receipt,
             terminal_exit_code,
         )
-        .map_err(|error| format!("crossing authority evidence could not be archived: {error}"))?;
+        .map_err(|error| RepoUpError {
+            message: format!("crossing authority evidence could not be archived: {error}"),
+            cargo_hydration: result.receipt.witnessed_observations.cargo_hydration.clone(),
+        })?;
     }
     Ok(*result)
 }
@@ -140347,20 +142847,18 @@ fn execute_repo_up_with_behavior_with_agent(
     mode: RepoExecutionMode,
     run_behavior_preference: UpRunBehaviorPreference,
     ready_timeout: Option<Duration>,
-) -> Result<RepoUpResult, String> {
-    if let Some(result) = typed_effect_up_pre_execution_result(
+) -> Result<RepoUpResult, RepoUpError> {
+    let admission = match prepare_up_command_admission(
         contract,
         resolved_path,
         overrides,
         workflow_name,
         agent,
         dry_run,
-        false,
-    )
-    .map_err(|error| error.to_string())?
-    {
-        return Ok(result);
-    }
+    )? {
+        Ok(admission) => admission,
+        Err(result) => return Ok(*result),
+    };
     let mut activate_authority = || Ok(());
     execute_repo_up_with_behavior_with_agent_and_authority_activation(
         contract,
@@ -140375,11 +142873,191 @@ fn execute_repo_up_with_behavior_with_agent(
         run_behavior_preference,
         ready_timeout,
         true,
+        &[],
+        admission.loaded_policy,
         &mut activate_authority,
     )
 }
 
-fn typed_effect_up_pre_execution_result(
+fn acquire_up_command_admission(
+    contract: &Contract,
+    resolved_path: &Path,
+    overrides: ExecutionOverrides,
+    workflow_name: Option<&str>,
+) -> Result<CommandTypedEffectAdmission, RunError> {
+    let effective_workflow_name = contract.selected_workflow(workflow_name).map(|(name, _)| name);
+    let roots = selected_workflow_phase_task_roots(contract, effective_workflow_name);
+    let adjusted_contract =
+        contract_adjusted_for_selected_workflow_env_profile(contract, effective_workflow_name);
+    let admission = admit_command_execution_closure(
+        adjusted_contract.as_ref().unwrap_or(contract), resolved_path,
+        effective_workflow_name, &roots, overrides,
+        Some(&current_effect_governance_overrides()),
+    ).map_err(|error| *error)?;
+    // Preserve the pure protected-delivery refusal; it is not an acquired absence.
+    if command_secret_delivery_refusal(&admission).is_some() {
+        return Ok(admission);
+    }
+    if !admission.policy_acquired {
+        return Err(RunError::FileActionFailed {
+            task: roots.first().map(|root| root.task.clone()).unwrap_or_default(),
+            message: String::from("Up command policy was not acquired"),
+        });
+    }
+    refuse_unsupported_toolchain_fulfillment_policy_route(admission.loaded_policy.as_ref(), "up")
+        .map_err(|error| *error)?;
+    Ok(admission)
+}
+
+fn prepare_up_command_admission(
+    contract: &Contract,
+    resolved_path: &Path,
+    overrides: ExecutionOverrides,
+    workflow_name: Option<&str>,
+    agent: bool,
+    dry_run: bool,
+) -> Result<Result<CommandTypedEffectAdmission, Box<RepoUpResult>>, RepoUpError> {
+    if let Some(name) = workflow_name
+        && !selected_workflow_selector_is_valid(contract, name)
+    {
+        return Err(workflow_selection_error(contract, resolved_path, name).into());
+    }
+    let admission = match acquire_up_command_admission(contract, resolved_path, overrides, workflow_name) {
+        Ok(admission) => admission,
+        Err(error) => return Ok(Err(Box::new(up_command_admission_refusal_result(
+            contract, resolved_path, workflow_name, &error,
+        )))),
+    };
+    if let Some(result) = typed_effect_up_pre_execution_result_from_admission(
+        contract, resolved_path, overrides, workflow_name, agent, dry_run, false, &admission,
+    ).map_err(|error| error.to_string())? {
+        return Ok(Err(Box::new(result)));
+    }
+    Ok(Ok(admission))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn prepare_up_frontend_admission(
+    target: &LoadedContractTarget,
+    overrides: ExecutionOverrides,
+    workflow_name: Option<&str>,
+    agent: bool,
+    dry_run: bool,
+    special_refusal_route: bool,
+    format: OutputFormat,
+    show_receipt: bool,
+) -> Result<CommandTypedEffectAdmission, CommandOutput> {
+    if let Some(name) = workflow_name
+        && !selected_workflow_selector_is_valid(&target.contract, name)
+    {
+        return Err(CommandOutput::failure_with_code(
+            workflow_selection_error(&target.contract, &target.contract_path, name), 2,
+        ));
+    }
+    let prepared = if special_refusal_route {
+        match acquire_up_command_admission(&target.contract, &target.contract_path, overrides, workflow_name) {
+            Ok(admission) if command_secret_delivery_refusal(&admission).is_none() => Ok(Ok(admission)),
+            Ok(admission) => typed_effect_up_pre_execution_result_from_admission(
+                &target.contract, &target.contract_path, overrides, workflow_name,
+                agent, dry_run, false, &admission,
+            ).and_then(|result| result.map(|result| Err(Box::new(result))).ok_or_else(|| {
+                TypedEffectRefusalArchiveError::from(String::from("protected Up admission must remain terminal"))
+            }))
+                .map_err(|error| RepoUpError::from(error.to_string())),
+            Err(error) => Ok(Err(Box::new(up_command_admission_refusal_result(
+                &target.contract, &target.contract_path, workflow_name, &error,
+            )))),
+        }
+    } else {
+        prepare_up_command_admission(
+            &target.contract, &target.contract_path, overrides, workflow_name, agent, dry_run,
+        )
+    };
+    match prepared {
+        Ok(Ok(admission)) => Ok(admission),
+        Ok(Err(result)) => {
+            let path = target.contract_path.display().to_string();
+            Err(render_up_result(&path, &compact_contract_path(&target.contract_path), *result, format, show_receipt))
+        }
+        Err(error) => Err(CommandOutput::failure(error.message)),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn prepare_up_local_member(
+    resolved_path: &Path,
+    member: &str,
+    overrides: ExecutionOverrides,
+    workflow_name: Option<&str>,
+    agent: bool,
+    dry_run: bool,
+    format: OutputFormat,
+    show_receipt: bool,
+) -> Result<(LoadedContractTarget, CommandTypedEffectAdmission), CommandOutput> {
+    let target = load_and_validate_target(resolved_path, Some(member)).map_err(|problem| {
+        let (errors, error, message) = match problem {
+            ContractProblem::Validation(errors) => (
+                errors.errors().iter().map(ToString::to_string).collect(), None, errors.to_string(),
+            ),
+            ContractProblem::Load(error) => (Vec::new(), Some(error.to_string()), error.to_string()),
+        };
+        match format {
+            OutputFormat::Text => CommandOutput::failure(message),
+            OutputFormat::Json => {
+                CommandOutput::failure(to_json(&ValidateFailure {
+                    summary: None, ok: false, path: &resolved_path.display().to_string(),
+                    errors, error, warnings: Vec::new(), warning_details: Vec::new(),
+                }))
+            }
+        }
+    })?;
+    let admission = prepare_up_frontend_admission(
+        &target, overrides, workflow_name, agent, dry_run, false, format, show_receipt,
+    )?;
+    Ok((target, admission))
+}
+
+fn up_command_admission_refusal_result(
+    contract: &Contract,
+    resolved_path: &Path,
+    workflow_name: Option<&str>,
+    error: &RunError,
+) -> RepoUpResult {
+    let route_refusal = error.toolchain_policy_route_refusal(resolved_path, None, workflow_name);
+    let code = if route_refusal.is_some() {
+        "toolchain_fulfillment_policy_route_unsupported"
+    } else {
+        "up_command_admission_unavailable"
+    };
+    let finding = Finding {
+        identity: Some(FindingIdentity {
+            code: code.to_string(), category: String::from("execution"), owner: String::from("repo_contract"),
+        }),
+        severity: FindingSeverity::Error,
+        summary: String::from("Up command admission refused"),
+        why: error.to_string(),
+        next: String::from("inspect the selected workflow and captured policy; no workflow preparation was attempted"),
+    };
+    let report = DoctorReport {
+        ok: false, provisioning: None, adapter_bootstrap: None, execution_target: None,
+        findings: vec![finding.clone()],
+    };
+    let mut receipt = repo_execution_receipt_with_observation_mode(
+        resolved_path, contract, PhaseExecutionContext::default(), "BLOCKED", "admission",
+        workflow_name, None, None, &report.findings, None, Some(finding.next), None, None, false,
+    );
+    receipt.witnessed_observations.toolchain_fulfillment_route_refusal = route_refusal;
+    receipt.failure_origin = Some(code.to_string());
+    receipt.blocked.push(code.to_string());
+    refresh_execution_receipt_status(&mut receipt);
+    RepoUpResult {
+        ok: false, status: "BLOCKED", phase: "admission", governance_preflight: None,
+        report, preview: None, receipt, service: None, service_command: None,
+        task: None, task_command: None, exit_code: None, stdout: String::new(), stderr: String::new(),
+    }
+}
+
+fn typed_effect_up_pre_execution_result_from_admission(
     contract: &Contract,
     resolved_path: &Path,
     overrides: ExecutionOverrides,
@@ -140387,55 +143065,13 @@ fn typed_effect_up_pre_execution_result(
     agent: bool,
     dry_run: bool,
     archive_effect_refusal: bool,
+    command_admission: &CommandTypedEffectAdmission,
 ) -> Result<Option<RepoUpResult>, TypedEffectRefusalArchiveError> {
-    if let Some(workflow_name) = workflow_name
-        && !selected_workflow_selector_is_valid(contract, workflow_name)
-    {
-        return Ok(None);
-    }
-    let effective_workflow_name = contract
-        .selected_workflow(workflow_name)
-        .map(|(name, _)| name);
+    let effective_workflow_name = contract.selected_workflow(workflow_name).map(|(name, _)| name);
     let roots = selected_workflow_phase_task_roots(contract, effective_workflow_name);
     let adjusted_contract =
         contract_adjusted_for_selected_workflow_env_profile(contract, effective_workflow_name);
     let admission_contract = adjusted_contract.as_ref().unwrap_or(contract);
-    let command_admission = match admit_command_typed_effect_closure(
-        admission_contract,
-        resolved_path,
-        effective_workflow_name,
-        roots.as_slice(),
-        overrides,
-        Some(&current_effect_governance_overrides()),
-    ) {
-        Ok(admission) => admission,
-        Err(error) => {
-            return Ok(Some(if dry_run {
-                typed_effect_up_dry_run_refusal_result(
-                    contract,
-                    resolved_path,
-                    workflow_name,
-                    overrides,
-                    agent,
-                    *error,
-                    None,
-                    None,
-                    false,
-                )
-            } else {
-                typed_effect_up_refusal_result(
-                    contract,
-                    resolved_path,
-                    workflow_name,
-                    overrides,
-                    agent,
-                    *error,
-                    None,
-                    false,
-                )
-            }));
-        }
-    };
     let secret_delivery_refusal = command_secret_delivery_refusal(&command_admission);
     let typed_effect_refusal = typed_effect_admission_refusal(&command_admission.typed);
     let secret_delivery_refused = secret_delivery_refusal.is_some();
@@ -140727,16 +143363,10 @@ fn typed_effect_up_refusal_result(
         execution_target: None,
         findings: vec![finding.clone()],
     };
-    let context = task_name
-        .as_deref()
-        .map(|task_name| {
-            task_phase_execution_context(contract, resolved_path, task_name, overrides, None)
-        })
-        .unwrap_or_else(native_phase_execution_context);
-    let mut receipt = repo_execution_receipt_with_overrides(
+    let mut receipt = repo_execution_receipt_with_observation_mode(
         resolved_path,
         contract,
-        context,
+        PhaseExecutionContext::default(),
         "BLOCKED",
         "preconditions",
         workflow_name,
@@ -140746,6 +143376,8 @@ fn typed_effect_up_refusal_result(
         None,
         Some(finding.next.clone()),
         Some(overrides),
+        None,
+        false,
     );
     receipt.blocked.push(String::from(finding_code));
     receipt.typed_effect_policy_refusal = typed_effect_policy_refusal;
@@ -140800,25 +143432,36 @@ fn typed_effect_up_dry_run_refusal_result(
         typed_effect_policy_refusal,
         secret_delivery_refused,
     );
-    let mut preview = build_up_preview_with_actor(
-        contract,
-        resolved_path,
-        overrides,
-        workflow_name,
-        UpRunBehaviorPreference::Auto,
-        &result.report,
-        agent,
-    );
-    preview.summary = doctor_summary(&result.report, DoctorVerdict::NotReady);
-    preview.governance = governance_evaluation_for_workflow_preview(
-        contract,
-        workflow_name,
-        overrides,
-        UpRunBehaviorPreference::Auto,
-        &preview.summary,
-        agent,
-        None,
-    );
+    let summary = doctor_summary(&result.report, DoctorVerdict::NotReady);
+    let primary_task = selected_up_primary_task_name(contract, workflow_name);
+    let (backend, lifecycle) = primary_task.map(|task| {
+        let effective = effective_task_execution(contract, task, overrides);
+        (effective.backend, effective.lifecycle)
+    }).unwrap_or_else(|| effective_execution(contract, overrides));
+    // Refusal previews contain declarations only, not prerequisite or hydration observations.
+    let mut preview = RepoUpPreview {
+        summary: summary.clone(),
+        contract_identity: repo_contract_identity(contract),
+        execution: UpPreviewExecution {
+            backend: format_backend(backend).to_string(),
+            context: primary_task.and_then(|task| reported_task_context_for_backend(contract, task, backend)).map(str::to_string),
+            lifecycle: lifecycle.map(format_lifecycle).map(str::to_string),
+            image: None, target: None, task: primary_task.map(str::to_string),
+        },
+        overrides: execution_plan_overrides(overrides),
+        plan: UpPreviewPlan {
+            selected_execution_graph_identity: plan_workflow_execution_structure_with_overrides(contract, workflow_name, overrides)
+                .ok().map(|plan| plan.identity),
+            actions: Vec::new(), staged_actions: Vec::new(), skipped: Vec::new(),
+            staged_skipped: Vec::new(), dependency_chain: Vec::new(), dependency_steps: Vec::new(),
+            effect_application_plans: Vec::new(), effect_policy_decision: None, secret_delivery_admission: None,
+        },
+        governance: governance_evaluation_for_workflow_preview(
+            contract, workflow_name, overrides, UpRunBehaviorPreference::Auto, &summary, agent, None,
+        ),
+        sandbox_admission: None, crossing_grant_admission: None,
+        blockers: result.report.findings.clone(),
+    };
     let action = String::from("refuse selected typed-effect closure before workflow preparation");
     preview.plan.actions = vec![action.clone()];
     preview.plan.staged_actions = vec![crate::output::PreviewStageAction {
@@ -140852,10 +143495,14 @@ fn execute_repo_up_with_behavior_with_agent_and_authority_activation(
     run_behavior_preference: UpRunBehaviorPreference,
     ready_timeout: Option<Duration>,
     execute_instance_prerequisites: bool,
+    cargo_invocation_prefix: &[String],
+    retained_policy: Option<LoadedOrgPolicyPack>,
     activate_authority: &mut dyn FnMut() -> Result<(), String>,
-) -> Result<RepoUpResult, String> {
+) -> Result<RepoUpResult, RepoUpError> {
     let replay_input_preflight =
-        workflow_replay_input_preflight(contract, resolved_path, workflow_name, overrides);
+        workflow_replay_input_preflight_with_retained_policy(
+            contract, resolved_path, workflow_name, overrides, true, retained_policy,
+        );
     if let Some(error) = replay_input_preflight.policy_load_error.as_ref() {
         return Ok(up_replay_input_policy_unavailable_result(
             contract,
@@ -140898,7 +143545,7 @@ fn execute_repo_up_with_behavior_with_agent_and_authority_activation(
                     evaluation,
                 ));
             }
-            return Err(error.to_string());
+            return Err(error.to_string().into());
         }
     };
     if let Some(evaluation) = replay_input_policy
@@ -141015,6 +143662,7 @@ fn execute_repo_up_with_behavior_with_agent_and_authority_activation(
                 ready_timeout,
                 &replay_input_preflight,
                 execute_instance_prerequisites,
+                cargo_invocation_prefix,
                 activate_authority,
             );
             (
@@ -141047,7 +143695,10 @@ fn execute_repo_up_with_behavior_with_agent_and_authority_activation(
                 terminal_exit_code,
             )
             .map_err(|error| {
-                format!("sandbox enforcement evidence could not be archived: {error}")
+                RepoUpError {
+                    message: format!("sandbox enforcement evidence could not be archived: {error}"),
+                    cargo_hydration: result.receipt.witnessed_observations.cargo_hydration.clone(),
+                }
             })?;
         }
     }
@@ -141145,8 +143796,11 @@ fn execute_repo_up_with_behavior_with_agent_inner(
     ready_timeout: Option<Duration>,
     replay_input_preflight: &TaskReplayInputPreflight,
     execute_instance_prerequisites: bool,
+    cargo_invocation_prefix: &[String],
     activate_authority: &mut dyn FnMut() -> Result<(), String>,
-) -> Result<RepoUpResult, String> {
+) -> Result<RepoUpResult, RepoUpError> {
+    let mut cargo_hydration = Vec::new();
+    let result = (|| -> Result<RepoUpResult, RepoUpError> {
     let replay_input_policy = replay_input_preflight.policy.as_ref();
     let adjusted_contract =
         contract_adjusted_for_selected_workflow_env_profile(contract, workflow_name);
@@ -141160,7 +143814,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
             contract,
             resolved_path,
             workflow_name,
-        ));
+        ).into());
     }
     if agent
         && let Some(refusal) = agent_workflow_execution_refusal_with_policy(
@@ -142223,7 +144877,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
                         stderr,
                     });
                 }
-                Err(error) => return Err(error),
+                Err(error) => return Err(error.into()),
             }
         }
 
@@ -142338,11 +144992,13 @@ fn execute_repo_up_with_behavior_with_agent_inner(
         });
     }
 
-    for prerequisite_selector in execute_instance_prerequisites
+    for (prerequisite_index, prerequisite_selector) in execute_instance_prerequisites
         .then(|| selected_workflow_instance_prerequisite_selectors(contract, workflow_name))
         .unwrap_or_default()
+        .into_iter().enumerate()
     {
         let mut no_authority_activation = || Ok(());
+        let prerequisite_path = cargo_invocation_path(cargo_invocation_prefix, "prerequisite", Some(prerequisite_index));
         let prerequisite_result =
             execute_repo_up_with_behavior_with_agent_and_authority_activation(
                 contract,
@@ -142357,10 +145013,13 @@ fn execute_repo_up_with_behavior_with_agent_inner(
                 run_behavior_preference,
                 ready_timeout,
                 false,
+                &prerequisite_path,
+                replay_input_preflight.loaded_policy.clone(),
                 &mut no_authority_activation,
             )?;
         stdout.push_str(&prerequisite_result.stdout);
         stderr.push_str(&prerequisite_result.stderr);
+        cargo_hydration.extend(prerequisite_result.receipt.witnessed_observations.cargo_hydration.iter().cloned());
         if !prerequisite_result.ok {
             return Ok(prerequisite_result);
         }
@@ -142375,7 +145034,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
             .tasks
             .get(prepare_task_name)
             .and_then(task_command_preview);
-        match run_up_task(
+        match retain_up_cargo_result(run_up_task(
             contract,
             resolved_path,
             prepare_task_name,
@@ -142383,7 +145042,8 @@ fn execute_repo_up_with_behavior_with_agent_inner(
             policy_env,
             mode,
             agent,
-        ) {
+            replay_input_preflight.retained_run_policy_context(),
+        ), &mut cargo_hydration, &cargo_invocation_path(cargo_invocation_prefix, "prepare", None)) {
             Ok(outcome) if outcome.exit_code != 0 => {
                 stdout.push_str(&outcome.stdout);
                 stderr.push_str(&outcome.stderr);
@@ -142511,7 +145171,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
                     });
                 }
             }
-            Err(error) => return Err(render_up_run_error(resolved_path, overrides, agent, error)),
+            Err(error) => return Err(retained_up_run_error(resolved_path, overrides, agent, error)),
         }
     } else if let Some(prepare_action) = prepare_action {
         let prepare_task_command = Some(prepare_action.preview());
@@ -142646,7 +145306,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
                     });
                 }
             }
-            Err(error) => return Err(render_up_run_error(resolved_path, overrides, agent, error)),
+            Err(error) => return Err(retained_up_run_error(resolved_path, overrides, agent, error)),
         }
     }
 
@@ -142694,7 +145354,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
             prepare_task,
         );
         let setup_contract_ref = setup_contract.as_ref().unwrap_or(contract);
-        match run_up_task(
+        match retain_up_cargo_result(run_up_task(
             setup_contract_ref,
             resolved_path,
             setup_task_name,
@@ -142702,7 +145362,8 @@ fn execute_repo_up_with_behavior_with_agent_inner(
             policy_env,
             mode,
             agent,
-        ) {
+            replay_input_preflight.retained_run_policy_context(),
+        ), &mut cargo_hydration, &cargo_invocation_path(cargo_invocation_prefix, "setup", None)) {
             Ok(outcome) if outcome.exit_code != 0 => {
                 stdout.push_str(&outcome.stdout);
                 stderr.push_str(&outcome.stderr);
@@ -142831,6 +145492,8 @@ fn execute_repo_up_with_behavior_with_agent_inner(
                 }
             }
             Err(error) => {
+                let (error, observations) = error.into_cargo_context();
+                cargo_hydration.extend(observations);
                 if let Some(blocked_result) = up_backend_fulfillment_blocked_result(
                     contract,
                     resolved_path,
@@ -142846,7 +145509,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
                 ) {
                     return Ok(blocked_result);
                 }
-                return Err(render_up_run_error(resolved_path, overrides, agent, error));
+                return Err(retained_up_run_error(resolved_path, overrides, agent, error));
             }
         }
     }
@@ -142940,9 +145603,11 @@ fn execute_repo_up_with_behavior_with_agent_inner(
                 policy_env,
                 mode,
                 agent,
+                replay_input_preflight.retained_run_policy_context(),
             )
         };
-        match run_result {
+        match retain_up_cargo_result(run_result, &mut cargo_hydration,
+            &cargo_invocation_path(cargo_invocation_prefix, "run", None)) {
             Ok(outcome) if run_phase_failure_exit_code(&outcome).is_some() => {
                 stdout.push_str(&outcome.stdout);
                 stderr.push_str(&outcome.stderr);
@@ -143012,6 +145677,8 @@ fn execute_repo_up_with_behavior_with_agent_inner(
                 fulfilled_toolchains.extend(outcome.fulfilled_toolchains);
             }
             Err(error) => {
+                let (error, observations) = error.into_cargo_context();
+                cargo_hydration.extend(observations);
                 if let Some(blocked_result) = up_backend_fulfillment_blocked_result(
                     contract,
                     resolved_path,
@@ -143027,7 +145694,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
                 ) {
                     return Ok(blocked_result);
                 }
-                return Err(render_up_run_error(resolved_path, overrides, agent, error));
+                return Err(retained_up_run_error(resolved_path, overrides, agent, error));
             }
         }
     }
@@ -143110,7 +145777,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
             .tasks
             .get(attach_task_name)
             .and_then(task_command_preview);
-        match run_up_task(
+        match retain_up_cargo_result(run_up_task(
             contract,
             resolved_path,
             attach_task_name,
@@ -143118,7 +145785,8 @@ fn execute_repo_up_with_behavior_with_agent_inner(
             policy_env,
             RepoExecutionMode::Stream,
             agent,
-        ) {
+            replay_input_preflight.retained_run_policy_context(),
+        ), &mut cargo_hydration, &cargo_invocation_path(cargo_invocation_prefix, "attach", None)) {
             Ok(outcome) if run_phase_failure_exit_code(&outcome).is_none() => {
                 stdout.push_str(&outcome.stdout);
                 stderr.push_str(&outcome.stderr);
@@ -143172,6 +145840,8 @@ fn execute_repo_up_with_behavior_with_agent_inner(
                 });
             }
             Err(error) => {
+                let (error, observations) = error.into_cargo_context();
+                cargo_hydration.extend(observations);
                 if let Some(blocked_result) = up_backend_fulfillment_blocked_result(
                     contract,
                     resolved_path,
@@ -143187,7 +145857,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
                 ) {
                     return Ok(blocked_result);
                 }
-                return Err(render_up_run_error(resolved_path, overrides, agent, error));
+                return Err(retained_up_run_error(resolved_path, overrides, agent, error));
             }
         }
     }
@@ -143246,6 +145916,442 @@ fn execute_repo_up_with_behavior_with_agent_inner(
         stdout,
         stderr,
     })
+    })();
+    match result {
+        Ok(mut result) => {
+            attach_cargo_hydration_to_receipt(&mut result.receipt, &cargo_hydration);
+            Ok(result)
+        }
+        Err(mut error) => {
+            cargo_hydration.extend(error.cargo_hydration);
+            error.cargo_hydration = cargo_hydration;
+            Err(error)
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum WorkspaceParentPolicyAcquisition {
+    AcquiredPresent,
+    Error,
+    Unavailable,
+}
+
+#[derive(Debug)]
+struct WorkspaceParentAdmissionFailure {
+    path: PathBuf,
+    route: &'static str,
+    task: Option<String>,
+    code: &'static str,
+    message: String,
+    policy_acquisition: WorkspaceParentPolicyAcquisition,
+    route_refusal: Option<crate::runner::ToolchainFulfillmentPolicyRouteRefusal>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum WorkspaceChildPolicyAcquisition {
+    AcquiredPresent,
+    AcquiredAbsent,
+    Error,
+    Unavailable,
+}
+
+#[derive(Debug, Serialize)]
+struct WorkspaceChildSelection {
+    name: String,
+    path: String,
+    contract_path: String,
+    selected_task: Option<String>,
+    selected_workflow: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    requested_selector: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct WorkspaceChildFailureEvidence {
+    kind: &'static str,
+    error_variant: &'static str,
+    message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stage: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    code: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    policy_decision: Option<crate::effect_policy::EffectPolicyDecision>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    typed_effect_policy_refusal: Option<crate::effect_orchestration::TypedEffectPolicyRefusalEvidence>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    toolchain_fulfillment_route_refusal: Option<crate::runner::ToolchainFulfillmentPolicyRouteRefusal>,
+}
+
+#[derive(Debug)]
+struct WorkspaceChildAdmissionFailure {
+    path: PathBuf,
+    route: &'static str,
+    task: Option<String>,
+    selected_child: WorkspaceChildSelection,
+    policy_acquisition: WorkspaceChildPolicyAcquisition,
+    policy: Option<crate::effect_orchestration::AcquiredCommandPolicyIdentity>,
+    failure: WorkspaceChildFailureEvidence,
+}
+
+struct PreparedWorkspaceTarget {
+    target: LoadedContractTarget,
+    admission: CommandTypedEffectAdmission,
+}
+
+enum WorkspaceChildAdmission {
+    Prepared(Box<PreparedWorkspaceTarget>),
+    Refused(Box<WorkspaceChildAdmissionFailure>),
+    UnknownBeforeAcquisition,
+}
+
+struct PreparedWorkspaceChild {
+    repo: WorkspaceRepoRef,
+    admission: WorkspaceChildAdmission,
+}
+
+impl std::ops::Deref for PreparedWorkspaceChild {
+    type Target = WorkspaceRepoRef;
+
+    fn deref(&self) -> &Self::Target {
+        &self.repo
+    }
+}
+
+fn workspace_child_failure(
+    workspace_path: &Path,
+    repo: &WorkspaceRepoRef,
+    task: Option<&str>,
+    kind: &'static str,
+    error_variant: &'static str,
+    message: String,
+) -> WorkspaceChildAdmissionFailure {
+    WorkspaceChildAdmissionFailure {
+        path: workspace_path.to_path_buf(),
+        route: if task.is_some() { "workspace.run" } else { "workspace.up" },
+        task: task.map(str::to_string),
+        selected_child: WorkspaceChildSelection {
+            name: repo.name.clone(), path: repo.path.display().to_string(),
+            contract_path: repo.contract_path.display().to_string(),
+            selected_task: None, selected_workflow: None,
+            requested_selector: task.map(|task| repo.resolve_workspace_task(task).to_string())
+                .or_else(|| repo.workflow.clone()),
+        },
+        policy_acquisition: WorkspaceChildPolicyAcquisition::Unavailable,
+        policy: None,
+        failure: WorkspaceChildFailureEvidence {
+            kind, error_variant, message, stage: None, code: None,
+            policy_decision: None, typed_effect_policy_refusal: None,
+            toolchain_fulfillment_route_refusal: None,
+        },
+    }
+}
+
+fn prepare_workspace_child(
+    workspace_path: &Path,
+    repo: &WorkspaceRepoRef,
+    task: Option<&str>,
+) -> Result<PreparedWorkspaceTarget, WorkspaceChildAdmissionFailure> {
+    use crate::effect_orchestration::IndependentCommandAdmissionStage as Stage;
+    let target = load_and_validate_target(&repo.contract_path, None).map_err(|error| {
+        let variant = match &error {
+            ContractProblem::Load(_) => "LoadContractError",
+            ContractProblem::Validation(_) => "ValidationErrors",
+        };
+        workspace_child_failure(workspace_path, repo, task, "contract_invalid", variant,
+            strip_ansi_codes(&render_contract_problem(&error)))
+    })?;
+    let mut failure = workspace_child_failure(workspace_path, repo, task,
+        "admission_error", "RunError", String::new());
+    let selected_task = task.map(|task| repo.resolve_workspace_task(task).to_string());
+    if let Some(task_name) = &selected_task
+        && !target.contract.tasks.contains_key(task_name)
+    {
+        let error = RunError::UnknownTask { task: task_name.clone() };
+        failure.failure.kind = "selection_invalid";
+        failure.failure.error_variant = "UnknownTask";
+        failure.failure.message = error.to_string();
+        return Err(failure);
+    }
+    if task.is_none()
+        && let Some(workflow) = repo.workflow.as_deref()
+        && !selected_workflow_selector_is_valid(&target.contract, workflow)
+    {
+        failure.failure.kind = "selection_invalid";
+        failure.failure.error_variant = "String";
+        failure.failure.message = workflow_selection_error(&target.contract, &target.contract_path, workflow);
+        return Err(failure);
+    }
+    let workflow = task.is_none().then(|| {
+        target.contract.selected_workflow(repo.workflow.as_deref()).map(|(name, _)| name.to_string())
+    }).flatten();
+    let workflow_selector = workflow.as_ref().map(|name| {
+        match target.contract.selected_workflow_instance_name(repo.workflow.as_deref()) {
+            Some(instance) => format!("{name}@{instance}"),
+            None => name.clone(),
+        }
+    });
+    failure.selected_child.contract_path = target.contract_path.display().to_string();
+    failure.selected_child.selected_task = selected_task.clone();
+    failure.selected_child.selected_workflow = workflow_selector.clone();
+    failure.selected_child.requested_selector = None;
+    let roots = match &selected_task {
+        Some(task) => vec![EffectPolicyInvocation { task: task.clone(), origin: String::from("task") }],
+        None => selected_workflow_phase_task_roots(&target.contract, workflow_selector.as_deref()),
+    };
+    let adjusted = if task.is_none() {
+        contract_adjusted_for_selected_workflow_env_profile(&target.contract, workflow_selector.as_deref())
+    } else { None };
+    // Policy and secret recipients name base workflows; instance selection stays in the adjusted contract.
+    let admission = crate::effect_orchestration::admit_independent_child_execution_closure(
+        adjusted.as_ref().unwrap_or(&target.contract), &target.contract_path,
+        workflow.as_deref(), &roots, ExecutionOverrides::default(),
+        Some(&current_effect_governance_overrides()),
+    ).map_err(|error| {
+        failure.failure.kind = match error.stage {
+            Stage::Protected => "protected_unavailable",
+            Stage::PolicyLoad => "policy_load_failed",
+            Stage::PolicyIdentity => "policy_identity_failed",
+            Stage::Structure | Stage::Evaluation => "admission_error",
+        };
+        failure.failure.stage = Some(match error.stage {
+            Stage::Protected => "protected",
+            Stage::Structure => "structure",
+            Stage::PolicyLoad => "policy_load",
+            Stage::PolicyIdentity => "policy_identity",
+            Stage::Evaluation => "evaluation",
+        });
+        failure.failure.error_variant = error.error.variant_name();
+        failure.failure.message = error.error.to_string();
+        failure.policy_acquisition = if matches!(error.stage, Stage::PolicyLoad | Stage::PolicyIdentity) {
+            WorkspaceChildPolicyAcquisition::Error
+        } else if error.policy_acquired {
+            if error.policy.is_some() { WorkspaceChildPolicyAcquisition::AcquiredPresent }
+            else { WorkspaceChildPolicyAcquisition::AcquiredAbsent }
+        } else { WorkspaceChildPolicyAcquisition::Unavailable };
+        failure.policy = error.policy;
+        failure
+    })?;
+    // Pure protected refusal still owns the boundary before independent policy acquisition.
+    if let Some(error) = command_secret_delivery_refusal(&admission) {
+        let mut failure = workspace_child_failure(workspace_path, repo, task,
+            "protected_unavailable", error.variant_name(), error.to_string());
+        failure.selected_child.selected_task = selected_task;
+        failure.selected_child.selected_workflow = workflow_selector;
+        failure.selected_child.requested_selector = None;
+        return Err(failure);
+    }
+    let mut failure = workspace_child_failure(workspace_path, repo, task,
+        "admission_error", "RunError", String::new());
+    failure.selected_child.contract_path = target.contract_path.display().to_string();
+    failure.selected_child.selected_task = selected_task;
+    failure.selected_child.selected_workflow = workflow_selector.clone();
+    failure.selected_child.requested_selector = None;
+    if !admission.policy_acquired {
+        failure.failure.message = String::from("Workspace child command policy was not acquired");
+        return Err(failure);
+    }
+    failure.policy = admission.loaded_policy.as_ref().map(|policy| {
+        crate::semantic_identity::semantic_contract_identity(&policy.pack)
+            .map(|identity| crate::effect_orchestration::AcquiredCommandPolicyIdentity {
+                identity, source: policy.source, path: policy.path.display().to_string(),
+            })
+    }).transpose().map_err(|error| {
+        let mut identity_failure = workspace_child_failure(workspace_path, repo, task,
+            "policy_identity_failed", "String", error);
+        identity_failure.selected_child.contract_path = target.contract_path.display().to_string();
+        identity_failure.selected_child.selected_task = failure.selected_child.selected_task.clone();
+        identity_failure.selected_child.selected_workflow = workflow_selector.clone();
+        identity_failure.selected_child.requested_selector = None;
+        identity_failure.policy_acquisition = WorkspaceChildPolicyAcquisition::Error;
+        identity_failure
+    })?;
+    failure.policy_acquisition = if failure.policy.is_some() {
+        WorkspaceChildPolicyAcquisition::AcquiredPresent
+    } else { WorkspaceChildPolicyAcquisition::AcquiredAbsent };
+    if task.is_none()
+        && let Err(error) = refuse_unsupported_toolchain_fulfillment_policy_route(admission.loaded_policy.as_ref(), "up")
+    {
+        failure.failure.kind = if matches!(error.as_ref(), RunError::ToolchainFulfillmentPolicyRouteUnsupported { .. }) {
+            "unsupported_route"
+        } else { "policy_identity_failed" };
+        failure.failure.error_variant = error.variant_name();
+        failure.failure.message = error.to_string();
+        failure.failure.toolchain_fulfillment_route_refusal = error.toolchain_policy_route_refusal(
+            &target.contract_path, None, workflow_selector.as_deref(),
+        );
+        if failure.failure.toolchain_fulfillment_route_refusal.is_some() {
+            failure.failure.code = Some("toolchain_fulfillment_policy_route_unsupported");
+        } else {
+            failure.policy_acquisition = WorkspaceChildPolicyAcquisition::Error;
+            failure.policy = None;
+        }
+        return Err(failure);
+    }
+    if let Some(error) = typed_effect_admission_refusal(&admission.typed) {
+        failure.failure.kind = if matches!(&error, RunError::EffectPolicyDenied { .. }) {
+            "typed_policy_denied"
+        } else { "typed_realization_unavailable" };
+        failure.failure.error_variant = error.variant_name();
+        failure.failure.message = error.to_string();
+        failure.failure.policy_decision = admission.typed.policy_decision.clone();
+        if matches!(&error, RunError::EffectPolicyDenied { .. }) {
+            failure.failure.code = Some("effect_policy_denied");
+            failure.failure.typed_effect_policy_refusal = typed_effect_policy_refusal_evidence(&admission.typed);
+        }
+        return Err(failure);
+    }
+    Ok(PreparedWorkspaceTarget { target, admission })
+}
+
+fn prepare_workspace_children(
+    workspace_path: &Path,
+    refs: Vec<WorkspaceRepoRef>,
+    task: Option<&str>,
+) -> Result<Vec<PreparedWorkspaceChild>, WorkspaceProblem> {
+    let mut prepared = Vec::with_capacity(refs.len());
+    for repo in refs {
+        let admission = if repo.present {
+            match prepare_workspace_child(workspace_path, &repo, task) {
+                Ok(target) => WorkspaceChildAdmission::Prepared(Box::new(target)),
+                Err(failure) if repo.required => return Err(WorkspaceProblem::ChildAdmission(Box::new(failure))),
+                Err(failure) => WorkspaceChildAdmission::Refused(Box::new(failure)),
+            }
+        } else { WorkspaceChildAdmission::UnknownBeforeAcquisition };
+        prepared.push(PreparedWorkspaceChild { repo, admission });
+    }
+    Ok(prepared)
+}
+
+fn workspace_child_admission_finding(failure: &WorkspaceChildAdmissionFailure, required: bool) -> Finding {
+    Finding {
+        identity: None,
+        severity: if required { FindingSeverity::Error } else { FindingSeverity::Warn },
+        summary: format!("Workspace child admission refused: {}", failure.selected_child.name),
+        why: failure.failure.message.clone(),
+        next: format!("repair child admission, then rerun `{}`", if failure.task.is_some() {
+            format!("ota workspace run {}", failure.task.as_deref().unwrap_or_default())
+        } else { String::from("ota workspace up") }),
+    }
+}
+
+fn refused_workspace_repo_up(repo: WorkspaceRepoRef, failure: &WorkspaceChildAdmissionFailure) -> WorkspaceRepoUpReport {
+    let finding = workspace_child_admission_finding(failure, repo.required);
+    WorkspaceRepoUpReport {
+        receipt: None, name: repo.name, path: repo.path.display().to_string(),
+        contract_path: repo.contract_path.display().to_string(), workflow: repo.workflow,
+        required: repo.required, ok: !repo.required,
+        status: if repo.required { "REFUSED" } else { "WARN" }.to_string(),
+        phase: String::from("child admission"), findings: vec![finding],
+        source_url: repo.source_url, source_ref: repo.source_ref,
+        service: None, service_command: None, task: None, task_command: None,
+        exit_code: None, stdout: None, stderr: None, env_sources: Vec::new(),
+        next: None, next_steps: Vec::new(),
+    }
+}
+
+fn refused_workspace_repo_task(repo: WorkspaceRepoRef, task: &str, failure: &WorkspaceChildAdmissionFailure) -> WorkspaceRepoRunReport {
+    let finding = workspace_child_admission_finding(failure, repo.required);
+    let resolved = repo.resolve_workspace_task(task).to_string();
+    WorkspaceRepoRunReport {
+        name: repo.name, path: repo.path.display().to_string(),
+        contract_path: repo.contract_path.display().to_string(),
+        required: repo.required, ok: !repo.required,
+        status: if repo.required { "REFUSED" } else { "WARN" }.to_string(),
+        task: task.to_string(), repo_task: (resolved != task).then_some(resolved),
+        findings: vec![finding], source_url: repo.source_url, source_ref: repo.source_ref,
+        task_command: None, exit_code: None, stdout: None, stderr: None,
+        env_sources: Vec::new(), next: None, next_steps: Vec::new(),
+    }
+}
+
+fn admit_workspace_parent(
+    path: &Path,
+    workspace: &crate::workspace::WorkspaceContract,
+    repos: &[WorkspaceRepoRef],
+    task: Option<&str>,
+) -> Result<Option<crate::policy_pack::LoadedOrgPolicyPack>, WorkspaceProblem> {
+    let route = if task.is_some() { "workspace.run" } else { "workspace.up" };
+    let unavailable = |message: String| WorkspaceProblem::Admission(Box::new(
+        WorkspaceParentAdmissionFailure {
+            path: path.to_path_buf(), route, task: task.map(str::to_string),
+            code: "workspace_parent_protected_admission_unavailable", message,
+            policy_acquisition: WorkspaceParentPolicyAcquisition::Unavailable,
+            route_refusal: None,
+        },
+    ));
+
+    // Inspect only available local declarations. Never clone to discover a carrier.
+    for repo in repos.iter().filter(|repo| repo.present) {
+        let Ok(target) = load_and_validate_target(&repo.contract_path, None) else {
+            // Preserve the existing per-child invalid/missing-contract report.
+            continue;
+        };
+        let (workflow, roots) = match task {
+            Some(task) => {
+                let selected_task = repo.resolve_workspace_task(task);
+                if !target.contract.tasks.contains_key(selected_task) {
+                    continue;
+                }
+                (None, vec![EffectPolicyInvocation {
+                    task: selected_task.to_string(), origin: String::from("task"),
+                }])
+            }
+            None => {
+                let workflow = target.contract.selected_workflow(repo.workflow.as_deref())
+                    .map(|(name, _)| name);
+                (workflow, selected_workflow_phase_task_roots(&target.contract, workflow))
+            }
+        };
+        let applicable = crate::secret_delivery_admission::secret_delivery_applies_to_selected_subject(
+            &target.contract, workflow, &roots,
+        ).map_err(|error| unavailable(error.to_string()))?;
+        if !applicable {
+            continue;
+        }
+        // This canonical applicable branch derives pure refusal only; it acquires no policy.
+        let admission = admit_command_execution_closure(
+            &target.contract, &target.contract_path, workflow, &roots,
+            ExecutionOverrides::default(), Some(&current_effect_governance_overrides()),
+        ).map_err(|error| unavailable(error.to_string()))?;
+        enforce_secret_delivery_local_carrier_boundary(
+            &target.contract, &target.contract_path, &admission.secret_delivery, None,
+        ).map_err(|error| unavailable(strip_ansi_codes(&error.message)))?;
+    }
+
+    let loaded_policy = crate::policy_pack::load_selected_workspace_policy_pack_details(path, workspace)
+        .map_err(|error| WorkspaceProblem::Admission(Box::new(WorkspaceParentAdmissionFailure {
+            path: path.to_path_buf(), route, task: task.map(str::to_string),
+            code: "workspace_parent_policy_load_failed",
+            message: format!("workspace parent policy could not be loaded before acquisition or execution: {error}"),
+            policy_acquisition: WorkspaceParentPolicyAcquisition::Error,
+            route_refusal: None,
+        })))?;
+    refuse_unsupported_toolchain_fulfillment_policy_route(loaded_policy.as_ref(), route)
+        .map_err(|error| {
+            let mut route_refusal = error.toolchain_policy_route_refusal(path, task, None);
+            if let Some(refusal) = &mut route_refusal
+                && refusal.root.as_os_str().is_empty()
+            {
+                refusal.root = PathBuf::from(".");
+            }
+            let (code, policy_acquisition) = if route_refusal.is_some() {
+                ("toolchain_fulfillment_policy_route_unsupported", WorkspaceParentPolicyAcquisition::AcquiredPresent)
+            } else {
+                ("workspace_parent_policy_load_failed", WorkspaceParentPolicyAcquisition::Error)
+            };
+            WorkspaceProblem::Admission(Box::new(WorkspaceParentAdmissionFailure {
+                path: path.to_path_buf(), route, task: task.map(str::to_string),
+                code,
+                message: error.to_string(),
+                policy_acquisition,
+                route_refusal,
+            }))
+        })?;
+    Ok(loaded_policy)
 }
 
 fn load_and_run_workspace_up(
@@ -143260,6 +146366,8 @@ fn load_and_run_workspace_up(
     let repo_refs =
         ordered_workspace_repo_refs(path, &workspace).map_err(WorkspaceProblem::Validation)?;
 
+    let _parent_policy = admit_workspace_parent(path, &workspace, &repo_refs, None)?;
+    let repo_refs = prepare_workspace_children(path, repo_refs, None)?;
     if stream {
         return run_workspace_up_streaming(
             &workspace_identity,
@@ -143320,7 +146428,10 @@ fn load_and_run_workspace_up(
                 .iter()
                 .find(|(blocked_index, _)| *blocked_index == pending_index)
             {
-                let report = blocked_workspace_repo_up(repo, dependency.clone());
+                let report = match repo.admission {
+                    WorkspaceChildAdmission::Refused(failure) => refused_workspace_repo_up(repo.repo, &failure),
+                    _ => blocked_workspace_repo_up(repo.repo, dependency.clone()),
+                };
                 if let Some(progress_mode) = progress_mode {
                     emit_workspace_progress_line(
                         progress_mode,
@@ -143333,7 +146444,12 @@ fn load_and_run_workspace_up(
                 }
                 blocked_reports.push((order, report));
             } else {
-                runnable.push((order, repo));
+                match repo.admission {
+                    WorkspaceChildAdmission::Refused(failure) => {
+                        blocked_reports.push((order, refused_workspace_repo_up(repo.repo, &failure)));
+                    }
+                    admission => runnable.push((order, PreparedWorkspaceChild { repo: repo.repo, admission })),
+                }
             }
         }
 
@@ -143358,9 +146474,14 @@ fn load_and_run_workspace_up(
                 }
                 let tx = tx.clone();
                 let workspace_path = path.to_path_buf();
+                #[cfg(test)]
+                TEST_WORKSPACE_PARENT_EFFECTS.with(|count| {
+                    let (progress, workers, acquisitions) = count.get();
+                    count.set((progress, workers + 1, acquisitions));
+                });
                 thread::spawn(move || {
                     let report =
-                        run_workspace_repo_up(repo, RepoExecutionMode::Capture, &workspace_path);
+                        run_prepared_workspace_repo_up(repo, RepoExecutionMode::Capture, &workspace_path);
                     let _ = tx.send((order, report));
                 })
             })
@@ -143781,6 +146902,8 @@ fn load_and_run_workspace_task(
     let repo_refs =
         ordered_workspace_repo_refs(path, &workspace).map_err(WorkspaceProblem::Validation)?;
 
+    let _parent_policy = admit_workspace_parent(path, &workspace, &repo_refs, Some(task))?;
+    let repo_refs = prepare_workspace_children(path, repo_refs, Some(task))?;
     if stream {
         return run_workspace_task_streaming(
             &workspace_identity,
@@ -143843,7 +146966,10 @@ fn load_and_run_workspace_task(
                 .iter()
                 .find(|(blocked_index, _)| *blocked_index == pending_index)
             {
-                let report = blocked_workspace_repo_run(repo, task, dependency.clone());
+                let report = match repo.admission {
+                    WorkspaceChildAdmission::Refused(failure) => refused_workspace_repo_task(repo.repo, task, &failure),
+                    _ => blocked_workspace_repo_run(repo.repo, task, dependency.clone()),
+                };
                 if let Some(progress_mode) = progress_mode {
                     let progress_detail =
                         workspace_progress_blocked_run_detail(&report, dependency);
@@ -143858,7 +146984,12 @@ fn load_and_run_workspace_task(
                 }
                 blocked_reports.push((order, report));
             } else {
-                runnable.push((order, repo));
+                match repo.admission {
+                    WorkspaceChildAdmission::Refused(failure) => {
+                        blocked_reports.push((order, refused_workspace_repo_task(repo.repo, task, &failure)));
+                    }
+                    admission => runnable.push((order, PreparedWorkspaceChild { repo: repo.repo, admission })),
+                }
             }
         }
 
@@ -143898,8 +147029,13 @@ fn load_and_run_workspace_task(
                 let task = task_name.clone();
                 let task_args = task_args.clone();
                 let workspace_path = path.to_path_buf();
+                #[cfg(test)]
+                TEST_WORKSPACE_PARENT_EFFECTS.with(|count| {
+                    let (progress, workers, acquisitions) = count.get();
+                    count.set((progress, workers + 1, acquisitions));
+                });
                 thread::spawn(move || {
-                    let report = run_workspace_repo_task(
+                    let report = run_prepared_workspace_repo_task(
                         repo,
                         &task,
                         &task_args,
@@ -144039,7 +147175,7 @@ fn run_workspace_task_streaming(
     workspace_name: &str,
     workspace_path: &Path,
     task: &str,
-    repo_refs: Vec<WorkspaceRepoRef>,
+    repo_refs: Vec<PreparedWorkspaceChild>,
     progress_mode: Option<WorkspaceProgressMode>,
     task_args: &[String],
 ) -> Result<WorkspaceRunReport, WorkspaceProblem> {
@@ -144048,6 +147184,12 @@ fn run_workspace_task_streaming(
     let mut repo_results = BTreeMap::new();
 
     for repo in repo_refs {
+        if let WorkspaceChildAdmission::Refused(failure) = &repo.admission {
+            let report = refused_workspace_repo_task(repo.repo.clone(), task, failure);
+            repo_results.insert(report.name.clone(), report.ok);
+            repos.push(report);
+            continue;
+        }
         let blocked_dependency = repo
             .depends_on
             .iter()
@@ -144055,7 +147197,7 @@ fn run_workspace_task_streaming(
             .cloned();
         let report = match blocked_dependency {
             Some(dependency) => {
-                let report = blocked_workspace_repo_run(repo, task, dependency.clone());
+                let report = blocked_workspace_repo_run(repo.repo, task, dependency.clone());
                 if let Some(progress_mode) = progress_mode {
                     let progress_detail =
                         workspace_progress_blocked_run_detail(&report, &dependency);
@@ -144094,7 +147236,7 @@ fn run_workspace_task_streaming(
                         Some(&progress_detail),
                     );
                 }
-                let report = run_workspace_repo_task(
+                let report = run_prepared_workspace_repo_task(
                     repo,
                     task,
                     task_args,
@@ -144137,7 +147279,7 @@ fn run_workspace_up_streaming(
     workspace_identity: &ContractIdentity,
     workspace_name: &str,
     workspace_path: &Path,
-    repo_refs: Vec<WorkspaceRepoRef>,
+    repo_refs: Vec<PreparedWorkspaceChild>,
     progress_mode: Option<WorkspaceProgressMode>,
 ) -> Result<WorkspaceUpReport, WorkspaceProblem> {
     let mut repos = Vec::new();
@@ -144145,6 +147287,12 @@ fn run_workspace_up_streaming(
     let mut repo_results = BTreeMap::new();
 
     for repo in repo_refs {
+        if let WorkspaceChildAdmission::Refused(failure) = &repo.admission {
+            let report = refused_workspace_repo_up(repo.repo.clone(), failure);
+            repo_results.insert(report.name.clone(), report.ok);
+            repos.push(report);
+            continue;
+        }
         let blocked_dependency = repo
             .depends_on
             .iter()
@@ -144152,7 +147300,7 @@ fn run_workspace_up_streaming(
             .cloned();
         let report = match blocked_dependency {
             Some(dependency) => {
-                let report = blocked_workspace_repo_up(repo, dependency.clone());
+                let report = blocked_workspace_repo_up(repo.repo, dependency.clone());
                 if let Some(progress_mode) = progress_mode {
                     emit_workspace_progress_line(
                         progress_mode,
@@ -144188,7 +147336,7 @@ fn run_workspace_up_streaming(
                         None,
                     );
                 }
-                let report = run_workspace_repo_up(repo, RepoExecutionMode::Stream, workspace_path);
+                let report = run_prepared_workspace_repo_up(repo, RepoExecutionMode::Stream, workspace_path);
                 if let Some(progress_mode) = progress_mode {
                     emit_workspace_progress_line(
                         progress_mode,
@@ -144408,6 +147556,11 @@ fn emit_workspace_progress_line(
     repo_name: &str,
     detail: Option<&WorkspaceProgressDetail>,
 ) {
+    #[cfg(test)]
+    TEST_WORKSPACE_PARENT_EFFECTS.with(|count| {
+        let (progress, workers, acquisitions) = count.get();
+        count.set((progress + 1, workers, acquisitions));
+    });
     if matches!(mode, WorkspaceProgressMode::Text) && io::stderr().is_terminal() {
         let mut stderr = io::stderr();
         let _ = write!(stderr, "\r\x1b[2K\r");
@@ -144490,17 +147643,33 @@ fn workspace_progress_stage_family(command: &str, status: &str) -> &'static str 
     }
 }
 
+#[cfg(test)]
 fn run_workspace_repo_up(
     repo: WorkspaceRepoRef,
     mode: RepoExecutionMode,
     workspace_path: &Path,
 ) -> WorkspaceRepoUpReport {
+    run_prepared_workspace_repo_up(PreparedWorkspaceChild {
+        repo, admission: WorkspaceChildAdmission::UnknownBeforeAcquisition,
+    }, mode, workspace_path)
+}
+
+fn run_prepared_workspace_repo_up(
+    prepared: PreparedWorkspaceChild,
+    mode: RepoExecutionMode,
+    workspace_path: &Path,
+) -> WorkspaceRepoUpReport {
+    let PreparedWorkspaceChild { repo, admission } = prepared;
+    if let WorkspaceChildAdmission::Refused(failure) = &admission {
+        return refused_workspace_repo_up(repo, failure);
+    }
     let repo_name = repo.name.clone();
     let contract_path_display = repo.contract_path.display().to_string();
     let path_display = repo.path.display().to_string();
     match acquire_workspace_repo(&repo, mode) {
         Ok(acquisition) if acquisition.exit_code != 0 => {
             return WorkspaceRepoUpReport {
+                receipt: None,
                 name: repo.name,
                 path: path_display,
                 contract_path: contract_path_display,
@@ -144560,6 +147729,7 @@ fn run_workspace_repo_up(
         Ok(_) => {}
         Err(error) => {
             return WorkspaceRepoUpReport {
+                receipt: None,
                 name: repo.name,
                 path: path_display,
                 contract_path: contract_path_display,
@@ -144602,8 +147772,16 @@ fn run_workspace_repo_up(
         }
     }
 
-    match load_and_validate_target(&repo.contract_path, None) {
-        Ok(target) => {
+    let prepared = match admission {
+        WorkspaceChildAdmission::Prepared(target) => *target,
+        WorkspaceChildAdmission::UnknownBeforeAcquisition => match prepare_workspace_child(workspace_path, &repo, None) {
+            Ok(target) => target,
+            Err(failure) => return refused_workspace_repo_up(repo, &failure),
+        },
+        WorkspaceChildAdmission::Refused(_) => unreachable!("refused children never enter acquisition"),
+    };
+    let PreparedWorkspaceTarget { target, admission } = prepared;
+    let mut report = {
             let env_sources = target
                 .contract
                 .selected_setup_task_name_for(repo.workflow.as_deref())
@@ -144621,16 +147799,20 @@ fn run_workspace_repo_up(
                 })
                 .unwrap_or_default();
 
-            match execute_repo_up(
+            match execute_repo_up_with_admission_and_grant(
                 &target.contract,
                 &target.contract_path,
                 ExecutionOverrides::default(),
                 repo.workflow.as_deref(),
+                &[], false, None, None, None,
                 Some(&repo.policy_env),
                 false,
                 mode,
+                UpRunBehaviorPreference::Auto, None, admission,
             ) {
                 Ok(result) => WorkspaceRepoUpReport {
+                    receipt: (!result.receipt.witnessed_observations.cargo_hydration.is_empty())
+                        .then(|| Box::new(result.receipt)),
                     name: repo.name,
                     path: path_display,
                     contract_path: contract_path_display,
@@ -144668,6 +147850,9 @@ fn run_workspace_repo_up(
                     next_steps: Vec::new(),
                 },
                 Err(error) => WorkspaceRepoUpReport {
+                    receipt: (!error.cargo_hydration.is_empty()).then(|| Box::new(cargo_up_failure_receipt(
+                        &error, &target.contract, &target.contract_path, repo.workflow.as_deref(), ExecutionOverrides::default(),
+                    ))),
                     name: repo.name,
                     path: path_display,
                     contract_path: contract_path_display,
@@ -144684,7 +147869,7 @@ fn run_workspace_repo_up(
                             FindingSeverity::Warn
                         },
                         summary: format!("Repo up failed: {}", repo_name),
-                        why: error,
+                        why: error.message,
                         next: workspace_repo_validate_then_rerun_next(
                             &repo.contract_path,
                             &command_for_workspace("ota workspace up", workspace_path),
@@ -144704,48 +147889,25 @@ fn run_workspace_repo_up(
                     next_steps: Vec::new(),
                 },
             }
-        }
-        Err(error) => WorkspaceRepoUpReport {
-            name: repo.name,
-            path: path_display,
-            contract_path: contract_path_display,
-            workflow: repo.workflow,
-            required: repo.required,
-            ok: !repo.required,
-            status: if repo.required { "NOT READY" } else { "WARN" }.to_string(),
-            phase: "validation".to_string(),
-            findings: vec![Finding {
-                identity: None,
-                severity: if repo.required {
-                    FindingSeverity::Error
-                } else {
-                    FindingSeverity::Warn
-                },
-                summary: format!("Repo contract failed validation: {}", repo_name),
-                why: render_contract_problem(&error),
-                next: workspace_repo_validate_then_rerun_next(
-                    &repo.contract_path,
-                    &command_for_workspace("ota workspace up", workspace_path),
-                ),
-            }],
-            service: None,
-            source_url: repo.source_url.clone(),
-            source_ref: repo.source_ref.clone(),
-            service_command: None,
-            task: None,
-            task_command: None,
-            exit_code: None,
-            stdout: None,
-            stderr: None,
-            env_sources: Vec::new(),
-            next: None,
-            next_steps: Vec::new(),
-        },
+    };
+    annotate_workspace_cargo_receipt(&mut report);
+    report
+}
+
+fn annotate_workspace_cargo_receipt(report: &mut WorkspaceRepoUpReport) {
+    if report.receipt.is_some() {
+        report.findings.push(Finding::identified(
+            "OTA_WORKSPACE_CHILD_EXECUTION_ARCHIVE_NOT_PROVED", "execution", "repo_contract",
+            FindingSeverity::Info, "Historical child execution archival is not proved",
+            "This workspace up output carries the repo execution receipt inline at repos[].receipt. It is not persisted by this command; a later workspace receipt --archive records current status and cannot recover this execution evidence.",
+            "retain this workspace up JSON output to keep its inline repo-scoped execution observations; do not treat a later status snapshot as historical execution evidence",
+        ));
     }
 }
 
 fn blocked_workspace_repo_up(repo: WorkspaceRepoRef, dependency: String) -> WorkspaceRepoUpReport {
     WorkspaceRepoUpReport {
+        receipt: None,
         name: repo.name,
         path: repo.path.display().to_string(),
         contract_path: repo.contract_path.display().to_string(),
@@ -145362,6 +148524,7 @@ fn blocked_workspace_repo_refresh(
     dependency: String,
 ) -> WorkspaceRepoUpReport {
     WorkspaceRepoUpReport {
+        receipt: None,
         name: repo.name,
         path: repo.path.display().to_string(),
         contract_path: repo.contract_path.display().to_string(),
@@ -145689,6 +148852,7 @@ fn run_workspace_repo_refresh(
 
     if !repo.present || !repo.path.is_dir() {
         return WorkspaceRepoUpReport {
+            receipt: None,
             name: repo.name,
             path: path_display,
             contract_path: contract_path_display,
@@ -145738,6 +148902,7 @@ fn run_workspace_repo_refresh(
 
     if repo.source_url.is_none() {
         return WorkspaceRepoUpReport {
+            receipt: None,
             name: repo.name,
             path: path_display,
             contract_path: contract_path_display,
@@ -145771,6 +148936,7 @@ fn run_workspace_repo_refresh(
     };
     if effective_ref.is_none() && upstream_ref.is_none() {
         return WorkspaceRepoUpReport {
+            receipt: None,
             name: repo.name,
             path: path_display,
             contract_path: contract_path_display,
@@ -145817,6 +148983,7 @@ fn run_workspace_repo_refresh(
 
     if options.dry_run {
         return WorkspaceRepoUpReport {
+            receipt: None,
             name: repo.name,
             path: path_display,
             contract_path: contract_path_display,
@@ -145845,6 +149012,7 @@ fn run_workspace_repo_refresh(
         Ok(result) => result,
         Err(error) => {
             return WorkspaceRepoUpReport {
+                receipt: None,
                 name: repo.name,
                 path: path_display,
                 contract_path: contract_path_display,
@@ -145896,6 +149064,7 @@ fn run_workspace_repo_refresh(
             Some(&refresh.stderr),
         );
         return WorkspaceRepoUpReport {
+            receipt: None,
             name: repo.name,
             path: path_display,
             contract_path: contract_path_display,
@@ -145945,6 +149114,7 @@ fn run_workspace_repo_refresh(
     }
 
     WorkspaceRepoUpReport {
+        receipt: None,
         name: repo.name,
         path: path_display,
         contract_path: contract_path_display,
@@ -145975,6 +149145,7 @@ fn run_workspace_repo_refresh(
     }
 }
 
+#[cfg(test)]
 fn run_workspace_repo_task(
     repo: WorkspaceRepoRef,
     task: &str,
@@ -145982,6 +149153,22 @@ fn run_workspace_repo_task(
     mode: RepoExecutionMode,
     workspace_path: &Path,
 ) -> WorkspaceRepoRunReport {
+    run_prepared_workspace_repo_task(PreparedWorkspaceChild {
+        repo, admission: WorkspaceChildAdmission::UnknownBeforeAcquisition,
+    }, task, task_args, mode, workspace_path)
+}
+
+fn run_prepared_workspace_repo_task(
+    prepared: PreparedWorkspaceChild,
+    task: &str,
+    task_args: &[String],
+    mode: RepoExecutionMode,
+    workspace_path: &Path,
+) -> WorkspaceRepoRunReport {
+    let PreparedWorkspaceChild { repo, admission } = prepared;
+    if let WorkspaceChildAdmission::Refused(failure) = &admission {
+        return refused_workspace_repo_task(repo, task, failure);
+    }
     let repo_name = repo.name.clone();
     let contract_path_display = repo.contract_path.display().to_string();
     let path_display = repo.path.display().to_string();
@@ -146088,62 +149275,24 @@ fn run_workspace_repo_task(
         }
     }
 
-    match load_contract(&repo.contract_path) {
-        Ok(contract) => {
+    let prepared = match admission {
+        WorkspaceChildAdmission::Prepared(target) => *target,
+        WorkspaceChildAdmission::UnknownBeforeAcquisition => match prepare_workspace_child(workspace_path, &repo, Some(task)) {
+            Ok(target) => target,
+            Err(failure) => return refused_workspace_repo_task(repo, task, &failure),
+        },
+        WorkspaceChildAdmission::Refused(_) => unreachable!("refused children never enter acquisition"),
+    };
+    let retained_policy = crate::runner::RetainedRunPolicyContext::from_acquired(
+        prepared.admission.loaded_policy.as_ref(), None,
+    );
+    let contract = prepared.target.contract;
+    let contract_path = prepared.target.contract_path;
+    {
             let task_command = contract
                 .tasks
                 .get(&resolved_task)
                 .and_then(task_command_preview);
-            if let Err(error) = validate_contract_with_path(&contract, Some(&repo.contract_path)) {
-                return WorkspaceRepoRunReport {
-                    name: repo.name,
-                    path: path_display,
-                    contract_path: contract_path_display.clone(),
-                    required: repo.required,
-                    ok: !repo.required,
-                    status: if repo.required {
-                        "INVALID CONTRACT"
-                    } else {
-                        "WARN"
-                    }
-                    .to_string(),
-                    task: requested_task.clone(),
-                    repo_task: resolved_task_field.clone(),
-                    findings: error
-                        .errors()
-                        .iter()
-                        .map(|validation_error| Finding {
-                            identity: None,
-                            severity: if repo.required {
-                                FindingSeverity::Error
-                            } else {
-                                FindingSeverity::Warn
-                            },
-                            summary: format!("Invalid repo contract: {}", repo_name),
-                            why: format!(
-                                "repo contract `{}` is invalid: {}",
-                                contract_path_display, validation_error
-                            ),
-                            next: workspace_repo_validate_then_rerun_next(
-                                &repo.contract_path,
-                                &command_for_workspace(
-                                    &format!("ota workspace run {}", requested_task),
-                                    workspace_path,
-                                ),
-                            ),
-                        })
-                        .collect(),
-                    source_url: repo.source_url.clone(),
-                    source_ref: repo.source_ref.clone(),
-                    task_command,
-                    exit_code: Some(1),
-                    stdout: None,
-                    stderr: None,
-                    env_sources: Vec::new(),
-                    next: None,
-                    next_steps: Vec::new(),
-                };
-            }
 
             let env_sources = contract
                 .tasks
@@ -146151,7 +149300,7 @@ fn run_workspace_repo_task(
                 .map(|task_spec| {
                     workspace_env_sources(
                         &contract,
-                        &repo.contract_path,
+                        &contract_path,
                         Some(&resolved_task),
                         Some(&task_spec.env),
                         Some(&repo.policy_env),
@@ -146160,13 +149309,14 @@ fn run_workspace_repo_task(
                 .unwrap_or_default();
             let run_result = match mode {
                 RepoExecutionMode::Capture => {
-                    run_task_captured_with_args_with_overrides_with_policy(
+                    crate::runner::run_task_captured_with_args_with_overrides_with_policy_context(
                         &contract,
-                        &repo.contract_path,
+                        &contract_path,
                         &resolved_task,
                         task_args,
                         ExecutionOverrides::default(),
                         Some(&repo.policy_env),
+                        retained_policy,
                     )
                     .map(|result| CommandRunResult {
                         exit_code: result.exit_code,
@@ -146182,9 +149332,9 @@ fn run_workspace_repo_task(
                     })
                 }
                 RepoExecutionMode::Stream => {
-                    run_task_with_progress_and_args_and_overrides_with_policy(
+                    crate::runner::run_task_with_progress_and_args_and_overrides_with_policy_context(
                         &contract,
-                        &repo.contract_path,
+                        &contract_path,
                         &resolved_task,
                         false,
                         task_args,
@@ -146193,6 +149343,7 @@ fn run_workspace_repo_task(
                         None,
                         false,
                         Some(&repo.policy_env),
+                        retained_policy,
                     )
                     .map(|result| CommandRunResult {
                         exit_code: result.exit_code,
@@ -146317,51 +149468,6 @@ fn run_workspace_repo_task(
                     next_steps: Vec::new(),
                 },
             }
-        }
-        Err(error) => WorkspaceRepoRunReport {
-            name: repo.name,
-            path: path_display,
-            contract_path: contract_path_display.clone(),
-            required: repo.required,
-            ok: !repo.required,
-            status: if repo.required {
-                "INVALID CONTRACT"
-            } else {
-                "WARN"
-            }
-            .to_string(),
-            task: requested_task.clone(),
-            repo_task: resolved_task_field,
-            findings: vec![Finding {
-                identity: None,
-                severity: if repo.required {
-                    FindingSeverity::Error
-                } else {
-                    FindingSeverity::Warn
-                },
-                summary: format!("Unreadable repo contract: {}", repo_name),
-                why: format!(
-                    "workspace repo `{}` contract `{}` could not be loaded: {}",
-                    repo_name, contract_path_display, error
-                ),
-                next: workspace_repo_validate_then_rerun_next(
-                    &repo.contract_path,
-                    &command_for_workspace(
-                        &format!("ota workspace run {}", requested_task),
-                        workspace_path,
-                    ),
-                ),
-            }],
-            source_url: repo.source_url.clone(),
-            source_ref: repo.source_ref.clone(),
-            task_command: None,
-            exit_code: Some(1),
-            stdout: None,
-            stderr: None,
-            env_sources: Vec::new(),
-            next: None,
-            next_steps: Vec::new(),
-        },
     }
 }
 
@@ -147584,6 +150690,19 @@ fn parse_backend_requirement_gap(line: &str) -> Option<(String, String, String, 
     ))
 }
 
+fn retained_up_run_error(
+    contract_path: &Path,
+    overrides: ExecutionOverrides,
+    agent: bool,
+    error: RunError,
+) -> RepoUpError {
+    let (error, cargo_hydration) = error.into_cargo_context();
+    RepoUpError {
+        message: render_up_run_error(contract_path, overrides, agent, error),
+        cargo_hydration,
+    }
+}
+
 fn render_up_run_error(
     contract_path: &Path,
     overrides: ExecutionOverrides,
@@ -147935,7 +151054,7 @@ fn render_up_run_error(
                     format!("task `{task}` selected toolchain `{toolchain}`"),
                     summary.allowance_clause,
                     format!(
-                        "{}; provisioning attempt failed: {details}",
+                        "{}; fulfillment did not complete: {details}",
                         summary.requirement_clause
                     ),
                 ],
@@ -148142,14 +151261,18 @@ fn render_table_cell(value: &str) -> String {
     value.replace('\n', " ").replace('|', "¦")
 }
 
+#[derive(Debug)]
 enum ContractProblem {
     Load(LoadContractError),
     Validation(ValidationErrors),
 }
 
+#[derive(Debug)]
 enum WorkspaceProblem {
     Load(crate::workspace::LoadWorkspaceError),
     Validation(WorkspaceValidationErrors),
+    Admission(Box<WorkspaceParentAdmissionFailure>),
+    ChildAdmission(Box<WorkspaceChildAdmissionFailure>),
 }
 
 #[derive(Debug, thiserror::Error)]

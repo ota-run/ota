@@ -6091,16 +6091,14 @@ fn diagnose_selected_task_effects(
     overrides: ExecutionOverrides,
     findings: &mut Vec<Finding>,
 ) {
-    let selected_task_names = selected_workflow_plan_steps(contract, workflow_name, overrides)
-        .into_iter()
-        .map(|step| step.task)
-        .collect::<Vec<_>>();
-    if selected_task_names.is_empty() {
+    let selected_steps = selected_workflow_plan_steps(contract, workflow_name, overrides);
+    if selected_steps.is_empty() {
         return;
     }
 
     let mut broad_network_tasks = Vec::new();
     let mut hydration_network_tasks = Vec::new();
+    let mut locked_cargo_tasks = Vec::new();
     let mut container_image_hydration_tasks = Vec::new();
     let mut service_readiness_tasks = Vec::new();
     let mut integration_test_network_tasks = Vec::new();
@@ -6110,10 +6108,17 @@ fn diagnose_selected_task_effects(
     let mut external_state_tasks = Vec::new();
     let mut external_state_systems = BTreeSet::new();
 
-    for task_name in selected_task_names {
+    for step in selected_steps {
+        let task_name = step.task;
         let Some(task) = contract.tasks.get(task_name.as_str()) else {
             continue;
         };
+        if task.resolved_execution_for_backend(step.backend, &step.target_os)
+            .and_then(|execution| execution.prepare()).is_some_and(|prepare| {
+            !crate::runner::locked_cargo_sources(prepare).is_empty()
+        }) {
+            locked_cargo_tasks.push(task_name.clone());
+        }
         if let Some(kind) = task.effects.effective_network_kind() {
             match kind {
                 TaskNetworkEffectKind::Broad => broad_network_tasks.push(task_name.clone()),
@@ -6175,6 +6180,18 @@ fn diagnose_selected_task_effects(
             ),
             "the selected task path includes tasks with `effects.network_kind: dependency_hydration`; this is a narrower network lane (for example lockfile-backed package-manager fetches), but still depends on registry reachability",
             "keep lockfiles and package-manager provenance strict for these tasks, and keep `effects.network_kind: dependency_hydration` explicit on that path",
+        ));
+    }
+
+    if !locked_cargo_tasks.is_empty() {
+        findings.push(Finding::identified(
+            "OTA_SELECTED_TASK_PATH_LOCKED_CARGO",
+            "execution",
+            "repo_contract",
+            FindingSeverity::Info,
+            format!("Selected task path declares locked Cargo hydration: {}", locked_cargo_tasks.join(", ")),
+            "Cargo root_resolution remains not_proved until execution; pre/post lock samples do not prove exact Cargo acquisition or absence of concurrent mutation",
+            "use the direct native Linux/macOS lane; inspect the retained lock observation and command status rather than treating --locked as hermetic or concurrency proof",
         ));
     }
 
@@ -9000,6 +9017,18 @@ fn diagnose_org_policy(
     };
     let policy_pack = &loaded_policy.pack;
     let policy_path = &loaded_policy.path;
+    if policy_pack.denies_toolchain_fulfillment("rust") {
+        findings.push(policy_finding(
+            "OTA_TOOLCHAIN_FULFILLMENT_DENIED",
+            FindingSeverity::Info,
+            "Policy declares Rust toolchain fulfillment denied",
+            format!(
+                "`{}` ({}) declares `policies.toolchain_fulfillment.rust: deny`. This declaration does not establish installed readiness; a positively verified matching toolchain may skip fulfillment.",
+                compact_display_path(policy_path), loaded_policy.source.as_str(),
+            ),
+            "review the selected execution path and policy with the policy owner; an approved provisioning source does not override this restriction",
+        ));
+    }
     let policy_requirement_surface = policy_requirement_surface_for_toolchains(
         contract,
         requirement_surface,
@@ -9165,7 +9194,7 @@ fn diagnose_org_policy(
                     )
                 } else {
                     format!(
-                        "`{}` declares approved provisioning sources: {}. This repo's declared prerequisites can be provisioned through: {}",
+                        "`{}` declares approved provisioning sources: {}. Source mappings for this repo's prerequisites: {}. Source approval does not override action restrictions",
                         compact_display_path(&policy_path),
                         sources.join(", "),
                         matched_targets.join(", ")
@@ -15816,6 +15845,39 @@ workflows:
                 && finding.summary
                     == "Selected task path performs network dependency hydration: setup"
         }));
+    }
+
+    #[test]
+    fn doctor_locked_cargo_reports_authored_posture_without_discovering_root() {
+        let contract = parse_contract_str(synthetic_contract_path(), r#"
+version: 1
+project:
+  name: locked-cargo-doctor
+tasks:
+  setup:
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: cargo
+        cwd: missing-member
+        locked: true
+    effects:
+      network: true
+      network_kind: dependency_hydration
+workflows:
+  default: app
+  app:
+    setup:
+      task: setup
+"#).unwrap();
+        let mut findings = Vec::new();
+        super::diagnose_selected_task_effects(&contract, None, crate::runner::ExecutionOverrides::default(), &mut findings);
+        let finding = findings.iter().find(|finding| {
+            finding.identity.as_ref().is_some_and(|identity| identity.code == "OTA_SELECTED_TASK_PATH_LOCKED_CARGO")
+        }).expect("authored locked posture");
+        assert_eq!(finding.severity, FindingSeverity::Info);
+        assert!(finding.why.contains("root_resolution remains not_proved"));
     }
 
     #[test]
@@ -24674,6 +24736,32 @@ unexpected: true
         assert_eq!(report.findings[0].category(), "policy");
         assert_eq!(report.findings[0].owner(), "org_policy");
         assert!(report.findings[0].why.contains("org-policy.yaml"));
+    }
+
+    #[test]
+    fn reports_rust_fulfillment_restriction_without_readiness_or_source_permission() {
+        let _guard = env_mutex_lock();
+        let fixture = TempDir::new().unwrap();
+        let contract_path = fixture.path().join("ota.yaml");
+        let contract = parse_contract_str(&contract_path,
+            "version: 1\nproject: {name: policy-declaration}\n",
+        ).unwrap();
+        fs::create_dir_all(fixture.path().join(".ota")).unwrap();
+        fs::write(fixture.path().join(".ota/org-policy.yaml"),
+            "policies: {toolchain_fulfillment: {rust: deny}}\n",
+        ).unwrap();
+        let report = diagnose_preconditions(&contract, &contract_path);
+        let finding = report.findings.iter().find(|finding| {
+            finding.code() == "OTA_TOOLCHAIN_FULFILLMENT_DENIED"
+        }).expect("static policy declaration should survive the no-violations return");
+        assert_eq!(finding.severity, FindingSeverity::Info);
+        assert_eq!(finding.category(), "policy");
+        assert_eq!(finding.owner(), "org_policy");
+        assert!(finding.why.contains("does not establish installed readiness"));
+        assert!(finding.next.contains("does not override this restriction"));
+        assert!(report.findings.iter().all(|finding| {
+            finding.code() != "OTA_TOOLCHAIN_FULFILLMENT_READY"
+        }));
     }
 
     #[test]

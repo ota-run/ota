@@ -81,6 +81,32 @@ OTA_POLICY=https://config.example.com/custom-org-policy.yaml ota doctor
 Use this when you want ota to read an explicit policy file path or hosted URL instead of the
 nearest ancestor `.ota/org-policy.yaml` or workspace policy source.
 
+### Selected Workspace Parent Admission (Source-Staged)
+
+The staged workspace up/run parent guard uses `OTA_POLICY`, then the nearest
+ancestor `.ota/org-policy.yaml` from the selected workspace file, then that loaded
+file's `workspace.policy` (local paths relative to its directory), then actual
+absence. A custom `--file` does not borrow a default workspace file in the same
+directory or above it. An inherited proof-child absence marker cannot suppress
+this parent's acquisition. Applicable read/parse/validation errors refuse without
+fallback; an empty valid pack is present, not absent. Remote policy loading itself
+can make network requests before the route is refused.
+
+Nonempty Rust fulfillment denial refuses the unsupported parent route before
+progress, workers or cloning, including optional repos. Parent policy/absence is
+not a child's acquisition result or its separate inline environment overlay.
+Generic child discovery and fresh final environment/backend policy checks remain
+unchanged for ordinary proof children. The integrated local-child source candidate
+independently acquires each present selected child's policy after parent admission,
+ignoring only an absence marker owned by an unrelated proof child. It retains that
+pack or genuinely acquired absence with the matching target and mapped task/Up
+workflow. Required initial load/typed/unsupported-Up refusal precedes all workspace
+dispatch; optional child-owned refusal is WARN without dispatch. Run Rust denial
+is conditional, not a blanket child refusal. Child policy unavailable before clone,
+conditional Run readiness denial before every worker, later drift and final fresh
+policy checks remain outside this initial-admission bar. This is unexecuted source
+staging, not shipped/runtime proof or protected authority permission.
+
 ## Current Policy-Source Model
 
 The current implementation supports:
@@ -214,6 +240,27 @@ That makes the value visible immediately:
 
 ## Semantics
 
+- Source-staged for 1.6.29: `toolchain_fulfillment: {rust: deny}` restricts Ota-owned
+  Rust toolchain fulfillment independently of approved provisioning sources.
+  The only selector/value pair is exactly `rust: deny`; aliases, `allow`, `warn`,
+  nulls and scalar/list shapes are rejected. Omitted or empty maps preserve
+  previous policy identities. Installed readiness must be positively checked to
+  skip fulfillment; unknown readiness and a cached earlier install do not grant
+  permission. Doctor/policy review show the declaration, not runtime proof.
+  The Up source candidate refuses captured Rust restrictions before preparation,
+  grant/proof-parent activity or detached child/log creation. Each selected local
+  root/member acquires its own policy before the first target effect; same-context
+  in-process tasks and prerequisites retain it, including an acquired absence.
+  This retention covers admission/replay and the readiness/restriction projection,
+  not every policy consumer: final task-environment, selected backend-fulfillment
+  and shared-backend environment policy evaluations retain their normal freshness.
+  A later fresh-policy failure is not evidence that no earlier Up effects occurred.
+  A load error is not absence. Up canary/archive routes reuse the acquired pack;
+  a fulfillment-route refusal is not an eligible typed-effect refusal archive.
+  Detached Up children remain distinct invocations with fresh policy acquisition;
+  parent-snapshot continuity across that process boundary is not proved.
+  Command-entry integration and runtime validation remain incomplete; this
+  unshipped source surface must not be relied on as an enforcement boundary.
 - `required_sections` defines contract sections that every governed repo must provide.
 - `required_files` defines files that every governed repo must keep at the repo root or under the governed repo directory.
 - `strict_versions` tells ota whether already-installed runtime and tool versions must also comply with policy instead of only satisfying the repo contract.

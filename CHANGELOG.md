@@ -26,6 +26,70 @@
 
 ## Unreleased
 
+- Stage integrated workspace local-child initial admission source: present selected
+  children acquire independent policies before dispatch, ignore unrelated proof-
+  child absence markers, and retain matching target/admission into captured and
+  streamed execution. Required initial refusal has a disjoint child-attributed
+  negative JSON branch; optional child-owned failure remains WARN without a worker.
+  Run Rust restrictions stay conditional, Up unsupported restrictions retain child
+  scope, and typed denial remains distinct from unavailable realization. No
+  receipt/archive, conditional-readiness-before-all-workers, unknown-before-clone,
+  final-policy immutability or authority permission is inferred. Source review,
+  compilation/tests/schema execution and public propagation remain open; not shipped.
+
+- Stage deny-only Rust fulfillment policy source: canonical
+  `policies.toolchain_fulfillment: {rust: deny}` rejects aliases/other values and
+  omits empty maps from old-pack identities. Invocation-owned denial precedes
+  fulfillment cache/provider construction and retains typed NOT_RUN evidence plus
+  prior prerequisite steps. Normal Run policy acquisition is earlier than replay
+  and Mise; protected carrier discovery remains non-activating and restricted
+  carrier/proof-parent routes refuse before authority activity. Doctor discloses
+  only the declaration. Unsupported-route Run receipts and proof failure JSON
+  retain distinct policy/root/selection attribution without runtime sampling or
+  protected-authority/fulfillment evidence. Up source now acquires selected local
+  root/member admissions before Mise or the first target effect, retains the
+  matching policy through replay preflight, in-process tasks/hooks and instance
+  prerequisite admission/readiness/restriction projection. Final environment and
+  backend policy evaluation remain fresh. Up refuses restricted dry-run/canary/archive/detach routes
+  without granting refusal-archive eligibility. Detached children still acquire
+  their own policy; no parent-snapshot transfer is claimed. Workspace up/run source
+  now stages selected-parent policy acquisition before progress/workers/clone,
+  using the actual loaded selected workspace file instead of an unrelated default.
+  Inherited proof-child absence does not suppress this parent's deny/error. Parent
+  refusal retains negative attribution without fabricated child receipts; child
+  roots/overlays and final policy freshness stay independent. Independent source
+  review, all regressions, compilation and public propagation remain open; not shipped.
+
+- Stage native Rust satisfied-toolchain provisioning avoidance source: exact Rustup
+  version, active executable selection and required rustfmt/targets are observed
+  with bounded probes before skipping `fulfillment.mode: run`. Skips do not record
+  provisioning or seed its deduplication cache; unknown/ineligible observations
+  preserve ordinary authorized provisioning, while interruption/cleanup failure
+  refuses continuation. Direct Linux/macOS only, not an offline-install guarantee.
+  Implicit/default and explicit Rustup share canonical provider resolution. Nested
+  command directories and late environment/activation paths retain provisioning
+  rather than borrowing readiness from a different launch context.
+  Extend the source candidate to literal absolute PATH composition using the normal
+  CLI's retained acquired-policy result, without an added policy/source load.
+  Variable-selection semantics are shared: optional unselected PATH remains inherited.
+  Final environment/executable and active Rustup selection are rechecked within the same
+  probe budget; invalidation fails before task dispatch without late provisioning
+  or failure hooks. Unavailable legacy context remains ineligible. Fulfillment
+  errors no longer imply that an install command necessarily ran.
+  Regressions, compilation, public propagation and driver qualification remain
+  unrun/open; this source increment is not shipped.
+
+- Stage opt-in lock-strict Cargo hydration source: shared `fetch --locked` selection,
+  Cargo workspace-root discovery at execution, pre/post manifest and lock observations,
+  actual command-status retention, typed refusals, and receipt/replay samples. Absent/false
+  retains legacy output. Selected-mode admission binds the exact nested source; run/up
+  failures retain partial samples and workspace up carries repo-scoped child receipts.
+  Matching Cargo samples remain narrowing evidence, with acquisition uncertainty retained.
+  The candidate supports only direct native Linux/macOS;
+  container, remote, Compose and orchestrator-wrapped locked paths refuse before startup.
+  Acquisition and concurrent mutation remain `not_proved`; validation, generated schemas,
+  backend parity and immutable pressure are still open. This source increment is not shipped.
+
 - Add the internal Step 7 IAM source route: a closed administrator request V3, complete signed
   V2 graph/record rederivation and shared runtime semantic/production-plan inspection, fixed
   retained STS-to-IAM transport, fresh post-preparation send

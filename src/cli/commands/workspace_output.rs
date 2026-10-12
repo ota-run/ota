@@ -22,6 +22,123 @@
 
 use super::*;
 
+fn render_workspace_child_admission_failure(
+    failure: &WorkspaceChildAdmissionFailure,
+    format: OutputFormat,
+) -> CommandOutput {
+    #[derive(Serialize)]
+    struct ChildAdmission<'a> {
+        route: &'static str,
+        execution_started: bool,
+        attempted: bool,
+        selected_child: &'a WorkspaceChildSelection,
+        policy_acquisition: WorkspaceChildPolicyAcquisition,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        policy: Option<&'a crate::effect_orchestration::AcquiredCommandPolicyIdentity>,
+        failure: &'a WorkspaceChildFailureEvidence,
+    }
+    #[derive(Serialize)]
+    struct Failure<'a> {
+        ok: bool,
+        path: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        task: Option<&'a str>,
+        code: &'static str,
+        error: &'a str,
+        child_admission: ChildAdmission<'a>,
+    }
+    match format {
+        OutputFormat::Json => CommandOutput::failure(to_json(&Failure {
+            ok: false, path: failure.path.display().to_string(), task: failure.task.as_deref(),
+            code: "workspace_child_admission_refused", error: &failure.failure.message,
+            child_admission: ChildAdmission {
+                route: failure.route, execution_started: false, attempted: false,
+                selected_child: &failure.selected_child,
+                policy_acquisition: failure.policy_acquisition, policy: failure.policy.as_ref(),
+                failure: &failure.failure,
+            },
+        })),
+        OutputFormat::Text => {
+            let header = if failure.task.is_some() { "WORKSPACE RUN" } else { "WORKSPACE UP" };
+            let status = match failure.policy_acquisition {
+                WorkspaceChildPolicyAcquisition::AcquiredPresent => "acquired_present",
+                WorkspaceChildPolicyAcquisition::AcquiredAbsent => "acquired_absent",
+                WorkspaceChildPolicyAcquisition::Error => "error",
+                WorkspaceChildPolicyAcquisition::Unavailable => "unavailable",
+            };
+            let child = &failure.selected_child;
+            let mut text = format!("{}\n\nChild admission refused: {}\nChild root: {}\nContract: {}\nTask: {}\nWorkflow: {}\nFailure kind: {}\nPolicy acquisition: {status}\n{}\nNo workspace acquisition or task execution attempted. Policy acquisition may already have occurred.",
+                format_command_header(header, &failure.path.display().to_string()), child.name,
+                child.path, child.contract_path, child.selected_task.as_deref().unwrap_or("none"),
+                child.selected_workflow.as_deref().unwrap_or("none"), failure.failure.kind,
+                failure.failure.message);
+            if let Some(selector) = &child.requested_selector {
+                text.push_str(&format!("\nUnresolved requested selector: {selector}"));
+            }
+            if let Some(policy) = &failure.policy {
+                text.push_str(&format!("\nPolicy: {} ({}, {})", policy.identity, policy.source.as_str(), policy.path));
+            }
+            if let Some(decision) = &failure.failure.policy_decision {
+                text.push_str(&format!("\nPolicy decision: {} ({:?})", decision.identity, decision.aggregate_decision));
+            }
+            if let Some(refusal) = &failure.failure.toolchain_fulfillment_route_refusal {
+                text.push_str(&render_toolchain_route_refusal_text(refusal));
+            }
+            CommandOutput::failure(text)
+        }
+    }
+}
+
+fn render_workspace_parent_admission_failure(
+    failure: &WorkspaceParentAdmissionFailure,
+    format: OutputFormat,
+) -> CommandOutput {
+    #[derive(Serialize)]
+    struct ParentAdmission<'a> {
+        route: &'static str,
+        policy_acquisition: WorkspaceParentPolicyAcquisition,
+        execution_started: bool,
+        attempted: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        toolchain_fulfillment_route_refusal: Option<&'a crate::runner::ToolchainFulfillmentPolicyRouteRefusal>,
+    }
+    #[derive(Serialize)]
+    struct Failure<'a> {
+        ok: bool,
+        path: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        task: Option<&'a str>,
+        code: &'static str,
+        error: &'a str,
+        parent_admission: ParentAdmission<'a>,
+    }
+    match format {
+        OutputFormat::Json => CommandOutput::failure(to_json(&Failure {
+            ok: false, path: failure.path.display().to_string(), task: failure.task.as_deref(),
+            code: failure.code, error: &failure.message,
+            parent_admission: ParentAdmission {
+                route: failure.route, policy_acquisition: failure.policy_acquisition,
+                execution_started: false, attempted: false,
+                toolchain_fulfillment_route_refusal: failure.route_refusal.as_ref(),
+            },
+        })),
+        OutputFormat::Text => {
+            let header = if failure.task.is_some() { "WORKSPACE RUN" } else { "WORKSPACE UP" };
+            let status = match failure.policy_acquisition {
+                WorkspaceParentPolicyAcquisition::AcquiredPresent => "acquired_present",
+                WorkspaceParentPolicyAcquisition::Error => "error",
+                WorkspaceParentPolicyAcquisition::Unavailable => "unavailable",
+            };
+            let mut text = format!("{}\n\nParent admission refused\nPolicy acquisition: {status}\n{}\nNo workspace acquisition or execution attempted.",
+                format_command_header(header, &failure.path.display().to_string()), failure.message);
+            if let Some(refusal) = &failure.route_refusal {
+                text.push_str(&render_toolchain_route_refusal_text(refusal));
+            }
+            CommandOutput::failure(text)
+        }
+    }
+}
+
 fn workspace_follow_up_artifact_routing(path: &str) -> Vec<crate::output::ArtifactRoute> {
     vec![artifact_route(
         "follow_up",
@@ -30,6 +147,14 @@ fn workspace_follow_up_artifact_routing(path: &str) -> Vec<crate::output::Artifa
         Some(workspace_receipt_command_for_workspace(path, true)),
         None,
     )]
+}
+
+fn workspace_up_artifact_routing(path: &str, report: &WorkspaceUpReport) -> Vec<crate::output::ArtifactRoute> {
+    let mut routes = workspace_follow_up_artifact_routing(path);
+    if report.repos.iter().any(|repo| repo.receipt.is_some()) {
+        routes.push(artifact_route("inspect", "workspace_inline_child_receipt", "receipt", None, None));
+    }
+    routes
 }
 
 fn workspace_receipt_artifact_routing(
@@ -131,6 +256,10 @@ pub(crate) fn render_workspace_up(
                     repo.stdout.as_deref(),
                     repo.stderr.as_deref(),
                 );
+                if show_receipt && let Some(receipt) = repo.receipt.as_deref() {
+                    stdout.push('\n');
+                    stdout.push_str(&render_execution_receipt_text(receipt));
+                }
             }
             if show_receipt {
                 stdout.push_str(&render_execution_receipt_text(&report.receipt));
@@ -161,7 +290,7 @@ pub(crate) fn render_workspace_up(
                 mode: None,
                 summary: report.receipt.summary,
                 receipt: report.receipt.clone(),
-                artifact_routing: workspace_follow_up_artifact_routing(path),
+                artifact_routing: workspace_up_artifact_routing(path, report),
                 repos: &report.repos,
             }),
             stderr: None,
@@ -343,6 +472,7 @@ mod tests {
                 next: None,
             },
             repos: vec![WorkspaceRepoUpReport {
+                receipt: None,
                 name: String::from("api"),
                 path: String::from("api"),
                 contract_path: String::from("api/ota.yaml"),
@@ -490,6 +620,7 @@ mod tests {
                 next: None,
             },
             repos: vec![WorkspaceRepoUpReport {
+                receipt: None,
                 name: String::from("api"),
                 path: String::from("api"),
                 contract_path: String::from("api/ota.yaml"),

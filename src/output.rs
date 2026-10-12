@@ -647,6 +647,12 @@ pub struct ExecutionReceiptEvaluatedInput {
 /// Receipt-owned observations from declared evidence artifacts.
 #[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq, Eq)]
 pub struct ExecutionReceiptWitnessedObservations {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub toolchain_fulfillment_route_refusal: Option<crate::runner::ToolchainFulfillmentPolicyRouteRefusal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub toolchain_fulfillment_denial: Option<crate::runner::ToolchainFulfillmentPolicyDenial>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cargo_hydration: Vec<crate::hydration_provenance::CargoHydrationEvidence>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub query_traces: Vec<ExecutionReceiptQueryTraceObservation>,
     /// Ota-recorded references from a producer receipt to replay-baseline evidence.
@@ -660,7 +666,10 @@ pub struct ExecutionReceiptWitnessedObservations {
 
 impl ExecutionReceiptWitnessedObservations {
     pub fn is_empty(&self) -> bool {
-        self.query_traces.is_empty()
+        self.toolchain_fulfillment_route_refusal.is_none()
+            && self.toolchain_fulfillment_denial.is_none()
+            && self.cargo_hydration.is_empty()
+            && self.query_traces.is_empty()
             && self.replay_baseline_recordings.is_empty()
             && self.sandbox_application.is_none()
     }
@@ -2514,6 +2523,8 @@ pub struct WorkspaceExecutionPlanSuccess<'a> {
 
 #[derive(Debug, Serialize)]
 pub struct WorkspaceRepoUpReport {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub receipt: Option<Box<ExecutionReceipt>>,
     pub name: String,
     pub path: String,
     pub contract_path: String,
@@ -5761,6 +5772,8 @@ pub struct TaskLaunchSummary<'a> {
 
 #[derive(Debug, Serialize, Clone)]
 pub struct TaskPrepareSummary<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cargo_lock: Option<CargoLockPlanSummary>,
     pub kind: &'static str,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub steps: Vec<TaskPrepareSummary<'a>>,
@@ -5818,6 +5831,8 @@ pub struct TaskPrepareSummary<'a> {
 
 #[derive(Debug, Serialize, Clone, PartialEq, Eq)]
 pub struct WorkspaceTaskPrepareSummary {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cargo_lock: Option<CargoLockPlanSummary>,
     pub kind: &'static str,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub steps: Vec<WorkspaceTaskPrepareSummary>,
@@ -5871,6 +5886,30 @@ pub struct WorkspaceTaskPrepareSummary {
     pub resolved_uv_local_project: Option<WorkspaceTaskUvLocalProjectSummary>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub compose: Option<WorkspaceTaskComposeInvocationSummary>,
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+pub struct CargoLockPlanSummary {
+    pub locked: bool,
+    pub root_resolution: &'static str,
+    pub acquisition: &'static str,
+    pub concurrent_mutation: &'static str,
+    pub metadata_command: Vec<&'static str>,
+}
+
+fn cargo_lock_plan_summary(
+    source: &crate::schema::TaskDependencyHydrationSourceSpec,
+) -> Option<CargoLockPlanSummary> {
+    let crate::schema::TaskDependencyHydrationSourceSpec::Cargo(source) = source else {
+        return None;
+    };
+    source.locked.then(|| CargoLockPlanSummary {
+        locked: true,
+        root_resolution: "not_proved",
+        acquisition: "not_proved",
+        concurrent_mutation: "not_proved",
+        metadata_command: vec!["cargo", "locate-project", "--workspace", "--manifest-path", "<selected-cwd>/Cargo.toml", "--message-format", "json"],
+    })
 }
 
 #[derive(Debug, Serialize, Clone, PartialEq, Eq)]
@@ -6386,6 +6425,7 @@ pub fn summarize_task_prepare(
 ) -> Option<TaskPrepareSummary<'_>> {
     match prepare? {
         crate::schema::TaskPrepareSpec::Sequence(spec) => Some(TaskPrepareSummary {
+            cargo_lock: None,
             kind: "sequence",
             steps: spec
                 .steps
@@ -6438,6 +6478,7 @@ fn summarize_task_prepare_sequence_step(
             Some(summarize_tool_bootstrap_prepare_spec(spec))
         }
         crate::schema::TaskPrepareSequenceStepSpec::Sequence(spec) => Some(TaskPrepareSummary {
+            cargo_lock: None,
             kind: "sequence",
             steps: spec
                 .steps
@@ -6499,6 +6540,7 @@ fn summarize_tool_bootstrap_prepare_spec(
         ),
     };
     TaskPrepareSummary {
+        cargo_lock: None,
         kind: "tool_bootstrap",
         steps: Vec::new(),
         medium: None,
@@ -6810,6 +6852,7 @@ fn summarize_dependency_hydration_prepare_spec(
                 });
     }
     TaskPrepareSummary {
+        cargo_lock: cargo_lock_plan_summary(&spec.source),
         kind: "dependency_hydration",
         steps: Vec::new(),
         medium: Some(match spec.medium {
@@ -6912,6 +6955,7 @@ pub(crate) fn declared_uv_local_project_summary(
 
 fn empty_task_prepare_summary(kind: &'static str) -> TaskPrepareSummary<'static> {
     TaskPrepareSummary {
+        cargo_lock: None,
         kind,
         steps: Vec::new(),
         medium: None,
@@ -6947,6 +6991,7 @@ pub fn summarize_task_prepare_owned(
 ) -> Option<WorkspaceTaskPrepareSummary> {
     match prepare? {
         crate::schema::TaskPrepareSpec::Sequence(spec) => Some(WorkspaceTaskPrepareSummary {
+            cargo_lock: None,
             kind: "sequence",
             steps: spec
                 .steps
@@ -7000,6 +7045,7 @@ pub fn summarize_task_prepare_owned(
                 ),
             };
             Some(WorkspaceTaskPrepareSummary {
+                cargo_lock: None,
                 kind: "tool_bootstrap",
                 steps: Vec::new(),
                 medium: None,
@@ -7280,6 +7326,7 @@ pub fn summarize_task_prepare_owned(
                 resolved_hydration_provenance = None;
             }
             Some(WorkspaceTaskPrepareSummary {
+                cargo_lock: cargo_lock_plan_summary(&spec.source),
                 kind: "dependency_hydration",
                 steps: Vec::new(),
                 medium: Some(match spec.medium {
@@ -7385,6 +7432,7 @@ fn summarize_task_prepare_sequence_step_owned(
 
 fn empty_workspace_task_prepare_summary(kind: &'static str) -> WorkspaceTaskPrepareSummary {
     WorkspaceTaskPrepareSummary {
+        cargo_lock: None,
         kind,
         steps: Vec::new(),
         medium: None,
@@ -7419,6 +7467,7 @@ pub fn workspace_prepare_summary_from_task_prepare_summary(
     summary: TaskPrepareSummary<'_>,
 ) -> WorkspaceTaskPrepareSummary {
     WorkspaceTaskPrepareSummary {
+        cargo_lock: summary.cargo_lock,
         kind: summary.kind,
         steps: summary
             .steps
@@ -7720,6 +7769,72 @@ mod tests {
     use std::path::Path;
 
     use crate::parser::parse_contract_str;
+
+    #[test]
+    fn cargo_prepare_plan_is_opt_in_and_does_not_resolve_root() {
+        for locked in [false, true] {
+            let prepare = crate::schema::TaskPrepareSpec::DependencyHydration(
+                crate::schema::TaskDependencyHydrationPrepareSpec {
+                    medium: crate::schema::TaskDependencyHydrationMedium::PackageDependencies,
+                    source: crate::schema::TaskDependencyHydrationSourceSpec::Cargo(
+                        crate::schema::TaskCargoHydrationSourceSpec {
+                            cwd: String::from("missing-member"), locked, compose: None,
+                        }),
+                    targets: Vec::new(),
+                });
+            let summary = super::summarize_task_prepare(Some(&prepare)).unwrap();
+            let owned = super::summarize_task_prepare_owned(Some(&prepare)).unwrap();
+            let projected = super::workspace_prepare_summary_from_task_prepare_summary(summary.clone());
+            let json = serde_json::to_value(summary).unwrap();
+            assert_eq!(serde_json::to_value(owned).unwrap(), serde_json::to_value(projected).unwrap());
+            if locked {
+                assert_eq!(json["cargo_lock"]["locked"], true);
+                assert_eq!(json["cargo_lock"]["root_resolution"], "not_proved");
+                assert_eq!(json["cargo_lock"]["acquisition"], "not_proved");
+                assert_eq!(json["cargo_lock"]["concurrent_mutation"], "not_proved");
+            } else {
+                assert!(json.get("cargo_lock").is_none());
+            }
+        }
+        let legacy: super::ExecutionReceiptWitnessedObservations = serde_json::from_str("{}").unwrap();
+        assert!(legacy.is_empty());
+        assert_eq!(serde_json::to_value(legacy).unwrap(), serde_json::json!({}));
+    }
+
+    #[test]
+    fn fulfillment_denial_serializes_negative_evidence_without_duplicate_steps() {
+        let evidence = crate::runner::ToolchainFulfillmentPolicyDenial {
+            reason: String::from("toolchain_fulfillment_policy_denied"),
+            root_task: Some(String::from("check")), task: String::from("setup"),
+            relation: Some(crate::runner::TaskExecutionRelation::DependsOn {
+                parent: String::from("check"),
+            }), generation: 0,
+            toolchain: String::from("rust"), backend: String::from("native"),
+            target_os: String::from("linux"), provider: String::from("rustup"),
+            version: String::from("1.94.0"), components: vec![String::from("rustfmt")],
+            targets: Vec::new(), policy_identity: format!("sha256:{}", "a".repeat(64)),
+            policy_source: crate::policy_pack::PolicyPackSource::RepoPolicy,
+            policy_path: ".ota/org-policy.yaml".into(), readiness: String::from("unknown"),
+            attempted: false, fulfillment: String::from("not_run"),
+            preceding_steps: vec![crate::runner::ExecutedTaskStep {
+                name: String::from("prepare"), exit_code: 0,
+                relation: crate::runner::TaskExecutionRelation::DependsOn { parent: String::from("check") },
+                generation: 0, execution_note: None, cargo_hydration: Vec::new(),
+            }],
+            preceding_target_resolutions: Vec::new(), preceding_backend_fulfillments: Vec::new(),
+            preceding_shared_local_backends: Vec::new(), cleanup_note: None,
+        };
+        let mut observations = super::ExecutionReceiptWitnessedObservations::default();
+        observations.toolchain_fulfillment_denial = Some(evidence);
+        assert!(!observations.is_empty());
+        let value = serde_json::to_value(observations).unwrap();
+        let denial = &value["toolchain_fulfillment_denial"];
+        assert_eq!(denial["attempted"], false);
+        assert_eq!(denial["fulfillment"], "not_run");
+        assert_eq!(denial["relation"]["parent"], "check");
+        assert!(denial.get("preceding_steps").is_none());
+        assert!(denial.get("preceding_backend_fulfillments").is_none());
+    }
 
     #[test]
     fn summarize_task_compose_uses_contract_kind_label() {

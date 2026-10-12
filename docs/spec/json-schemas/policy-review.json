@@ -37,7 +37,22 @@
     },
     "policy": {
       "type": "object",
-      "additionalProperties": true
+      "additionalProperties": true,
+      "properties": {
+        "policies": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "toolchain_fulfillment": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "rust": { "const": "deny" }
+              }
+            }
+          }
+        }
+      }
     },
     "findings": {
       "type": "array",

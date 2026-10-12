@@ -73,6 +73,56 @@ Fields:
 - `git_base`: optional clone base used by `repos.<name>.source.repo`
 - `policy`: optional policy pack path or HTTP(S) URL resolved from the workspace root
 
+### Workspace parent admission (source stage)
+
+The accepted source-stage design for `ota workspace up` and `ota workspace run` is not a shipped
+or runtime-verified guarantee. After local argument/shape validation and applicable protected-delivery
+refusal, parent policy resolution uses `OTA_POLICY`, then the nearest ancestor `.ota/org-policy.yaml`,
+then the actual selected, loaded workspace's `workspace.policy`, then genuinely observed absence.
+Local workspace policy paths are relative to that selected file's directory, including a custom
+`--file`. An unrelated default workspace file is not a fallback, and an inherited proof-child
+policy-absence marker cannot suppress parent policy acquisition. Empty packs remain present;
+applicable load errors do not fall through to absence or a lower-priority source. Remote policy
+acquisition is itself effectful and potentially networked, not an offline operation.
+
+A nonempty `policies.toolchain_fulfillment: {rust: deny}` rule refuses this unsupported parent route
+before captured or streamed repo progress, channels/workers, directory creation, cloning or child
+execution, even when all children are optional. This is not a provisioning attempt or evidence of
+provider or authority admission. Parent policy is not substituted for each child's policy: actual
+child contract roots, generic child policy discovery, the separate inline `policies.env.values`
+overlay carried as `policy_env`, and fresh final environment/backend resolution remain unchanged.
+This guard does not admit all children upfront; an acquisition-only child's previously unknown
+policy is checked only after cloning.
+Later child or final-resolution failures therefore do not imply zero prior effects.
+
+### Local-child command admission (source stage)
+
+The source-staged candidate under the accepted design preflights inspectable, present local children after
+parent admission and before captured/streamed workers or repo acquisition. Each child owns
+its loaded contract, Run task mapping or Up workflow/instance selection, independent policy
+acquisition and canonical command admission. Parent policy and an unrelated inherited
+proof-child marker cannot substitute for that ownership. Inline environment overlays remain
+separate from policy-pack attribution.
+
+An initial required terminal refusal uses the separate
+[`child_admission` negative envelope](json-output-reference.md#source-staged-local-child-admission-failure),
+with actual child selection and acquisition state. Optional refusals remain child-owned WARN
+results excluded from dispatch; existing parent protected refusal is never downgraded to WARN.
+Up's unsupported Rust route carries route `up` and the actual child root/workflow selector,
+not the workspace verb/root. Typed denial, coarse denial and typed realization failure retain
+their distinct actual evidence; no receipt or archive is synthesized by preflight.
+
+This is not blanket Rust denial for Run: non-Rust and already-satisfied conditional readiness
+must retain their canonical behavior. All-child conditional readiness before workers remains
+open. Acquisition-only/uninspectable child policy is still unknown before cloning, retained
+sources can drift, and final environment/backend checks remain fresh. Earlier policy network
+effects and later ordinary partial-effect failures are not erased by negative preflight flags.
+
+Schema projections do not prove child/pack relational ownership or complete produced-output
+conformance. Source regressions and all execution gates remain NOT_RUN/open; public
+Site/Learn/FAQ/Glossary, Skills and Examples propagation remains open with the integrated
+checkpoint. This section does not claim shipped, provider or repo-global governance.
+
 ## `repos`
 
 ```yaml

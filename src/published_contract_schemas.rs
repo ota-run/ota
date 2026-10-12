@@ -1640,6 +1640,7 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
           "properties": {
             "kind": { "const": "cargo" },
             "cwd": { "type": "string" },
+            "locked": { "type": "boolean", "default": false },
             "compose": { "$ref": "#/$defs/taskComposeInvocation" }
           }
         },

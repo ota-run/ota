@@ -1488,6 +1488,20 @@ JSON output:
 
 Run a validated task.
 
+Unreleased source increment: a typed Cargo hydration prepare may opt into `source.locked: true`.
+Use it to refuse observed lock changes rather than silently allowing resolution updates. The
+current candidate supports only direct native Linux/macOS; other locked execution paths refuse
+before startup. Preview shows unresolved root selection, not an executed metadata command.
+Receipts retain sampled manifests/lockfile and actual command status, with acquisition and
+concurrent mutation explicitly `not_proved`, including partial observations on typed failures.
+`ota up` uses the same evidence attachment; workspace up keeps a repo-scoped child receipt
+when these observations exist. Matching samples narrow drift, but do not acquit acquisition
+or remove the dependency-resolution uncertainty. This is not offline, hermetic or custody assurance;
+validation, generated schemas, connected site guidance and backend parity remain pending.
+Keep the workspace up JSON output when retaining these inline child receipts matters.
+The informational historical-archive limitation is explicit: a later
+`ota workspace receipt --archive` is a current-status snapshot, not recovery of the prior run.
+
 ```bash
 ota run <task> [PATH]
 ota run <task> --dry-run [PATH]
@@ -1678,6 +1692,25 @@ Current behavior:
 - declared env-source failures now point through `ota env --task <name>` first so source status and precedence stay visible before you repair files or rerun the task
 - when the selected task path uses `requirements.toolchains`, ota treats that toolchain as the owner for the selected path instead of describing its owned capabilities as standalone `runtimes` or `tools`
 - toolchain run-path fulfillment is opt-in: `toolchains.<name>.fulfillment.mode: none` keeps `ota run` on diagnosis/check-only behavior, while `fulfillment.mode: run` lets ota attempt run-path provisioning for the selected toolchain only
+- Source candidate only: direct native Linux/macOS canonical Rustup with an exact version
+  and no profile may avoid provisioning when bounded observations positively match the
+  active selection, effective executables/environment, required targets and supported
+  components (none or `rustfmt`). Use this to avoid an unnecessary install invocation for
+  an already-selected toolchain, not as an offline/no-install policy. Unknown, mismatched
+  or ineligible observations preserve ordinary authorized fulfillment; cancellation or
+  child-cleanup failure stops continuation. A skip adds no receipt fulfillment action or
+  fulfillment-cache entry. Runtime qualification and rendered-site propagation remain open.
+  This first source increment also retains provisioning for nested command directories,
+  shell commands and late environment/input/target/native-activation paths; it never borrows
+  readiness from a different launch context. A single non-secret PATH requirement with
+  fixed absolute prepend/append entries may now use the normal CLI preflight's retained
+  policy result and canonical PATH composition; unavailable legacy context remains
+  ineligible. The canonical variable-selection rule still applies: optional unselected
+  PATH remains inherited, not implicitly composed or made required.
+  Final environment/executable and active Rustup selection are rechecked
+  within the original probe budget before task dispatch. Invalidation stops without
+  late provisioning, retry or failure hooks. Core's offline/no-install driver route
+  still remains unqualified; this does not introduce an install-denial policy.
 - when toolchain fulfillment fails, run output names the selected toolchain, the chosen fulfillment source, the declared requirement slice ota checked, and the rerun lane instead of reducing the failure to a generic tool install error
 - `ota run <task> --dry-run --json` exposes additive `toolchains[]` evidence for the selected
   preview path, including provider, backend, target OS, version, fulfillment mode, owned runtime,
@@ -2494,6 +2527,16 @@ Current behavior:
 - when a root contract declares `workspace.type: monorepo`, plain `ota up` prepares the root contract and grouped member summaries for each declared member
 - when `--member` is set, prepares the merged member contract
 - repeated `--member` values prepare those members in the provided order
+- Source-staged for 1.6.29, NOT_RUN: Up acquires all selected local root/member
+  policies before Mise or any target preparation. Captured Rust fulfillment
+  restrictions refuse this unsupported route, including dry-run, canary, archive
+  and detach, with negative receipt attribution and no archive authority. Matching
+  in-process tasks/hooks/prerequisites reuse the admission/readiness/restriction
+  projection; acquired absence and load failure are distinct. Final environment,
+  selected backend-fulfillment and shared-backend environment policy evaluations
+  retain their established freshness; this is not global no-reload. Ordinary detached children
+  still acquire policy as separate invocations; no cross-process snapshot
+  continuity is claimed. Workspace acquisition and public propagation remain open.
 - `--agent` enforces the declared agent-safe task boundary before setup or workflow execution starts; ota refuses the selected workflow path when any selected prepare/setup/run/attach task sits outside the safe set or reaches an unsafe task closure
 - selected secret-requirement recipients refuse before preparation through the same command-scoped
   admission used by `ota run`; dry-run and JSON retain the bounded public projection, while setup,
@@ -2794,6 +2837,11 @@ ota policy review
 Current behavior:
 
 - resolves the active policy pack using the same precedence as `ota policy`
+- the unreleased deny-only Rust source increment reports
+  `policies.toolchain_fulfillment.rust: deny` as a static restriction, not readiness
+  or provisioning permission; normal Run previews carry the same limitation in
+  plan notes. Source approval cannot override it. Parent integration, tests and
+  propagation remain open; this is not shipped behavior.
 - focuses only on policy-authority findings, approved provisioning sources, and adapter bootstrap sources
 - stays read-only
 - points repo-owned conflicts back to `ota.yaml`
@@ -3720,6 +3768,17 @@ Current non-goals:
 
 ## `ota workspace run`
 
+The source-staged parent policy guard is shared with
+[`ota workspace up`](#ota-workspace-up): applicable parent errors/nonempty Rust
+denial refuse before progress, workers or cloning and retain negative selected-file
+attribution. After that guard, the integrated local-child source candidate prepares
+present selected children with independent policy ownership and mapped tasks before
+dispatch. Initial required child refusal emits a disjoint `child_admission` failure
+without receipts; optional child-owned refusal remains WARN without dispatch.
+Missing-before-clone policy, later drift/final checks and conditional Run readiness
+denial before every worker remain outside this bar. Rust deny is not a blanket
+child Run refusal. Existing text-only streaming and jobs=1 remain unchanged.
+
 Run one task across workspace repos in dependency order.
 
 ```bash
@@ -3946,6 +4005,21 @@ The `summary` object on success mirrors the top-level receipt summary and includ
 `error_count`, `warn_count`, `info_count`, and `step_count`.
 
 ## `ota workspace up`
+
+Source-staged parent admission resolves policy against the actual selected
+workspace file before progress, workers or repository acquisition. It uses
+`OTA_POLICY`, nearest ancestor org policy, then selected `workspace.policy`;
+selected absence does not consult an unrelated default workspace or inherited
+proof-child absence marker. Applicable policy errors/nonempty Rust denial refuse
+the parent even for optional repos. Child policy roots and inline environment
+overlays remain independent. The integrated source candidate preflights present
+selected local children before dispatch and retains their owned Up admissions;
+required initial failures stop all dispatch, while optional child-owned failures
+are WARN without a worker. Up unsupported Rust denial retains the actual child
+root/workflow and route `up`, not parent `workspace.up`. After-clone, body and
+final-policy failures remain ordinary partial-effect reports and do not prove zero
+earlier effects. See [policy discovery](policy-packs.md#selected-workspace-parent-admission-source-staged).
+Tests/runtime proof and rendered site propagation remain open for this staging.
 
 Prepare every repo in an ota workspace contract.
 

@@ -4,11 +4,59 @@
   "title": "ota workspace run --json",
   "type": "object",
   "additionalProperties": false,
-  "required": ["ok", "path", "task", "summary", "receipt", "repos"],
+  "required": ["ok", "path", "task"],
+  "anyOf": [
+    {
+      "required": ["summary", "receipt", "repos"],
+      "not": { "anyOf": [{ "required": ["parent_admission"] }, { "required": ["child_admission"] }, { "required": ["code"] }, { "required": ["error"] }] }
+    },
+    {
+      "required": ["code", "error", "parent_admission"],
+      "properties": { "ok": { "const": false }, "code": { "enum": ["toolchain_fulfillment_policy_route_unsupported", "workspace_parent_policy_load_failed", "workspace_parent_protected_admission_unavailable"] } },
+      "not": { "anyOf": [{ "required": ["child_admission"] }, { "required": ["receipt"] }, { "required": ["repos"] }, { "required": ["summary"] }, { "required": ["artifact_routing"] }] }
+    },
+    {
+      "required": ["code", "error", "child_admission"],
+      "properties": { "ok": { "const": false }, "code": { "const": "workspace_child_admission_refused" } },
+      "not": { "anyOf": [{ "required": ["parent_admission"] }, { "required": ["receipt"] }, { "required": ["repos"] }, { "required": ["summary"] }, { "required": ["artifact_routing"] }] }
+    }
+  ],
+  "allOf": [
+    {
+      "if": { "required": ["code"], "properties": { "code": { "const": "toolchain_fulfillment_policy_route_unsupported" } } },
+      "then": { "properties": { "parent_admission": { "properties": { "policy_acquisition": { "const": "acquired_present" } } } } }
+    },
+    {
+      "if": { "required": ["code"], "properties": { "code": { "const": "workspace_parent_policy_load_failed" } } },
+      "then": { "properties": { "parent_admission": { "properties": { "policy_acquisition": { "const": "error" } } } } }
+    },
+    {
+      "if": { "required": ["code"], "properties": { "code": { "const": "workspace_parent_protected_admission_unavailable" } } },
+      "then": { "properties": { "parent_admission": { "properties": { "policy_acquisition": { "const": "unavailable" } } } } }
+    }
+  ],
   "properties": {
     "ok": { "type": "boolean" },
     "path": { "type": "string" },
     "task": { "type": "string" },
+    "code": { "enum": ["toolchain_fulfillment_policy_route_unsupported", "workspace_parent_policy_load_failed", "workspace_parent_protected_admission_unavailable", "workspace_child_admission_refused"] },
+    "error": { "type": "string" },
+    "parent_admission": {
+      "allOf": [
+        { "$ref": "./workspace-up.json#/$defs/workspaceParentAdmission" },
+        { "properties": { "route": { "const": "workspace.run" }, "toolchain_fulfillment_route_refusal": { "properties": { "route": { "const": "workspace.run" }, "selected_task": { "type": "string" }, "selected_workflow": { "type": "null" } } } } }
+      ]
+    },
+    "child_admission": {
+      "allOf": [
+        { "$ref": "./workspace-up.json#/$defs/workspaceChildAdmission" },
+        {
+          "properties": { "route": { "const": "workspace.run" }, "selected_child": { "properties": { "selected_workflow": { "type": "null" } } } },
+          "if": { "properties": { "failure": { "properties": { "kind": { "not": { "enum": ["contract_invalid", "selection_invalid"] } } } } } },
+          "then": { "properties": { "selected_child": { "properties": { "selected_task": { "type": "string" } } } } }
+        }
+      ]
+    },
     "summary": {
       "type": "object",
       "additionalProperties": false,

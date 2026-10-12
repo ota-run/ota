@@ -4,10 +4,196 @@
   "title": "ota workspace up --json",
   "type": "object",
   "additionalProperties": false,
-  "required": ["ok", "path", "summary", "receipt", "repos"],
+  "required": ["ok", "path"],
+  "anyOf": [
+    {
+      "required": ["summary", "receipt", "repos"],
+      "not": { "anyOf": [{ "required": ["parent_admission"] }, { "required": ["child_admission"] }, { "required": ["code"] }, { "required": ["error"] }] }
+    },
+    {
+      "required": ["code", "error", "parent_admission"],
+      "properties": { "ok": { "const": false }, "code": { "enum": ["toolchain_fulfillment_policy_route_unsupported", "workspace_parent_policy_load_failed", "workspace_parent_protected_admission_unavailable"] } },
+      "not": { "anyOf": [{ "required": ["child_admission"] }, { "required": ["receipt"] }, { "required": ["repos"] }, { "required": ["summary"] }, { "required": ["artifact_routing"] }] }
+    },
+    {
+      "required": ["code", "error", "child_admission"],
+      "properties": { "ok": { "const": false }, "code": { "const": "workspace_child_admission_refused" } },
+      "not": { "anyOf": [{ "required": ["parent_admission"] }, { "required": ["receipt"] }, { "required": ["repos"] }, { "required": ["summary"] }, { "required": ["artifact_routing"] }] }
+    }
+  ],
+  "$defs": {
+    "workspaceChildAdmission": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["route", "execution_started", "attempted", "selected_child", "policy_acquisition", "failure"],
+      "properties": {
+        "route": { "enum": ["workspace.up", "workspace.run"] },
+        "execution_started": { "const": false },
+        "attempted": { "const": false },
+        "selected_child": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "path", "contract_path", "selected_task", "selected_workflow"],
+          "properties": {
+            "name": { "type": "string", "minLength": 1 },
+            "path": { "type": "string", "minLength": 1 },
+            "contract_path": { "type": "string", "minLength": 1 },
+            "selected_task": { "type": ["string", "null"] },
+            "selected_workflow": { "type": ["string", "null"] },
+            "requested_selector": { "type": "string", "minLength": 1 }
+          }
+        },
+        "policy_acquisition": { "enum": ["acquired_present", "acquired_absent", "error", "unavailable"] },
+        "policy": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["identity", "source", "path"],
+          "properties": {
+            "identity": { "$ref": "./receipt.json#/$defs/sha256Identity" },
+            "source": { "enum": ["env_override", "repo_policy", "workspace_policy"] },
+            "path": { "type": "string" }
+          }
+        },
+        "failure": { "$ref": "#/$defs/workspaceChildFailure" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "policy_acquisition": { "const": "acquired_present" } } },
+          "then": { "required": ["policy"] },
+          "else": { "not": { "required": ["policy"] } }
+        },
+        {
+          "if": { "properties": { "failure": { "properties": { "kind": { "enum": ["contract_invalid", "selection_invalid", "protected_unavailable"] } } } } },
+          "then": { "properties": { "policy_acquisition": { "const": "unavailable" } } }
+        },
+        {
+          "if": { "properties": { "failure": { "properties": { "kind": { "enum": ["policy_load_failed", "policy_identity_failed"] } } } } },
+          "then": { "properties": { "policy_acquisition": { "const": "error" } } }
+        },
+        {
+          "if": { "properties": { "failure": { "properties": { "kind": { "enum": ["typed_policy_denied", "typed_realization_unavailable"] } } } } },
+          "then": { "properties": { "policy_acquisition": { "enum": ["acquired_present", "acquired_absent"] } } }
+        },
+        {
+          "if": { "properties": { "failure": { "properties": { "kind": { "const": "unsupported_route" } } } } },
+          "then": { "properties": { "route": { "const": "workspace.up" }, "policy_acquisition": { "const": "acquired_present" } } }
+        },
+        {
+          "if": { "properties": { "failure": { "properties": { "kind": { "const": "admission_error" } } } } },
+          "then": { "properties": { "policy_acquisition": { "enum": ["unavailable", "acquired_present", "acquired_absent"] } } }
+        },
+        {
+          "if": { "properties": { "policy_acquisition": { "const": "unavailable" } } },
+          "then": { "properties": { "failure": { "not": { "required": ["policy_decision"] } } } }
+        },
+        {
+          "if": { "properties": { "failure": { "properties": { "kind": { "enum": ["contract_invalid", "selection_invalid"] } } } } },
+          "then": { "properties": { "selected_child": { "properties": { "selected_task": { "type": "null" }, "selected_workflow": { "type": "null" } } } } }
+        },
+        {
+          "if": { "properties": { "failure": { "properties": { "kind": { "const": "selection_invalid" } } } } },
+          "then": { "properties": { "selected_child": { "required": ["requested_selector"] } } }
+        }
+      ]
+    },
+    "workspaceChildFailure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "error_variant", "message"],
+      "properties": {
+        "kind": { "enum": ["contract_invalid", "selection_invalid", "policy_load_failed", "policy_identity_failed", "protected_unavailable", "typed_policy_denied", "typed_realization_unavailable", "unsupported_route", "admission_error"] },
+        "error_variant": { "type": "string", "minLength": 1 },
+        "message": { "type": "string" },
+        "stage": { "type": "string" },
+        "code": { "type": "string" },
+        "policy_decision": { "$ref": "./run-preview.json#/$defs/effectPolicyDecision" },
+        "typed_effect_policy_refusal": {
+          "allOf": [
+            { "$ref": "./receipt.json#/oneOf/0/properties/receipt/properties/witnessed_observations/properties/typed_effect_policy_refusal" },
+            { "not": { "anyOf": [{ "required": ["policy_snapshot_archive"] }, { "required": ["refusal_archive_path"] }] } }
+          ]
+        },
+        "toolchain_fulfillment_route_refusal": {
+          "allOf": [
+            { "$ref": "./receipt.json#/$defs/toolchainFulfillmentPolicyRouteRefusal" },
+            { "properties": { "route": { "const": "up" }, "selected_task": { "type": "null" } } }
+          ]
+        }
+      },
+      "oneOf": [
+        {
+          "properties": { "kind": { "enum": ["contract_invalid", "selection_invalid", "policy_load_failed", "policy_identity_failed", "protected_unavailable"] } },
+          "not": { "anyOf": [{ "required": ["policy_decision"] }, { "required": ["typed_effect_policy_refusal"] }, { "required": ["toolchain_fulfillment_route_refusal"] }] }
+        },
+        {
+          "properties": { "kind": { "const": "typed_policy_denied" }, "error_variant": { "const": "EffectPolicyDenied" }, "code": { "const": "effect_policy_denied" }, "policy_decision": { "properties": { "aggregate_decision": { "const": "deny" } } } },
+          "required": ["policy_decision"],
+          "not": { "required": ["toolchain_fulfillment_route_refusal"] },
+          "if": { "required": ["typed_effect_policy_refusal"] },
+          "then": { "properties": { "policy_decision": { "properties": { "explicit_typed_deny": { "const": true } } } } }
+        },
+        {
+          "properties": { "kind": { "const": "typed_realization_unavailable" }, "error_variant": { "const": "FileActionFailed" } },
+          "not": { "anyOf": [{ "required": ["code"] }, { "required": ["typed_effect_policy_refusal"] }, { "required": ["toolchain_fulfillment_route_refusal"] }] }
+        },
+        {
+          "properties": { "kind": { "const": "unsupported_route" }, "error_variant": { "const": "ToolchainFulfillmentPolicyRouteUnsupported" }, "code": { "const": "toolchain_fulfillment_policy_route_unsupported" } },
+          "required": ["toolchain_fulfillment_route_refusal"],
+          "not": { "anyOf": [{ "required": ["policy_decision"] }, { "required": ["typed_effect_policy_refusal"] }] }
+        },
+        {
+          "properties": { "kind": { "const": "admission_error" } },
+          "not": { "anyOf": [{ "required": ["typed_effect_policy_refusal"] }, { "required": ["toolchain_fulfillment_route_refusal"] }] }
+        }
+      ]
+    },
+    "workspaceParentAdmission": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["route", "policy_acquisition", "execution_started", "attempted"],
+      "properties": {
+        "route": { "enum": ["workspace.up", "workspace.run"] },
+        "policy_acquisition": { "enum": ["acquired_present", "error", "unavailable"] },
+        "execution_started": { "const": false },
+        "attempted": { "const": false },
+        "toolchain_fulfillment_route_refusal": { "$ref": "./receipt.json#/$defs/toolchainFulfillmentPolicyRouteRefusal" }
+      },
+      "if": { "properties": { "policy_acquisition": { "const": "acquired_present" } } },
+      "then": { "required": ["toolchain_fulfillment_route_refusal"] },
+      "else": { "not": { "required": ["toolchain_fulfillment_route_refusal"] } }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "required": ["code"], "properties": { "code": { "const": "toolchain_fulfillment_policy_route_unsupported" } } },
+      "then": { "properties": { "parent_admission": { "properties": { "policy_acquisition": { "const": "acquired_present" } } } } }
+    },
+    {
+      "if": { "required": ["code"], "properties": { "code": { "const": "workspace_parent_policy_load_failed" } } },
+      "then": { "properties": { "parent_admission": { "properties": { "policy_acquisition": { "const": "error" } } } } }
+    },
+    {
+      "if": { "required": ["code"], "properties": { "code": { "const": "workspace_parent_protected_admission_unavailable" } } },
+      "then": { "properties": { "parent_admission": { "properties": { "policy_acquisition": { "const": "unavailable" } } } } }
+    }
+  ],
   "properties": {
     "ok": { "type": "boolean" },
     "path": { "type": "string" },
+    "code": { "enum": ["toolchain_fulfillment_policy_route_unsupported", "workspace_parent_policy_load_failed", "workspace_parent_protected_admission_unavailable", "workspace_child_admission_refused"] },
+    "error": { "type": "string" },
+    "parent_admission": {
+      "allOf": [
+        { "$ref": "#/$defs/workspaceParentAdmission" },
+        { "properties": { "route": { "const": "workspace.up" }, "toolchain_fulfillment_route_refusal": { "properties": { "route": { "const": "workspace.up" }, "selected_task": { "type": "null" }, "selected_workflow": { "type": "null" } } } } }
+      ]
+    },
+    "child_admission": {
+      "allOf": [
+        { "$ref": "#/$defs/workspaceChildAdmission" },
+        { "properties": { "route": { "const": "workspace.up" }, "selected_child": { "properties": { "selected_task": { "type": "null" } } } } }
+      ]
+    },
     "summary": {
       "type": "object",
       "additionalProperties": false,

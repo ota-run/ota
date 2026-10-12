@@ -262,3 +262,33 @@ It is intentionally opinionated, but still small enough to be understandable in 
 2. Adjust versions to the installable versions in your approved sources.
 3. Keep per-repo `ota.yaml` contracts focused on actual repo needs.
 4. Let `ota doctor` tell you when the repo and org policy disagree.
+
+## Workspace parent policy (source stage)
+
+The accepted source-stage workspace up/run design is not shipped or runtime-verified. Parent policy
+precedence is `OTA_POLICY` > nearest ancestor `.ota/org-policy.yaml` > the actual selected, loaded
+workspace's `workspace.policy` > genuinely observed absence. Relative policy paths use that selected
+workspace file's directory; neither an unrelated default workspace nor an inherited proof-child
+absence marker supplies or suppresses this parent's policy. An empty pack is present, while an
+applicable load error is terminal rather than absence or permission to fall back. Remote policy
+acquisition is itself an effect, not an offline check.
+
+A nonempty `policies.toolchain_fulfillment: {rust: deny}` refuses the unsupported workspace parent
+route before either captured or streamed repo progress, workers, directory creation, cloning or
+child execution; source approval cannot override that denial. It records no provisioning attempt
+and grants no provider or authority permission. This parent-only guard does not replace child
+policy roots, conflate external policy with the inline `policies.env.values`
+overlay carried as `policy_env`, or freeze final environment/backend resolution. A newly acquired
+child's unknown policy is checked after cloning, not admitted upfront; later child/final failures
+are not evidence of zero prior
+effects. The integrated source candidate separately preflights present selected
+local children and carries their independently acquired admission into captured
+and streamed dispatch. Initial required admission errors/typed refusal or child Up
+unsupported Rust restriction stop dispatch; optional child-owned terminal failure
+is WARN with no body. A proof child's inherited absence marker cannot stand in for
+this independent acquisition. Run Rust restriction remains conditional on the
+existing runner's actual readiness/fulfillment path; no-Rust and satisfied-readiness
+compatibility are not replaced by blanket denial. Full final-policy/drift and
+unknown-before-clone guarantees remain open, and none of this source staging grants
+authority or shipped/runtime proof.
+See [the workspace reference](../spec/workspace-reference.md#workspace-parent-admission-source-stage).

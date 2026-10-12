@@ -30363,7 +30363,7 @@ tasks:
 
     #[test]
     fn accepts_prepare_only_cargo_hydration_task() {
-        let contract = parse_contract_str(
+        let mut contract = parse_contract_str(
             Path::new("ota.yaml"),
             r#"
 version: 1
@@ -30391,6 +30391,14 @@ tasks:
         .unwrap();
 
         validate_contract(&contract).expect("cargo hydration should validate");
+        let crate::schema::TaskPrepareSpec::DependencyHydration(prepare) =
+            contract.tasks.get_mut("setup").unwrap().prepare.as_mut().unwrap()
+        else { panic!("typed Cargo prepare"); };
+        let crate::schema::TaskDependencyHydrationSourceSpec::Cargo(source) = &mut prepare.source
+        else { panic!("typed Cargo source"); };
+        source.locked = true;
+        // Validation does not execute Cargo or require an on-disk lockfile.
+        validate_contract(&contract).expect("authored locked Cargo should validate without root discovery");
     }
 
     #[test]

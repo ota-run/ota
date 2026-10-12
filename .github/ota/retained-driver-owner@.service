@@ -1,0 +1,37 @@
+# Private operator-installed template; source only, not an installation instruction.
+# Admitted installation must be root:root, single-link 0444 at the fixed path.
+[Unit]
+Description=Ota retained driver build owner %i
+After=local-fs.target
+
+[Service]
+Type=exec
+User=root
+Group=root
+ExecStart=/usr/bin/python3 -I -B /opt/ota-bootstrap/controller.py build-owner /etc/ota-bootstrap/requests/%i.json
+Restart=no
+RemainAfterExit=yes
+KillMode=control-group
+SendSIGKILL=yes
+TimeoutStopSec=10s
+RuntimeMaxSec=18min
+MemoryMax=3G
+MemorySwapMax=0
+CPUQuota=200%
+TasksMax=256
+LimitNOFILE=1024
+UMask=0077
+PrivateNetwork=yes
+PrivateMounts=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/ota-bootstrap/invocations /var/lib/ota-bootstrap/retained
+TemporaryFileSystem=/run/ota-bootstrap-work:rw,nosuid,nodev,size=7G,mode=0711
+Delegate=cpu memory pids
+NoNewPrivileges=yes
+StandardInput=null
+StandardOutput=null
+StandardError=journal
+
+# Deliberately no [Install]: no boot activation, CI caller, or automatic restart.

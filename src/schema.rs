@@ -8477,13 +8477,23 @@ impl TaskGradleHydrationSourceSpec {
 #[serde(deny_unknown_fields)]
 pub struct TaskCargoHydrationSourceSpec {
     pub cwd: String,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub locked: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compose: Option<TaskComposeInvocationSpec>,
 }
 
 impl TaskCargoHydrationSourceSpec {
+    pub fn command_args(&self) -> Vec<String> {
+        let mut args = vec![String::from("fetch")];
+        if self.locked {
+            args.push(String::from("--locked"));
+        }
+        args
+    }
+
     pub fn command_preview(&self) -> String {
-        String::from("cargo fetch")
+        format!("cargo {}", self.command_args().join(" "))
     }
 }
 
@@ -10879,6 +10889,34 @@ tasks:
             compose: None,
         };
         assert_eq!(composer.command_preview(), "composer install");
+    }
+
+    #[test]
+    fn cargo_hydration_locked_is_opt_in_and_uses_shared_arguments() {
+        for value in [
+            serde_json::json!({"cwd": "."}),
+            serde_json::json!({"cwd": ".", "locked": false}),
+        ] {
+            let source: super::TaskCargoHydrationSourceSpec =
+                serde_json::from_value(value).unwrap();
+            assert!(!source.locked);
+            assert_eq!(source.command_args(), ["fetch"]);
+            assert_eq!(source.command_preview(), "cargo fetch");
+            assert_eq!(serde_json::to_value(source).unwrap(), serde_json::json!({"cwd": "."}));
+        }
+        let source: super::TaskCargoHydrationSourceSpec = serde_json::from_value(
+            serde_json::json!({"cwd": "member", "locked": true}),
+        ).unwrap();
+        assert!(source.locked);
+        assert_eq!(source.command_args(), ["fetch", "--locked"]);
+        assert_eq!(source.command_preview(), "cargo fetch --locked");
+        assert_eq!(serde_json::to_value(source).unwrap(),
+            serde_json::json!({"cwd": "member", "locked": true}));
+        for invalid in [serde_json::json!("true"), serde_json::json!(1), serde_json::Value::Null] {
+            assert!(serde_json::from_value::<super::TaskCargoHydrationSourceSpec>(
+                serde_json::json!({"cwd": ".", "locked": invalid}),
+            ).is_err());
+        }
     }
 
     #[test]

@@ -95,6 +95,9 @@ pub struct PolicyRules {
     pub exports: Option<PolicyExportsRules>,
     #[serde(default)]
     pub provisioning: BTreeMap<String, PolicyProvisioningRule>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub toolchain_fulfillment:
+        BTreeMap<PolicyToolchainFulfillmentSelector, PolicyToolchainFulfillmentRestriction>,
     #[serde(default)]
     pub native_packages: BTreeMap<String, PolicyNativePackageRule>,
     #[serde(default)]
@@ -107,6 +110,18 @@ pub struct PolicyRules {
     pub replay_inputs: PolicyReplayInputRules,
     #[serde(default)]
     pub sandbox: Option<PolicySandboxRules>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+pub enum PolicyToolchainFulfillmentSelector {
+    #[serde(rename = "rust")]
+    Rust,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum PolicyToolchainFulfillmentRestriction {
+    #[serde(rename = "deny")]
+    Deny,
 }
 
 /// Organization-owned restrictions that may only narrow repo-declared runtime boundaries.
@@ -776,6 +791,15 @@ impl ProvisioningAction {
 }
 
 impl OrgPolicyPack {
+    pub fn denies_toolchain_fulfillment(&self, name: &str) -> bool {
+        name == "rust"
+            && self
+                .policies
+                .toolchain_fulfillment
+                .get(&PolicyToolchainFulfillmentSelector::Rust)
+                == Some(&PolicyToolchainFulfillmentRestriction::Deny)
+    }
+
     pub fn env_values(&self) -> &BTreeMap<String, String> {
         &self.policies.env.values
     }
@@ -3114,6 +3138,29 @@ pub fn load_org_policy_pack_auto_details(
         return Ok(None);
     }
 
+    load_org_policy_pack_with_workspace_source(contract_path, None)
+}
+
+pub(crate) fn load_selected_workspace_policy_pack_details(
+    workspace_path: &Path,
+    workspace: &crate::workspace::WorkspaceContract,
+) -> Result<Option<LoadedOrgPolicyPack>, LoadPolicyPackError> {
+    // A proof child's absence marker is not an acquisition result for this owner.
+    load_org_policy_pack_with_workspace_source(workspace_path, Some(workspace))
+}
+
+pub(crate) fn load_independent_child_policy_pack_details(
+    contract_path: &Path,
+) -> Result<Option<LoadedOrgPolicyPack>, LoadPolicyPackError> {
+    // A marker scoped to a proof child cannot establish this child's policy absence.
+    load_org_policy_pack_with_workspace_source(contract_path, None)
+}
+
+fn load_org_policy_pack_with_workspace_source(
+    contract_path: &Path,
+    selected_workspace: Option<&crate::workspace::WorkspaceContract>,
+) -> Result<Option<LoadedOrgPolicyPack>, LoadPolicyPackError> {
+
     fn map_loaded(
         loaded: Option<(OrgPolicyPack, PathBuf)>,
         source: PolicyPackSource,
@@ -3141,12 +3188,36 @@ pub fn load_org_policy_pack_auto_details(
             .map(|loaded| map_loaded(loaded, PolicyPackSource::EnvOverride));
     }
 
+    let normalized_workspace_path;
+    let contract_path = if selected_workspace.is_some() {
+        let directory = contract_path.parent().filter(|path| !path.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        let basename = contract_path.file_name().ok_or_else(|| LoadPolicyPackError::Validate {
+            path: contract_path.display().to_string(),
+            message: String::from("selected workspace policy owner must name a file"),
+        })?;
+        // Normalize directory ancestry, but do not relocate a file symlink to its target.
+        normalized_workspace_path = fs::canonicalize(directory)
+            .map_err(|source| LoadPolicyPackError::Read {
+                path: directory.display().to_string(), source,
+            })?.join(basename);
+        normalized_workspace_path.as_path()
+    } else {
+        contract_path
+    };
+
     if let Some(policy_path) = find_org_policy_pack_path(contract_path) {
         return load_org_policy_pack_from_path(policy_path)
             .map(|loaded| map_loaded(loaded, PolicyPackSource::RepoPolicy));
     }
 
-    if let Some(policy_location) = find_workspace_policy_pack_location(contract_path)? {
+    let workspace_policy_location = match selected_workspace {
+        Some(workspace) => workspace.workspace.policy.as_deref()
+            .map(|policy| workspace_policy_pack_location(contract_path, policy))
+            .transpose()?,
+        None => find_workspace_policy_pack_location(contract_path)?,
+    };
+    if let Some(policy_location) = workspace_policy_location {
         return load_org_policy_pack_from_location(policy_location)
             .map(|loaded| map_loaded(loaded, PolicyPackSource::WorkspacePolicy));
     }
@@ -3250,31 +3321,35 @@ fn find_workspace_policy_pack_location(
                 })?;
 
             if let Some(policy) = workspace.workspace.and_then(|workspace| workspace.policy) {
-                let policy = policy.trim();
-                if policy.is_empty() {
-                    return Err(LoadPolicyPackError::Validate {
-                        path: candidate.display().to_string(),
-                        message: String::from("workspace policy path must not be empty"),
-                    });
-                }
-
-                return Ok(Some(if is_remote_policy_source(policy) {
-                    policy.to_string()
-                } else {
-                    fs::canonicalize(dir.join(policy))
-                        .map_err(|source| LoadPolicyPackError::Read {
-                            path: dir.join(policy).display().to_string(),
-                            source,
-                        })?
-                        .display()
-                        .to_string()
-                }));
+                return workspace_policy_pack_location(&candidate, &policy).map(Some);
             }
         }
         current = dir.parent();
     }
 
     Ok(None)
+}
+
+fn workspace_policy_pack_location(
+    workspace_path: &Path,
+    policy: &str,
+) -> Result<String, LoadPolicyPackError> {
+    let policy = policy.trim();
+    if policy.is_empty() {
+        return Err(LoadPolicyPackError::Validate {
+            path: workspace_path.display().to_string(),
+            message: String::from("workspace policy path must not be empty"),
+        });
+    }
+    if is_remote_policy_source(policy) {
+        return Ok(policy.to_string());
+    }
+    let policy_path = workspace_path.parent().unwrap_or_else(|| Path::new(".")).join(policy);
+    fs::canonicalize(&policy_path)
+        .map(|path| path.display().to_string())
+        .map_err(|source| LoadPolicyPackError::Read {
+            path: policy_path.display().to_string(), source,
+        })
 }
 
 fn fetch_policy_pack_contents(url: &str) -> Result<String, String> {
@@ -3408,12 +3483,287 @@ mod tests {
 
     use super::{
         EffectGovernanceOverrides, EffectGovernanceScope, OrgPolicyPack, PolicyEffectDecision,
-        PolicyPackSource, ProvisioningActionKind, ProvisioningTargetKind,
+        PolicyPackSource, PolicyToolchainFulfillmentRestriction, PolicyToolchainFulfillmentSelector,
+        ProvisioningActionKind, ProvisioningTargetKind,
         load_org_policy_pack_auto, load_org_policy_pack_auto_details,
     };
 
+    #[test]
+    fn toolchain_fulfillment_denial_uses_only_the_canonical_rust_selector() {
+        let absent: OrgPolicyPack = serde_yaml::from_str("policies: {}").unwrap();
+        let denied: OrgPolicyPack =
+            serde_yaml::from_str("policies:\n  toolchain_fulfillment: {rust: deny}\n").unwrap();
+        absent.validate().unwrap();
+        denied.validate().unwrap();
+
+        assert!(absent.policies.toolchain_fulfillment.is_empty());
+        assert!(!absent.denies_toolchain_fulfillment("rust"));
+        assert_eq!(
+            denied
+                .policies
+                .toolchain_fulfillment
+                .get(&PolicyToolchainFulfillmentSelector::Rust),
+            Some(&PolicyToolchainFulfillmentRestriction::Deny)
+        );
+        assert!(denied.denies_toolchain_fulfillment("rust"));
+        for name in ["Rust", "RUST", " rust", "rust ", "rustup", "cargo", "node", ""] {
+            assert!(!denied.denies_toolchain_fulfillment(name), "{name:?}");
+        }
+    }
+
+    #[test]
+    fn rejects_noncanonical_toolchain_fulfillment_yaml_shapes() {
+        for restriction in [
+            "null",
+            "~",
+            "deny",
+            "[]",
+            "[rust]",
+            "[{}]",
+            "{node: deny}",
+            "{rustup: deny}",
+            "{Rust: deny}",
+            "{RUST: deny}",
+            "{' rust': deny}",
+            "{'rust ': deny}",
+            "{rust: allow}",
+            "{rust: warn}",
+            "{rust: Deny}",
+            "{rust: DENY}",
+            "{rust: ' deny'}",
+            "{rust: 'deny '}",
+            "{rust: null}",
+            "{rust: true}",
+            "{rust: 1}",
+            "{rust: []}",
+            "{rust: {}}",
+            "{rust: {decision: deny}}",
+            "{rust: deny, node: deny}",
+        ] {
+            let source = format!("policies:\n  toolchain_fulfillment: {restriction}\n");
+            assert!(
+                serde_yaml::from_str::<OrgPolicyPack>(&source).is_err(),
+                "unexpectedly accepted {restriction}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_noncanonical_toolchain_fulfillment_json_shapes() {
+        for restriction in [
+            "null",
+            "\"deny\"",
+            "[]",
+            "[{}]",
+            "{\"node\":\"deny\"}",
+            "{\"Rust\":\"deny\"}",
+            "{\"rust\":\"allow\"}",
+            "{\"rust\":\"warn\"}",
+            "{\"rust\":\"Deny\"}",
+            "{\"rust\":null}",
+            "{\"rust\":true}",
+            "{\"rust\":[]}",
+            "{\"rust\":{\"decision\":\"deny\"}}",
+        ] {
+            let source = format!("{{\"policies\":{{\"toolchain_fulfillment\":{restriction}}}}}");
+            assert!(
+                serde_json::from_str::<OrgPolicyPack>(&source).is_err(),
+                "unexpectedly accepted {restriction}"
+            );
+        }
+    }
+
+    #[test]
+    fn empty_toolchain_fulfillment_preserves_legacy_serialization_and_identity() {
+        let absent: OrgPolicyPack =
+            serde_yaml::from_str("policies:\n  required_sections: [tasks]\n").unwrap();
+        let empty: OrgPolicyPack = serde_yaml::from_str(
+            "policies:\n  required_sections: [tasks]\n  toolchain_fulfillment: {}\n",
+        )
+        .unwrap();
+        empty.validate().unwrap();
+
+        let legacy_value = serde_json::to_value(&absent).unwrap();
+        let empty_value = serde_json::to_value(&empty).unwrap();
+        assert!(legacy_value["policies"].get("toolchain_fulfillment").is_none());
+        assert_eq!(legacy_value, empty_value);
+        assert_eq!(
+            serde_yaml::to_string(&absent).unwrap(),
+            serde_yaml::to_string(&empty).unwrap()
+        );
+        assert!(
+            !serde_yaml::to_string(&empty)
+                .unwrap()
+                .contains("toolchain_fulfillment")
+        );
+        assert_eq!(
+            super::semantic_contract_identity(&absent).unwrap(),
+            super::semantic_contract_identity(&empty).unwrap()
+        );
+        assert_eq!(
+            super::semantic_contract_identity(&empty).unwrap(),
+            super::semantic_contract_identity(&legacy_value).unwrap()
+        );
+        assert!(!empty.denies_toolchain_fulfillment("rust"));
+    }
+
+    #[test]
+    fn toolchain_fulfillment_denial_changes_identity_and_round_trips() {
+        let absent: OrgPolicyPack = serde_yaml::from_str("policies: {}").unwrap();
+        let denied: OrgPolicyPack =
+            serde_yaml::from_str("policies:\n  toolchain_fulfillment: {rust: deny}\n").unwrap();
+        let value = serde_json::to_value(&denied).unwrap();
+        assert_eq!(
+            value["policies"]["toolchain_fulfillment"],
+            serde_json::json!({"rust": "deny"})
+        );
+        let denied_identity = super::semantic_contract_identity(&denied).unwrap();
+        assert_ne!(
+            super::semantic_contract_identity(&absent).unwrap(),
+            denied_identity
+        );
+
+        let json_round_trip: OrgPolicyPack = serde_json::from_value(value).unwrap();
+        let yaml_round_trip: OrgPolicyPack =
+            serde_yaml::from_str(&serde_yaml::to_string(&denied).unwrap()).unwrap();
+        for round_trip in [json_round_trip, yaml_round_trip] {
+            round_trip.validate().unwrap();
+            assert!(round_trip.denies_toolchain_fulfillment("rust"));
+            assert_eq!(
+                super::semantic_contract_identity(&round_trip).unwrap(),
+                denied_identity
+            );
+        }
+    }
+
     fn write_contract(dir: &TempDir, body: &str) {
         fs::write(dir.path().join("ota.yaml"), body).unwrap();
+    }
+
+    #[test]
+    fn selected_workspace_parent_owns_file_precedence_and_ignores_only_the_proof_child_marker() {
+        let _guard = env_mutex_lock();
+        let _cwd_guard = cwd_mutex_lock();
+        struct Environment(Vec<(&'static str, Option<std::ffi::OsString>)>);
+        impl Drop for Environment {
+            fn drop(&mut self) {
+                for (name, value) in &self.0 {
+                    unsafe {
+                        match value {
+                            Some(value) => env::set_var(name, value),
+                            None => env::remove_var(name),
+                        }
+                    }
+                }
+            }
+        }
+        let names = ["OTA_POLICY", super::OTA_POLICY_COMMAND_SNAPSHOT_ABSENT_ENV];
+        let _environment = Environment(names.into_iter().map(|name| (name, env::var_os(name))).collect());
+        unsafe {
+            env::remove_var("OTA_POLICY");
+            env::set_var(super::OTA_POLICY_COMMAND_SNAPSHOT_ABSENT_ENV, "1");
+        }
+        let fixture = TempDir::new().unwrap();
+        let directory = fixture.path().join("selected");
+        fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("custom.yaml");
+        fs::write(&path, "version: 1\nworkspace: {name: selected, policy: policy.yaml}\nrepos: {}\n").unwrap();
+        let mut workspace = crate::workspace::load_workspace_contract(&path).unwrap();
+        let deny = "policies: {toolchain_fulfillment: {rust: deny}}";
+        let selected = directory.join("policy.yaml");
+        fs::write(&selected, deny).unwrap();
+        // Neither same-directory nor inherited default-workspace files own this parent.
+        for root in [directory.as_path(), fixture.path()] {
+            fs::write(root.join("ota.workspace.yaml"), "workspace: {policy: default.yaml}\n").unwrap();
+            fs::write(root.join("default.yaml"), deny).unwrap();
+        }
+        let load = |workspace: &crate::workspace::WorkspaceContract| super::load_selected_workspace_policy_pack_details(&path, workspace);
+        let loaded = load(&workspace).unwrap().unwrap();
+        assert!(loaded.pack.denies_toolchain_fulfillment("rust"));
+        assert_eq!(loaded.source, PolicyPackSource::WorkspacePolicy);
+        assert_eq!(loaded.path, fs::canonicalize(&selected).unwrap());
+        assert!(loaded.source_identity.is_some());
+        assert_eq!(env::var(super::OTA_POLICY_COMMAND_SNAPSHOT_ABSENT_ENV).unwrap(), "1");
+        assert!(load_org_policy_pack_auto_details(&path).unwrap().is_none());
+
+        let override_path = fixture.path().join("override.yaml");
+        fs::write(&override_path, "policies: {}").unwrap();
+        unsafe { env::set_var("OTA_POLICY", &override_path); }
+        let empty = load(&workspace).unwrap().unwrap();
+        assert_eq!(empty.source, PolicyPackSource::EnvOverride);
+        assert!(!empty.pack.denies_toolchain_fulfillment("rust"));
+        assert!(empty.source_identity.is_some());
+        fs::remove_file(&override_path).unwrap();
+        assert!(load(&workspace).is_err());
+        unsafe { env::remove_var("OTA_POLICY"); }
+
+        let org = fixture.path().join(".ota");
+        fs::create_dir_all(&org).unwrap();
+        fs::write(org.join("org-policy.yaml"), "policies: {}").unwrap();
+        fs::write(&selected, "policies: [").unwrap();
+        let inherited = load(&workspace).unwrap().unwrap();
+        assert_eq!(inherited.source, PolicyPackSource::RepoPolicy);
+        fs::remove_file(org.join("org-policy.yaml")).unwrap();
+        assert!(load(&workspace).is_err());
+        for contents in ["policies: {toolchain_fulfillment: {rust: allow}}", "policies: {}"] {
+            fs::write(&selected, contents).unwrap();
+            if contents.contains("allow") { assert!(load(&workspace).is_err()); }
+            else { assert!(load(&workspace).unwrap().unwrap().source_identity.is_some()); }
+        }
+        fs::remove_file(&selected).unwrap();
+        assert!(load(&workspace).is_err());
+        workspace.workspace.policy = Some(String::new());
+        assert!(load(&workspace).is_err());
+        workspace.workspace.policy = None;
+        assert!(load(&workspace).unwrap().is_none());
+        unsafe { env::remove_var(super::OTA_POLICY_COMMAND_SNAPSHOT_ABSENT_ENV); }
+        let generic = load_org_policy_pack_auto_details(&path).unwrap().unwrap();
+        assert_eq!(generic.source, PolicyPackSource::WorkspacePolicy);
+        assert_eq!(generic.path, fs::canonicalize(directory.join("default.yaml")).unwrap());
+        assert!(load(&workspace).unwrap().is_none());
+
+        struct CurrentDirectory(PathBuf);
+        impl Drop for CurrentDirectory {
+            fn drop(&mut self) { env::set_current_dir(&self.0).unwrap(); }
+        }
+        let _restore_cwd = CurrentDirectory(env::current_dir().unwrap());
+        env::set_current_dir(&directory).unwrap();
+        workspace.workspace.policy = Some(String::from("policy.yaml"));
+        fs::write(&selected, deny).unwrap();
+        fs::write(org.join("org-policy.yaml"), "policies: {}").unwrap();
+        let configs = directory.join("configs");
+        fs::create_dir_all(configs.join(".ota")).unwrap();
+        fs::write(configs.join(".ota/org-policy.yaml"), deny).unwrap();
+        for selected_path in [Path::new("custom.yaml"), Path::new("configs/../custom.yaml"), path.as_path()] {
+            let actual = super::load_selected_workspace_policy_pack_details(selected_path, &workspace).unwrap().unwrap();
+            assert_eq!(actual.source, PolicyPackSource::RepoPolicy);
+            assert_eq!(actual.path, fs::canonicalize(org.join("org-policy.yaml")).unwrap());
+            assert!(!actual.pack.denies_toolchain_fulfillment("rust"));
+        }
+        // Higher-priority env policy is selected before lower-priority directory acquisition.
+        fs::write(&override_path, "policies: {}").unwrap();
+        unsafe { env::set_var("OTA_POLICY", &override_path); }
+        assert_eq!(super::load_selected_workspace_policy_pack_details(
+            Path::new("missing-directory/custom.yaml"), &workspace,
+        ).unwrap().unwrap().source, PolicyPackSource::EnvOverride);
+        unsafe { env::remove_var("OTA_POLICY"); }
+        assert!(super::load_selected_workspace_policy_pack_details(
+            Path::new("missing-directory/custom.yaml"), &workspace,
+        ).is_err());
+        #[cfg(unix)]
+        {
+            fs::remove_file(org.join("org-policy.yaml")).unwrap();
+            let target = fixture.path().join("target");
+            fs::create_dir_all(&target).unwrap();
+            fs::write(target.join("target.yaml"), "version: 1\nworkspace: {name: target, policy: policy.yaml}\nrepos: {}\n").unwrap();
+            fs::write(target.join("policy.yaml"), "policies: {}").unwrap();
+            let link = directory.join("linked.yaml");
+            std::os::unix::fs::symlink(target.join("target.yaml"), &link).unwrap();
+            let linked = crate::workspace::load_workspace_contract(&link).unwrap();
+            let actual = super::load_selected_workspace_policy_pack_details(&link, &linked).unwrap().unwrap();
+            assert_eq!(actual.path, fs::canonicalize(&selected).unwrap());
+            assert!(actual.pack.denies_toolchain_fulfillment("rust"));
+        }
     }
 
     #[test]

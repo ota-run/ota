@@ -3,6 +3,76 @@
   "$id": "https://dist.ota.run/spec/json-schemas/latest/receipt.json",
   "title": "ota receipt --json",
   "$defs": {
+    "toolchainFulfillmentPolicyRouteRefusal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reason", "route", "root", "selected_task", "selected_workflow",
+        "policy_identity", "policy_source", "policy_path",
+        "execution_started", "attempted", "outcome"
+      ],
+      "properties": {
+        "reason": { "const": "toolchain_fulfillment_policy_route_unsupported" },
+        "route": { "type": "string", "minLength": 1 },
+        "root": { "type": "string" },
+        "selected_task": { "type": ["string", "null"] },
+        "selected_workflow": { "type": ["string", "null"] },
+        "policy_identity": { "$ref": "#/$defs/sha256Identity" },
+        "policy_source": { "enum": ["env_override", "repo_policy", "workspace_policy"] },
+        "policy_path": { "type": "string" },
+        "execution_started": { "const": false },
+        "attempted": { "const": false },
+        "outcome": { "const": "not_run" }
+      }
+    },
+    "toolchainFulfillmentPolicyDenial": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reason", "root_task", "task", "relation", "generation", "toolchain",
+        "backend", "target_os", "provider", "version", "components", "targets",
+        "policy_identity", "policy_source", "policy_path", "readiness",
+        "attempted", "fulfillment", "cleanup_note"
+      ],
+      "properties": {
+        "reason": { "const": "toolchain_fulfillment_policy_denied" },
+        "root_task": { "type": ["string", "null"] },
+        "task": { "type": "string" },
+        "relation": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object", "additionalProperties": false,
+              "required": ["kind"],
+              "properties": { "kind": { "const": "requested" } }
+            },
+            {
+              "type": "object", "additionalProperties": false,
+              "required": ["kind", "parent"],
+              "properties": {
+                "kind": { "enum": ["depends_on", "aggregate_member", "after_success", "after_failure", "after_always"] },
+                "parent": { "type": "string" }
+              }
+            }
+          ]
+        },
+        "generation": { "type": "integer", "minimum": 0 },
+        "toolchain": { "const": "rust" },
+        "backend": { "enum": ["native", "container", "remote"] },
+        "target_os": { "type": "string" },
+        "provider": { "enum": ["rustup", "mise"] },
+        "version": { "type": "string" },
+        "components": { "type": "array", "items": { "type": "string" } },
+        "targets": { "type": "array", "items": { "type": "string" } },
+        "policy_identity": { "$ref": "#/$defs/sha256Identity" },
+        "policy_source": { "enum": ["env_override", "repo_policy", "workspace_policy"] },
+        "policy_path": { "type": "string" },
+        "readiness": { "enum": ["unknown", "unsatisfied"] },
+        "attempted": { "const": false },
+        "fulfillment": { "const": "not_run" },
+        "cleanup_note": { "type": ["string", "null"] }
+      }
+    },
     "sha256Identity": {
       "type": "string",
       "pattern": "^sha256:[0-9a-f]{64}$"
@@ -2048,6 +2118,12 @@
               "type": "object",
               "additionalProperties": false,
               "properties": {
+                "toolchain_fulfillment_route_refusal": {
+                  "$ref": "#/$defs/toolchainFulfillmentPolicyRouteRefusal"
+                },
+                "toolchain_fulfillment_denial": {
+                  "$ref": "#/$defs/toolchainFulfillmentPolicyDenial"
+                },
                 "query_traces": {
                   "type": "array",
                   "items": {
