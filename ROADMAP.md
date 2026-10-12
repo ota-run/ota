@@ -37,19 +37,20 @@ activate a planned slice or turn a successful narrow pressure run into a support
   in their version plans and the live handoff.
 - V12.1 Step 7 is the sole active implementation slice. Its earlier provider-free hosted-evidence
   custody gate is closed only for the recorded Core, Launcher, Protocol, and runner revisions.
-- The later public-evidence-root correction needs a fresh protected Linux/X64 run for its paired
-  Core and Launcher revisions. GitHub-hosted Launcher jobs do not replace that proof.
-- Real GitHub OIDC contact, Google STS/WIF, Secret Manager access, materialization, injection,
-  selected-work execution, and positive provider evidence remain unproved. V12.1 Steps 8-10 and
-  V12.2 or later versions remain inactive.
+- Protected Linux/X64 and provider-contact checkpoints retain only their exact recorded scope.
+  Changed Core or Launcher builds need their own proof; source tests and GitHub-hosted Launcher
+  jobs do not replace installed authority or effective-runtime evidence.
+- The first end-to-end secret-delivery path is not closed. The live handoff records which
+  individual checkpoints have passed and which remain open. V12.1 Steps 8-10 and V12.2 or later
+  versions remain inactive.
 - `1.6.29-implementation` is a working branch and candidate patch-release train, not an activation
   record or a promise that V12.1 will be complete before the patch release.
 
 ## Current Focus
 
-1. Reconcile the exact Core, Launcher, and Protocol revisions and complete the fresh protected
-   Linux/X64 public-root proof. Preserve the prior custody record as historical evidence; do not
-   treat it as proof for a changed installation path.
+1. Advance the current Step 7 gate named in the live handoff against exact Core, Launcher, and
+   Protocol revisions. Preserve prior custody records as historical evidence; do not transfer
+   proof to a changed installation path, build, or runtime.
 2. Continue the separately activated Step 7 provider-contact sequence only through its reviewed
    proof gates. A provider-free refusal must not be described as provider delivery.
 3. Keep design-partner pressure and narrow product fixes moving without promoting draft PRs or
@@ -107,6 +108,31 @@ Preserve one selected execution graph for humans, CI, and agents; retain explici
 and the separation between repository truth, protected authority, and observed outcomes.
 Future provider, adapter, enterprise, and cross-platform claims activate only through their
 own plans and pressure gates.
+
+## Execution Security And Trust Foundations
+
+Deepen execution security, not a general cybersecurity product. The review bar is:
+
+- an agent cannot approve its own weakening of the contract, checker, enforcement or authority;
+- each claimed restriction is tested against bypass and failure, not merely configured; and
+- retained evidence identifies the exact execution and states what remains unproved.
+
+The [agent execution-governance strategy](docs/planning/agent-execution-governance-core/plan.md#execution-security-acceptance-bar)
+owns the cross-cutting acceptance criteria. Existing plans own implementation:
+
+| Trust foundation | Roadmap owner and status | Limit |
+| --- | --- | --- |
+| Independent permission and authority lifetime | [V11.7](docs/planning/v11.7/plan.md), complete for its bounded audited-crossing slice; [V12.1](docs/planning/v12.1/plan.md), Step 7 active | Authority is not supplied by the requesting agent or contract. The end-to-end secret-delivery follow-on remains open. |
+| Honest declarations and reviewable inputs | [V11.14](docs/planning/v11.14/plan.md) and [V11.22](docs/planning/v11.22/plan.md), complete | A valid contract or reviewed candidate is not proof of application correctness. |
+| Applied restrictions and refusal evidence | [V11.21](docs/planning/v11.21/plan.md) and [V12](docs/planning/v12/plan.md), complete within retained profiles and pressure scope | Configured policy, provider acknowledgement and effective enforcement remain separate; raw activity outside the governed path is not covered. |
+| Protected acceptance of changes | [V13](docs/planning/v13/plan.md), planned and inactive | Independently approved obligations and trusted checkers must prevent a candidate from authorizing its own weaker acceptance gate. |
+| In-session control and reusable evidence | [V13.1](docs/planning/v13.1/plan.md) and [V12.6](docs/planning/v12.6/plan.md), planned and inactive | In-session enforcement is optional and demand-gated; evidence portability does not create authority or broaden proof. |
+
+These foundations answer who approved an operation, what controls actually held, what happened,
+and whether the result can be independently checked, including interruption and cleanup. They
+are not a new version or a claim that every layer is finished. Future integrations must address
+a recurring operator problem that existing controls do not adequately solve; reuse those controls
+rather than rebuild identity, sandbox, vulnerability-scanning or compliance products.
 
 ## Historical Plans
 

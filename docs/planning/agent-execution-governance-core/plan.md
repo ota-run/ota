@@ -140,6 +140,43 @@ This strategy maps owned plans; it does not duplicate, implicitly activate or re
 Every owning plan keeps its current status and activation gates. This strategy cannot move work
 between them merely because the shared destination is now explicit.
 
+## Execution Security Acceptance Bar
+
+Deepening execution security means strengthening the existing bounded execution promise, not
+opening a general cybersecurity workstream. For each newly activated or broadened capability,
+the owning plan must select measurable controls for these three outcomes:
+
+1. **No self-approved weakening.** Distinguish editable candidate inputs from independently
+   approved obligations, trusted checker/enforcer implementations and authority. Pressure must
+   attempt to alter the contract, assertions, checker, policy, enforcement configuration or trust
+   root, and show that such changes cannot silently weaken accepted verification or obtain
+   protected authority. Legitimate changes require independently authorized change control and
+   fresh identity reconciliation. V13 owns protected acceptance; V13.1 owns any claimed in-session
+   protection. Protected artifact changes also retain the authority-distribution lifecycle gates.
+   Existing repository declarations alone do not make those files immutable.
+2. **Restrictions survive the claimed failure modes.** Identify the exact control point and
+   effective dimensions. Retain permitted controls and prohibited probes, including alternate
+   entry paths, inherited capability, partial completion, interruption and cleanup failure where
+   material. Evidence must distinguish refusal before an effect, an observed effect, and unresolved
+   recovery; an always-refusing or merely configured control is not positive enforcement proof.
+   Reuse V11.21 and V12's bounded foundations. V12.1 owns its provider transaction and V13.1 any
+   future session integration; no test may imply host-global or arbitrary-agent coverage.
+3. **Evidence belongs to the execution it describes.** Bind the applicable source, contract,
+   selected closure, captured inputs, checker/observation profile, executor, authority and
+   transaction identities through existing Core models. An independent verifier must detect
+   material revision substitution, stale replay and tampering within the selected verification
+   posture. Retain the injected fault and specific assertion for regression controls. A receipt,
+   signature or matching hash alone does not prove authority, effective enforcement or application
+   correctness. V12.1 owns its transaction evidence, V12.6 evidence portability, and V13 trusted
+   submissions; adapter/profile conformance owns observation and implementation support claims.
+
+Each activated slice records its threat model, owner, reproducible regression cases, proof posture
+and bypass/`not_proved` inventory in its existing plan and pressure evidence. Do not create a second
+policy engine, checker framework or evidence format for this strategy. Integrate established
+runtime, policy and security controls when they satisfy the selected boundary; add enforcement
+only where a recurring operator problem and the owning plan's gates justify it. This acceptance
+bar does not reopen completed slices, add scope to active Step 7 or activate a later version.
+
 ## First Complete Vertical Slice
 
 V12.1 is the first required vertical slice. Closure must demonstrate one bounded path:
