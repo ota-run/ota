@@ -113,7 +113,8 @@ exact source and accepted this checkpoint in turn
 `01a127c4-b457-7431-a5db-7e1bc9a6b11d`. This closes the source findings only:
 all authored regressions, compilation and execution validation remain NOT_RUN.
 Reviewed HEAD remains `8926ddb1fc0e4a225059c48375fc6e1185081b1e`; changes
-remain uncommitted. The reviewed checkpoint identities below precede this
+were uncommitted at that review boundary and are now retained in source-only
+checkpoint commit `bfa557e6`. The reviewed checkpoint identities below precede this
 record-only handoff update; its current-state hash is not the resulting live hash.
 
 | Reviewed File | SHA-256 |
@@ -907,12 +908,20 @@ selected workspace-parent acquisition and inspectable local-child owned handoff;
 remaining acceptance gaps include conditional readiness before all workers,
 unknown pre-clone policy, full backend/OS/legacy dispatch and final-selection
 failure coverage, broader integration and all execution validation. The broader
-increment is incomplete; no runtime enforcement or commit readiness is claimed.
+increment is incomplete; no runtime enforcement or validation readiness is claimed.
 No second parser/loader or fabricated snapshot is introduced. SCOOBY owns integration and the canonical plan;
 RUBY returned file ownership. Combined source needs VLAD review then MUSE acceptance;
 material ordering/ownership conflicts must return to MUSE, not be bypassed.
-No compiler/tests/formatter/generator/probes/network/provider/VM/spend/commit/push
-or release is cleared. RUBY returned exact-source findings:
+No compiler/tests/formatter/generator/probes/network/provider/VM/spend/push or
+release is cleared. On 2026-10-12 Bobai separately authorized commit-only
+publication and required each future accepted slice to be committed before the
+next begins. Because the accrued accepted checkpoints predated that discipline
+and shared files, synthetic intermediate history was rejected. Commit `6013060a`
+retains the separately owned execution-security strategy; `bfa557e6` retains the
+intertwined reviewed source/design checkpoints and canonical records; `ebd53631`
+records the slice-commit rule. These commits do not promote source review into
+validation, runtime enforcement, public propagation, Step 7 closure or release,
+and nothing was pushed. RUBY returned exact-source findings:
 there is no inspected invocation-bound readiness-conditioned refusal before
 Rust fulfillment dispatch, and no qualified non-release bootstrap-only retained
 driver artifact path. SCOOBY reconciled the runner fallback, agent/provisioning
