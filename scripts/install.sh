@@ -377,6 +377,34 @@ EOF
   return 0
 }
 
+replace_windows_binary() {
+  ps="$(powershell_runner || true)"
+  if [ -z "${ps}" ]; then
+    if mv -f "$1" "$2"; then
+      return 0
+    fi
+    return 1
+  fi
+
+  source_escaped="$(single_quote_for_powershell "$(path_for_powershell "$1")")"
+  destination_escaped="$(single_quote_for_powershell "$(path_for_powershell "$2")")"
+  "${ps}" -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "
+    try {
+      Move-Item -LiteralPath '${source_escaped}' -Destination '${destination_escaped}' -Force -ErrorAction Stop
+      exit 0
+    } catch {
+      \$exception = \$_.Exception
+      while (\$exception) {
+        if (\$exception -is [System.IO.IOException]) {
+          \$code = \$exception.HResult -band 0xFFFF
+          if (\$code -eq 32 -or \$code -eq 33) { exit 32 }
+        }
+        \$exception = \$exception.InnerException
+      }
+      exit 1
+    }"
+}
+
 resolve_target() {
   os="$(uname -s | tr '[:upper:]' '[:lower:]')"
   arch="$(uname -m)"
@@ -397,9 +425,37 @@ resolve_target() {
 checksum_expected_value() {
   checksums_path="$1"
   asset_name="$2"
+  [ -f "${checksums_path}" ] && [ -r "${checksums_path}" ] || return 1
   awk -v asset="${asset_name}" '
-    $2 == asset || $2 == ("dist/" asset) { print $1; exit }
+    NF == 0 { next }
+    NF != 2 || length($1) != 64 || $1 ~ /[^0-9a-fA-F]/ { invalid = 1; next }
+    $2 == asset || $2 == ("dist/" asset) { matches++; expected = tolower($1) }
+    END {
+      if (invalid || matches != 1) exit 1
+      print expected
+    }
   ' "${checksums_path}"
+}
+
+archive_sha256() {
+  if command -v shasum >/dev/null 2>&1; then
+    hash_output="$(shasum -a 256 "$1")" || return 1
+  elif command -v sha256sum >/dev/null 2>&1; then
+    hash_output="$(sha256sum "$1")" || return 1
+  else
+    return 1
+  fi
+  printf '%s\n' "${hash_output}" | awk '
+    NF {
+      lines++
+      value = tolower($1)
+      if (length(value) != 64 || value ~ /[^0-9a-f]/) invalid = 1
+    }
+    END {
+      if (invalid || lines != 1) exit 1
+      print value
+    }
+  '
 }
 
 install_release_binary() {
@@ -435,30 +491,21 @@ install_release_binary() {
     return 1
   fi
 
-  if download_to "${download_prefix}/${checksum_asset}" "${checksums}"; then
-    if command -v shasum >/dev/null 2>&1; then
-      expected="$(checksum_expected_value "${checksums}" "${asset}" || true)"
-      if [ -n "${expected}" ]; then
-        actual="$(shasum -a 256 "${archive}" | awk '{print $1}')"
-        if [ "${actual}" != "${expected}" ]; then
-          ota_error "error: checksum verification failed for ${asset}"
-          return 1
-        fi
-      fi
-    elif command -v sha256sum >/dev/null 2>&1; then
-      expected="$(checksum_expected_value "${checksums}" "${asset}" || true)"
-      if [ -n "${expected}" ]; then
-        actual="$(sha256sum "${archive}" | awk '{print $1}')"
-        if [ "${actual}" != "${expected}" ]; then
-          ota_error "error: checksum verification failed for ${asset}"
-          return 1
-        fi
-      fi
-    else
-      ota_warn "warning: no sha256 tool found; skipping checksum verification"
-    fi
-  else
-    ota_warn "warning: checksums not found; skipping checksum verification"
+  if ! download_to "${download_prefix}/${checksum_asset}" "${checksums}"; then
+    ota_error "error: required release checksums could not be downloaded"
+    return 1
+  fi
+  if ! expected="$(checksum_expected_value "${checksums}" "${asset}")"; then
+    ota_error "error: release checksums must be readable, valid, and contain exactly one entry for ${asset}"
+    return 1
+  fi
+  if ! actual="$(archive_sha256 "${archive}")"; then
+    ota_error "error: a working SHA-256 tool is required to verify ${asset}"
+    return 1
+  fi
+  if [ "${actual}" != "${expected}" ]; then
+    ota_error "error: checksum verification failed for ${asset}"
+    return 1
   fi
 
   case "${asset}" in
@@ -473,21 +520,33 @@ install_release_binary() {
         ota_error "error: tar is required to unpack release artifacts"
         return 1
       fi
-      tar -xzf "${archive}" -C "${tmpdir}"
+      if ! tar -xzf "${archive}" -C "${tmpdir}"; then
+        ota_error "error: could not unpack verified release artifact"
+        return 1
+      fi
       ;;
   esac
-  mkdir -p "${bin_dir}"
+  if ! mkdir -p "${bin_dir}"; then
+    ota_error "error: could not create release installation directory ${bin_dir}"
+    return 1
+  fi
   if printf '%s' "${target}" | grep -q 'windows-msvc$'; then
     if [ ! -f "${tmpdir}/ota.exe" ]; then
       ota_error "error: release artifact did not contain ota.exe"
       return 1
     fi
     staged="${bin_dir}/ota.exe.new"
-    install -m 0755 "${tmpdir}/ota.exe" "${staged}"
-    if mv -f "${staged}" "${bin_dir}/ota.exe" 2>/dev/null; then
+    if ! install -m 0755 "${tmpdir}/ota.exe" "${staged}"; then
+      ota_error "error: could not stage verified release binary"
+      return 1
+    fi
+    replacement_status=0
+    replace_windows_binary "${staged}" "${bin_dir}/ota.exe" || replacement_status=$?
+    if [ "${replacement_status}" -eq 0 ]; then
       ota_info "installed ota to ${bin_dir}/ota.exe"
       installed_binary_path="${bin_dir}/ota.exe"
-    elif [ -f "${bin_dir}/ota.exe" ] && schedule_windows_replacement_after_exit "${staged}" "${bin_dir}/ota.exe"; then
+    elif [ "${replacement_status}" -eq 32 ] && [ -f "${staged}" ] &&
+      [ -f "${bin_dir}/ota.exe" ] && schedule_windows_replacement_after_exit "${staged}" "${bin_dir}/ota.exe"; then
       release_install_status="pending"
       ota_warn "pending: ota is currently running; staged update will be applied after it exits"
       ota_warn "pending: staged update at ${staged}"
@@ -503,8 +562,14 @@ install_release_binary() {
       return 1
     fi
     staged="${bin_dir}/ota.new"
-    install -m 0755 "${tmpdir}/ota" "${staged}"
-    mv -f "${staged}" "${bin_dir}/ota"
+    if ! install -m 0755 "${tmpdir}/ota" "${staged}"; then
+      ota_error "error: could not stage verified release binary"
+      return 1
+    fi
+    if ! mv -f "${staged}" "${bin_dir}/ota"; then
+      ota_error "error: could not replace release binary"
+      return 1
+    fi
     ota_info "installed ota to ${bin_dir}/ota"
     installed_binary_path="${bin_dir}/ota"
   fi
@@ -558,27 +623,36 @@ install_from_cargo() {
   fi
 }
 
-install_from_source=false
 install_mode="${OTA_INSTALL_MODE:-release}"
 install_mode_forced=false
 if [ "${OTA_INSTALL_MODE+x}" = "x" ]; then
+  install_mode="$(printf '%s' "${OTA_INSTALL_MODE}" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | tr '[:upper:]' '[:lower:]')"
+  case "${install_mode}" in
+    release|git|source) ;;
+    *) ota_error "error: OTA_INSTALL_MODE must be release, git, or source"; exit 1 ;;
+  esac
   install_mode_forced=true
 fi
+
+select_install_mode() {
+  if [ "${install_mode_forced}" = "true" ] && [ "${install_mode}" != "$1" ]; then
+    ota_error "error: conflicting explicit install modes"
+    return 1
+  fi
+  install_mode="$1"
+  install_mode_forced=true
+}
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --from-source)
-      install_from_source=true
-      install_mode="source"
-      install_mode_forced=true
+      select_install_mode source || exit 1
       ;;
     --from-git)
-      install_mode="git"
-      install_mode_forced=true
+      select_install_mode git || exit 1
       ;;
     --from-release)
-      install_mode="release"
-      install_mode_forced=true
+      select_install_mode release || exit 1
       ;;
     --setup-path)
       setup_path=true
@@ -591,11 +665,20 @@ while [ "$#" -gt 0 ]; do
   shift
 done
 
-if [ "${install_mode_forced}" != "true" ] && [ -f "./Cargo.toml" ] && grep -q '^name = "ota"$' "./Cargo.toml"; then
-  if [ "${install_mode}" = "release" ]; then
-    install_mode="source"
-  fi
-  install_from_source=true
+if [ "${install_mode}" != "git" ] && {
+  [ -n "${OTA_GIT_TAG:-}" ] || [ -n "${OTA_GIT_BRANCH:-}" ] ||
+  [ -n "${OTA_GIT_REV:-}" ] || [ -n "${OTA_GIT_URL:-}" ];
+}; then
+  ota_error "error: Git source settings require explicit git install mode"
+  exit 1
+fi
+if [ "${install_mode}" != "release" ] && [ -n "${OTA_VERSION:-}" ]; then
+  ota_error "error: OTA_VERSION conflicts with source/git install mode"
+  exit 1
+fi
+if [ "${install_mode}" = "release" ] && [ -n "${OTA_ALLOW_MISSING_CHECKSUMS:-}" ]; then
+  ota_error "error: OTA_ALLOW_MISSING_CHECKSUMS is not supported; release integrity is required"
+  exit 1
 fi
 
 ota_header
@@ -606,12 +689,8 @@ elif [ "${install_mode}" = "git" ]; then
   install_from_cargo "false"
 else
   if ! install_release_binary; then
-    if [ "${install_mode}" = "release" ] && [ "${install_mode_forced}" = "true" ]; then
-      ota_error "error: prebuilt release install failed; refusing cargo fallback in explicit release mode"
-      exit 1
-    fi
-    ota_warn "warning: falling back to git install via cargo"
-    install_from_cargo "false"
+    ota_error "error: prebuilt release install failed; source/git installation requires an explicit request"
+    exit 1
   fi
 fi
 

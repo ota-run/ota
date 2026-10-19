@@ -31,6 +31,15 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+$modeCount = 0
+if ($FromSource.IsPresent) { $modeCount++ }
+if ($FromGit.IsPresent) { $modeCount++ }
+if ($FromRelease.IsPresent) { $modeCount++ }
+if ($modeCount -gt 1) {
+    Write-Error "conflicting explicit install modes"
+    exit 1
+}
+
 $bootstrapUrl = if ($env:OTA_BOOTSTRAP_URL) { $env:OTA_BOOTSTRAP_URL } else { "https://dist.ota.run/bootstrap.ps1" }
 $bootstrapPath = $null
 $localBootstrapPath = $null

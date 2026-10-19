@@ -509,30 +509,46 @@ function Install-ReleaseBinary {
             return $false
         }
 
-        if (Download-OtaFile "$downloadPrefix/$checksumAsset" $checksums) {
-            $checksumLine = Get-Content $checksums | Where-Object {
-                $parts = $_ -split "\s+", 2
-                if ($parts.Count -lt 2) { return $false }
-                $name = $parts[1].Trim()
-                $name -eq $asset -or $name -eq "dist/$asset"
-            } | Select-Object -First 1
-            if ($checksumLine) {
-                $expected = ($checksumLine -split "\s+")[0].ToLowerInvariant()
-                $actual = (Get-FileHash -Algorithm SHA256 -Path $archive).Hash.ToLowerInvariant()
-                if ($actual -ne $expected) {
-                    Write-OtaError "error: checksum verification failed for $asset"
-                    return "failed"
+        if (-not (Download-OtaFile "$downloadPrefix/$checksumAsset" $checksums)) {
+            Write-OtaError "error: required release checksums could not be downloaded"
+            return "failed"
+        }
+        try {
+            if (-not (Test-Path -LiteralPath $checksums -PathType Leaf)) {
+                throw "checksum manifest is not a regular file"
+            }
+            $matchedDigests = @()
+            foreach ($line in (Get-Content -LiteralPath $checksums -ErrorAction Stop)) {
+                if ([string]::IsNullOrWhiteSpace($line)) { continue }
+                $parts = $line.Trim() -split "\s+"
+                if ($parts.Count -ne 2 -or $parts[0] -cnotmatch '\A[0-9a-fA-F]{64}\z') {
+                    throw "checksum manifest contains a malformed entry"
                 }
-            } else {
-                Write-OtaError "error: checksum file does not include $asset"
+                if ($parts[1] -ceq $asset -or $parts[1] -ceq "dist/$asset") {
+                    $matchedDigests += $parts[0].ToLowerInvariant()
+                }
+            }
+            if ($matchedDigests.Count -ne 1) {
+                throw "checksum manifest must contain exactly one entry for $asset"
+            }
+            if (-not (Get-Command Get-FileHash -ErrorAction SilentlyContinue)) {
+                throw "a working SHA-256 tool is required"
+            }
+            $hashResults = @(Get-FileHash -Algorithm SHA256 -LiteralPath $archive -ErrorAction Stop)
+            if ($hashResults.Count -ne 1) {
+                throw "SHA-256 tool must return exactly one digest"
+            }
+            $actual = $hashResults[0].Hash
+            if ($actual -isnot [string] -or $actual -cnotmatch '\A[0-9a-fA-F]{64}\z') {
+                throw "SHA-256 tool returned an invalid digest"
+            }
+            if ($actual.ToLowerInvariant() -cne $matchedDigests[0]) {
+                Write-OtaError "error: checksum verification failed for $asset"
                 return "failed"
             }
-        } else {
-            if ($releaseBase -eq "https://github.com/ota-run/ota/releases" -and -not $env:OTA_ALLOW_MISSING_CHECKSUMS) {
-                Write-OtaError "error: checksums not found for official ota release asset"
-                return "failed"
-            }
-            Write-OtaWarn "warning: checksums not found; skipping checksum verification by explicit/custom policy"
+        } catch {
+            Write-OtaError "error: release integrity verification failed: $($_.Exception.Message)"
+            return "failed"
         }
 
         if ($asset.EndsWith(".zip")) {
@@ -549,6 +565,10 @@ function Install-ReleaseBinary {
             }
 
             & tar -xzf $archive -C $tmpdir
+            if ($LASTEXITCODE -ne 0) {
+                Write-OtaError "error: could not unpack verified release artifact (tar exit $LASTEXITCODE)"
+                return "failed"
+            }
         }
 
         $binaryName = if ($asset.EndsWith(".zip")) { "ota.exe" } else { "ota" }
@@ -606,36 +626,47 @@ function Install-ReleaseBinary {
     }
 }
 
+$flagModes = @()
+if ($FromSource.IsPresent) { $flagModes += "source" }
+if ($FromGit.IsPresent) { $flagModes += "git" }
+if ($FromRelease.IsPresent) { $flagModes += "release" }
+if ($flagModes.Count -gt 1) {
+    Write-OtaError "error: conflicting explicit install modes"
+    exit 1
+}
+$environmentMode = $env:OTA_INSTALL_MODE
+if ($null -ne $environmentMode) {
+    $environmentMode = $environmentMode.Trim().ToLowerInvariant()
+    if ($environmentMode -notin @("release", "git", "source")) {
+        Write-OtaError "error: OTA_INSTALL_MODE must be release, git, or source"
+        exit 1
+    }
+}
+if ($flagModes.Count -eq 1 -and $null -ne $environmentMode -and $flagModes[0] -ne $environmentMode) {
+    Write-OtaError "error: conflicting explicit install modes"
+    exit 1
+}
+$installMode = if ($flagModes.Count -eq 1) {
+    $flagModes[0]
+} elseif ($null -ne $environmentMode) {
+    $environmentMode
+} else {
+    "release"
+}
+if ($installMode -ne "git" -and ($env:OTA_GIT_TAG -or $env:OTA_GIT_BRANCH -or $env:OTA_GIT_REV -or $env:OTA_GIT_URL)) {
+    Write-OtaError "error: Git source settings require explicit git install mode"
+    exit 1
+}
+if ($installMode -ne "release" -and $env:OTA_VERSION) {
+    Write-OtaError "error: OTA_VERSION conflicts with source/git install mode"
+    exit 1
+}
+if ($installMode -eq "release" -and $env:OTA_ALLOW_MISSING_CHECKSUMS) {
+    Write-OtaError "error: OTA_ALLOW_MISSING_CHECKSUMS is not supported; release integrity is required"
+    exit 1
+}
+
 Write-OtaHeader
-
-$installMode = if ($FromSource.IsPresent)
-{
-    "source"
-}
-elseif ($FromGit.IsPresent)
-{
-    "git"
-}
-elseif ($FromRelease.IsPresent)
-{
-    "release"
-}
-elseif (-not [string]::IsNullOrWhiteSpace($env:OTA_INSTALL_MODE))
-{
-    $env:OTA_INSTALL_MODE.Trim().ToLowerInvariant()
-}
-else
-{
-    "release"
-}
-
-$installModeForced = $FromSource.IsPresent -or $FromGit.IsPresent -or $FromRelease.IsPresent -or
-        (-not [string]::IsNullOrWhiteSpace($env:OTA_INSTALL_MODE))
-
-if (-not $installModeForced -and (Test-Path ".\Cargo.toml") -and (Select-String -Path ".\Cargo.toml" -Pattern '^name = "ota"$' -Quiet))
-{
-    $installMode = "source"
-}
 
 if ($installMode -eq "source")
 {
@@ -658,13 +689,8 @@ else
     }
     if ($releaseInstallStatus -ne "installed")
     {
-        if ($installMode -eq "release" -and $installModeForced)
-        {
-            Write-OtaError "error: prebuilt release install failed; refusing cargo fallback in explicit release mode"
-            exit 1
-        }
-        Write-OtaWarn "warning: falling back to git install via cargo"
-        Install-FromGit
+        Write-OtaError "error: prebuilt release install failed; source/git installation requires an explicit request"
+        exit 1
     }
 }
 

@@ -33,6 +33,235 @@ durable agent workflow belongs in the canonical Ota skill.
 
 ## Active Work
 
+### Native StartAuthority: Local Producer And Child Accepted / Production HOLD
+
+MUSE accepts the ORIGINAL bounded producer-bound F compilation/evaluation/
+completion goal as achieved after VLAD's final source, coverage, outcome and
+original-goal review `01a14f63-1f96-7821-a4f1-4f59241c069d`, final
+`msg_0074fa586a19efbe016ad4d695cfa481918c20d7d22b5b27d7`.
+No remaining P1/P2/P3 findings in that bounded subject. The unchanged goal includes
+exact namespace/minimal builtins, one-use behavior, actual compile/eval/error
+retention, regression coverage, independent review and MUSE acceptance. It does
+NOT claim complete startup authority/custody or require a canonical-documents
+checkpoint before its tool completion. SCOOBY's actual tool result now marks
+that SAME goal COMPLETE, objective unchanged: 461,890 tokens / 4,603 seconds,
+no token budget. No successor goal was created.
+
+The private [producer workset](/Users/bobai/.codex/artifacts/2026-10-18/f-producer-execution-completion-r1/PLAN.md)
+implements one native producer holding the actual compile inputs/code and actual
+F dictionary, executing that code synchronously and retaining the genuine result
+or original error. Bootstrap creates one owner/F and bounded source views but
+does not compile/exec F; the fixed 219-byte F initializer no longer recursively
+imports its native module. The native module stays CLAIMED until actual
+normal None return AND exact completion predicates permit READY. No exported
+product Python evaluator/getter/setter, embedding launch, extra actor or authority issuer
+is introduced.
+
+The exact eight-key F namespace preserves `_ota_start_authority_owner` and
+`__ota_bootstrap_owner`; its explicit minimal builtins dictionary binds only the
+required RuntimeError to the actual native exception type. Native-held references
+are independent of mutable dictionary slots. Precompile, preeval and postreturn
+checks preserve actual owner/F/code/native/namespace identities and first-error,
+attempt/result and native initialization/commit histories. Python API/compiler/
+eval work stays outside the native record gate. This proves the local F producing
+relationship, not a separately retained live F frame, fixed-bootstrap frame/
+globals/raw argv/OS decoding, protected native-import/runtime/source lineage or
+source-FD/OFD derivation.
+
+Final coherent 03 used the SAME complete 19-member, 274,018-byte input in all
+three sequential runs, SHA-256
+`350fce47acf552b1dab643104116073fdc01c8ba925f4b514f9c30d2b8986524`.
+The reviewed 524,288-byte host/child ingress ceiling is LOCAL VALIDATION ONLY;
+per-member, output, isolation, timing and cleanup controls are unchanged.
+It raises no operative source/native/retention/admission capacity. Source input
+is not sharded, assertions are not dropped and source is not minified to fit.
+
+- A03 replays the prior 12 fixture groups / 86 origin controls / 16 module
+  scenarios + five entry refusals + two follow-ons + six retention cases:
+  22 successful stages, exact 9,913-byte report, 23,399 ms.
+- B03 passes 28 normal scenarios, including real collision controls 59/60 and
+  direct module-clear controls 61/62/63: six successful stages, exact 8,837-byte
+  report, 11,477 ms.
+- C03 passes 12 explicitly linker-wrapped fault scenarios: six successful stages,
+  exact 7,407-byte report, 9,332 ms. These are instrumented alternate API inputs/
+  mutations, not normal protected startup execution.
+
+All 34 stages returned zero with no stderr or reported overruns. Actual A03
+module-state/native-record/context layouts are 1504/1584/48; B/C do not claim fresh
+native-record measurements. Layout observations are not whole live/retained-fit
+proof. Each owned container reached terminal zero and completed non-force removal
+and filtered absence before the next run. Cleanup acceptance rests on reviewed
+driver/execution/journal evidence; raw Engine replies are not independently held.
+
+The [A03 journal](/Users/bobai/.codex/artifacts/2026-10-18/f-producer-execution-completion-r1/baseline-validation-03/journal.jsonl)
+is 19,802 bytes / 21 records, SHA-256
+`e076f8cb48beaffb681df47145dad1fbf573166beae1136ca0c3d456ab70c2fb`.
+The [B03 journal](/Users/bobai/.codex/artifacts/2026-10-18/f-producer-execution-completion-r1/input-validation-03/journal.jsonl)
+is 17,831 bytes / 21 records, SHA-256
+`fc66f028b037c709667eb666fd3c090f5710ff6c08243959dd1abdb2c33a5062`.
+The [C03 journal](/Users/bobai/.codex/artifacts/2026-10-18/f-producer-execution-completion-r1/fault-validation-03/journal.jsonl)
+is 14,705 bytes / 21 records, SHA-256
+`f4559c552698ae4549050836da60ed89af4b04fa8f1539d08df70ec2fa312c65`.
+
+The dict-borrow/callback P1 is closed by callback-free exact-Unicode acquisition,
+immediate owned references and actual collision regressions. The descriptor-oracle
+P2 is closed using only the canonical three role DUP/CLOSE transitions, anchored
+to independent BEFORE object/status observations and exact retained role mapping;
+the getter is test-only/observational, not a product API or blanket allow-close.
+C01 remains a failed oracle run; producer logic was not changed to bless it.
+
+The later preclaim EMPTY/clear rearm P1 is closed by terminal CLOSED BEFORE
+Python-reference release, even with record NULL. Actual case 63 verifies real
+module clear/retry, pending-error preservation and externally held first cause,
+traverse 1-to-0 and EMPTY 0-to-CLOSED 4, with no native initialization, compile/eval
+or descriptor effects. Admission no longer relies on retaining an error object.
+READY/FAILED direct-clear coverage also remains. This is not automatic-GC,
+resurrection or custody proof. The producer 02 runs remain historical positives,
+but their withdrawn readiness recommendation is NOT final goal acceptance.
+
+Prior accepted checkpoints remain separate and frozen:
+- Original local-native integration goal: Driver07 12/86/16+5 and Driver10 focused
+  2+6, independently accepted in
+  `01a14eb0-cac5-7940-8163-4b62798cb2fc`. Driver10 did not rerun 07; Driver09 remains
+  historical HOLD. Consume-P2 closure is instrumented-component-only, not actual
+  F startup composition or independent process-wide timing.
+- [Initialized-context correspondence](/Users/bobai/.codex/artifacts/2026-10-18/f-initialized-context-correspondence-r1/PLAN.md):
+  accepted A02+B03, input `cb9051c4c6dc457304d7d800c87150576fe5fd5f1e8840b8e95020b54f1ef820`,
+  21 shared-helper cases / two outer refusals and aggregate source-copy limits.
+  Its initial baseline remains positive; final-baseline01 stays HOLD and B02
+  reporting-defective. B03 closes that report P2, not provenance.
+- [Startup field/root/lifetime R2](/Users/bobai/.codex/artifacts/2026-10-18/f-startup-context-contract-r2/PLAN.md),
+  SHA-256 `aad4934ad20da895b1b5814d079b42cbae6b90eabdd5c966bbc2fe0feede4286`,
+  remains the reviewed normative context. Actual operator/C/M qualifications
+  UNSUPPLIED in reviewed inputs are not proof of global absence. Controller C
+  owns launch/admission; Consumer C remains evidence-only.
+
+MUSE separately accepts the LOCAL reservation/actual-child constructor, exact
+[freeze06](/Users/bobai/.codex/artifacts/2026-10-18/f-reservation-child-binding-r1/manifest-06.json),
+after VLAD SOURCE GO `01a14fac-b5e7-7b80-9054-825318ddd40c`, final
+`msg_0074fa586a19efbe016ad4e8e2a99c819193a87abe4275c494`, and OUTCOME/COVERAGE GO
+`01a14faf-4ec3-7d02-895d-759f1e7e85c0`, final
+`msg_0074fa586a19efbe016ad4e95012e88191ae300ac87a3c39c2`. This is a separate
+checkpoint, not a new formal goal or complete protected startup.
+
+Its immutable prebirth C/E expectations and existing six-role expected/wire ABI
+bind once to a constructor-owned actual child plus atomically acquired pidfd.
+Wrong reservation/child/role, replay, second bind and uncertain outcomes refuse
+without rearm or release. The owned child is a fixed stopped LOCAL STUB, NOT
+CPython/F. Static FD3..63 exclusion depends on the exact admitted Python
+`subprocess(close_fds=True, pass_fds=(), shell=False)` clean-start chain, unchanged
+finite fixtures and hard/soft nofile64; rlimit alone does not exclude higher
+inherited descriptors. There is no runtime syscall fallback or PID-only
+reacquisition. E is a local independently C-supplied expected copy, not a qualified
+receiver/process or committed startup retention/receipt. Existing Launcher
+ownership patterns are reusable inputs; its Ota-specific child record cannot
+stand in for an actual CPython/F binding or protected runtime frontier.
+
+Freeze06 uses 21 source members plus the 1,950-byte tool table: 306,485 bytes,
+SHA-256 `24f982f3cf51d8061a97285817dd3a8afc6de9b368305475bec65b3a66dcf8ea`.
+All 19 accepted producer members remain byte-identical. Driver SHA-256 is
+`e00a2d095904b8478c4c2c601b9b38ffd9270ed74cfd5e3d7ce9414eb6464c44`.
+The [06 journal](/Users/bobai/.codex/artifacts/2026-10-18/f-reservation-child-binding-r1/validation-06/journal.jsonl)
+is 20,738 bytes / 21 records, SHA-256
+`82843a2c20736acaf645734b92bc1ad6ba13da319263dfaa3c1e4d8a54b78792`.
+All 26 wrapper stages passed: 22 baseline, supported constructor compile/link,
+31-case main, and default-inclusion negative control. The negative wrapper checks
+EXPECTED standalone compiler exit1; it is not a successful standalone compile.
+Actual elapsed time was 35,694 ms with no reported call-budget overruns, terminal
+zero and exact-owned removal/absence. Cleanup rests on retained driver/journal
+evidence, not independently retained raw Engine replies.
+
+The two source05 P2s are closed only in reviewed06: every known-quiescent child
+cleanup retains actual published/partial/unpublished diagnostic state before
+unmapping, including early wrong-E refusal; unknown reap keeps mapping/resource
+duty. The explicit private include-only contract has checked ABI prerequisites
+and positive/negative build controls. Case31 exercises pre-stop failure followed
+by early refusal and exact retained diagnostics. Injected lost-close/reap/wait
+cases remain terminally pending where asserted: cases17/30 retain seven net FDs
+AND shared mapping until isolated case exit; outer container absence does not
+retroactively prove constructor reap/cleanup or a physical retention bound.
+The [derived outcome index](/Users/bobai/.codex/artifacts/2026-10-18/f-reservation-child-binding-r1/outcome-06.json)
+is assertion/whole-suite evidence, not a raw per-case kernel trace; its frozen
+preacceptance status is historical, while this handoff carries MUSE acceptance.
+Source03/04 remain actual close_range ENOSYS/HOLD with owned cleanup. The static
+mechanism was explicitly revised, not silently selected after failure. Source05
+remains a positive 30-case run WITH its two then-open P2s, not final acceptance.
+
+Separate producer-only replays changed ONLY each accepted driver's WORK path:
+28 normal cases in 15,912 ms and 12 wrapped cases in 12,817 ms, six zero-exit stages
+each, no reported overruns and each exact-owned container absent. Both use the
+unchanged 19-member-plus-table 274,018-byte producer input/hash above, NOT the
+21-member constructor composition. Normal replay journal SHA-256 is
+`aa909e5068779453bb248b5eff83d26141e7b26a38047b37924fe2c14627951b`;
+wrapped replay journal SHA-256 is
+`251ac4d7a1edc5ecfc5225513495b3d5d3d26f6fdd5bea1550712c4b6e2cf269`.
+
+Next owner: SCOOBY, with MUSE sequencing, independent VLAD review and safely
+disjoint RUBY tests. MUSE selects bounded LOCAL actual-child/F-initialization
+composition in `/Users/bobai/.codex/artifacts/2026-10-18/f-actual-child-composition-r1/`
+under ordinary source/build/test/fix authority following VLAD DESIGN GO
+`01a14fb9-42f8-72a0-b860-0d4b7eb45dff` and clarification GO
+`01a14fbc-5b8d-7880-9f6a-597a8f19a1fe`. Preserve accepted originals and the 31
+stub oracles against the derivative constructor's unchanged stub profile.
+The selected chain is retained child/pidfd, exact six original role FD inheritance/
+CLOEXEC and other FD3..63 alias exclusion, one-use independent postbirth
+expected8/scope9 write/seal/verification, possible PRE-EXEC continuation, actual
+held-ELF execveat/bootstrap/F initialization and bounded natural terminal/reap.
+Native preexec FD frontier and later Python post-prerequisite-import frontier
+are separate: intervening loader/interpreter/import effects remain NOT_PROVED.
+MUSE selects the LOCAL A6/B6+exact1 observed-view amendment after VLAD DESIGN GO
+`01a14fe4-09de-7f03-966c-da1dab16dd1f`, pending implementation and runtime
+acceptance. Native A remains exactly six originals. Python B must retain those
+six and exactly one additional regular-file occurrence matching independent
+prebirth C-role6 dev/ino/type/mode/nlink/size/uid/gid, F_GETFD=0 and the supported
+readonly F_GETFL=0x8020 profile; its observed FD number is not authority.
+Zero or multiple extras, wrong/missing/mutated originals, wrong object/type,
+write access or unsupported flags refuse. Strict_B_six remains false, including
+the preserved source02/03 failures; revised-profile matching is a distinct LOCAL
+claim. Bounded machine-readable evidence must retain the extra material view
+and origin/OFD/copy/creation/intervening-history/whole-retirement NOT_PROVED.
+Readonly access is not harmlessness or absence of executable-file capability.
+Synthetic matcher controls must include uid/gid and all refusal boundaries;
+actual F/exception/natural-reap evidence remains independently required.
+The final-deadline and second-scan diagnostic P2 repairs remain acceptance
+blockers pending focused regressions and independent review. No extra-FD
+repair/close/dup, seventh authority role, new wire ABI or protected acceptance.
+Seals do not retire parent aliases or make writable handles readonly. Child
+preexec diagnostic mapping does not survive exec; parent serialization is not
+physical Python-original retention or qualified E custody. Continuation is not
+F success or WORKFLOW authority; emergency kill/unknown cleanup is not natural
+completion. Same qualified local containment/limits, no repair-cap inheritance,
+new wire ABI, arbitrary child command or pathname/embedding fallback. Frozen
+source/coverage/outcomes require VLAD review and MUSE acceptance; this activation
+is not implementation evidence or a new formal goal. The loaderless F219 /
+bootstrap3649 does not reuse incompatible physical-file components or waive
+their oracles. Protected runtime membership/installation/issuer designation,
+source/retention deficits and complete constructor/alias/lifetime fit remain
+separate integration inputs/HOLD; no operative cap changes. Scoped UNSUPPLIED
+does not establish global absence. No generic gap dossier or forced compaction.
+
+Normal local implementation/build/test/fix authority remains delegated within
+MUSE-selected work, without guarded-source measurement, private authoring caps
+or repeated founder forms. Independent review gates substantive integration/
+acceptance, not every isolated development iteration. Changed host execution,
+credential or isolation boundaries receive focused prior-use review; unknown
+effects/cleanup are reconciled before reuse.
+
+Linux/x86_64 CPython 3.12.15, original native CLOCK_MONOTONIC integer issuance/work/
+final deadlines and operative limits remain. Protected C/M issuance and source/
+runtime lineage, actual bootstrap/native import and argv, complete OFD/copy
+closure, startup E acquisition/retention/receipt, WORKFLOW release, custody, HE1,
+whole operative fit and Step 7 remain OPEN. No operative encoder/publisher/controller/
+receiver, provider action, privilege, infrastructure, publication or later phase
+is activated. Standard vendor/Engine trust applies; local OCI configuration
+identity is unverified, daemon/cache/VM overhead is not bounded by container
+limits and timeouts remain best effort.
+
+This private checkpoint changes no public CLI/schema/runtime surface. Examples,
+Skills, Site, Learn, FAQ, Glossary and command-reference propagation are not
+affected. Cargo, installer and unrelated work/evidence remain unchanged. Core CI
+was not rerun for this record-only Core documentation delta.
+
 ### Lock-Strict Cargo Hydration: Source Checkpoint Accepted / Validation HOLD
 
 Bobai requested work on 2026-10-10 after the independent Cargo follow-on
@@ -6203,6 +6432,71 @@ and remain `update_needed` pending review; exact current generated-only files st
 Core command docs, CHANGELOG, the Site command card, canonical Skill, and both installed Skill
 mirrors carry this correction. Examples, schemas, Learn, FAQ, and Glossary need no new shape or
 term: this fixes existing command guidance without changing admission semantics.
+
+## Bootstrap Repair - G1 R2 Source Reviewed
+
+ATR PR #618 is merged; the owning relationship/evidence state stays in the design-partner
+pipeline, not a second ledger here. Its maintainer hardening exposed source-confirmed first-party
+bootstrap gaps: mutable installer execution behind a pinned action, skipped checksum verification,
+implicit release-to-source fallback, the older setup pin's missing version comparison, and
+unrecognised raw-download bootstrap outside Doctor's drift coverage. MUSE and RUBY accept ATR's
+bounded verified-release containment; no fresh upstream manual-run proof is inferred from merge.
+
+The canonical repair record, owners, evidence and acceptance bar are
+[follow-on section G](../planning/execution-contract-follow-ons/plan.md#g-fail-closed-ota-bootstrap-and-drift-coverage).
+Status: OPEN / G1 R2 scoped SOURCE GO, validation NOT RUN, following Bobai's 2026-10-16 request
+for RUBY and MUSE
+to work in parallel without interrupting SCOOBY. RUBY is sole writer for `scripts/install.sh`,
+`scripts/bootstrap.ps1`, `scripts/install.ps1` and new `tests/installer_bootstrap.rs`; MUSE owns the
+plan/current-state and changelog. This security-correctness slice stays within current V12.1 and permits source
+authoring and text/hash/diff review only. Independent review precedes any separately bounded
+validation. No target parsing/execution, tests, installers, builds, dependency installation,
+infrastructure, Git mutation, publication, dispatch or release is authorized by this slice.
+
+The wrapper's G1 scope is only early rejection of mutually exclusive mode switches, which its
+existing forwarding otherwise hides from the bootstrap. MUSE verified and approved this necessary
+fourth-file extension; no new founder decision was required for the connected source correction.
+The expected-digest/bootstrap trust chain, Windows wrapper trust-chain repair, connected self-update
+and Doctor drift coverage remain open and inactive. No served installer change or complete repair
+is implied.
+R1's exact base, byte counts and SHA-256 tuple stay in section G as historical review identities.
+VLAD found unchecked POSIX directory/staging/replacement failure and PowerShell native extraction
+status; MUSE verified both and accepted R1 SOURCE HOLD. RUBY froze the approved correction in the
+two implementations and existing test source, preserving the wrapper's R1 bytes. R2 identities
+are in section G; MUSE matched them and accepted VLAD's independent delta review with no
+corrective P1/P2/P3 and both R1 findings closed by source inspection. Sixteen
+ignored fixtures remain NOT_PARSED/NOT_RUN, not cross-platform installation proof. Windows lock
+classification and detached completion are not runtime-qualified; the native-TAR fixture's approved
+PowerShell tool and OS containment are also unverified prerequisites.
+All four files remain frozen. RUBY may prepare only one read-only, chat-only validation-readiness
+proposal; no target parsing/build/test, contract change, new validator or G2 implementation follows
+from SOURCE GO. Exact review/disposition and prerequisites stay in section G.
+That readiness proposal returned HOLD: no existing declared task selects the installer controls,
+and qualified containment/toolchain readiness is unestablished. Bobai has now approved source-only
+definitions for four fixed locked/offline installer tasks. RUBY alone may edit `ota.yaml` and only
+the matching generated task list in `AGENTS.md`; the four G1 R2 code/test files remain frozen.
+The two-file definition returned SOURCE HOLD: VLAD found that selecting global Rust fulfillment
+`run` permits provisioning before Cargo's offline arguments; MUSE independently verified the P2.
+Task/context requirements cannot override that fulfillment. MUSE cleared a connected source-only
+correction under the standing technical delegation: RUBY removes only the four new task/admission/
+generated-list entries from ordinary `ota.yaml`/`AGENTS.md` and relocates the finite tasks to new
+`ota.installer-validation.yaml`, using existing global `--file` selection and canonical Rust
+fulfillment `none`. Ordinary tasks/global fulfillment and the four G1 R2 code/test files stay
+unchanged. The new contract has a 16 KiB authoring allowance, not an operative budget change.
+All three definition files remain frozen. MUSE matched the seven-file tuple, read the new
+173-line / 5,956-byte contract and verified that
+ordinary `ota.yaml`/`AGENTS.md` match their pre-definition baseline. Exact current and historical
+definition identities remain in section G. VLAD's independent correction review has no
+corrective P1/P2/P3 and closes the provisioning-authority P2 by source inspection. MUSE rechecked
+all seven hashes unchanged and accepts scoped SOURCE GO for the definition correction, not
+runtime readiness. Exact review/disposition remains in section G; agent path declarations do not
+prove OS confinement.
+No parsing, build/test, installation, container/infrastructure, Git or publication action follows;
+no runtime command is authorized. Diagnose-only does not qualify Rustup shims, caches or containment.
+Exact task names, grant and unchanged qualification blockers stay in section G.
+Compatibility guidance and public propagation must be reconciled before publication.
+SCOOBY's current frozen checkpoint, Step 7 authority, proof gate and every operative limit remain
+unchanged; the worksets do not overlap. Full scope and compatibility requirements stay in section G.
 
 ## Working Rules
 

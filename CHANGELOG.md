@@ -26,6 +26,18 @@
 
 ## Unreleased
 
+- Stage G1 release-installer hardening source: require unambiguous checksum evidence
+  and successful SHA-256 verification before extraction, reject conflicting install
+  selections, and remove implicit checkout-based source selection and Cargo fallback.
+  Explicit source/Git installation remains available; custom mirrors no longer bypass
+  checksum requirements. The Windows wrapper rejects mutually exclusive mode switches
+  before bootstrap download or delegation. Explicitly propagate staging/replacement
+  failures and PowerShell native TAR status before reporting an installation result.
+  Sixteen ignored regression fixtures are authored but unparsed/unrun; focused independent
+  source review passed, while isolated validation and compatibility propagation remain
+  open. Trusted bootstrap/publisher authentication, Doctor coverage
+  and self-update are separate open work. Not shipped; served installers are unchanged.
+
 - Stage integrated workspace local-child initial admission source: present selected
   children acquire independent policies before dispatch, ignore unrelated proof-
   child absence markers, and retain matching target/admission into captured and

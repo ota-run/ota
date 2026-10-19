@@ -1,0 +1,173 @@
+# Copyright (C) 2026, Ota. All Rights Reserved.
+# Licensed under the Apache License, Version 2.0. See LICENSE for the full license text.
+
+version: 1
+project:
+  name: ota-installer-validation
+  description: Explicit diagnostic-only contract for bounded installer fixture validation
+toolchains:
+  rust:
+    version: "1.95.0"
+    components:
+      - rustfmt
+    fulfillment:
+      mode: none
+tasks:
+  test:installer:compile:
+    description: Compile only the installer bootstrap integration-test target
+    notes: |
+      Internal validation only: this builds the current host's test target without running
+      its ignored controls. Cargo may compile and execute build machinery. Qualified global
+      Rust/toolchain and offline-cache readiness plus approved outer OS containment are
+      prerequisites; locked/offline Cargo flags are not a whole-execution no-network or
+      no-install guarantee. This task grants no fetching, provisioning, or validation run.
+    category: test
+    internal: true
+    only_on:
+      - linux
+      - macos
+      - windows
+    execution:
+      default_mode: native
+      modes:
+        native:
+          command:
+            exe: cargo
+            args:
+              - test
+              - --locked
+              - --offline
+              - --test
+              - installer_bootstrap
+              - --no-run
+    requirements:
+      toolchains:
+        - rust
+    safe_for_agent: true
+  test:installer:posix:
+    description: Select only the ignored POSIX installer fixture controls
+    notes: |
+      Internal validation only. Cargo may compile before running these fixed controls.
+      Qualified global Rust/toolchain and offline-cache readiness plus approved outer OS
+      containment are prerequisites; locked/offline Cargo flags are not a whole-execution
+      no-network or no-install guarantee. Simulated Linux/MINGW selection does not prove
+      actual Windows sharing-error classification or deferred replacement. No run is granted here.
+    category: test
+    internal: true
+    only_on:
+      - linux
+      - macos
+    execution:
+      default_mode: native
+      modes:
+        native:
+          command:
+            exe: cargo
+            args:
+              - test
+              - --locked
+              - --offline
+              - --test
+              - installer_bootstrap
+              - "posix::"
+              - --
+              - --ignored
+              - --test-threads=1
+    requirements:
+      toolchains:
+        - rust
+    safe_for_agent: true
+  test:installer:pwsh-tar:
+    description: Select the exact ignored native PowerShell TAR partial-failure control
+    notes: |
+      Internal validation only. Cargo may compile. An approved absolute OTA_TEST_PWSH
+      identifying a native PowerShell tool matching the real OS and architecture is required.
+      Qualified global Rust/toolchain and offline-cache readiness plus approved outer OS
+      containment remain prerequisites; locked/offline Cargo flags are not a whole-execution
+      no-network or no-install guarantee. This is not Windows ZIP or replacement proof;
+      defining the task grants no tool installation, provisioning, or validation run.
+    category: test
+    internal: true
+    only_on:
+      - linux
+      - macos
+    execution:
+      default_mode: native
+      modes:
+        native:
+          command:
+            exe: cargo
+            args:
+              - test
+              - --locked
+              - --offline
+              - --test
+              - installer_bootstrap
+              - powershell_native_tar::native_tar_partial_failure_refuses_before_discovery_or_copy
+              - --
+              - --ignored
+              - --exact
+              - --test-threads=1
+    requirements:
+      toolchains:
+        - rust
+    safe_for_agent: true
+  test:installer:windows:
+    description: Select only the ignored Windows installer fixture controls
+    notes: |
+      Internal validation only. Cargo may compile. These controls require a qualified native
+      Windows/PowerShell toolchain, global Rust and offline-cache readiness, and approved outer
+      OS containment. Locked/offline Cargo flags are not a whole-execution no-network or
+      no-install guarantee. Fixture success would not prove real Windows sharing HResults,
+      deferred replacement completion, or published installation. No run is granted here.
+    category: test
+    internal: true
+    only_on:
+      - windows
+    execution:
+      default_mode: native
+      modes:
+        native:
+          command:
+            exe: cargo
+            args:
+              - test
+              - --locked
+              - --offline
+              - --test
+              - installer_bootstrap
+              - "powershell::"
+              - --
+              - --ignored
+              - --test-threads=1
+    requirements:
+      toolchains:
+        - rust
+    safe_for_agent: true
+agent:
+  posture: readiness_strict
+  safe_tasks:
+    - test:installer:compile
+    - test:installer:posix
+    - test:installer:pwsh-tar
+    - test:installer:windows
+  writable_paths: []
+  protected_paths:
+    - .github
+    - AGENTS.md
+    - Cargo.lock
+    - ota.yaml
+    - ota.installer-validation.yaml
+    - LICENSE
+    - scripts/install.sh
+    - scripts/install.ps1
+    - scripts/bootstrap.ps1
+    - tests/installer_bootstrap.rs
+  notes: |
+    Select this standalone contract explicitly with the global --file option and execute
+    only its four fixed tasks through ota run <task> --agent. It does not inherit or override
+    ota.yaml, and no task is duplicated there. Rust fulfillment is diagnose-only; installed
+    Rustup-shim behavior, dependency caches, native tool identities and qualified outer OS
+    containment remain unproved prerequisites. Source approval grants no validation run,
+    fetching, provisioning, installation, container or infrastructure operation. Keep the
+    target and toolchain read-only and validation writes in approved external scratch space.

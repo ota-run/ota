@@ -45,6 +45,9 @@ integrations, or the complete repository ran. The same pressure exposed six prod
 5. stronger declaration and evidence boundaries for source-owned shell orchestration; and
 6. identity-bound terminal cleanup evidence for container-created resources.
 
+Section G separately records source-confirmed bootstrap-integrity and drift-coverage gaps
+exposed by ATR PR #618. It is a repair candidate, not an Eris proof result or an activated slice.
+
 These are not one feature. This document records their separate ownership and activation bars so
 that pressure findings do not become either forgotten backlog or an unjustified expansion of the
 active version.
@@ -72,8 +75,8 @@ Activation requires:
 - connected Core, Site, Skill, Example, Learn, FAQ, and Glossary assessment; and
 - independent review before the implementation is called complete.
 
-Eris alone is sufficient discovery evidence for this register. It is not sufficient support,
-conformance, or release evidence for any activated implementation.
+Eris supplies the discovery evidence for sections A-F; section G has its own ATR/source evidence.
+Neither is sufficient support, conformance, or release evidence for an activated implementation.
 
 ## A. Lock-Strict Cargo Hydration
 
@@ -3965,9 +3968,255 @@ listing is insufficient.
 - Linux evidence cannot establish macOS or Windows cleanup support; and
 - immutable pressure includes leaked-resource negative controls and recovery after uncertainty.
 
+## G. Fail-Closed Ota Bootstrap And Drift Coverage
+
+Status: OPEN, source findings recorded 2026-10-16; G1 R2 scoped SOURCE GO, validation NOT RUN.
+R1 remains historical SOURCE HOLD. The remaining
+bootstrap trust-chain and drift-coverage slices are NOT ACTIVATED.
+Accountable engineering owner: SCOOBY. Delivery owner: RUBY for the bounded installer repair,
+working directly with MUSE without interrupting SCOOBY's frozen Step 7 checkpoint. Independent
+review remains required; VLAD retains security ownership. MUSE owns sequencing and acceptance.
+
+### Evidence And Current Boundary
+
+[ATR PR #618](https://github.com/Agent-Threat-Rule/agent-threat-rules/pull/618) merged as
+`44bfb18a5b3292b6ba27a8d09076f5e6f813255d`, from reviewed head
+`01e2725cf64a2d9f68efc2063d8a69c3b3578e6a`. Its
+[maintainer hardening](https://github.com/Agent-Threat-Rule/agent-threat-rules/pull/618#issuecomment-6202874145)
+uses an immutable v1.6.28 release archive, a committed expected SHA-256, an exact binary-version
+check and `ota-run/action` with `install: never`. MUSE and RUBY accept this bounded containment;
+do not ask ATR to restore the weaker installation path merely to satisfy current drift detection.
+Merge does not establish a fresh upstream manual run, sustained adoption or payment.
+
+MUSE's 2026-10-16 read of `https://dist.ota.run/install.sh` returned 22,152 bytes, SHA-256
+`1c034b21f12a83c3896dea4008b59bcdc836c6de78e050204707bb45cf5f7c6d`, identical to
+Core `scripts/install.sh` at review. The removed setup pin
+[`493cba84bf7f7c11c9e8e996d832d93a89c62184`](https://github.com/ota-run/setup/tree/493cba84bf7f7c11c9e8e996d832d93a89c62184)
+and its actual `dist/index.js` were inspected, not executed. Source-confirmed gaps:
+
+- The action SHA does not freeze the mutable installer script it downloads and executes.
+- Missing checksum files, missing matching asset entries or missing SHA tools can skip verification.
+  Release download/checksum failure can instead execute a Cargo Git-source install when release
+  mode is not explicitly forced. Forcing release mode alone does not fix skipped verification.
+- That older setup pin reports the resolved version without comparing it with the requested one.
+  A guard in newer source does not retroactively protect the older pin or undo earlier build effects.
+- Released v1.6.28 Doctor does not recognise direct release-download shell as Ota bootstrap truth;
+  an empty bootstrap-drift finding set is not proof of that shell's contract/version conformity.
+  ATR's current workflow and contract agree at the reviewed head, with future pairing manual.
+
+These are static control-flow and served-byte observations, not an executed exploit or a new
+installation test. The workflow's task evidence and its unsupported bootstrap-drift coverage
+remain distinct. The canonical commercial merge record stays in the design-partner pipeline.
+
+### Repair And Acceptance Bar
+
+1. Make declared release installation fail closed before extraction/execution on missing,
+   malformed, ambiguous or mismatched integrity evidence, or unavailable/failed verification.
+   A release request must not silently become a source build or an ambient mode/ref selection.
+   Explicit Git/source installation remains a separate, declared compatibility path.
+2. Pin the executable bootstrap path as well as the selected asset, using a trusted expected
+   integrity binding. Derive version/source selection from the canonical contract, verify the
+   resolved binary against it and avoid permanent per-repository copies of version truth.
+   Downloading a checksum beside an artifact is not independent authentication by itself.
+3. Repair Core's bootstrap-drift coverage through canonical structured install truth. Recognise
+   a supported binding or explicitly bound what was not checked; do not present an unrecognised
+   shell install as proven consistent. Do not add a generic trusted shell parser as a shortcut.
+4. Add isolated regressions for missing/invalid integrity, mismatch, download failure, absent SHA
+   tools, wrong version, forbidden source fallback/ambient overrides and paired contract/workflow
+   drift. Assert zero unverified payload execution and zero unintended Cargo invocation. Assess
+   Linux/macOS/Windows and both installer families explicitly; one platform does not prove parity.
+5. Independently review the exact source and bundled action, then separately validate the
+   published installer/release path and a bounded consumer. Source, mock, hosted and publication
+   evidence must remain separate. No upgrade, release, dispatch or upstream contact follows here.
+
+Each implementation slice requires an exact workset, compatibility posture, permitted validation
+and release/propagation plan. Assess Core specs/JSON/tests, setup/action docs and bundles, installer
+publication, Site install/reference/Learn/FAQ/Glossary, Skills and Examples. No published behavior,
+completed propagation or closed gap follows from a source repair. Current V12.1/Step 7, its
+source-measurement authority and every operative limit remain unchanged.
+
+### G1 - Strict Release Installation Source Repair
+
+On 2026-10-16 Bobai requested that RUBY and MUSE repair the ATR-exposed gap in parallel without
+interrupting SCOOBY. MUSE activated this security-correctness slice within the current V12.1 work;
+it does not activate a new version or expand Step 7 authority.
+
+RUBY is the sole source writer for exactly `scripts/install.sh`, `scripts/bootstrap.ps1`,
+`scripts/install.ps1` and new `tests/installer_bootstrap.rs`. MUSE owns this plan, the current-state
+pointer and any eventual changelog entry. Existing frozen artifacts, `.github`, `ota.yaml`,
+`Cargo.lock`, `AGENTS.md` and SCOOBY's active work are excluded.
+
+MUSE verified and approved the narrow fourth-file extension on 2026-10-16: the Windows wrapper's
+`if`/`elseif` forwarding masks mutually exclusive mode switches from the bootstrap. Its G1 edit
+only rejects conflicting `FromSource`/`FromGit`/`FromRelease` switches before bootstrap download,
+temporary state or local-bootstrap selection, with regression source. No wrapper trust-chain
+pinning or other G2 work is activated by this extension.
+
+G1 removes implicit checkout-based source selection and release-to-Cargo fallback. Separately
+explicit source/Git installs remain available. Release installation must refuse missing, unreadable,
+ambiguous or malformed integrity evidence, unavailable/failed SHA verification, mismatches and
+download failures before extraction, payload execution or installation, including custom-origin
+and missing-checksum bypass paths. Both installer families require source coverage. Existing
+`latest` semantics must not be silently redefined. Removing implicit source selection and permissive
+verification is a compatibility change that requires migration guidance before publication.
+
+Author isolated regression sources with dummy inputs and extraction/payload/Cargo counters, then
+freeze the diff for MUSE and independent review. This activation permits source authoring and
+ordinary text/hash/diff inspection only: no parsing/running target code, tests, installers, builds,
+dependency installation, probes, Git mutation, publication, dispatch or infrastructure. Validation
+is a separately bounded next step, not an automatic consequence of authoring.
+
+RUBY froze the four-file R1 candidate on 2026-10-16 against Core
+`8a0032c198a007840ecd7c97c4018b7ee93fb1b4` and stopped source writing. MUSE independently matched
+the following SHA-256 identities before VLAD's focused independent source review:
+
+- `scripts/install.sh`: 23,224 bytes, `e59425152f4f2c39ced03256173e889a5899a2ab3a9ad6c75146359ba9cebf1d`.
+- `scripts/bootstrap.ps1`: 25,766 bytes, `6d3de35f8166721f9513833e9b2266cb0e01dba56b433075aea548d6d606c31d`.
+- `scripts/install.ps1`: 3,934 bytes, `2fb0f42b440bc7f20a4990946c3de50456f59ff3b03b5af488ca3f569836f22f`.
+- `tests/installer_bootstrap.rs`: 29,566 bytes, `3ddc6d2cfef460805b7b476750c6e5621d9f52805e55c97b4a801cf0477d66e7`.
+
+The 13 ignored fixtures (six POSIX, seven Windows) are authored, NOT_PARSED and NOT_RUN.
+POSIX fixtures select a synthetic Linux target; Windows positives deliberately stop at the copy
+boundary, not a successful executable/replacement result. No actual OS/architecture matrix,
+bootstrap publication or installed behavior is established. Existing installation guidance still
+describes automatic Cargo fallback and a custom-mirror checksum bypass; reconcile it and the
+connected first-party guidance before publication, not by claiming served installers changed.
+
+VLAD's independent source review (`01a141d5-08d7-7ff0-97c3-57bf596cb8af`, final
+`msg_0074fa586a19efbe016ad15df94f348191936d4d277a109a40`) found two status-handling blockers:
+POSIX directory/staging/replacement errors can fall through to a successful installation result
+because the caller's `if !` suppresses reliance on `set -e`; PowerShell native `tar` failure is
+unchecked before binary discovery/copy. MUSE verified both source paths and accepted SOURCE HOLD.
+MUSE authorized one correction pass in `scripts/install.sh`, `scripts/bootstrap.ps1` and the existing
+test source only; the Windows wrapper retains its R1 hash. RUBY froze R2 and stopped; MUSE matched
+its observed SHA-256 identities before VLAD's independent delta review:
+
+- `scripts/install.sh`: 24,636 bytes, `1b200b9d7cb02f795789a67e8dd99d6c73326e4c020e3941a84bd4bfcc0435d2`.
+- `scripts/bootstrap.ps1`: 25,959 bytes, `69ae0a95f68acd2b57397a75744146dfb69c95e49e56c747858da1003db69923`.
+- `tests/installer_bootstrap.rs`: 40,181 bytes, `3d2068f32e22ed3e876f6f745936ff4c0ce812d668c56057bde95ce43f523d8e`.
+- `scripts/install.ps1`: unchanged 3,934 bytes and the R1 hash above; total R2 source 94,710 bytes.
+
+R2 explicitly propagates directory/staging/replacement failures and native TAR status. Its
+Windows shell replacement path classifies only the fixed PowerShell helper's sharing/lock result
+for pending replacement; simulations do not establish actual Windows exception classification,
+availability or detached completion. The 16 ignored tests retain the original 13 and add status,
+pending and native-TAR controls. The Unix PowerShell fixture requires a separately approved,
+matching absolute `OTA_TEST_PWSH` tool and OS-enforced containment, neither supplied nor verified
+by source authoring. No target parsing, tests, builds, installation or wider G2 work is authorized.
+R1 remains a historical reviewed candidate, not retroactively cleared by R2.
+
+VLAD's focused independent R2 review (`01a141e3-44c7-76d0-99c9-40a0b597d6f9`, final
+`msg_0074fa586a19efbe016ad1615b65c08191a14e5ccebf169e93`) found no corrective P1/P2/P3 in the
+scoped delta and closed both R1 status-handling findings by textual inspection. MUSE matched the
+stable identities and reviewed the connected failure paths/oracles, accepting scoped SOURCE GO
+only. All four files stay frozen; this is not compilation, actual OS/locking/replacement proof,
+publication evidence, a complete pre-release audit or completed section G acceptance.
+
+The permitted next step is one read-only, chat-only validation-readiness proposal using an
+existing declared Ota path and existing OS-enforced containment. It must separate parsing/build
+from selected ignored fixtures, native POSIX/PowerShell/Windows prerequisites, resource and
+whole-process cleanup controls. Do not invoke Cargo around agent admission, invent task flags,
+change the protected contract or build a new validator as an implicit follow-on. Missing admission
+or containment is an explicit blocker; source review does not authorize a run.
+
+RUBY's chat-only readiness check returned HOLD. MUSE verified `ota.yaml:125-139` is plain
+`cargo test` with no filter input and a `setup` dependency that fetches dependencies, while
+`src/runner.rs:23109-23194` treats trailing arguments as declared task inputs, not Cargo flags.
+There is no currently permitted narrow runtime command. Do not drop `--agent`, call Cargo
+directly, inject a filter through the environment or silently change the protected contract.
+
+Bobai approved focused task definitions only on 2026-10-16 (question
+`call_8f62100f0e444d1c92857d6ca9545d46`, answer "Approve focused task definitions only
+(Recommended)"). MUSE relayed the explicit protected-file exception. RUBY is sole writer for
+`ota.yaml` and only the corresponding generated task-list portion of `AGENTS.md`, adding
+`test:installer:compile`, `test:installer:posix`, `test:installer:pwsh-tar` and
+`test:installer:windows` with matching agent admission. Existing four G1 R2 source/test files
+remain frozen. No general argument passthrough, setup-fetch dependency, toolchain/fulfillment
+change or unrelated contract/guidance edit is permitted. Freeze the two-file definition for
+independent source review; do not run a generator or parser to obtain it.
+
+The two-file definition was frozen at SHA-256
+`c3c4fc593bfb4936709a55092e7d7dc97b4edd90c1eb8a03bb88a2d24c470726` (`ota.yaml`) and
+`d80e19dacc7bc91a7be2a9b3eb1b2ea923dee1383f6498fa78cced722d914e1e` (`AGENTS.md`).
+VLAD review `01a141f5-3bc6-7c41-a6d0-d4ad40e53687`, final
+`msg_0074fa586a19efbe016ad16740e0f48191b2df4a8bb493cd9f`, found P2: the four tasks
+select global Rust fulfillment `run`, permitting provisioning before Cargo's offline arguments.
+MUSE verified and accepts SOURCE HOLD for that mismatch; no run occurred. Existing task/context
+requirements select toolchain names, not task-local fulfillment overrides. Dropping the canonical
+Rust requirement or inventing an alias/override is not a correction.
+
+Under Bobai's standing technical delegation, MUSE cleared one connected three-file source
+correction: RUBY removes only those four definitions/admissions/generated list entries from
+`ota.yaml` and `AGENTS.md`, and relocates them to new `ota.installer-validation.yaml`, selected
+by the existing global `--file` mechanism. This is one standalone finite validation contract,
+not an overlay or second owner for the same tasks. Its canonical Rust requirement uses
+fulfillment `none`; ordinary tasks and global Rust fulfillment remain unchanged. Preserve fixed
+arguments, platform limits, prerequisite/protection metadata and narrow agent authority. The new
+file has a 16 KiB source-authoring allowance only; no operative limit changes. Existing four G1
+R2 code/test files remain frozen. Freeze the three-file correction for independent VLAD source
+review and MUSE disposition; no parsing, generator, execution or automatic successor is granted.
+This is internal validation selection, not a new CLI feature or public workflow. Remaining
+publication/consumer propagation stays open; no new Site/Examples/Skills/Learn/FAQ/Glossary term
+or command semantics is introduced by this source-only correction.
+
+The standalone definition candidate is now frozen for independent source review. MUSE matched
+all seven definition/implementation/test hashes, read the complete finite contract and verified
+that ordinary `ota.yaml` and `AGENTS.md` have no diff from their pre-definition baseline.
+The new file is 173 lines / 5,956 bytes, within the 16 KiB authoring allowance. Exact current
+definition identities are:
+
+| File | SHA-256 |
+| --- | --- |
+| `ota.yaml` | `3fb331bf8f15efc85f0ea7066803523234cc35ccf72efa32c09fbfe9aa11fa6c` |
+| `AGENTS.md` | `1c8fa657b2adf70bc276d6b8d6c66e8d6a36f5333a3a5e8cf93a0210ae2fc2cd` |
+| `ota.installer-validation.yaml` | `b9f8db144f9fba33b9c2b4f2f24380152b3dbec34b8c719cb1f45c63f345057c` |
+
+The four G1 R2 implementation/test identities above remain unchanged. The standalone contract
+admits only the four fixed tasks, permits no agent source writes and protects both contracts,
+agent guidance and the frozen implementation/test files. No implicit entrypoint/default/bootstrap
+task, new Rust alias, dynamic arguments or setup-fetch dependency was added. This records the
+source candidate, not closure of the prior P2 before review or permission to execute it. Tracked
+whitespace checks passed; the untracked contract's no-index check returned 1 with empty output
+because it is a new-file diff. No parser, generator, compiler or test was run.
+
+VLAD's focused independent correction review `01a14221-ed29-7151-9743-7396dfcf7ee9`, final
+`msg_0074fa586a19efbe016ad172835f088191989ba7d9a8d6556f`, has no corrective P1/P2/P3;
+the prior provisioning-authority P2 closes by source inspection. MUSE rechecked all seven
+hashes unchanged and accepts scoped SOURCE GO for the standalone definition correction.
+Explicit `--file` selection, diagnose-only Rust, fixed task/OS/admission boundaries and restored
+ordinary contracts are source-confirmed, not parser or runtime results. Agent path declarations
+are not OS confinement. Rustup shims, caches, native tools and outer containment remain
+unqualified; runtime readiness remains HOLD. No parsing, build, test, installation or automatic
+validation successor follows from this disposition.
+
+This grant permits source edits and text/hash/diff inspection only, not parsing, builds, tests,
+installation, dependency provisioning, containers, infrastructure, Git or publication. The task
+definitions are not execution or provisioning authority. Locked/offline Cargo arguments alone
+do not establish a whole-path no-install/no-network guarantee. Rust 1.95.0/cache satisfaction,
+native PowerShell/Windows qualification and an existing
+OS-enforced network-denied/read-only/resource-bounded whole-descendant containment route remain
+unqualified. Tool-path presence is metadata only. No new validator, runtime venue, numeric runtime
+allowance or infrastructure is adopted by the readiness proposal.
+
+G1 does not independently authenticate a publisher by fetching an adjacent checksum manifest. The
+trusted expected digest, immutable setup/action bootstrap path, PowerShell second-stage chain and
+connected self-update hop remain open. Doctor's structured checked/not-checked coverage remains a
+separate inactive slice. Do not call section G closed after G1 or infer any change to served bytes.
+
+An independent read-only design challenge recommends pinning the existing published
+`ota-checksums.txt` hash per exact release, alongside immutable installer identities, rather than
+duplicating per-platform release catalogues in both actions. MUSE verified that the existing
+release workflow already generates and publishes this manifest. A follow-on must authenticate
+the manifest as data before selecting an asset digest, authenticate both Windows script hops,
+and bind managed installation to the installed binary rather than an unrelated PATH candidate.
+This is a design candidate, not G2 source authority or reviewed production pin metadata. An exact
+default bound to an action SHA would require an explicit compatibility/release decision; do not
+silently redefine `latest`. No new publication workflow, signing service or installer engine is
+justified merely to introduce another metadata format.
+
 ## Implementation Order
 
-This register does not impose one six-item release train. When future demand selects work, prefer:
+This register does not impose one bundled release train. When future demand selects work, prefer:
 
 1. lock-strict Cargo hydration as the smallest contract-truth improvement;
 2. mixed-mode preview selection as a separate reviewed execution-selection batch, without
@@ -3978,6 +4227,9 @@ This register does not impose one six-item release train. When future demand sel
 
 Do not start item 2 merely because item 1 completes. Each item needs its own activation record,
 tests, propagation assessment, pressure evidence, and closure review.
+
+Section G is a security-relevant correctness repair candidate requiring an explicit sequencing
+decision, not an automatic addition behind that feature order or permission to interrupt Step 7.
 
 ## Current Product Boundary
 
