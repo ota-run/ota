@@ -31,7 +31,7 @@ updates:
       - dependencies
       - cargo
     assignees:
-      - bobaikato
+      - e7raem
     commit-message:
       prefix: deps
 
@@ -44,6 +44,6 @@ updates:
       - dependencies
       - github-actions
     assignees:
-      - bobaikato
+      - e7raem
     commit-message:
       prefix: ci

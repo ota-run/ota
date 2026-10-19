@@ -23730,7 +23730,7 @@ tasks:
         ref: main
       remotes:
         - name: origin
-          git: git@github.com:bobaikato/wagtail.git
+          git: git@github.com:e7raem/wagtail.git
         - name: upstream
           git: git@github.com:wagtail/wagtail.git
 "#,

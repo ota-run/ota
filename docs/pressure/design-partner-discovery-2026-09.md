@@ -12,7 +12,7 @@ is published; the other engineering notes remain drafts pending upstream review.
 - **Aggregate execution-mode propagation (sem):** The older v1.6.27 finding is
   retained in [`sem-discovery.md`](sem-discovery.md). The current fork still
   selects `test` and `local-index:freshness` separately in its hosted container
-  lane, so the [retained run](https://github.com/bobaikato/sem/actions/runs/36239195385)
+  lane, so the [retained run](https://github.com/e7raem/sem/actions/runs/36239195385)
   does **not** exercise aggregate container execution. A local dry-run of
   `ota run verify --container --agent` with the current source-built v1.6.28
   binary resolved the complete container-selected closure. No post-tag changes

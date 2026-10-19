@@ -387,8 +387,8 @@
 
 - Recorded the same archive, assurance, review-only candidate, and bounded selected-path controls against forked
   Plausible and Outline repositories on Linux/x64 and macOS in
-  [run 33391482073](https://github.com/bobaikato/analytics/actions/runs/33391482073) and
-  [run 33391486538](https://github.com/bobaikato/outline/actions/runs/33391486538). Both retained
+  [run 33391482073](https://github.com/e7raem/analytics/actions/runs/33391482073) and
+  [run 33391486538](https://github.com/e7raem/outline/actions/runs/33391486538). Both retained
   artifacts bind clean source-built Core `e96cad13db9e4289c0985fca2ce6d8353a896da4`, verify one
   private workflow archive, promote only its exact workflow claim to `supported`, return it to
   `unknown` after retained-context stripping, and exercise durable projection-free candidate,
@@ -863,9 +863,9 @@
   `cc680cef790bf8334ee0dfe513c202a51c21954e`, Protocol
   `b4f36fe450dc4047bd7bd623ea8ba60fd951e31d`, and Launcher
   `d8aa1d0bf9783d29d53d0a5e912f09f1fa414624`. Hosted normal run
-  [31389237232](https://github.com/bobaikato/create-chrome-extension/actions/runs/31389237232)
+  [31389237232](https://github.com/e7raem/create-chrome-extension/actions/runs/31389237232)
   and root-armed crash/recovery run
-  [31389713244](https://github.com/bobaikato/create-chrome-extension/actions/runs/31389713244)
+  [31389713244](https://github.com/e7raem/create-chrome-extension/actions/runs/31389713244)
   bind reproducible installed binaries, unchanged repository identities, exact transient-scope
   cleanup, and a typed `posture_admitted_boundary_removed` terminal stage. The crash path records
   launcher exit `86` before fresh reconciliation. These runs still create no V3 attestation,

@@ -10,9 +10,9 @@ released and Aleksei reviews a draft PR in writing.
 - Default branch: `main`
 - Reviewed revision: `17df87775c0d5407c07e86f278455d912ed51305`
 - Review date: 2026-08-29
-- Fork: `bobaikato/pythiaLabs`, branch `bobai/ota-pre-release-pressure`
+- Fork: `e7raem/pythiaLabs`, branch `bobai/ota-pre-release-pressure`
 - Native-pressure revision: `bf51a0b4c93128522226cf977895f54c6603d33d`
-- Container-pressure revision: `916f9f127c9d76580e8f5efa8f4f0af497019fff`, hosted in [run 33258442106](https://github.com/bobaikato/pythiaLabs/actions/runs/33258442106)
+- Container-pressure revision: `916f9f127c9d76580e8f5efa8f4f0af497019fff`, hosted in [run 33258442106](https://github.com/e7raem/pythiaLabs/actions/runs/33258442106)
 - Ota probe: source-built Ota v1.6.27 at Core `cd99c9abd2c0225b454371e897eca2486319db26`
 - Upstream posture: Aleksei requested asynchronous written review through a draft PR from a fork, with a proposed `ota.yaml`, a separate non-blocking workflow, exercised assumptions, and explicit unproved boundaries.
 
@@ -43,8 +43,8 @@ The fork carries a reviewable `ota.yaml` and two separate visible workflows. The
 upstream CI checks and do not execute credentialed CAEP, GitHub merge, communications, or the
 Liminal multi-repository lifecycle.
 
-- [Declaration and discovery pressure run 33256380938](https://github.com/bobaikato/pythiaLabs/actions/runs/33256380938) passed at the fork revision above. It validates the contract, exports declared task posture, runs Doctor, and emits a review-only detection candidate.
-- [Non-credentialed execution matrix 33256380935](https://github.com/bobaikato/pythiaLabs/actions/runs/33256380935) ran the reviewed native lanes with the exact Core revision above. Ten of eleven lanes passed: Elixir format/test, MCP smoke, Rust worker build/test, site build, and Action Envelope, VCE, ACI, and local CAEP conformance.
+- [Declaration and discovery pressure run 33256380938](https://github.com/e7raem/pythiaLabs/actions/runs/33256380938) passed at the fork revision above. It validates the contract, exports declared task posture, runs Doctor, and emits a review-only detection candidate.
+- [Non-credentialed execution matrix 33256380935](https://github.com/e7raem/pythiaLabs/actions/runs/33256380935) ran the reviewed native lanes with the exact Core revision above. Ten of eleven lanes passed: Elixir format/test, MCP smoke, Rust worker build/test, site build, and Action Envelope, VCE, ACI, and local CAEP conformance.
 - `verify:site-format` failed because Pythia's existing `prettier --check .` reports 13 unformatted site files. This is a repository-quality finding, not an Ota failure. The fork does not rewrite upstream source or downgrade the verification lane without maintainer review.
 - An earlier fork execution attempt exposed an Ota parser defect: the generic version parser read `Erlang/OTP 26` as the Elixir version. Core `cd99c9ab` now extracts the explicit `Elixir 1.16.3` line, with a regression. The contract also replaced unsupported `~> 1.15` syntax with the supported equivalent `>=1.15,<2`.
 
@@ -55,7 +55,7 @@ bootstrap and is not a reviewed image, platform, mount, or hydration carrier. Th
 the value of Ota-owned container execution. The fork now declares a bounded container pressure slice
 using an explicit, digest-pinned Linux Node context for the portable MCP and site closures, with
 each task selecting it through `--mode container` and retaining separate artifacts. The
-[hosted container matrix](https://github.com/bobaikato/pythiaLabs/actions/runs/33258442106) passed
+[hosted container matrix](https://github.com/e7raem/pythiaLabs/actions/runs/33258442106) passed
 that bounded Linux Node slice and retains Ota's selected-context summary plus child output.
 
 This proves only Ota's declared context selection, closure execution, working-directory handling,

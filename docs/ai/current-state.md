@@ -4416,8 +4416,8 @@ historical evidence below retains only its original scope.
   from a verified private archive and its fallback to `unknown` after archive tampering. It remains
   internal, provider-disabled negative evidence, not provider contact, mutation, positive
   assurance, or export safety. The final fork-only Linux/macOS matrices against Plausible and
-  Outline are immutable-hosted in [run 33391482073](https://github.com/bobaikato/analytics/actions/runs/33391482073)
-  and [run 33391486538](https://github.com/bobaikato/outline/actions/runs/33391486538) at fork
+  Outline are immutable-hosted in [run 33391482073](https://github.com/e7raem/analytics/actions/runs/33391482073)
+  and [run 33391486538](https://github.com/e7raem/outline/actions/runs/33391486538) at fork
   revisions `fa24db238dae39a277e5fbfc08519488a32c1020` and
   `58b6a7731aff1a1237da1d9ade6021114b0a1c6e`. Every retained artifact binds clean source-built
   Core `e96cad13db9e4289c0985fca2ce6d8353a896da4`. Both create and verify one private workflow
@@ -4648,16 +4648,16 @@ historical evidence below retains only its original scope.
   outside this enforcement boundary. Core fixture proof is green. Independent hosted pressure is
   also green against exact Core `d796f28e5556c0f1315052e8782ed774e9156922`:
   create-chrome-extension run
-  [30544809360](https://github.com/bobaikato/create-chrome-extension/actions/runs/30544809360)
+  [30544809360](https://github.com/e7raem/create-chrome-extension/actions/runs/30544809360)
   proves generated output inside one writable carve-out, and Caddy run
-  [30544809898](https://github.com/bobaikato/caddy/actions/runs/30544809898) independently proves
+  [30544809898](https://github.com/e7raem/caddy/actions/runs/30544809898) independently proves
   a source-manifest artifact under external-network denial. Both runs include protected
   `ota.yaml` write refusal, discovery JSON, dry-run admission, real task and workflow execution,
   terminal cleanup, archive reconciliation, and an explicit uncovered-material-behavior
   inventory. They prove only their selected Linux/amd64 `oci_local` lanes. The full Core and
   first-party release gate is green, so V11.21 is complete.
 - supplementary V11.21 pressure: Buzz run
-  [30559160264](https://github.com/bobaikato/buzz/actions/runs/30559160264) confirms that the
+  [30559160264](https://github.com/e7raem/buzz/actions/runs/30559160264) confirms that the
   stock adapter refuses a real Compose, migration, persistent-volume, hydration, and external-state
   integration closure before Buzz provider or worktree mutation. This does not widen V11.21. It
   records two explicit boundaries: the clean host remains Doctor-blocked on the declared missing
@@ -4731,16 +4731,16 @@ historical evidence below retains only its original scope.
   refusal. Core regression proof covers exact admission, mutation, revocation, sequence rollback,
   selected-graph expansion, missing-grant refusal, dry-run parity, pending-journal recovery, and
   terminal outcome reconciliation. Create-chrome-extension hosted refusal pressure
-  [30714738522](https://github.com/bobaikato/create-chrome-extension/actions/runs/30714738522)
+  [30714738522](https://github.com/e7raem/create-chrome-extension/actions/runs/30714738522)
   confirms that a GitHub-hosted runner without the fixed authority source refuses before scaffold
-  execution; its normal matrix [30718303916](https://github.com/bobaikato/create-chrome-extension/actions/runs/30718303916)
+  execution; its normal matrix [30718303916](https://github.com/e7raem/create-chrome-extension/actions/runs/30718303916)
   is green across native and bounded container paths. This does not prove live grant authority
   separation because a hosted job could self-provision its own filesystem state. The first
   carrier's live, expired, revoked, and out-of-scope VPS pressure is now green:
-  [30863257307](https://github.com/bobaikato/create-chrome-extension/actions/runs/30863257307),
-  [30862934335](https://github.com/bobaikato/create-chrome-extension/actions/runs/30862934335),
-  [30863024099](https://github.com/bobaikato/create-chrome-extension/actions/runs/30863024099), and
-  [30863121110](https://github.com/bobaikato/create-chrome-extension/actions/runs/30863121110).
+  [30863257307](https://github.com/e7raem/create-chrome-extension/actions/runs/30863257307),
+  [30862934335](https://github.com/e7raem/create-chrome-extension/actions/runs/30862934335),
+  [30863024099](https://github.com/e7raem/create-chrome-extension/actions/runs/30863024099), and
+  [30863121110](https://github.com/e7raem/create-chrome-extension/actions/runs/30863121110).
   The live artifact retains the exact transaction-bound receipt archive; every refusal preserves
   typed admission evidence and an unchanged checkout before and after dry-run and real refusal.
   The immutable native Linux/systemd proof [31986767770](https://github.com/ota-run/ota/actions/runs/31986767770)
@@ -4795,11 +4795,11 @@ historical evidence below retains only its original scope.
   cgroup empty or absent before releasing the principal slot.
   OrbStack's systemd refuses the real pre-exec PID attachment with `ENOTTY`, so that environment
   proves fail-closed behavior but not positive scope ownership. Immutable Linux/x64 VPS run
-  [31373366733](https://github.com/bobaikato/create-chrome-extension/actions/runs/31373366733)
+  [31373366733](https://github.com/e7raem/create-chrome-extension/actions/runs/31373366733)
   now proves the exact reproducibly built launcher/client identities, fixed socket, root-stopped
   child, positive `openat2` containment, request-derived transient scope, terminal scope removal,
   child reap, active-slot cleanup, and unchanged repository state. Crash/recovery run
-  [31373928434](https://github.com/bobaikato/create-chrome-extension/actions/runs/31373928434)
+  [31373928434](https://github.com/e7raem/create-chrome-extension/actions/runs/31373928434)
   proves a root-only post-scope crash at exit `86`, durable abandoned-slot reconciliation before the
   next request, terminal refusal, and zero residual slots, scopes, or recorded children. The empty
   execution-disabled child was collected before the post-crash scope observation, so the evidence
@@ -4810,7 +4810,7 @@ historical evidence below retains only its original scope.
   against the immutable stopped-child revisions prove socket
   replacement refusal, descriptor transport, and fail-closed behavior when that environment
   reports `openat2` as `ENOSYS`. The separate VPS kernel-pressure run
-  [31319741342](https://github.com/bobaikato/create-chrome-extension/actions/runs/31319741342)
+  [31319741342](https://github.com/e7raem/create-chrome-extension/actions/runs/31319741342)
   checks out exact authority-launcher `99affd90f712512fa1fd7c039868d114904736cf` and proves the
   positive `openat2` containment flags plus symlink-escape refusal on Linux/x86_64 kernel
   `6.8.0-134`. This does not exercise the root UID-switching helper or the systemd service.
@@ -4823,9 +4823,9 @@ historical evidence below retains only its original scope.
   and principal mapping before exact scope/child/slot cleanup. Core emits the preface before CLI
   parsing or command dispatch and blocks for launcher continuation; this slice deliberately sends
   none. Malformed or substituted posture fails closed. Hosted normal run
-  [31389237232](https://github.com/bobaikato/create-chrome-extension/actions/runs/31389237232)
+  [31389237232](https://github.com/e7raem/create-chrome-extension/actions/runs/31389237232)
   and root-armed crash/recovery run
-  [31389713244](https://github.com/bobaikato/create-chrome-extension/actions/runs/31389713244)
+  [31389713244](https://github.com/e7raem/create-chrome-extension/actions/runs/31389713244)
   bind exact reproducible binary identities, unchanged repository state, zero terminal scopes, and
   the typed `posture_admitted_boundary_removed` terminal stage; the crash path records launcher
   exit `86` before fresh reconciliation. The first hosted posture attempt also exposed that Core's
@@ -5091,7 +5091,7 @@ historical evidence below retains only its original scope.
   `ota baseline promote`; Bedrock must retain `.ota/receipts/` and make a fresh reviewed recording
   after that workflow fix. This is a Bedrock workflow-retention gap, not an Ota Core defect. Core focused
   record/promotion, JSON conformance, and published-schema tests pass. EventCatalog closes the
-  independent non-model generated-baseline gate: [run 30198942717](https://github.com/bobaikato/eventcatalog/actions/runs/30198942717)
+  independent non-model generated-baseline gate: [run 30198942717](https://github.com/e7raem/eventcatalog/actions/runs/30198942717)
   preserves the ordinary native generator matrix on Ubuntu, macOS, and Windows and separately
   proves a fresh runner can consume the committed portable authority without local `.ota` history:
   Doctor admission, workflow dry-run, setup hydration, detached compiler consumption, and receipt
@@ -5100,7 +5100,7 @@ historical evidence below retains only its original scope.
   correctly excludes declared Langium outputs and refuses workflow-generated transient JSON until
   that evidence moves to `$RUNNER_TEMP`; the promoted consumer compiles the approved authority
   rather than comparing a newly approved baseline against Git `HEAD`. EventCatalog run
-  [30226480354](https://github.com/bobaikato/eventcatalog/actions/runs/30226480354) completes the
+  [30226480354](https://github.com/e7raem/eventcatalog/actions/runs/30226480354) completes the
   independent strict-replay pressure gate: ordinary generated-source lineage remains green on
   Ubuntu, macOS, and Windows, while explicit record/promotion and committed-authority consumption
   both run through the declared ephemeral container boundary with `read_only` enforcement. A
@@ -5111,7 +5111,7 @@ historical evidence below retains only its original scope.
   `generated_source` retains an ordinary producer-dependent SDK check while a second task can
   consume the same output only through explicit promoted replay authority. The Core schema, Doctor,
   receipt, mutation guard, and strict runner boundary all derive that consumer distinction from the
-  producer dependency. Its hosted pressure run [30179771523](https://github.com/bobaikato/dagger/actions/runs/30179771523)
+  producer dependency. Its hosted pressure run [30179771523](https://github.com/e7raem/dagger/actions/runs/30179771523)
   bootstrapped Core `b5b55e0e` and passed contract/discovery/dry-run admission, but the ordinary
   producer failed before record/promotion because Dagger's module-owned runtime resolves
   `protobuf-dev~32` against a mutable Alpine package index that no longer satisfies it. This is not
@@ -5122,10 +5122,10 @@ historical evidence below retains only its original scope.
 - completed implementation slice: V11.19 typed uv local-project hydration. The replay classifier
   now requires resolved source posture, declared lockfile identity, and clean local-project source
   identity before editable hydration can be acquitting; missing lockfile or source identity remains
-  narrowing evidence. Dograh [run 30165303012](https://github.com/bobaikato/dograh/actions/runs/30165303012)
+  narrowing evidence. Dograh [run 30165303012](https://github.com/e7raem/dograh/actions/runs/30165303012)
   proves nested editable Pipecat hydration with its full declared extras, ordered `dev` group,
   manifest, lockfile, and Git source identities, plus bounded PostgreSQL/Redis lifecycle execution.
-  Marimo [run 30165304206](https://github.com/bobaikato/marimo/actions/runs/30165304206) proves the
+  Marimo [run 30165304206](https://github.com/e7raem/marimo/actions/runs/30165304206) proves the
   different editable root-project plus `test`-group shape on Linux and macOS; it has no `uv.lock`,
   so Ota records manifest and Git source identities while correctly retaining narrowing replay
   evidence. Both matrices bootstrap exact Core `19509754` and retain platform-specific evidence
@@ -5140,7 +5140,7 @@ historical evidence below retains only its original scope.
   and orchestrator wrapping; dry-run JSON publishes the invocation-specific
   `terminal_passthrough`, `piped`, or `refused` resolution. Agent, captured, container, remote,
   and ordinary non-TTY CI execution do not acquire terminal capability. Workers SDK
-  [run 30265519625](https://github.com/bobaikato/workers-sdk/actions/runs/30265519625) bootstraps
+  [run 30265519625](https://github.com/e7raem/workers-sdk/actions/runs/30265519625) bootstraps
   Core `c5256d64f3060b30d40f07fa389b2bb16fc61b1f` and proves validation, Doctor, task discovery,
   dry-run JSON, non-TTY refusal before hydration, and agent refusal across Ubuntu, macOS, and
   Windows. Windows also proves a failed optional WSL shell probe cannot corrupt machine JSON.
@@ -5190,9 +5190,9 @@ historical evidence below retains only its original scope.
   setup, execution, or durable logs. This remains an internal fixture: provider execution,
   mutation, positive receipts, archives, assurance, and independent real-repository behavior are
   not proved.
-  Bedrock [run 30413944121](https://github.com/bobaikato/bedrock/actions/runs/30413944121)
+  Bedrock [run 30413944121](https://github.com/e7raem/bedrock/actions/runs/30413944121)
   proves strict matching admission for four declared frozen inputs through native and container
-  execution. Kylrix [run 30413944203](https://github.com/bobaikato/kylrix/actions/runs/30413944203)
+  execution. Kylrix [run 30413944203](https://github.com/e7raem/kylrix/actions/runs/30413944203)
   preserves ordinary unpinned compatibility while its dedicated strict-policy lane refuses
   Doctor, dry-run, real `ota up`, receipt, and `doctor --fix` before setup outputs are created.
   Both bootstrap exact implementation Core `f97b96cc`; later Core `d0e77a95`, `ff35a910`,
@@ -5274,16 +5274,16 @@ historical evidence below retains only its original scope.
   and attests only engine-confirmed session removal as `boundary_terminated`. It explicitly retains
   `service_started_state_not_proved`, `application_output_not_proved`, and
   `broader_repo_completion_not_proved`; it never claims `manager_inactive` or host process absence.
-  Caddy matrix [30102633474](https://github.com/bobaikato/caddy/actions/runs/30102633474) is green
+  Caddy matrix [30102633474](https://github.com/e7raem/caddy/actions/runs/30102633474) is green
   for regenerated native and container governance lanes against committed Core `6025187b`, but it
   does not invoke `ota proof lifecycle`; it is not isolated-boundary pressure proof. The dedicated
-  hosted lifecycle run [30111427705](https://github.com/bobaikato/caddy/actions/runs/30111427705)
+  hosted lifecycle run [30111427705](https://github.com/e7raem/caddy/actions/runs/30111427705)
   is green against Core `3ffaf362` and binds the exact runner-owned boundary identity. The final
-  hardened rerun [30124528078](https://github.com/bobaikato/caddy/actions/runs/30124528078) is
+  hardened rerun [30124528078](https://github.com/e7raem/caddy/actions/runs/30124528078) is
   green against Core `53ff07eb`, emits qualified proof, and archives
   `sha256:8985f57cd191e4d1db370122a6adb33a5f3a3fc649a289b2855dd2b48894de39` with exact session
   `container:docker:ota-ephemeral-43c71044194b0e05`. The final setup-failure correction passed
-  [30125996749](https://github.com/bobaikato/caddy/actions/runs/30125996749) against Core
+  [30125996749](https://github.com/e7raem/caddy/actions/runs/30125996749) against Core
   `fc88d215`, emitting archive
   `sha256:c2dab2e7535589819f416159ca06b5384d599093e87546cc1aab1b242d8e3235` with exact session
   `container:docker:ota-ephemeral-3890811a19b2944d`. Open WebUI supplies the independent Compose

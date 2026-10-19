@@ -520,11 +520,11 @@ attribution, candidate identity, closure identity where applicable, and truthful
 classification before V11.22 is called complete.
 
 The required pressure set is now evidenced. Immutable Linux/macOS Buzz pressure
-[32795701879](https://github.com/bobaikato/buzz/actions/runs/32795701879) proves deterministic
+[32795701879](https://github.com/e7raem/buzz/actions/runs/32795701879) proves deterministic
 no-contract candidate creation, create-new application, validation, and no-op reapplication at
 `block/buzz@2d280376ad36134cec1f23bead6d866d30bed147`; it creates only `ota.yaml` and emits no
 agent-safe proposal. Immutable Linux/macOS Flowise pressure
-[32794430600](https://github.com/bobaikato/Flowise/actions/runs/32794430600) proves the registered
+[32794430600](https://github.com/e7raem/Flowise/actions/runs/32794430600) proves the registered
 legacy upgrade and Git-carrier application at
 `FlowiseAI/Flowise@90121fac54e234ca83e2a85c435354af1df8ac8f`; its semantic contract identity is
 unchanged, its commit contains only `ota.yaml`, and reapplication is a no-op. These runs do not

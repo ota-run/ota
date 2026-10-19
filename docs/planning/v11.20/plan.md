@@ -194,13 +194,13 @@ actually exist.
 
 ## Pressure Evidence
 
-- Bedrock [run 30413944121](https://github.com/bobaikato/bedrock/actions/runs/30413944121)
+- Bedrock [run 30413944121](https://github.com/e7raem/bedrock/actions/runs/30413944121)
   bootstraps exact Core `f97b96cc` and proves strict matching policy admission for its four
   declared frozen replay inputs. Ubuntu executes the real deterministic replay workflow and
   bounded runtime proof; macOS and Windows execute the deterministic native contract surface; the
   isolated Linux container lane executes the same replay workflow. Contract-to-CI drift also
   remains green.
-- Kylrix [run 30413944203](https://github.com/bobaikato/kylrix/actions/runs/30413944203)
+- Kylrix [run 30413944203](https://github.com/e7raem/kylrix/actions/runs/30413944203)
   bootstraps the same Core revision. Its ordinary native/container governance lanes retain
   compatible optional-pin behavior for the unpinned `pnpm-lock.yaml` replay input. A dedicated
   strict-policy lane proves typed denial through Doctor, dry-run, real `ota up`, receipt output,

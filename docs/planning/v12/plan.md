@@ -867,8 +867,8 @@ does not prove provider contact or mutation, arbitrary child-process absence, re
 immutability, positive assurance, or export safety.
 The same archive, assurance, candidate-reconciliation, and bounded selected-path controls are now
 immutable-hosted on Linux/x64 and macOS against two forked real repositories: Plausible in
-[run 33391482073](https://github.com/bobaikato/analytics/actions/runs/33391482073) and Outline in
-[run 33391486538](https://github.com/bobaikato/outline/actions/runs/33391486538). Both retain a
+[run 33391482073](https://github.com/e7raem/analytics/actions/runs/33391482073) and Outline in
+[run 33391486538](https://github.com/e7raem/outline/actions/runs/33391486538). Both retain a
 clean source-built Core `e96cad13db9e4289c0985fca2ce6d8353a896da4` identity, one valid private
 workflow archive, exact workflow-only Doctor promotion to `supported` with fallback to `unknown`
 after context stripping, a projection-free `unknown` candidate, read-only write refusal,

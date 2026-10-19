@@ -73824,7 +73824,7 @@ tasks:
         git: https://github.com/wagtail/wagtail.git
       remotes:
         - name: origin
-          git: git@github.com:bobaikato/wagtail.git
+          git: git@github.com:e7raem/wagtail.git
         - name: upstream
           git: git@github.com:wagtail/wagtail.git
 "#,
@@ -73880,7 +73880,7 @@ tasks:
             fs::read_to_string(remotes_dir.join("origin"))
                 .unwrap()
                 .trim(),
-            "git@github.com:bobaikato/wagtail.git"
+            "git@github.com:e7raem/wagtail.git"
         );
         assert_eq!(
             fs::read_to_string(remotes_dir.join("upstream"))
@@ -73891,10 +73891,10 @@ tasks:
         assert!(
             first
                 .stdout
-                .contains("remote set-url origin git@github.com:bobaikato/wagtail.git")
+                .contains("remote set-url origin git@github.com:e7raem/wagtail.git")
                 || first
                     .stdout
-                    .contains("set git remote `origin` to `git@github.com:bobaikato/wagtail.git`"),
+                    .contains("set git remote `origin` to `git@github.com:e7raem/wagtail.git`"),
             "{}",
             first.stdout
         );
@@ -73910,7 +73910,7 @@ tasks:
         );
         assert_eq!(second.exit_code, 0);
         assert!(
-            second.stdout.contains("git remote `origin` already points at `git@github.com:bobaikato/wagtail.git`; no update needed"),
+            second.stdout.contains("git remote `origin` already points at `git@github.com:e7raem/wagtail.git`; no update needed"),
             "{}",
             second.stdout
         );

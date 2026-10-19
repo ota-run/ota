@@ -30,7 +30,7 @@
 ## Source
 
 - pressure revision: `a3b08cd5f38917dbe4c12b9f724369a47a70f61c`
-- hosted matrix: [run 34962979289](https://github.com/bobaikato/sem/actions/runs/34962979289)
+- hosted matrix: [run 34962979289](https://github.com/e7raem/sem/actions/runs/34962979289)
 - exercised paths: Ubuntu native and Linux/AMD64 container local-index freshness proof.
 
 This is an Ota product-discovery record, not a public evidence-registry entry and not a claim

@@ -764,7 +764,7 @@ A green provider-backed task is not repo-global sandbox proof.
 Current pressure evidence:
 
 - create-chrome-extension run
-  [30544809360](https://github.com/bobaikato/create-chrome-extension/actions/runs/30544809360)
+  [30544809360](https://github.com/e7raem/create-chrome-extension/actions/runs/30544809360)
   pins Core `d796f28e5556c0f1315052e8782ed774e9156922` and proves one existing repository
   script generating a bounded artifact inside the declared writable carve-out. The same selected
   boundary confirms protected `ota.yaml` write refusal, external-network denial, discovery JSON,
@@ -772,14 +772,14 @@ Current pressure evidence:
   reconciliation. It does not prove the extension build, browser checks, contributor workflow, or
   publication lanes.
 - Caddy run
-  [30544809898](https://github.com/bobaikato/caddy/actions/runs/30544809898) pins the same
+  [30544809898](https://github.com/e7raem/caddy/actions/runs/30544809898) pins the same
   Core revision and independently proves a bounded `go.mod` source-manifest artifact under the
   declared read-only root, protected-path refusal, external-network denial, discovery JSON,
   dry-run admission, real `run` and workflow-backed `up`, terminal cleanup, and archive
   reconciliation. It does not prove Caddy's build, tests, lifecycle, signing, release, publication,
   or downstream image-dispatch lanes.
 - Buzz run
-  [30559160264](https://github.com/bobaikato/buzz/actions/runs/30559160264) is supplementary
+  [30559160264](https://github.com/e7raem/buzz/actions/runs/30559160264) is supplementary
   unsupported-capability pressure against Core `8de7d34db7c74def6944712d356ddcb4ab0e9ab2`. Its
   real `just test-integration` closure declares Docker Compose services, migrations, persistent
   volumes, dependency hydration, and external state. Stock `oci_local` refuses before execution;

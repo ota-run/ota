@@ -186,7 +186,7 @@ it is not a `pip_local_project` mode or a generic `--container` switch.
 
 ## Pressure Evidence
 
-Dograh [run 30165303012](https://github.com/bobaikato/dograh/actions/runs/30165303012) proves the
+Dograh [run 30165303012](https://github.com/e7raem/dograh/actions/runs/30165303012) proves the
 first target against exact Core commit `19509754`. Its matrix validates and diagnoses the contract,
 lists public and agent-safe task surfaces, dry-runs the API workflow, asserts the single typed
 `setup:pipecat` source renders editable `pip_local_project` hydration with its full declared extras
@@ -196,7 +196,7 @@ bounded: Dograh advertises native Linux and macOS execution only; its Dev Contai
 validator install, and GitHub-service versus local-Compose topology are not promoted into this
 proof.
 
-Marimo [run 30165304206](https://github.com/bobaikato/marimo/actions/runs/30165304206) proves the
+Marimo [run 30165304206](https://github.com/e7raem/marimo/actions/runs/30165304206) proves the
 independent root-project shape against the same exact Core commit on Linux and macOS. Its contract
 uses one editable `path: .` source with the ordered `test` group, and the retained per-platform
 artifacts prove matching manifest and Git source identities. Marimo does not commit `uv.lock`, so

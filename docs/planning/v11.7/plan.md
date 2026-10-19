@@ -35,14 +35,14 @@ and `heavier_workflow` families. Boundary crossing records and provenance are sh
 canonical semantic crossing evaluator and first `prebound_file` signed-authority carrier are
 implemented in Core. GitHub-hosted pressure proves that absent fixed authority refuses before the
 selected lane starts through create-chrome-extension run
-[30714738522](https://github.com/bobaikato/create-chrome-extension/actions/runs/30714738522).
+[30714738522](https://github.com/e7raem/create-chrome-extension/actions/runs/30714738522).
 Pre-provisioned Linux/x64 VPS pressure now proves the bounded carrier under one exact workflow
 revision: a live grant creates and retains a transaction-bound archive in
-[30863257307](https://github.com/bobaikato/create-chrome-extension/actions/runs/30863257307), and
+[30863257307](https://github.com/e7raem/create-chrome-extension/actions/runs/30863257307), and
 expired, revoked, and out-of-scope grants refuse before task work with full checkout mutation
-controls in [30862934335](https://github.com/bobaikato/create-chrome-extension/actions/runs/30862934335),
-[30863024099](https://github.com/bobaikato/create-chrome-extension/actions/runs/30863024099), and
-[30863121110](https://github.com/bobaikato/create-chrome-extension/actions/runs/30863121110).
+controls in [30862934335](https://github.com/e7raem/create-chrome-extension/actions/runs/30862934335),
+[30863024099](https://github.com/e7raem/create-chrome-extension/actions/runs/30863024099), and
+[30863121110](https://github.com/e7raem/create-chrome-extension/actions/runs/30863121110).
 This proves only the first carrier's `current_process_filesystem_guarded` posture, not
 provider-attested separation. Core now also implements the Unix launcher-session
 `authority_broker` carrier for governed `ota run` and `ota up`: it verifies challenge-bound
@@ -119,10 +119,10 @@ journal. Cleanup stops the exact scope when still present and confirms the scope
 recorded cgroup empty or absent before releasing the principal slot.
 OrbStack's systemd currently refuses the pre-exec PID attachment with `ENOTTY`, which is retained as
 fail-closed local evidence with no residual child or unit. Immutable Linux/x64 VPS run
-[31373366733](https://github.com/bobaikato/create-chrome-extension/actions/runs/31373366733)
+[31373366733](https://github.com/e7raem/create-chrome-extension/actions/runs/31373366733)
 proves the exact reproducibly built launcher and client, positive scope ownership, terminal scope
 removal, and unchanged repository state. Run
-[31373928434](https://github.com/bobaikato/create-chrome-extension/actions/runs/31373928434)
+[31373928434](https://github.com/e7raem/create-chrome-extension/actions/runs/31373928434)
 uses a root-only one-shot fault after durable `scope_attached` persistence, then proves that the
 next activation reconciles the abandoned slot before accepting a new request and leaves no slot,
 scope, or recorded child. An execution-disabled child may exit early enough for systemd to collect
@@ -1203,8 +1203,8 @@ defects: listener reconciliation incorrectly rejected same-path connected socket
 properties were queried from the generic Unit interface instead of Scope; and a scope collected
 between `KillUnit` and `StopUnit` was treated as cleanup failure without reconciling the recorded
 cgroup. Immutable hosted runs
-[31373366733](https://github.com/bobaikato/create-chrome-extension/actions/runs/31373366733)
-and [31373928434](https://github.com/bobaikato/create-chrome-extension/actions/runs/31373928434)
+[31373366733](https://github.com/e7raem/create-chrome-extension/actions/runs/31373366733)
+and [31373928434](https://github.com/e7raem/create-chrome-extension/actions/runs/31373928434)
 now bind that normal and crash/recovery evidence to launcher
 `0f9d9eb33e37d6cd855aafdbc7c4d72b3c8957e2`, reproducible installed binary identities, workflow
 revisions `cbf5183e0b3c8edf000f9d0ea840e1b50bfa4802` and
@@ -1229,11 +1229,11 @@ schema discovery embedded the absolute compile checkout through `CARGO_MANIFEST_
 embeds the published schema set into the source-built executable instead, preserving installed
 schema validation while allowing exact immutable binaries to reconcile across checkout paths.
 Hosted normal run
-[31389237232](https://github.com/bobaikato/create-chrome-extension/actions/runs/31389237232)
+[31389237232](https://github.com/e7raem/create-chrome-extension/actions/runs/31389237232)
 binds those exact source revisions and root-installed binary identities to an unchanged repository,
 zero residual transient scopes, and the typed `posture_admitted_boundary_removed` terminal stage.
 Root-armed crash/recovery run
-[31389713244](https://github.com/bobaikato/create-chrome-extension/actions/runs/31389713244)
+[31389713244](https://github.com/e7raem/create-chrome-extension/actions/runs/31389713244)
 records launcher exit `86`, then proves fresh reconciliation and the same exact terminal cleanup.
 This closes only the immutable hosted execution-disabled posture gate; V3 attestation, broker
 authorization, lease consumption, selected execution, receipt/archive evidence, and provider
