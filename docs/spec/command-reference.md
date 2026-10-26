@@ -4006,6 +4006,17 @@ The `summary` object on success mirrors the top-level receipt summary and includ
 
 ## `ota workspace up`
 
+The unreleased native child-Up environment-requirement correction uses the inline
+workspace `policies.env.values` already supplied for execution in initial,
+pre-authority/prerequisite and post-Up diagnosis. Inline values precede acquired
+repo-policy values, process, declared sources and defaults; task overrides stay
+task-only. Required/allowed and selected-path checks remain, and invalid secret
+values are omitted. This input is separate from acquired policy identity,
+absence/load errors and fresh final Runner checks. Standalone Doctor does not
+discover that workspace input. Selected native Linux/arm64 local fixture controls
+cover this unreleased correction; other-platform, container/remote and installed
+qualification are not established.
+
 Source-staged parent admission resolves policy against the actual selected
 workspace file before progress, workers or repository acquisition. It uses
 `OTA_POLICY`, nearest ancestor org policy, then selected `workspace.policy`;

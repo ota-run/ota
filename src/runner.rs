@@ -106,10 +106,8 @@ use crate::schema::{
 };
 use crate::semantic_identity::semantic_contract_identity;
 use crate::terminal::supports_dynamic_stderr_ui;
-#[cfg(test)]
-use crate::toolchains::declared_toolchain_contract;
 use crate::toolchains::{
-    ToolchainCommandSpec, declared_toolchain_fulfillment_commands,
+    ToolchainCommandSpec, declared_toolchain_contract, declared_toolchain_fulfillment_commands,
     requirement_surface_with_toolchain_owned_capabilities_for_required_tools,
     requirement_surface_with_toolchain_owned_tools_for_required_tools,
 };
@@ -6691,6 +6689,42 @@ fn selected_execution_env_names(
     selected_env_names
 }
 
+// Select from already acquired inputs; callers retain policy/source ownership and validation.
+pub(crate) fn resolve_contract_env_value(
+    name: &str,
+    requirement: &EnvRequirement,
+    inline_env: Option<&BTreeMap<String, String>>,
+    repo_env: Option<(&BTreeMap<String, String>, &str)>,
+    process_value: Option<String>,
+    declared_sources: &[LoadedDeclaredEnvSource],
+) -> Option<(String, EnvResolutionSource)> {
+    inline_env
+        .and_then(|values| values.get(name))
+        .cloned()
+        .map(|value| {
+            (
+                value,
+                EnvResolutionSource::Policy(String::from("workspace policy")),
+            )
+        })
+        .or_else(|| {
+            repo_env.and_then(|(values, label)| {
+                values
+                    .get(name)
+                    .cloned()
+                    .map(|value| (value, EnvResolutionSource::Policy(label.to_owned())))
+            })
+        })
+        .or_else(|| process_value.map(|value| (value, EnvResolutionSource::Process)))
+        .or_else(|| resolve_declared_env_source_value(name, declared_sources))
+        .or_else(|| {
+            requirement
+                .default
+                .clone()
+                .map(|value| (value, EnvResolutionSource::Default))
+        })
+}
+
 fn resolve_task_env_details_with_policy_and_required_env_names(
     contract: &Contract,
     contract_path: &Path,
@@ -6724,31 +6758,14 @@ fn resolve_task_env_details_with_policy_and_required_env_names(
         let resolved = task_value
             .map(|value| (value, EnvResolutionSource::Task))
             .or_else(|| {
-                policy_env
-                    .and_then(|values| values.get(name))
-                    .cloned()
-                    .map(|value| {
-                        (
-                            value,
-                            EnvResolutionSource::Policy(String::from("workspace policy")),
-                        )
-                    })
-            })
-            .or_else(|| {
-                repo_policy.values.get(name).cloned().map(|value| {
-                    (
-                        value,
-                        EnvResolutionSource::Policy(repo_policy.label.clone()),
-                    )
-                })
-            })
-            .or_else(|| process_value.map(|value| (value, EnvResolutionSource::Process)))
-            .or_else(|| resolve_declared_env_source_value(name, &declared_sources))
-            .or_else(|| {
-                requirement
-                    .default
-                    .clone()
-                    .map(|value| (value, EnvResolutionSource::Default))
+                resolve_contract_env_value(
+                    name,
+                    requirement,
+                    policy_env,
+                    Some((&repo_policy.values, &repo_policy.label)),
+                    process_value,
+                    &declared_sources,
+                )
             });
 
         match resolved {
@@ -21251,23 +21268,31 @@ fn backend_fulfillment_plan(
     if matches!(backend, ResolvedExecutionBackend::Native { .. }) {
         let target_os = current_os().to_string();
         let (declared_runtimes, declared_tools) =
-            direct_task_requirement_versions(contract, task, task_name, target_os.as_str())
-                .map_err(|details| RunError::BackendFulfillmentFailed {
-                    task: task_name.to_string(),
+            direct_task_requirement_versions_for_backend_with_native_rust_owner(
+                contract,
+                task,
+                task_name,
+                Backend::Native,
+                task.context_for_backend(contract.execution.as_ref(), Backend::Native),
+                target_os.as_str(),
+                true,
+            )
+            .map_err(|details| RunError::BackendFulfillmentFailed {
+                task: task_name.to_string(),
+                backend_unit: format!("task:{task_name}:native"),
+                details,
+                evidence: BackendFulfillmentEvidence {
                     backend_unit: format!("task:{task_name}:native"),
-                    details,
-                    evidence: BackendFulfillmentEvidence {
-                        backend_unit: format!("task:{task_name}:native"),
-                        backend: String::from("native"),
-                        mode: BackendFulfillmentMode::Run,
-                        declared_runtimes: BTreeMap::new(),
-                        declared_tools: BTreeMap::new(),
-                        missing: Vec::new(),
-                        actions: Vec::new(),
-                        result: BackendFulfillmentResult::Failed,
-                        task_executed: false,
-                    },
-                })?;
+                    backend: String::from("native"),
+                    mode: BackendFulfillmentMode::Run,
+                    declared_runtimes: BTreeMap::new(),
+                    declared_tools: BTreeMap::new(),
+                    missing: Vec::new(),
+                    actions: Vec::new(),
+                    result: BackendFulfillmentResult::Failed,
+                    task_executed: false,
+                },
+            })?;
         if declared_runtimes.is_empty() && declared_tools.is_empty() {
             return Ok(None);
         }
@@ -21680,6 +21705,7 @@ fn shared_local_backend_requirement_versions(
     ))
 }
 
+#[cfg(test)]
 fn direct_task_requirement_versions(
     contract: &Contract,
     task: &TaskSpec,
@@ -21703,6 +21729,26 @@ fn direct_task_requirement_versions_for_backend(
     backend: Backend,
     context_name: Option<&str>,
     target_os: &str,
+) -> Result<(BTreeMap<String, String>, BTreeMap<String, String>), String> {
+    direct_task_requirement_versions_for_backend_with_native_rust_owner(
+        contract,
+        task,
+        task_name,
+        backend,
+        context_name,
+        target_os,
+        false,
+    )
+}
+
+fn direct_task_requirement_versions_for_backend_with_native_rust_owner(
+    contract: &Contract,
+    task: &TaskSpec,
+    task_name: &str,
+    backend: Backend,
+    context_name: Option<&str>,
+    target_os: &str,
+    delegate_native_rust: bool,
 ) -> Result<(BTreeMap<String, String>, BTreeMap<String, String>), String> {
     let mut surface = contract.resolved_task_requirement_surface_for_execution_for_os(
         task,
@@ -21733,12 +21779,6 @@ fn direct_task_requirement_versions_for_backend(
             surface.tools = contract.tools.clone();
         }
     }
-    if let Some(exe) = task.effective_command_launch_executable_for_backend(backend, target_os) {
-        surface
-            .tools
-            .entry(exe)
-            .or_insert(crate::schema::ToolRequirement::Simple(String::from("*")));
-    }
     if let Some(context_name) = context_name
         && let Some((_, context)) = named_execution_context(contract, context_name)
     {
@@ -21752,17 +21792,74 @@ fn direct_task_requirement_versions_for_backend(
         );
     }
 
+    let explicit_rust_runtime = surface.runtimes.get("rust").cloned();
+    let inferred_tool = task
+        .effective_command_launch_executable_for_backend(backend, target_os)
+        .filter(|exe| !surface.tools.contains_key(exe));
+    if let Some(exe) = &inferred_tool {
+        surface.tools.insert(
+            exe.clone(),
+            crate::schema::ToolRequirement::Simple(String::from("*")),
+        );
+    }
+
     let required_tool_names = surface.tools.keys().cloned().collect::<BTreeSet<_>>();
-    let surface = requirement_surface_with_toolchain_owned_capabilities_for_required_tools(
+    let selected_toolchains = contract
+        .task_toolchain_names_for_execution_for_os(task, backend, context_name, target_os)
+        .into_iter()
+        .collect::<BTreeSet<_>>();
+    let mut surface = requirement_surface_with_toolchain_owned_capabilities_for_required_tools(
         contract,
         &surface,
-        &contract
-            .task_toolchain_names_for_execution_for_os(task, backend, context_name, target_os)
-            .into_iter()
-            .collect(),
+        &selected_toolchains,
         target_os,
         Some(&required_tool_names),
     );
+
+    if delegate_native_rust
+        && cfg!(any(target_os = "linux", target_os = "macos"))
+        && backend == Backend::Native
+        && target_os == current_os()
+        && selected_toolchains.contains("rust")
+        && let Some(toolchain) = contract.toolchains.get("rust")
+        && toolchain.active_for_os(target_os)
+        && toolchain.required_for_os(target_os)
+        && toolchain.fulfillment_mode() == ToolchainFulfillmentMode::Run
+        && let Some(owner) = declared_toolchain_contract("rust", toolchain)
+        && toolchain
+            .fulfillment_source()
+            .unwrap_or_else(|| owner.provider().into())
+            == crate::schema::ToolchainFulfillmentSource::Rustup
+    {
+        // This pool owns only generic provisioning, not the selected Rustup owner's work.
+        // Preserve explicit runtime checks; never describe deferred Rust as already satisfied.
+        if let Some(requirement) = explicit_rust_runtime {
+            surface
+                .runtimes
+                .insert(owner.owned_runtime().to_string(), requirement);
+        } else {
+            surface.runtimes.remove(owner.owned_runtime());
+        }
+        let mut selected_toolchain = toolchain.clone();
+        selected_toolchain.components = toolchain.components_for_os(target_os);
+        selected_toolchain.platforms.clear();
+        if let Some(exe) = inferred_tool
+            && (task_runtime_executable_candidates(
+                owner.owned_runtime(),
+                toolchain.version_for_os(target_os),
+            )
+            .contains(&exe)
+                || owner
+                    .owned_capabilities(&selected_toolchain)
+                    .iter()
+                    .any(|capability| {
+                        capability.kind == crate::toolchains::ToolchainOwnedCapabilityKind::Tool
+                            && capability.name == exe
+                    }))
+        {
+            surface.tools.remove(&exe);
+        }
+    }
 
     let mut runtimes = BTreeMap::<String, (String, String)>::new();
     let mut tools = BTreeMap::<String, (String, String)>::new();
@@ -39937,7 +40034,7 @@ mod tests {
 
     use crate::parser::{load_contract, load_contract_for_member, parse_contract_str};
     use crate::policy_pack::{ProvisioningAction, ProvisioningActionKind, ProvisioningTargetKind};
-    use crate::schema::TaskRuntimeSurfaceAttachments;
+    use crate::schema::{Contract, TaskRuntimeSurfaceAttachments};
     use crate::test_support::{cwd_mutex_lock, env_mutex_lock};
 
     use super::{
@@ -79668,6 +79765,170 @@ else : > task-body; fi
         write_fake_bin(&managed, "rustc", "#!/bin/sh\nprintf '%s\\n' 'rustc 1.94.0'\n");
         assert_ne!(fixture.satisfaction().unwrap(), super::NativeRustSatisfaction::Satisfied);
         assert!(!cwd.join("installs").exists());
+    }
+
+    #[test]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn native_rust_run_owner_partitions_only_implicit_generic_requirements() {
+        for (fulfillment, extra_runtime, extra_tool, exe, delegated) in [
+            ("{mode: run}", "", "", "cargo", true),
+            ("{mode: none}", "", "", "cargo", false),
+            ("{source: mise, mode: run}", "", "", "cargo", false),
+            ("{mode: run}", "  rust: '>=2'\n", "", "cargo", true),
+            (
+                "{mode: run}",
+                "",
+                "      tools: {cargo: '9'}\n",
+                "cargo",
+                true,
+            ),
+            ("{mode: run}", "", "", "rustc", true),
+            (
+                "{mode: run}",
+                "",
+                "      tools: {rustc: '9'}\n",
+                "rustc",
+                true,
+            ),
+        ] {
+            let fixture = ContractFixture::new(&format!(
+                r#"
+version: 1
+project: {{name: rust-owner-partition}}
+runtimes:
+  node: '>=20'
+{extra_runtime}toolchains:
+  rust:
+    version: '1.95.0'
+    fulfillment: {fulfillment}
+tasks:
+  verify:
+    requirements:
+      toolchains: [rust]
+{extra_tool}    command: {{exe: {exe}, args: [test]}}
+"#
+            ));
+            let task = &fixture.contract.tasks["verify"];
+            let (truth_runtimes, _) = super::direct_task_requirement_versions(
+                &fixture.contract,
+                task,
+                "verify",
+                current_os(),
+            )
+            .unwrap();
+            assert_eq!(
+                truth_runtimes.get("rust").map(String::as_str),
+                Some("1.95.0")
+            );
+            let backend = ResolvedExecutionBackend::Native {
+                shared_local_backend: None,
+            };
+            let plan = super::backend_fulfillment_plan(
+                &fixture.contract,
+                fixture.file_path(),
+                "verify",
+                &backend,
+                None,
+            )
+            .unwrap()
+            .unwrap();
+            assert_eq!(
+                plan.declared_runtimes.get("node").map(String::as_str),
+                Some(">=20")
+            );
+            if !extra_runtime.is_empty() {
+                assert_eq!(
+                    plan.declared_runtimes.get("rust").map(String::as_str),
+                    Some(">=2")
+                );
+            } else {
+                assert_eq!(plan.declared_runtimes.contains_key("rust"), !delegated);
+            }
+            if !extra_tool.is_empty() {
+                assert_eq!(plan.declared_tools.get(exe).map(String::as_str), Some("9"));
+            } else {
+                assert_eq!(plan.declared_tools.contains_key(exe), !delegated);
+            }
+        }
+        for (platform, explicit_tool, delegated) in [
+            ("windows", "", false),
+            (current_os(), "", true),
+            (current_os(), "      tools: {rustfmt: '9'}\n", false),
+        ] {
+            let fixture = ContractFixture::new(&format!(
+                r#"
+version: 1
+project: {{name: selected-rust-component-owner}}
+toolchains:
+  rust:
+    version: '1.95.0'
+    profile: minimal
+    fulfillment: {{mode: run}}
+    platforms:
+      {platform}:
+        components: [rustfmt]
+tasks:
+  verify:
+    requirements:
+      toolchains: [rust]
+{explicit_tool}    command: {{exe: rustfmt, args: [--check, src/lib.rs]}}
+"#
+            ));
+            let plan = super::backend_fulfillment_plan(
+                &fixture.contract,
+                fixture.file_path(),
+                "verify",
+                &ResolvedExecutionBackend::Native {
+                    shared_local_backend: None,
+                },
+                None,
+            )
+            .unwrap();
+            assert_eq!(
+                plan.as_ref()
+                    .is_some_and(|plan| plan.declared_tools.contains_key("rustfmt")),
+                !delegated
+            );
+            if !explicit_tool.is_empty() {
+                assert_eq!(
+                    plan.unwrap()
+                        .declared_tools
+                        .get("rustfmt")
+                        .map(String::as_str),
+                    Some("9")
+                );
+            }
+        }
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project: {name: inactive-rust-owner}
+toolchains:
+  rust:
+    version: '1.95.0'
+    only_on: [windows]
+    fulfillment: {mode: run}
+tasks:
+  verify:
+    requirements: {toolchains: [rust]}
+    command: {exe: cargo, args: [test]}
+"#,
+        );
+        let plan = super::backend_fulfillment_plan(
+            &fixture.contract,
+            fixture.file_path(),
+            "verify",
+            &ResolvedExecutionBackend::Native {
+                shared_local_backend: None,
+            },
+            None,
+        )
+        .unwrap()
+        .unwrap();
+        assert!(
+            plan.declared_tools.contains_key("cargo"),
+            "inactive Rust cannot own this command"
+        );
     }
 
     #[test]

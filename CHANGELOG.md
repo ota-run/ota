@@ -26,6 +26,40 @@
 
 ## Unreleased
 
+- Correct native Up environment-requirement readiness to use the already supplied
+  inline workspace values before acquired repo-policy, process, declared-source
+  and default values, matching execution below task overrides. Carry the input
+  through initial, pre-authority/prerequisite and post-Up diagnostics without
+  replacing acquired policy ownership, absence or load errors; preserve fresh
+  final Runner checks. Omit secret values in invalid-environment diagnostics.
+  Selected native Linux/arm64 local fixture controls pass; this remains unreleased
+  and does not establish other-platform, container/remote or installed support.
+  Standalone Doctor discovery is unchanged.
+
+- Stage the recursive Up phase-lifetime repair: preparation returns before ordered
+  instance prerequisites, and completion begins only after their success. Preserve
+  acquired policy/absence, authority timing and existing output/Cargo evidence on
+  result and error paths. Add refusal, ordering and earlier-success/later-failure
+  controls without raising worker stacks or weakening existing assertions. Source
+  compilation and selected local Linux/arm64 regressions pass, not installed or
+  hosted qualification.
+
+- Repair the staged direct-native Rustup `run` ownership boundary: generic backend
+  preparation no longer blocks synthesized Rust runtime or implicit owned-command
+  requirements before the selected toolchain owner evaluates readiness and policy.
+  Explicit/unmanaged requirements and unsupported paths retain their checks; no
+  deferred toolchain requirement is reported as already satisfied. The real
+  two-mode denial control and ownership counter-controls pass in the selected local
+  Linux/arm64 fixture; no real toolchain-installation claim follows.
+
+- Repair compilation of staged workspace refusal rendering and native Run denial
+  receipt wiring, preserving preceding target/backend/shared-backend evidence.
+  Up prerequisites share the same immutable acquired policy allocation instead of
+  copying policy contents or reloading retained absence. Restore shared test
+  fixtures/imports and assert the existing stderr refusal channel. These source
+  repairs pass isolated Linux/arm64 compilation and selected regressions; they add
+  no authority, provider activation or Step 7 completion claim.
+
 - Stage G1 release-installer hardening source: require unambiguous checksum evidence
   and successful SHA-256 verification before extraction, reject conflicting install
   selections, and remove implicit checkout-based source selection and Cargo fallback.

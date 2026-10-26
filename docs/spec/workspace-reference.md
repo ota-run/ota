@@ -104,6 +104,19 @@ acquisition and canonical command admission. Parent policy and an unrelated inhe
 proof-child marker cannot substitute for that ownership. Inline environment overlays remain
 separate from policy-pack attribution.
 
+The unreleased native Up correction carries already supplied inline
+`policies.env.values` into environment-requirement diagnosis at initial admission,
+before authority/instance prerequisites, after preparation and after Up. Its value
+selection is inline workspace overlay, independently acquired repo-policy values,
+process, ordered declared sources, then defaults; task-specific overrides remain
+an execution-only layer above these. Selected-path scoping and allowed-value
+refusals still apply, with secret invalid values omitted from diagnostics.
+Inline values do not manufacture a policy pack, replace acquired absence or a
+load error, or suppress Runner's fresh final-policy checks. Standalone Doctor does
+not automatically acquire a workspace overlay. Selected native Linux/arm64 local
+fixture controls cover this unreleased correction; no other-platform,
+container/remote or installed qualification is established.
+
 An initial required terminal refusal uses the separate
 [`child_admission` negative envelope](json-output-reference.md#source-staged-local-child-admission-failure),
 with actual child selection and acquisition state. Optional refusals remain child-owned WARN

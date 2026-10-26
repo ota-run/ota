@@ -22,7 +22,7 @@
 
 use super::*;
 
-fn render_workspace_child_admission_failure(
+pub(super) fn render_workspace_child_admission_failure(
     failure: &WorkspaceChildAdmissionFailure,
     format: OutputFormat,
 ) -> CommandOutput {
@@ -89,7 +89,7 @@ fn render_workspace_child_admission_failure(
     }
 }
 
-fn render_workspace_parent_admission_failure(
+pub(super) fn render_workspace_parent_admission_failure(
     failure: &WorkspaceParentAdmissionFailure,
     format: OutputFormat,
 ) -> CommandOutput {

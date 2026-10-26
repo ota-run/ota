@@ -75,12 +75,12 @@ use crate::runner::{
     effective_task_execution, evaluate_declared_env_check, host_runtime_readiness_observed,
     http_readiness_endpoint_status, load_declared_env_sources, parse_http_probe_url,
     plan_task_execution_structure_with_overrides, plan_workflow_execution_structure_with_overrides,
-    resolve_context_execution_backend, resolve_declared_env_source_value,
-    resolve_named_readiness_probe, resolve_named_readiness_probe_contract,
-    resolve_task_target_binding_url_with_contract_path, run_backend_argv_command_captured,
-    run_backend_command_captured, run_backend_precondition_probe_argv_captured,
-    run_backend_precondition_probe_captured, target_os_for_declared_backend,
-    task_runtime_host_readiness_probe_for_backend, task_surface_host_readiness_probe_for_backend,
+    resolve_context_execution_backend, resolve_contract_env_value, resolve_named_readiness_probe,
+    resolve_named_readiness_probe_contract, resolve_task_target_binding_url_with_contract_path,
+    run_backend_argv_command_captured, run_backend_command_captured,
+    run_backend_precondition_probe_argv_captured, run_backend_precondition_probe_captured,
+    target_os_for_declared_backend, task_runtime_host_readiness_probe_for_backend,
+    task_surface_host_readiness_probe_for_backend,
 };
 use crate::schema::{
     Backend, CheckKind, CheckSeverity, ContainerBackend, Contract, ExtensionKind, Lifecycle,
@@ -4223,6 +4223,30 @@ pub(crate) struct DoctorPolicySnapshot<'a> {
     pub load_error: Option<&'a str>,
 }
 
+#[derive(Clone, Copy)]
+pub(crate) struct DoctorInputs<'a> {
+    policy: DoctorPolicySnapshot<'a>,
+    inline_env: Option<&'a BTreeMap<String, String>>,
+}
+
+impl<'a> DoctorPolicySnapshot<'a> {
+    pub(crate) fn with_inline_env(
+        self,
+        inline_env: Option<&'a BTreeMap<String, String>>,
+    ) -> DoctorInputs<'a> {
+        DoctorInputs {
+            policy: self,
+            inline_env,
+        }
+    }
+}
+
+impl<'a> From<DoctorPolicySnapshot<'a>> for DoctorInputs<'a> {
+    fn from(policy: DoctorPolicySnapshot<'a>) -> Self {
+        policy.with_inline_env(None)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ProviderProbePosture {
     Enabled,
@@ -4327,7 +4351,9 @@ pub fn diagnose_contract_with_mode_and_lifecycle_for_workflow_with_overrides(
     )
 }
 
-pub(crate) fn diagnose_contract_with_mode_and_lifecycle_for_workflow_with_overrides_and_replay_input_policy(
+pub(crate) fn diagnose_contract_with_mode_and_lifecycle_for_workflow_with_overrides_and_replay_input_policy<
+    'a,
+>(
     contract: &Contract,
     contract_path: &Path,
     mode: DoctorMode,
@@ -4335,9 +4361,10 @@ pub(crate) fn diagnose_contract_with_mode_and_lifecycle_for_workflow_with_overri
     workflow_name: Option<&str>,
     overrides: ExecutionOverrides,
     replay_input_policy: Option<&ReplayInputPolicyEvaluation>,
-    policy_snapshot: DoctorPolicySnapshot<'_>,
+    inputs: impl Into<DoctorInputs<'a>>,
 ) -> DoctorReport {
-    diagnose_contract_with_scope(
+    let inputs = inputs.into();
+    diagnose_contract_with_scope_and_provider_probe_posture(
         contract,
         contract_path,
         DoctorScope::All,
@@ -4347,7 +4374,9 @@ pub(crate) fn diagnose_contract_with_mode_and_lifecycle_for_workflow_with_overri
         overrides,
         None,
         replay_input_policy,
-        Some(policy_snapshot),
+        Some(inputs.policy),
+        ProviderProbePosture::Enabled,
+        inputs.inline_env,
     )
 }
 
@@ -4446,38 +4475,18 @@ pub fn diagnose_preconditions_with_mode_for_workflow_with_overrides(
     )
 }
 
-pub(crate) fn diagnose_preconditions_with_mode_for_workflow_with_overrides_and_replay_input_policy(
+pub(crate) fn diagnose_preconditions_with_mode_for_workflow_with_overrides_and_replay_input_policy<
+    'a,
+>(
     contract: &Contract,
     contract_path: &Path,
     mode: DoctorMode,
     workflow_name: Option<&str>,
     overrides: ExecutionOverrides,
     replay_input_policy: Option<&ReplayInputPolicyEvaluation>,
-    policy_snapshot: DoctorPolicySnapshot<'_>,
+    inputs: impl Into<DoctorInputs<'a>>,
 ) -> DoctorReport {
-    diagnose_contract_with_scope(
-        contract,
-        contract_path,
-        DoctorScope::Preconditions,
-        mode,
-        None,
-        workflow_name,
-        overrides,
-        None,
-        replay_input_policy,
-        Some(policy_snapshot),
-    )
-}
-
-pub(crate) fn diagnose_preconditions_non_mutating_with_mode_for_workflow_with_overrides_and_replay_input_policy(
-    contract: &Contract,
-    contract_path: &Path,
-    mode: DoctorMode,
-    workflow_name: Option<&str>,
-    overrides: ExecutionOverrides,
-    replay_input_policy: Option<&ReplayInputPolicyEvaluation>,
-    policy_snapshot: DoctorPolicySnapshot<'_>,
-) -> DoctorReport {
+    let inputs = inputs.into();
     diagnose_contract_with_scope_and_provider_probe_posture(
         contract,
         contract_path,
@@ -4488,8 +4497,37 @@ pub(crate) fn diagnose_preconditions_non_mutating_with_mode_for_workflow_with_ov
         overrides,
         None,
         replay_input_policy,
-        Some(policy_snapshot),
+        Some(inputs.policy),
+        ProviderProbePosture::Enabled,
+        inputs.inline_env,
+    )
+}
+
+pub(crate) fn diagnose_preconditions_non_mutating_with_mode_for_workflow_with_overrides_and_replay_input_policy<
+    'a,
+>(
+    contract: &Contract,
+    contract_path: &Path,
+    mode: DoctorMode,
+    workflow_name: Option<&str>,
+    overrides: ExecutionOverrides,
+    replay_input_policy: Option<&ReplayInputPolicyEvaluation>,
+    inputs: impl Into<DoctorInputs<'a>>,
+) -> DoctorReport {
+    let inputs = inputs.into();
+    diagnose_contract_with_scope_and_provider_probe_posture(
+        contract,
+        contract_path,
+        DoctorScope::Preconditions,
+        mode,
+        None,
+        workflow_name,
+        overrides,
+        None,
+        replay_input_policy,
+        Some(inputs.policy),
         ProviderProbePosture::NonMutating,
+        inputs.inline_env,
     )
 }
 
@@ -4558,6 +4596,7 @@ pub(crate) fn diagnose_preconditions_non_mutating_with_mode_for_task_with_overri
         replay_input_policy,
         Some(policy_snapshot),
         ProviderProbePosture::NonMutating,
+        None,
     )
 }
 
@@ -4668,6 +4707,7 @@ fn diagnose_contract_with_scope(
         replay_input_policy,
         policy_snapshot,
         ProviderProbePosture::Enabled,
+        None,
     )
 }
 
@@ -4684,6 +4724,7 @@ fn diagnose_contract_with_scope_and_provider_probe_posture(
     replay_input_policy: Option<&ReplayInputPolicyEvaluation>,
     policy_snapshot: Option<DoctorPolicySnapshot<'_>>,
     provider_probe_posture: ProviderProbePosture,
+    inline_env: Option<&BTreeMap<String, String>>,
 ) -> DoctorReport {
     let mut findings = Vec::new();
     let mut provisioning = None;
@@ -4825,6 +4866,7 @@ fn diagnose_contract_with_scope_and_provider_probe_posture(
         if mode == DoctorMode::Native {
             diagnose_env(
                 contract,
+                inline_env,
                 loaded_policy
                     .as_ref()
                     .map(|loaded| loaded.pack.env_values()),
@@ -4995,6 +5037,7 @@ fn diagnose_contract_with_scope_and_provider_probe_posture(
                     );
                 diagnose_env(
                     contract,
+                    None,
                     loaded_policy
                         .as_ref()
                         .map(|loaded| loaded.pack.env_values()),
@@ -5187,6 +5230,11 @@ fn diagnose_contract_with_scope_and_provider_probe_posture(
                 if matches!(additional_mode, DoctorMode::Native | DoctorMode::Container) {
                     diagnose_env(
                         contract,
+                        if additional_mode == DoctorMode::Native {
+                            inline_env
+                        } else {
+                            None
+                        },
                         loaded_policy
                             .as_ref()
                             .map(|loaded| loaded.pack.env_values()),
@@ -8040,6 +8088,7 @@ fn diagnose_env_sources(declared_sources: &[LoadedDeclaredEnvSource], findings: 
 
 fn diagnose_env(
     contract: &Contract,
+    inline_env: Option<&BTreeMap<String, String>>,
     policy_env: Option<&BTreeMap<String, String>>,
     declared_sources: &[LoadedDeclaredEnvSource],
     selected_env_names: Option<&BTreeSet<String>>,
@@ -8054,14 +8103,15 @@ fn diagnose_env(
         let required_for_selected_path = selected_env_names
             .map(|names| names.contains(name))
             .unwrap_or(requirement.required);
-        let value = policy_env
-            .and_then(|values| values.get(name))
-            .cloned()
-            .or_else(|| std::env::var(name).ok())
-            .or_else(|| {
-                resolve_declared_env_source_value(name, &declared_sources).map(|(value, _)| value)
-            })
-            .or_else(|| requirement.default.clone());
+        let value = resolve_contract_env_value(
+            name,
+            requirement,
+            inline_env,
+            policy_env.map(|values| (values, "acquired repo policy")),
+            std::env::var(name).ok(),
+            declared_sources,
+        )
+        .map(|(value, _)| value);
 
         match value {
             Some(value) => {
@@ -8074,13 +8124,19 @@ fn diagnose_env(
                         "host",
                         FindingSeverity::Error,
                         format!("Invalid environment value: {name}"),
-                        format!(
-                            "{name} resolved to `{value}`, which is outside the allowed values"
-                        ),
-                        format!(
-                            "run `ota env` to inspect the resolved source for {name}, then set {name} to one of: {}",
-                            requirement.allowed.join(", ")
-                        ),
+                        if requirement.secret {
+                            format!("{name} resolved outside the allowed values (secret value omitted)")
+                        } else {
+                            format!("{name} resolved to `{value}`, which is outside the allowed values")
+                        },
+                        if requirement.secret {
+                            format!("set {name} to a configured allowed value (secret values omitted)")
+                        } else {
+                            format!(
+                                "run `ota env` to inspect the resolved source for {name}, then set {name} to one of: {}",
+                                requirement.allowed.join(", ")
+                            )
+                        },
                     ));
                 }
             }
@@ -19896,6 +19952,185 @@ tasks:
                 .iter()
                 .any(|finding| finding.code() == "OTA_ENV_INVALID"
                     && finding.severity == FindingSeverity::Error)
+        );
+    }
+
+    #[test]
+    fn inline_env_readiness_preserves_precedence_scope_and_secret_refusal() {
+        let _lock = env_mutex_lock();
+        let name = "OTA_DOCTOR_INLINE_PARITY_REQUIRED_41CF63D";
+        assert!(env::var_os(name).is_none());
+        let mut contract = parse_contract_str(
+            synthetic_contract_path(),
+            &format!("version: 1\nproject: {{name: inline-env}}\nenv:\n  vars:\n    {name}: {{required: true, allowed: [inline]}}\ntasks: {{check: {{run: 'true'}}}}\n"),
+        ).unwrap();
+        let inline = BTreeMap::from([(name.to_owned(), String::from("inline"))]);
+        let repo = BTreeMap::from([(name.to_owned(), String::from("repo"))]);
+        let mut findings = Vec::new();
+        super::diagnose_env(
+            &contract,
+            Some(&inline),
+            Some(&repo),
+            &[],
+            None,
+            &mut findings,
+        );
+        assert!(findings.is_empty(), "{findings:?}");
+        super::diagnose_env(&contract, None, Some(&repo), &[], None, &mut findings);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].code(), "OTA_ENV_INVALID");
+        assert!(findings[0].why.contains("`repo`"));
+        findings.clear();
+        super::diagnose_env(&contract, None, None, &[], None, &mut findings);
+        assert_eq!(findings[0].code(), "OTA_ENV_MISSING");
+        findings.clear();
+        super::diagnose_env(
+            &contract,
+            None,
+            None,
+            &[],
+            Some(&BTreeSet::new()),
+            &mut findings,
+        );
+        assert!(
+            findings.is_empty(),
+            "unselected requirements must remain scoped out"
+        );
+
+        let sentinel = "PUBLIC_TEST_SENTINEL_NOT_A_CREDENTIAL";
+        let invalid = BTreeMap::from([(name.to_owned(), sentinel.to_owned())]);
+        contract.env.vars.get_mut(name).unwrap().secret = true;
+        super::diagnose_env(&contract, Some(&invalid), None, &[], None, &mut findings);
+        assert_eq!(findings[0].code(), "OTA_ENV_INVALID");
+        let json = serde_json::to_string(&findings).unwrap();
+        assert!(!json.contains(sentinel));
+        assert!(!format!("{findings:?}").contains(sentinel));
+        assert!(findings[0].why.contains("secret value omitted"));
+
+        // The same pure selector is used below task overrides in execution.
+        let requirement = contract.env.vars.get_mut(name).unwrap();
+        requirement.default = Some(String::from("default"));
+        for (overlay, policy, process, expected) in [
+            (
+                Some(&inline),
+                Some((&repo, "retained")),
+                Some(String::from("process")),
+                "inline",
+            ),
+            (
+                None,
+                Some((&repo, "retained")),
+                Some(String::from("process")),
+                "repo",
+            ),
+            (None, None, Some(String::from("process")), "process"),
+            (None, None, None, "default"),
+        ] {
+            assert_eq!(
+                crate::runner::resolve_contract_env_value(
+                    name,
+                    requirement,
+                    overlay,
+                    policy,
+                    process,
+                    &[],
+                )
+                .unwrap()
+                .0,
+                expected
+            );
+        }
+        let sources = [crate::runner::LoadedDeclaredEnvSource {
+            kind: crate::schema::EnvSourceKind::Dotenv,
+            path: String::from("public-test.env"),
+            must_exist: true,
+            status: crate::runner::DeclaredEnvSourceStatus::Loaded,
+            details: None,
+            values: BTreeMap::from([(name.to_owned(), String::from("declared"))]),
+        }];
+        assert_eq!(
+            crate::runner::resolve_contract_env_value(
+                name,
+                requirement,
+                None,
+                None,
+                None,
+                &sources,
+            )
+            .unwrap()
+            .0,
+            "declared"
+        );
+        assert_eq!(
+            crate::runner::resolve_contract_env_value(
+                name,
+                requirement,
+                None,
+                None,
+                Some(String::from("process")),
+                &sources,
+            )
+            .unwrap()
+            .0,
+            "process"
+        );
+    }
+
+    #[test]
+    fn inline_env_diagnostic_input_does_not_replace_policy_or_standalone_doctor() {
+        let _lock = env_mutex_lock();
+        let fixture = TempDir::new().unwrap();
+        let path = fixture.path().join("ota.yaml");
+        let name = "OTA_DOCTOR_INLINE_PARITY_REQUIRED_41CF63D";
+        assert!(env::var_os(name).is_none());
+        let contract = parse_contract_str(&path, &format!(
+            "version: 1\nproject: {{name: inline-env}}\nenv:\n  vars:\n    {name}: {{required: true}}\ntasks: {{check: {{run: 'true'}}}}\nworkflows: {{default: ci, ci: {{setup: {{task: check}}}}}}\n",
+        )).unwrap();
+        let inline = BTreeMap::from([(name.to_owned(), String::from("provided"))]);
+        let absent = super::DoctorPolicySnapshot {
+            loaded: None,
+            load_error: None,
+        };
+        let diagnose = |inputs| {
+            super::diagnose_preconditions_non_mutating_with_mode_for_workflow_with_overrides_and_replay_input_policy(
+                &contract, &path, DoctorMode::Native, Some("ci"),
+                ExecutionOverrides::default(), None, inputs,
+            )
+        };
+        let provided = diagnose(absent.with_inline_env(Some(&inline)));
+        assert!(provided.ok, "{:?}", provided.findings);
+        let missing = diagnose(absent.with_inline_env(None));
+        assert!(
+            missing
+                .findings
+                .iter()
+                .any(|finding| finding.code() == "OTA_ENV_MISSING")
+        );
+        let load_error = super::DoctorPolicySnapshot {
+            loaded: None,
+            load_error: Some("retained load failure"),
+        };
+        let refused = diagnose(load_error.with_inline_env(Some(&inline)));
+        assert!(!refused.ok);
+        assert!(
+            refused
+                .findings
+                .iter()
+                .any(|finding| finding.code() == "OTA_POLICY_PACK_INVALID")
+        );
+        assert!(
+            !refused
+                .findings
+                .iter()
+                .any(|finding| finding.code() == "OTA_ENV_MISSING")
+        );
+        assert!(absent.loaded.is_none() && absent.load_error.is_none());
+        let standalone = diagnose_contract(&contract, &path);
+        assert!(
+            standalone
+                .findings
+                .iter()
+                .any(|finding| finding.code() == "OTA_ENV_MISSING")
         );
     }
 
