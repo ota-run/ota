@@ -47,7 +47,7 @@ checkpoint before its tool completion. SCOOBY's actual tool result now marks
 that SAME goal COMPLETE, objective unchanged: 461,890 tokens / 4,603 seconds,
 no token budget. No successor goal was created.
 
-The private [producer workset](/Users/bobai/.codex/artifacts/2026-10-18/f-producer-execution-completion-r1/PLAN.md)
+The private producer workset (`/Users/bobai/.codex/artifacts/2026-10-18/f-producer-execution-completion-r1/PLAN.md`; local/private, not public evidence)
 implements one native producer holding the actual compile inputs/code and actual
 F dictionary, executing that code synchronously and retaining the genuine result
 or original error. Bootstrap creates one owner/F and bounded source views but
@@ -93,13 +93,13 @@ proof. Each owned container reached terminal zero and completed non-force remova
 and filtered absence before the next run. Cleanup acceptance rests on reviewed
 driver/execution/journal evidence; raw Engine replies are not independently held.
 
-The [A03 journal](/Users/bobai/.codex/artifacts/2026-10-18/f-producer-execution-completion-r1/baseline-validation-03/journal.jsonl)
+The A03 journal (`/Users/bobai/.codex/artifacts/2026-10-18/f-producer-execution-completion-r1/baseline-validation-03/journal.jsonl`; local/private, not public evidence)
 is 19,802 bytes / 21 records, SHA-256
 `e076f8cb48beaffb681df47145dad1fbf573166beae1136ca0c3d456ab70c2fb`.
-The [B03 journal](/Users/bobai/.codex/artifacts/2026-10-18/f-producer-execution-completion-r1/input-validation-03/journal.jsonl)
+The B03 journal (`/Users/bobai/.codex/artifacts/2026-10-18/f-producer-execution-completion-r1/input-validation-03/journal.jsonl`; local/private, not public evidence)
 is 17,831 bytes / 21 records, SHA-256
 `fc66f028b037c709667eb666fd3c090f5710ff6c08243959dd1abdb2c33a5062`.
-The [C03 journal](/Users/bobai/.codex/artifacts/2026-10-18/f-producer-execution-completion-r1/fault-validation-03/journal.jsonl)
+The C03 journal (`/Users/bobai/.codex/artifacts/2026-10-18/f-producer-execution-completion-r1/fault-validation-03/journal.jsonl`; local/private, not public evidence)
 is 14,705 bytes / 21 records, SHA-256
 `f4559c552698ae4549050836da60ed89af4b04fa8f1539d08df70ec2fa312c65`.
 
@@ -120,24 +120,25 @@ resurrection or custody proof. The producer 02 runs remain historical positives,
 but their withdrawn readiness recommendation is NOT final goal acceptance.
 
 Prior accepted checkpoints remain separate and frozen:
+
 - Original local-native integration goal: Driver07 12/86/16+5 and Driver10 focused
   2+6, independently accepted in
   `01a14eb0-cac5-7940-8163-4b62798cb2fc`. Driver10 did not rerun 07; Driver09 remains
   historical HOLD. Consume-P2 closure is instrumented-component-only, not actual
   F startup composition or independent process-wide timing.
-- [Initialized-context correspondence](/Users/bobai/.codex/artifacts/2026-10-18/f-initialized-context-correspondence-r1/PLAN.md):
+- Initialized-context correspondence (`/Users/bobai/.codex/artifacts/2026-10-18/f-initialized-context-correspondence-r1/PLAN.md`; local/private, not public evidence):
   accepted A02+B03, input `cb9051c4c6dc457304d7d800c87150576fe5fd5f1e8840b8e95020b54f1ef820`,
   21 shared-helper cases / two outer refusals and aggregate source-copy limits.
   Its initial baseline remains positive; final-baseline01 stays HOLD and B02
   reporting-defective. B03 closes that report P2, not provenance.
-- [Startup field/root/lifetime R2](/Users/bobai/.codex/artifacts/2026-10-18/f-startup-context-contract-r2/PLAN.md),
+- Startup field/root/lifetime R2 (`/Users/bobai/.codex/artifacts/2026-10-18/f-startup-context-contract-r2/PLAN.md`; local/private, not public evidence),
   SHA-256 `aad4934ad20da895b1b5814d079b42cbae6b90eabdd5c966bbc2fe0feede4286`,
   remains the reviewed normative context. Actual operator/C/M qualifications
   UNSUPPLIED in reviewed inputs are not proof of global absence. Controller C
   owns launch/admission; Consumer C remains evidence-only.
 
 MUSE separately accepts the LOCAL reservation/actual-child constructor, exact
-[freeze06](/Users/bobai/.codex/artifacts/2026-10-18/f-reservation-child-binding-r1/manifest-06.json),
+freeze06 (`/Users/bobai/.codex/artifacts/2026-10-18/f-reservation-child-binding-r1/manifest-06.json`; local/private, not public evidence),
 after VLAD SOURCE GO `01a14fac-b5e7-7b80-9054-825318ddd40c`, final
 `msg_0074fa586a19efbe016ad4e8e2a99c819193a87abe4275c494`, and OUTCOME/COVERAGE GO
 `01a14faf-4ec3-7d02-895d-759f1e7e85c0`, final
@@ -161,7 +162,7 @@ Freeze06 uses 21 source members plus the 1,950-byte tool table: 306,485 bytes,
 SHA-256 `24f982f3cf51d8061a97285817dd3a8afc6de9b368305475bec65b3a66dcf8ea`.
 All 19 accepted producer members remain byte-identical. Driver SHA-256 is
 `e00a2d095904b8478c4c2c601b9b38ffd9270ed74cfd5e3d7ce9414eb6464c44`.
-The [06 journal](/Users/bobai/.codex/artifacts/2026-10-18/f-reservation-child-binding-r1/validation-06/journal.jsonl)
+The 06 journal (`/Users/bobai/.codex/artifacts/2026-10-18/f-reservation-child-binding-r1/validation-06/journal.jsonl`; local/private, not public evidence)
 is 20,738 bytes / 21 records, SHA-256
 `82843a2c20736acaf645734b92bc1ad6ba13da319263dfaa3c1e4d8a54b78792`.
 All 26 wrapper stages passed: 22 baseline, supported constructor compile/link,
@@ -180,7 +181,7 @@ by early refusal and exact retained diagnostics. Injected lost-close/reap/wait
 cases remain terminally pending where asserted: cases17/30 retain seven net FDs
 AND shared mapping until isolated case exit; outer container absence does not
 retroactively prove constructor reap/cleanup or a physical retention bound.
-The [derived outcome index](/Users/bobai/.codex/artifacts/2026-10-18/f-reservation-child-binding-r1/outcome-06.json)
+The derived outcome index (`/Users/bobai/.codex/artifacts/2026-10-18/f-reservation-child-binding-r1/outcome-06.json`; local/private, not public evidence)
 is assertion/whole-suite evidence, not a raw per-case kernel trace; its frozen
 preacceptance status is historical, while this handoff carries MUSE acceptance.
 Source03/04 remain actual close_range ENOSYS/HOLD with owned cleanup. The static
@@ -1098,7 +1099,7 @@ unchanged, optional non-privileged artifact consumption deferred until needed.
 No protected Launcher/provider authority expansion or general attestation service.
 Design/inputs review is complete; no new owner discovery or inventory loop.
 R3 supersedes R2's Action branch and four-file proposal: future source is ONLY
-build_retained_driver.py, retained-driver-owner@.service and
+build_retained_driver.py, `retained-driver-owner@.service` and
 test_build_retained_driver.py under .github/ota, plus canonical plan/state.
 Source authoring and SOURCE R3 acceptance are recorded above; execution remains
 NOT_CLEARED. Existing Action/default ref-install stays unchanged.
@@ -1295,6 +1296,7 @@ preparation above does not revive this closed grant.
 
 **Accepted bounded facts and canonical private records** (under
 `/Users/bobai/.codex/artifacts/2026-10-10`; RESULT.md and raw evidence retained):
+
 - `kernel-custody-preflight-r11`: Python3.11.2,11 methods/12 synthetic shapes,
   including current-frame parent-detach refusal. VLAD
   `01a125fc-c0a8-76d2-b594-6c69863c6a39` and MUSE
