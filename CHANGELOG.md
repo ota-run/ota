@@ -26,6 +26,17 @@
 
 ## Unreleased
 
+- Update locked TLS dependencies to `rustls` 0.23.46, `rustls-webpki` 0.103.16
+  and `webpki-roots` 1.0.10 for RustSec advisories
+  [RUSTSEC-2026-0346](https://rustsec.org/advisories/RUSTSEC-2026-0346.html),
+  [RUSTSEC-2026-0347](https://rustsec.org/advisories/RUSTSEC-2026-0347.html),
+  [RUSTSEC-2026-0348](https://rustsec.org/advisories/RUSTSEC-2026-0348.html),
+  [RUSTSEC-2026-0349](https://rustsec.org/advisories/RUSTSEC-2026-0349.html),
+  [RUSTSEC-2026-0382](https://rustsec.org/advisories/RUSTSEC-2026-0382.html) and
+  [RUSTSEC-2026-0381](https://rustsec.org/advisories/RUSTSEC-2026-0381.html).
+  The separate `unsafe-libyaml` maintenance finding remains open; this does not
+  establish a full dependency-audit PASS.
+
 - Correct native Up environment-requirement readiness to use the already supplied
   inline workspace values before acquired repo-policy, process, declared-source
   and default values, matching execution below task overrides. Carry the input
