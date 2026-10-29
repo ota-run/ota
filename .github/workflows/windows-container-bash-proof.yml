@@ -77,7 +77,7 @@ jobs:
         run: cargo build --locked --offline --release --quiet
 
       - name: Run Git Bash container path proof
-        shell: bash
+        shell: gitbash.exe --noprofile --norc -e -o pipefail {0}
         run: |
           set -euo pipefail
 
@@ -85,6 +85,48 @@ jobs:
           proof_root="$PWD/.ota-ci/windows-mingw-container-proof"
           rm -rf "$proof_root"
           mkdir -p "$proof_root/docker-state"
+
+          # Qualify the runner's Git for Windows installation, not a renamed MSYS2 shell.
+          printf 'MSYSTEM=%s\nBASH=%s\n' "${MSYSTEM:-}" "$BASH" > "$proof_root/environment.txt"
+          if [ "${MSYSTEM:-}" != "UCRT64" ]; then
+            echo "expected the Git for Windows UCRT64 environment, got '${MSYSTEM:-unset}'" >&2
+            exit 1
+          fi
+          cygpath=/usr/bin/cygpath.exe
+          git_exe=/cmd/git.exe
+          for tool in "$BASH" "$cygpath" "$git_exe"; do
+            if [ ! -x "$tool" ]; then
+              echo "required Git for Windows tool is unavailable: $tool" >&2
+              exit 1
+            fi
+          done
+          git_root_win="$("$cygpath" -am /)"
+          git_root_win="${git_root_win%/}"
+          if [ "${git_root_win,,}" != "c:/program files/git" ]; then
+            echo "unexpected Git for Windows installation: $git_root_win" >&2
+            exit 1
+          fi
+          bash_win="$("$cygpath" -am "$BASH")"
+          case "${bash_win,,}" in
+            "c:/program files/git/bin/bash"|"c:/program files/git/bin/bash.exe"|"c:/program files/git/usr/bin/bash"|"c:/program files/git/usr/bin/bash.exe") ;;
+            *)
+              echo "the active Bash is outside the selected Git for Windows installation: $bash_win" >&2
+              exit 1
+              ;;
+          esac
+          {
+            printf 'git-root=%s\nbash-path=%s\n' "$git_root_win" "$bash_win"
+            printf 'git-path=%s\n' "$("$cygpath" -am "$git_exe")"
+            printf 'cygpath-path=%s\n' "$("$cygpath" -am "$cygpath")"
+            "$BASH" --version
+            "$git_exe" --version
+            "$cygpath" --version
+          } >> "$proof_root/environment.txt"
+          rustc -vV > "$proof_root/rustc-version.txt"
+          if ! grep -Fx 'host: x86_64-pc-windows-msvc' "$proof_root/rustc-version.txt"; then
+            echo "this proof requires the selected native Windows MSVC Rust host" >&2
+            exit 1
+          fi
 
           cat > "$proof_root/docker.cmd" <<'EOF'
           @echo off
@@ -101,18 +143,24 @@ jobs:
           if /I "%COMMAND%"=="start" exit /b 0
           if /I "%COMMAND%"=="exec" exit /b 0
 
-          echo unsupported docker command %COMMAND% 1>&2
+          1>&2 echo unsupported docker command %COMMAND%
           exit /b 1
 
           :create
+          >>"!STATE_DIR!\creates.txt" echo(create
           set "WORKSPACE_MOUNT="
+          set /a WORKSPACE_COUNT=0
 
           :loop
           if "%~1"=="" goto done
           if /I "%~1"=="-v" (
             set "MOUNT=%~2"
             >>"!STATE_DIR!\mounts.txt" echo(!MOUNT!
-            echo(!MOUNT! | findstr /C:":/workspace" >nul && set "WORKSPACE_MOUNT=!MOUNT!"
+            if not "!MOUNT::/workspace=!"=="!MOUNT!" (
+              set "WORKSPACE_MOUNT=!MOUNT!"
+              set /a WORKSPACE_COUNT+=1
+              >>"!STATE_DIR!\workspace-mounts.txt" echo(!MOUNT!
+            )
             shift
             shift
             goto loop
@@ -121,8 +169,12 @@ jobs:
           goto loop
 
           :done
+          if not "!WORKSPACE_COUNT!"=="1" (
+            1>&2 echo expected exactly one workspace argument per create
+            exit /b 1
+          )
           if not defined WORKSPACE_MOUNT (
-            echo missing workspace mount 1>&2
+            1>&2 echo missing workspace mount
             exit /b 1
           )
 
@@ -154,40 +206,268 @@ jobs:
                 task: setup
           EOF
 
-          printf 'MSYSTEM=%s\n' "${MSYSTEM:-}" > "$proof_root/environment.txt"
-          if [ "${MSYSTEM:-}" != "MINGW64" ]; then
-            echo "expected Git Bash to report MSYSTEM=MINGW64, got '${MSYSTEM:-unset}'" >&2
-            exit 1
-          fi
+          proof_root_win="$("$cygpath" -aw "$proof_root")"
+          expected_workspace_mount="$proof_root_win:/workspace"
 
-          proof_root_win="$(cygpath -w "$proof_root")"
+          # This is a Docker-argv stub, not execution of Alpine or a real container.
+          verify_workspace_mounts() {
+            local lane="$1"
+            local mount
+            local mount_count=0
+            local create_count=0
+            if [ ! -f "$proof_root/docker-state/creates.txt" ] ||
+               [ ! -f "$proof_root/docker-state/workspace-mounts.txt" ]; then
+              echo "$lane did not retain create/workspace arguments" >&2
+              return 1
+            fi
+            while IFS= read -r mount || [ -n "$mount" ]; do
+              mount="${mount%$'\r'}"
+              if [ "$mount" != "create" ]; then
+                echo "$lane retained an unexpected create record" >&2
+                return 1
+              fi
+              create_count=$((create_count + 1))
+            done < "$proof_root/docker-state/creates.txt"
+            while IFS= read -r mount || [ -n "$mount" ]; do
+              mount="${mount%$'\r'}"
+              if [[ "$mount" == *'\\?'* ]]; then
+                echo "$lane leaked a verbatim Windows path into a workspace mount" >&2
+                return 1
+              fi
+              if [ "$mount" != "$expected_workspace_mount" ]; then
+                echo "$lane workspace argument differs from the exact host source and /workspace target: $mount" >&2
+                return 1
+              fi
+              mount_count=$((mount_count + 1))
+            done < "$proof_root/docker-state/workspace-mounts.txt"
+            if [ "$create_count" -ne 1 ] || [ "$mount_count" -ne 1 ]; then
+              echo "$lane requires one create and one exact workspace argument" >&2
+              return 1
+            fi
+            # Move the complete lane capture before another CLI can overwrite it.
+            mv "$proof_root/docker-state" "$proof_root/$lane-docker-state"
+          }
+
+          # Known-answer controls invoke the same oracle; fixtures are not Ota evidence.
+          oracle_control() {
+            local label="$1"
+            local capture="$proof_root/controls/oracle-$label"
+            local expected=1
+            local diagnostic="$label requires one create and one exact workspace argument"
+            local bad_mount="${proof_root_win}-wrong:/workspace"
+            mkdir "$capture"
+            mkdir "$capture/docker-state"
+            printf 'create\n' > "$capture/docker-state/creates.txt"
+            printf '%s\n' "$expected_workspace_mount" > "$capture/docker-state/workspace-mounts.txt"
+            case "$label" in
+              valid-lf) expected=0; diagnostic="" ;;
+              valid-crlf)
+                expected=0; diagnostic=""
+                printf 'create\r\n' > "$capture/docker-state/creates.txt"
+                printf '%s\r\n' "$expected_workspace_mount" > "$capture/docker-state/workspace-mounts.txt"
+                ;;
+              valid-no-final-newline)
+                expected=0; diagnostic=""
+                printf 'create' > "$capture/docker-state/creates.txt"
+                printf '%s' "$expected_workspace_mount" > "$capture/docker-state/workspace-mounts.txt"
+                ;;
+              missing-creates)
+                rm "$capture/docker-state/creates.txt"
+                diagnostic="$label did not retain create/workspace arguments"
+                ;;
+              missing-mounts)
+                rm "$capture/docker-state/workspace-mounts.txt"
+                diagnostic="$label did not retain create/workspace arguments"
+                ;;
+              missing-both)
+                rm "$capture/docker-state/creates.txt" "$capture/docker-state/workspace-mounts.txt"
+                diagnostic="$label did not retain create/workspace arguments"
+                ;;
+              empty-creates) : > "$capture/docker-state/creates.txt" ;;
+              empty-mounts) : > "$capture/docker-state/workspace-mounts.txt" ;;
+              empty-both)
+                : > "$capture/docker-state/creates.txt"
+                : > "$capture/docker-state/workspace-mounts.txt"
+                ;;
+              multiple-creates) printf 'create\ncreate\n' > "$capture/docker-state/creates.txt" ;;
+              unexpected-create)
+                printf 'unexpected\n' > "$capture/docker-state/creates.txt"
+                diagnostic="$label retained an unexpected create record"
+                ;;
+              wrong-source|wrong-target|verbatim-prefix)
+                if [ "$label" = wrong-target ]; then
+                  bad_mount="$proof_root_win:/elsewhere"
+                elif [ "$label" = verbatim-prefix ]; then
+                  bad_mount="\\\\?\\$expected_workspace_mount"
+                fi
+                printf '%s\n' "$bad_mount" > "$capture/docker-state/workspace-mounts.txt"
+                if [ "$label" = verbatim-prefix ]; then
+                  diagnostic="$label leaked a verbatim Windows path into a workspace mount"
+                else
+                  diagnostic="$label workspace argument differs from the exact host source and /workspace target: $bad_mount"
+                fi
+                ;;
+              duplicate-mounts)
+                printf '%s\n' "$expected_workspace_mount" "$expected_workspace_mount" > "$capture/docker-state/workspace-mounts.txt"
+                ;;
+              bad-first-valid-last|valid-first-bad-last)
+                if [ "$label" = bad-first-valid-last ]; then
+                  printf '%s\n' "$bad_mount" "$expected_workspace_mount" > "$capture/docker-state/workspace-mounts.txt"
+                else
+                  printf '%s\n' "$expected_workspace_mount" "$bad_mount" > "$capture/docker-state/workspace-mounts.txt"
+                fi
+                diagnostic="$label workspace argument differs from the exact host source and /workspace target: $bad_mount"
+                ;;
+              *) echo "unknown oracle control: $label" >&2; return 1 ;;
+            esac
+            cp -R "$capture/docker-state" "$capture/input-state"
+            local actual
+            if (
+              proof_root="$capture"
+              verify_workspace_mounts "$label"
+            ) > "$capture/stdout.txt" 2> "$capture/stderr.txt"; then
+              actual=0
+            else
+              actual=$?
+            fi
+            printf '%s\n' "$actual" > "$capture/exit.txt"
+            printf '%s\t%s\t%s\n' "$label" "$expected" "$actual" >> "$proof_root/controls/oracle-results.tsv"
+            if [ "$actual" -ne "$expected" ]; then
+              echo "oracle control $label: expected exit $expected, got $actual" >&2
+              return 1
+            fi
+            [ ! -s "$capture/stdout.txt" ]
+            if [ "$expected" -eq 0 ]; then
+              [ ! -s "$capture/stderr.txt" ]
+              [ ! -e "$capture/docker-state" ]
+              [ -d "$capture/$label-docker-state" ]
+              diff -r "$capture/input-state" "$capture/$label-docker-state"
+            else
+              printf '%s\n' "$diagnostic" > "$capture/expected-stderr.txt"
+              cmp "$capture/expected-stderr.txt" "$capture/stderr.txt"
+              [ ! -e "$capture/$label-docker-state" ]
+              diff -r "$capture/input-state" "$capture/docker-state"
+            fi
+          }
+
+          # Invoke the actual generated batch file, retaining each invocation's status.
+          invoke_cmd_control() {
+            local capture="$1"
+            local expected="$2"
+            local diagnostic="$3"
+            shift 3
+            mkdir "$capture"
+            local actual
+            if "$proof_root/docker.cmd" "$@" > "$capture/stdout.txt" 2> "$capture/stderr.txt"; then
+              actual=0
+            else
+              actual=$?
+            fi
+            printf '%s\n' "$actual" > "$capture/exit.txt"
+            printf '%s\t%s\t%s\n' "${capture#"$proof_root/controls/"}" "$expected" "$actual" >> "$proof_root/controls/cmd-results.tsv"
+            cp -R "$proof_root/docker-state" "$capture/raw-state"
+            if [ "$actual" -ne "$expected" ]; then
+              echo "CMD control $capture: expected exit $expected, got $actual" >&2
+              return 1
+            fi
+            if [ "$expected" -eq 0 ]; then
+              [ ! -s "$capture/stderr.txt" ]
+            else
+              # CMD emits CRLF; retain raw stderr and normalize only the comparison copy.
+              sed 's/\r$//' "$capture/stderr.txt" > "$capture/stderr-lf.txt"
+              printf '%s\n' "$diagnostic" > "$capture/expected-stderr.txt"
+              cmp "$capture/expected-stderr.txt" "$capture/stderr-lf.txt"
+            fi
+          }
+
+          assert_cmd_rows() {
+            local expected_file="$1"
+            local actual_file="$2"
+            shift 2
+            if [ "$#" -eq 0 ]; then
+              [ ! -e "$actual_file" ]
+            else
+              printf '%s\n' "$@" > "$expected_file"
+              # Raw CMD rows remain untouched for review.
+              sed 's/\r$//' "$actual_file" > "$expected_file.actual-lf"
+              cmp "$expected_file" "$expected_file.actual-lf"
+            fi
+          }
+
+          cmd_control() {
+            local label="$1"
+            local capture="$proof_root/controls/cmd-$label"
+            local unrelated='C:\ota-control-cache:/cache'
+            local -a creates=() mounts=() workspace=() last=()
+            mkdir "$capture"
+            mkdir "$capture/expected"
+            case "$label" in
+              zero-workspace)
+                invoke_cmd_control "$capture/first" 1 'expected exactly one workspace argument per create' create
+                creates=(create)
+                ;;
+              one-workspace|unrelated-volume|repeated-create)
+                if [ "$label" = unrelated-volume ]; then
+                  invoke_cmd_control "$capture/first" 0 '' create -v "$unrelated" -v "$expected_workspace_mount"
+                  mounts=("$unrelated" "$expected_workspace_mount")
+                else
+                  invoke_cmd_control "$capture/first" 0 '' create -v "$expected_workspace_mount"
+                  mounts=("$expected_workspace_mount")
+                fi
+                creates=(create)
+                workspace=("$expected_workspace_mount")
+                last=("$expected_workspace_mount")
+                if [ "$label" = repeated-create ]; then
+                  invoke_cmd_control "$capture/second" 0 '' create -v "$expected_workspace_mount"
+                  creates+=(create)
+                  mounts+=("$expected_workspace_mount")
+                  workspace+=("$expected_workspace_mount")
+                fi
+                ;;
+              two-workspace)
+                invoke_cmd_control "$capture/first" 1 'expected exactly one workspace argument per create' create -v "$expected_workspace_mount" -v "$expected_workspace_mount"
+                creates=(create)
+                mounts=("$expected_workspace_mount" "$expected_workspace_mount")
+                workspace=("$expected_workspace_mount" "$expected_workspace_mount")
+                ;;
+              unsupported-command)
+                invoke_cmd_control "$capture/first" 1 'unsupported docker command ota-proof-unsupported' ota-proof-unsupported
+                ;;
+              *) echo "unknown CMD control: $label" >&2; return 1 ;;
+            esac
+            # Archive the shared stub's own state before starting the next case.
+            mv "$proof_root/docker-state" "$capture/raw-state"
+            assert_cmd_rows "$capture/expected/creates.txt" "$capture/raw-state/creates.txt" "${creates[@]}"
+            assert_cmd_rows "$capture/expected/mounts.txt" "$capture/raw-state/mounts.txt" "${mounts[@]}"
+            assert_cmd_rows "$capture/expected/workspace-mounts.txt" "$capture/raw-state/workspace-mounts.txt" "${workspace[@]}"
+            assert_cmd_rows "$capture/expected/workspace-mount.txt" "$capture/raw-state/workspace-mount.txt" "${last[@]}"
+            mkdir -p "$proof_root/docker-state"
+          }
+
+          mkdir "$proof_root/controls"
+          for control in valid-lf valid-crlf valid-no-final-newline \
+            missing-creates missing-mounts missing-both empty-creates empty-mounts empty-both \
+            multiple-creates unexpected-create wrong-source wrong-target verbatim-prefix \
+            duplicate-mounts bad-first-valid-last valid-first-bad-last; do
+            oracle_control "$control"
+          done
+          for control in zero-workspace one-workspace two-workspace unrelated-volume repeated-create unsupported-command; do
+            cmd_control "$control"
+          done
+          [ "$(wc -l < "$proof_root/controls/oracle-results.tsv")" -eq 17 ]
+          [ "$(wc -l < "$proof_root/controls/cmd-results.tsv")" -eq 7 ]
+          # Empty shared stub state is recreated; controls cannot seed Ota's captures.
+          rmdir "$proof_root/docker-state"
+          mkdir -p "$proof_root/docker-state"
 
           (
             cd "$proof_root"
-            PATH="$proof_root_win;$PATH" "$ota" run --mode container --plain setup . > run.txt 2>&1
-            PATH="$proof_root_win;$PATH" "$ota" up --mode container --json . > up.json 2> up.stderr.txt
+            PATH="$proof_root:$PATH" "$ota" run --mode container --plain setup . > run.txt 2>&1
+            verify_workspace_mounts run
+            mkdir "$proof_root/docker-state"
+            PATH="$proof_root:$PATH" "$ota" up --mode container --json . > up.json 2> up.stderr.txt
+            verify_workspace_mounts up
           )
-
-          if [ ! -f "$proof_root/docker-state/workspace-mount.txt" ]; then
-            echo "docker proof did not capture a workspace mount argument" >&2
-            exit 1
-          fi
-
-          workspace_mount="$(tr -d '\r\n' < "$proof_root/docker-state/workspace-mount.txt")"
-          printf '%s\n' "$workspace_mount" > "$proof_root/workspace-mount.txt"
-
-          if [[ "$workspace_mount" == *'\\?\'* ]]; then
-            echo "verbatim Windows path leaked into docker mount: $workspace_mount" >&2
-            exit 1
-          fi
-
-          case "$workspace_mount" in
-            *:/workspace) ;;
-            *)
-              echo "workspace mount did not target /workspace: $workspace_mount" >&2
-              exit 1
-              ;;
-          esac
 
       - name: Upload proof artifacts
         id: upload-proof-artifacts
@@ -203,11 +483,11 @@ jobs:
         if: always() && steps.upload-proof-artifacts.outcome == 'failure'
         shell: bash
         run: |
-          echo "::warning::proof artifacts failed to upload, but the Windows container path proof itself completed"
+          echo "::warning::proof artifact upload failed; consult the proof step status and job logs"
           {
             echo "### Artifact upload warning"
             echo
             echo "- workflow: windows-container-bash-proof"
             echo "- job: mingw-container-path-proof"
-            echo "- note: diagnostic artifact upload failed after proof execution"
+            echo "- note: diagnostic artifact upload failed; proof success is determined by the proof step"
           } >> "$GITHUB_STEP_SUMMARY"

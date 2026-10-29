@@ -33,6 +33,47 @@ durable agent workflow belongs in the canonical Ota skill.
 
 ## Active Work
 
+### Windows CI Repair: Local Structural Gate Accepted / Hosted Pending
+
+The sole active product slice remains V12.1 / Step 7 OPEN. Step 8/V12.2,
+merge and release remain inactive. This scoped change repairs the Windows Git
+Bash precondition and strengthens the existing Docker-argv proof; it does not
+publish the other pending local CI/schema/CLI repairs.
+
+MUSE accepted the private formatter-plus-ten-structural-test gate after VLAD
+outcome review `01a18541-d7d3-7a62-98af-c09c94868b0a`: ten passed, zero failed,
+ignored or filtered; all ten exact names observed once. Formatter passed before
+Cargo. Wrapper/root exited zero; all 1,669 bytes were retained with EOF/zero
+discard, root reaping, empty known session and independent PID absence. Source
+and predecessor preservation checks passed. The accepted local receipt is
+`windows-git-bash-source-qualification-r1/acceptance-r3a.json`, SHA256
+`77777113db6cd6d1ccbf06f448dd495a7fdb4a5d3f7be2f74feb60e0e7713880`.
+This is private local evidence, not public hosted proof. Its one-use validation
+projection is retired; no retry or execution authority survives.
+
+The exact reviewed workflow SHA256 is
+`98580f5c5daa99a10d36c36ae4da1f774780c62917d3999cb39d1a64aeed68bf`;
+the corresponding structural-test SHA256 is
+`bdeacb88f37a21c5f5c384a80bcd060969e5b8aef8c58754b7d3d9fd0a3a3855`.
+The existing workflow/job/check identity and trigger/build policy are preserved.
+Seventeen mount-oracle cases and six CMD cases/seven invocations use the same
+verifier and generated stub, retaining raw inputs, diagnostics and actual exits
+separately from the final Ota Run/Up captures. Their actual Windows execution
+is still NOT_RUN. Local Rust structural PASS does not establish CMD expansion,
+MSYS path conversion, real Docker/Alpine execution, readiness or task-body proof.
+
+Bobai authorized the exact reviewed pair plus this concise handoff update for
+commit/push on `1.6.29-implementation` and a draft PR with existing CI. Unrelated
+dirty repairs and the larger working-handoff accumulation are not part of this
+commit. The PR covers the existing implementation branch, not only this latest
+repair. Normal push/PR triggers can run broader existing CI; this is not a
+Windows-only or zero-cost action. Account storage/billing allowances are not
+verified. No merge, tag, release, duplicate manual dispatch or retry is selected.
+The Windows verdict requires exact-head runner/startup metadata, all expected
+control statuses/rows and separate Run/Up captures; absent evidence is HOLD.
+No new public command, schema, JSON or vocabulary change is supplied, so Site,
+Skills, Examples, Learn, FAQ and Glossary propagation is not required here.
+
 ### Native StartAuthority: Local Producer And Child Accepted / Production HOLD
 
 MUSE accepts the ORIGINAL bounded producer-bound F compilation/evaluation/
