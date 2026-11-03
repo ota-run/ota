@@ -43,6 +43,14 @@ fn iam_workflow_keeps_exact_protected_principal_request_and_closed_posture() {
     assert_eq!(workflow["jobs"].as_mapping().unwrap().len(), 1);
     let job = &workflow["jobs"]["request-one-bounded-google-iam-response"];
     assert_eq!(
+        job["env"]["EXPECTED_LAUNCHER_SOURCE_REVISION"].as_str(),
+        Some("be9b4521a097b31f90cd06e2c37018cd00019f1a")
+    );
+    assert_eq!(
+        job["env"]["EXPECTED_PROTOCOL_SOURCE_REVISION"].as_str(),
+        Some("e5fe1c83e562e02f60e27026c7148918bd016155")
+    );
+    assert_eq!(
         job["runs-on"].as_sequence().unwrap(),
         &["self-hosted", "Linux", "X64", "ota-authority-independent"].map(serde_yaml::Value::from)
     );
