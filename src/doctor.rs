@@ -6161,10 +6161,11 @@ fn diagnose_selected_task_effects(
         let Some(task) = contract.tasks.get(task_name.as_str()) else {
             continue;
         };
-        if task.resolved_execution_for_backend(step.backend, &step.target_os)
-            .and_then(|execution| execution.prepare()).is_some_and(|prepare| {
-            !crate::runner::locked_cargo_sources(prepare).is_empty()
-        }) {
+        if task
+            .resolved_execution_for_backend(step.backend, &step.target_os)
+            .and_then(|execution| execution.prepare())
+            .is_some_and(|prepare| !crate::runner::locked_cargo_sources(prepare).is_empty())
+        {
             locked_cargo_tasks.push(task_name.clone());
         }
         if let Some(kind) = task.effects.effective_network_kind() {
@@ -15905,7 +15906,9 @@ workflows:
 
     #[test]
     fn doctor_locked_cargo_reports_authored_posture_without_discovering_root() {
-        let contract = parse_contract_str(synthetic_contract_path(), r#"
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
 version: 1
 project:
   name: locked-cargo-doctor
@@ -15926,12 +15929,25 @@ workflows:
   app:
     setup:
       task: setup
-"#).unwrap();
+"#,
+        )
+        .unwrap();
         let mut findings = Vec::new();
-        super::diagnose_selected_task_effects(&contract, None, crate::runner::ExecutionOverrides::default(), &mut findings);
-        let finding = findings.iter().find(|finding| {
-            finding.identity.as_ref().is_some_and(|identity| identity.code == "OTA_SELECTED_TASK_PATH_LOCKED_CARGO")
-        }).expect("authored locked posture");
+        super::diagnose_selected_task_effects(
+            &contract,
+            None,
+            crate::runner::ExecutionOverrides::default(),
+            &mut findings,
+        );
+        let finding = findings
+            .iter()
+            .find(|finding| {
+                finding
+                    .identity
+                    .as_ref()
+                    .is_some_and(|identity| identity.code == "OTA_SELECTED_TASK_PATH_LOCKED_CARGO")
+            })
+            .expect("authored locked posture");
         assert_eq!(finding.severity, FindingSeverity::Info);
         assert!(finding.why.contains("root_resolution remains not_proved"));
     }
@@ -24978,25 +24994,38 @@ unexpected: true
         let _guard = env_mutex_lock();
         let fixture = TempDir::new().unwrap();
         let contract_path = fixture.path().join("ota.yaml");
-        let contract = parse_contract_str(&contract_path,
+        let contract = parse_contract_str(
+            &contract_path,
             "version: 1\nproject: {name: policy-declaration}\n",
-        ).unwrap();
+        )
+        .unwrap();
         fs::create_dir_all(fixture.path().join(".ota")).unwrap();
-        fs::write(fixture.path().join(".ota/org-policy.yaml"),
+        fs::write(
+            fixture.path().join(".ota/org-policy.yaml"),
             "policies: {toolchain_fulfillment: {rust: deny}}\n",
-        ).unwrap();
+        )
+        .unwrap();
         let report = diagnose_preconditions(&contract, &contract_path);
-        let finding = report.findings.iter().find(|finding| {
-            finding.code() == "OTA_TOOLCHAIN_FULFILLMENT_DENIED"
-        }).expect("static policy declaration should survive the no-violations return");
+        let finding = report
+            .findings
+            .iter()
+            .find(|finding| finding.code() == "OTA_TOOLCHAIN_FULFILLMENT_DENIED")
+            .expect("static policy declaration should survive the no-violations return");
         assert_eq!(finding.severity, FindingSeverity::Info);
         assert_eq!(finding.category(), "policy");
         assert_eq!(finding.owner(), "org_policy");
-        assert!(finding.why.contains("does not establish installed readiness"));
+        assert!(
+            finding
+                .why
+                .contains("does not establish installed readiness")
+        );
         assert!(finding.next.contains("does not override this restriction"));
-        assert!(report.findings.iter().all(|finding| {
-            finding.code() != "OTA_TOOLCHAIN_FULFILLMENT_READY"
-        }));
+        assert!(
+            report
+                .findings
+                .iter()
+                .all(|finding| { finding.code() != "OTA_TOOLCHAIN_FULFILLMENT_READY" })
+        );
     }
 
     #[test]

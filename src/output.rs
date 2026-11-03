@@ -648,7 +648,8 @@ pub struct ExecutionReceiptEvaluatedInput {
 #[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq, Eq)]
 pub struct ExecutionReceiptWitnessedObservations {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub toolchain_fulfillment_route_refusal: Option<crate::runner::ToolchainFulfillmentPolicyRouteRefusal>,
+    pub toolchain_fulfillment_route_refusal:
+        Option<crate::runner::ToolchainFulfillmentPolicyRouteRefusal>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub toolchain_fulfillment_denial: Option<crate::runner::ToolchainFulfillmentPolicyDenial>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -5908,7 +5909,15 @@ fn cargo_lock_plan_summary(
         root_resolution: "not_proved",
         acquisition: "not_proved",
         concurrent_mutation: "not_proved",
-        metadata_command: vec!["cargo", "locate-project", "--workspace", "--manifest-path", "<selected-cwd>/Cargo.toml", "--message-format", "json"],
+        metadata_command: vec![
+            "cargo",
+            "locate-project",
+            "--workspace",
+            "--manifest-path",
+            "<selected-cwd>/Cargo.toml",
+            "--message-format",
+            "json",
+        ],
     })
 }
 
@@ -7778,15 +7787,23 @@ mod tests {
                     medium: crate::schema::TaskDependencyHydrationMedium::PackageDependencies,
                     source: crate::schema::TaskDependencyHydrationSourceSpec::Cargo(
                         crate::schema::TaskCargoHydrationSourceSpec {
-                            cwd: String::from("missing-member"), locked, compose: None,
-                        }),
+                            cwd: String::from("missing-member"),
+                            locked,
+                            compose: None,
+                        },
+                    ),
                     targets: Vec::new(),
-                });
+                },
+            );
             let summary = super::summarize_task_prepare(Some(&prepare)).unwrap();
             let owned = super::summarize_task_prepare_owned(Some(&prepare)).unwrap();
-            let projected = super::workspace_prepare_summary_from_task_prepare_summary(summary.clone());
+            let projected =
+                super::workspace_prepare_summary_from_task_prepare_summary(summary.clone());
             let json = serde_json::to_value(summary).unwrap();
-            assert_eq!(serde_json::to_value(owned).unwrap(), serde_json::to_value(projected).unwrap());
+            assert_eq!(
+                serde_json::to_value(owned).unwrap(),
+                serde_json::to_value(projected).unwrap()
+            );
             if locked {
                 assert_eq!(json["cargo_lock"]["locked"], true);
                 assert_eq!(json["cargo_lock"]["root_resolution"], "not_proved");
@@ -7796,7 +7813,8 @@ mod tests {
                 assert!(json.get("cargo_lock").is_none());
             }
         }
-        let legacy: super::ExecutionReceiptWitnessedObservations = serde_json::from_str("{}").unwrap();
+        let legacy: super::ExecutionReceiptWitnessedObservations =
+            serde_json::from_str("{}").unwrap();
         assert!(legacy.is_empty());
         assert_eq!(serde_json::to_value(legacy).unwrap(), serde_json::json!({}));
     }
@@ -7805,24 +7823,39 @@ mod tests {
     fn fulfillment_denial_serializes_negative_evidence_without_duplicate_steps() {
         let evidence = crate::runner::ToolchainFulfillmentPolicyDenial {
             reason: String::from("toolchain_fulfillment_policy_denied"),
-            root_task: Some(String::from("check")), task: String::from("setup"),
+            root_task: Some(String::from("check")),
+            task: String::from("setup"),
             relation: Some(crate::runner::TaskExecutionRelation::DependsOn {
                 parent: String::from("check"),
-            }), generation: 0,
-            toolchain: String::from("rust"), backend: String::from("native"),
-            target_os: String::from("linux"), provider: String::from("rustup"),
-            version: String::from("1.94.0"), components: vec![String::from("rustfmt")],
-            targets: Vec::new(), policy_identity: format!("sha256:{}", "a".repeat(64)),
+            }),
+            generation: 0,
+            toolchain: String::from("rust"),
+            backend: String::from("native"),
+            target_os: String::from("linux"),
+            provider: String::from("rustup"),
+            version: String::from("1.94.0"),
+            components: vec![String::from("rustfmt")],
+            targets: Vec::new(),
+            policy_identity: format!("sha256:{}", "a".repeat(64)),
             policy_source: crate::policy_pack::PolicyPackSource::RepoPolicy,
-            policy_path: ".ota/org-policy.yaml".into(), readiness: String::from("unknown"),
-            attempted: false, fulfillment: String::from("not_run"),
+            policy_path: ".ota/org-policy.yaml".into(),
+            readiness: String::from("unknown"),
+            attempted: false,
+            fulfillment: String::from("not_run"),
             preceding_steps: vec![crate::runner::ExecutedTaskStep {
-                name: String::from("prepare"), exit_code: 0,
-                relation: crate::runner::TaskExecutionRelation::DependsOn { parent: String::from("check") },
-                generation: 0, execution_note: None, cargo_hydration: Vec::new(),
+                name: String::from("prepare"),
+                exit_code: 0,
+                relation: crate::runner::TaskExecutionRelation::DependsOn {
+                    parent: String::from("check"),
+                },
+                generation: 0,
+                execution_note: None,
+                cargo_hydration: Vec::new(),
             }],
-            preceding_target_resolutions: Vec::new(), preceding_backend_fulfillments: Vec::new(),
-            preceding_shared_local_backends: Vec::new(), cleanup_note: None,
+            preceding_target_resolutions: Vec::new(),
+            preceding_backend_fulfillments: Vec::new(),
+            preceding_shared_local_backends: Vec::new(),
+            cleanup_note: None,
         };
         let mut observations = super::ExecutionReceiptWitnessedObservations::default();
         observations.toolchain_fulfillment_denial = Some(evidence);

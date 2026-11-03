@@ -36503,10 +36503,7 @@ tasks:
             script.contains("schedule_windows_replacement_after_exit()"),
             "{script}"
         );
-        assert!(
-            script.contains("replace_windows_binary()"),
-            "{script}"
-        );
+        assert!(script.contains("replace_windows_binary()"), "{script}");
         assert!(
             script.contains("replacement_status=0\n    replace_windows_binary \"${staged}\" \"${bin_dir}/ota.exe\" || replacement_status=$?"),
             "{script}"
@@ -46434,11 +46431,19 @@ project:
         let stderr = strip_ansi(output.stderr.as_deref().expect("refusal should use stderr"));
         assert!(stderr.contains("Child admission refused: web"), "{stderr}");
         assert!(stderr.contains("Where: ./apps/web/ota.yaml"), "{stderr}");
-        assert!(stderr.contains("Failure kind: contract_invalid"), "{stderr}");
-        assert!(stderr.contains("Policy acquisition: unavailable"), "{stderr}");
+        assert!(
+            stderr.contains("Failure kind: contract_invalid"),
+            "{stderr}"
+        );
+        assert!(
+            stderr.contains("Policy acquisition: unavailable"),
+            "{stderr}"
+        );
         assert!(stderr.contains("run `ota validate ./apps/web`"), "{stderr}");
         assert!(
-            stderr.contains("rerun your original workspace Run command with the same options and task inputs"),
+            stderr.contains(
+                "rerun your original workspace Run command with the same options and task inputs"
+            ),
             "{stderr}"
         );
         assert!(!stderr.contains(input_value), "{stderr}");
@@ -46910,19 +46915,41 @@ tasks:
                 );
                 assert_eq!(
                     selection["contract_path"],
-                    fixture.dir.path().join("apps/web/ota.yaml").display().to_string()
+                    fixture
+                        .dir
+                        .path()
+                        .join("apps/web/ota.yaml")
+                        .display()
+                        .to_string()
                 );
                 assert_eq!(
-                    selection.get("requested_selector").and_then(serde_json::Value::as_str),
+                    selection
+                        .get("requested_selector")
+                        .and_then(serde_json::Value::as_str),
                     task
                 );
-                assert_eq!(selection.get("selected_task"), Some(&serde_json::Value::Null));
-                assert_eq!(selection.get("selected_workflow"), Some(&serde_json::Value::Null));
+                assert_eq!(
+                    selection.get("selected_task"),
+                    Some(&serde_json::Value::Null)
+                );
+                assert_eq!(
+                    selection.get("selected_workflow"),
+                    Some(&serde_json::Value::Null)
+                );
                 assert_eq!(value["error"], child["failure"]["message"]);
                 assert_eq!(value.get("task").and_then(serde_json::Value::as_str), task);
                 assert!(child.get("policy").is_none());
-                for key in ["receipt", "repos", "summary", "artifact_routing", "parent_admission"] {
-                    assert!(value.get(key).is_none(), "pre-dispatch refusal must omit {key}");
+                for key in [
+                    "receipt",
+                    "repos",
+                    "summary",
+                    "artifact_routing",
+                    "parent_admission",
+                ] {
+                    assert!(
+                        value.get(key).is_none(),
+                        "pre-dispatch refusal must omit {key}"
+                    );
                 }
             };
         let run = run_with(["ota", "workspace", "run", "setup", "--json", fixture.path()]);
@@ -50207,8 +50234,14 @@ project:
         let stderr = strip_ansi(output.stderr.as_deref().expect("refusal should use stderr"));
         assert!(stderr.contains("Child admission refused: web"), "{stderr}");
         assert!(stderr.contains("Where: ./apps/web/ota.yaml"), "{stderr}");
-        assert!(stderr.contains("Failure kind: contract_invalid"), "{stderr}");
-        assert!(stderr.contains("Policy acquisition: unavailable"), "{stderr}");
+        assert!(
+            stderr.contains("Failure kind: contract_invalid"),
+            "{stderr}"
+        );
+        assert!(
+            stderr.contains("Policy acquisition: unavailable"),
+            "{stderr}"
+        );
         assert!(stderr.contains("run `ota validate ./apps/web`"), "{stderr}");
         assert!(stderr.contains("custom.workspace.yaml"), "{stderr}");
         assert!(

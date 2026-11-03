@@ -1734,8 +1734,7 @@ fn policy_review_schema_includes_summary_and_policy_fields() {
 #[test]
 fn policy_review_schema_locks_deny_only_rust_fulfillment_shape() {
     let schema = load_schema("docs/spec/json-schemas/policy-review.json");
-    let restriction = &schema["properties"]["policy"]["properties"]["policies"]
-        ["properties"]["toolchain_fulfillment"];
+    let restriction = &schema["properties"]["policy"]["properties"]["policies"]["properties"]["toolchain_fulfillment"];
     let validator = JSONSchema::options()
         .with_draft(Draft::Draft202012)
         .compile(restriction)
@@ -1744,10 +1743,16 @@ fn policy_review_schema_locks_deny_only_rust_fulfillment_shape() {
         assert!(validator.is_valid(&value), "{value}");
     }
     for value in [
-        json!(null), json!([]), json!("deny"), json!({"rust": null}),
-        json!({"rust": "allow"}), json!({"rust": "warn"}),
-        json!({"rust": "Deny"}), json!({"Rust": "deny"}),
-        json!({"rustup": "deny"}), json!({"mise": "deny"}),
+        json!(null),
+        json!([]),
+        json!("deny"),
+        json!({"rust": null}),
+        json!({"rust": "allow"}),
+        json!({"rust": "warn"}),
+        json!({"rust": "Deny"}),
+        json!({"Rust": "deny"}),
+        json!({"rustup": "deny"}),
+        json!({"mise": "deny"}),
         json!({"rust": "deny", "node": "deny"}),
     ] {
         assert!(!validator.is_valid(&value), "{value}");
@@ -1770,9 +1775,12 @@ fn receipt_schema_keeps_policy_denial_distinct_from_fulfillment_attempt() {
     });
     assert!(schema.is_valid(&valid));
     for (field, value) in [
-        ("attempted", json!(true)), ("fulfillment", json!("completed")),
-        ("readiness", json!("satisfied")), ("provider", json!("cargo")),
-        ("policy_source", json!("unknown")), ("preceding_steps", json!([])),
+        ("attempted", json!(true)),
+        ("fulfillment", json!("completed")),
+        ("readiness", json!("satisfied")),
+        ("provider", json!("cargo")),
+        ("policy_source", json!("unknown")),
+        ("preceding_steps", json!([])),
         ("relation", json!({"kind": "requested", "parent": "check"})),
     ] {
         let mut invalid = valid.clone();
@@ -1792,19 +1800,31 @@ fn receipt_schema_route_refusal_is_not_fulfillment_or_authority_evidence() {
         "execution_started": false, "attempted": false, "outcome": "not_run"
     });
     assert!(schema.is_valid(&valid));
-    for path in ["docs/spec/json-schemas/proof-lifecycle.json", "docs/spec/json-schemas/proof-runtime.json"] {
+    for path in [
+        "docs/spec/json-schemas/proof-lifecycle.json",
+        "docs/spec/json-schemas/proof-runtime.json",
+    ] {
         let proof = load_schema(path);
-        let failure = proof["oneOf"].as_array().unwrap().iter()
+        let failure = proof["oneOf"]
+            .as_array()
+            .unwrap()
+            .iter()
             .find(|branch| branch["properties"]["execution_started"]["const"] == false)
             .expect("pre-execution refusal branch");
-        assert_eq!(failure["properties"]["toolchain_fulfillment_route_refusal"]["$ref"],
-            "./receipt.json#/$defs/toolchainFulfillmentPolicyRouteRefusal");
+        assert_eq!(
+            failure["properties"]["toolchain_fulfillment_route_refusal"]["$ref"],
+            "./receipt.json#/$defs/toolchainFulfillmentPolicyRouteRefusal"
+        );
     }
     for (field, value) in [
-        ("execution_started", json!(true)), ("attempted", json!(true)),
-        ("outcome", json!("completed")), ("policy_source", json!("unavailable")),
-        ("readiness", json!("satisfied")), ("provider", json!("rustup")),
-        ("authority_id", json!("approved")), ("policy_identity", json!("unknown")),
+        ("execution_started", json!(true)),
+        ("attempted", json!(true)),
+        ("outcome", json!("completed")),
+        ("policy_source", json!("unavailable")),
+        ("readiness", json!("satisfied")),
+        ("provider", json!("rustup")),
+        ("authority_id", json!("approved")),
+        ("policy_identity", json!("unknown")),
     ] {
         let mut invalid = valid.clone();
         invalid[field] = value;
@@ -3111,7 +3131,10 @@ fn workspace_run_schema_exists_and_covers_repo_run_reports() {
 fn workspace_parent_failure_schema_projection_is_negative_only_and_links_acquisition_to_code() {
     let up = load_schema("docs/spec/json-schemas/workspace-up.json");
     let receipt = load_schema("docs/spec/json-schemas/receipt.json");
-    for (filename, route) in [("workspace-up", "workspace.up"), ("workspace-run", "workspace.run")] {
+    for (filename, route) in [
+        ("workspace-up", "workspace.up"),
+        ("workspace-run", "workspace.run"),
+    ] {
         let mut source = load_schema(&format!("docs/spec/json-schemas/{filename}.json"));
         // Isolate the actual parent failure branch from unrelated success-receipt references.
         for key in ["summary", "receipt", "repos", "artifact_routing"] {
@@ -3120,11 +3143,16 @@ fn workspace_parent_failure_schema_projection_is_negative_only_and_links_acquisi
         // This projection checks parent constraints, not the child branch or whole document.
         source["properties"]["child_admission"] = json!({});
         source["$defs"] = receipt["$defs"].clone();
-        source["$defs"]["workspaceParentAdmission"] = up["$defs"]["workspaceParentAdmission"].clone();
-        source["$defs"]["workspaceParentAdmission"]["properties"]["toolchain_fulfillment_route_refusal"]["$ref"] =
-            json!("#/$defs/toolchainFulfillmentPolicyRouteRefusal");
-        source["properties"]["parent_admission"]["allOf"][0]["$ref"] = json!("#/$defs/workspaceParentAdmission");
-        let schema = JSONSchema::options().with_draft(Draft::Draft202012).compile(&source).unwrap();
+        source["$defs"]["workspaceParentAdmission"] =
+            up["$defs"]["workspaceParentAdmission"].clone();
+        source["$defs"]["workspaceParentAdmission"]["properties"]["toolchain_fulfillment_route_refusal"]
+            ["$ref"] = json!("#/$defs/toolchainFulfillmentPolicyRouteRefusal");
+        source["properties"]["parent_admission"]["allOf"][0]["$ref"] =
+            json!("#/$defs/workspaceParentAdmission");
+        let schema = JSONSchema::options()
+            .with_draft(Draft::Draft202012)
+            .compile(&source)
+            .unwrap();
         let mut sample = json!({
             "ok": false,
             "path": "/workspace/custom.yaml",
@@ -3145,7 +3173,8 @@ fn workspace_parent_failure_schema_projection_is_negative_only_and_links_acquisi
         });
         if route == "workspace.run" {
             sample["task"] = json!("ci");
-            sample["parent_admission"]["toolchain_fulfillment_route_refusal"]["selected_task"] = json!("ci");
+            sample["parent_admission"]["toolchain_fulfillment_route_refusal"]["selected_task"] =
+                json!("ci");
         }
         assert!(schema.is_valid(&sample));
         let mut mixed = sample.clone();
@@ -3168,16 +3197,25 @@ fn workspace_parent_failure_schema_projection_is_negative_only_and_links_acquisi
         invalid["parent_admission"]["policy_acquisition"] = json!("acquired_absent");
         assert!(!schema.is_valid(&invalid));
         invalid = sample.clone();
-        invalid["parent_admission"]["toolchain_fulfillment_route_refusal"]["policy_identity"] = json!("unknown");
+        invalid["parent_admission"]["toolchain_fulfillment_route_refusal"]["policy_identity"] =
+            json!("unknown");
         assert!(!schema.is_valid(&invalid));
-        for (code, status) in [("workspace_parent_policy_load_failed", "error"),
-            ("workspace_parent_protected_admission_unavailable", "unavailable")] {
+        for (code, status) in [
+            ("workspace_parent_policy_load_failed", "error"),
+            (
+                "workspace_parent_protected_admission_unavailable",
+                "unavailable",
+            ),
+        ] {
             let mut failure = sample.clone();
             failure["code"] = json!(code);
             failure["parent_admission"]["policy_acquisition"] = json!(status);
             // An error/unavailable outcome cannot borrow successful policy attribution.
             assert!(!schema.is_valid(&failure));
-            failure["parent_admission"].as_object_mut().unwrap().remove("toolchain_fulfillment_route_refusal");
+            failure["parent_admission"]
+                .as_object_mut()
+                .unwrap()
+                .remove("toolchain_fulfillment_route_refusal");
             assert!(schema.is_valid(&failure));
             failure["code"] = json!("toolchain_fulfillment_policy_route_unsupported");
             assert!(!schema.is_valid(&failure));
@@ -3196,23 +3234,33 @@ fn workspace_child_failure_schema_projection(filename: &str) -> JSONSchema {
         source["properties"][key] = json!({});
     }
     source["$defs"] = json!({});
-    for key in ["sha256Identity", "effectPolicyDecision", "policySourceEvidence",
-        "effectPolicyEffectEvaluation", "applicableEffectPolicyRule"] {
+    for key in [
+        "sha256Identity",
+        "effectPolicyDecision",
+        "policySourceEvidence",
+        "effectPolicyEffectEvaluation",
+        "applicableEffectPolicyRule",
+    ] {
         source["$defs"][key] = preview["$defs"][key].clone();
     }
     source["$defs"]["toolchainFulfillmentPolicyRouteRefusal"] =
         receipt["$defs"]["toolchainFulfillmentPolicyRouteRefusal"].clone();
-    for key in ["workspaceParentAdmission", "workspaceChildAdmission", "workspaceChildFailure"] {
+    for key in [
+        "workspaceParentAdmission",
+        "workspaceChildAdmission",
+        "workspaceChildFailure",
+    ] {
         source["$defs"][key] = up["$defs"][key].clone();
     }
-    source["$defs"]["workspaceParentAdmission"]["properties"]["toolchain_fulfillment_route_refusal"]["$ref"] =
-        json!("#/$defs/toolchainFulfillmentPolicyRouteRefusal");
-    source["$defs"]["workspaceChildAdmission"]["properties"]["policy"]["properties"]["identity"]["$ref"] =
-        json!("#/$defs/sha256Identity");
-    let typed_ref = up["$defs"]["workspaceChildFailure"]["properties"]
-        ["typed_effect_policy_refusal"]["allOf"][0]["$ref"]
-        .as_str()
-        .expect("published typed-refusal reference must be a string");
+    source["$defs"]["workspaceParentAdmission"]["properties"]["toolchain_fulfillment_route_refusal"]
+        ["$ref"] = json!("#/$defs/toolchainFulfillmentPolicyRouteRefusal");
+    source["$defs"]["workspaceChildAdmission"]["properties"]["policy"]["properties"]["identity"]
+        ["$ref"] = json!("#/$defs/sha256Identity");
+    let typed_ref =
+        up["$defs"]["workspaceChildFailure"]["properties"]["typed_effect_policy_refusal"]["allOf"]
+            [0]["$ref"]
+            .as_str()
+            .expect("published typed-refusal reference must be a string");
     let typed_pointer = typed_ref
         .strip_prefix("./receipt.json#")
         .expect("published typed-refusal reference must target the local receipt schema");
@@ -3220,20 +3268,28 @@ fn workspace_child_failure_schema_projection(filename: &str) -> JSONSchema {
         .pointer(typed_pointer)
         .expect("published typed-refusal pointer must resolve")
         .clone();
-    assert!(typed.is_object(), "canonical typed refusal must be an object");
+    assert!(
+        typed.is_object(),
+        "canonical typed refusal must be an object"
+    );
     assert_eq!(typed["additionalProperties"], false);
     source["$defs"]["workspaceTypedEffectPolicyRefusal"] = typed;
-    source["$defs"]["workspaceTypedEffectPolicyRefusal"]["properties"]["policy_decision"]["allOf"][0]["$ref"] =
-        json!("#/$defs/effectPolicyDecision");
+    source["$defs"]["workspaceTypedEffectPolicyRefusal"]["properties"]["policy_decision"]["allOf"]
+        [0]["$ref"] = json!("#/$defs/effectPolicyDecision");
     let properties = &mut source["$defs"]["workspaceChildFailure"]["properties"];
     properties["policy_decision"]["$ref"] = json!("#/$defs/effectPolicyDecision");
     properties["typed_effect_policy_refusal"]["allOf"][0]["$ref"] =
         json!("#/$defs/workspaceTypedEffectPolicyRefusal");
     properties["toolchain_fulfillment_route_refusal"]["allOf"][0]["$ref"] =
         json!("#/$defs/toolchainFulfillmentPolicyRouteRefusal");
-    source["properties"]["parent_admission"]["allOf"][0]["$ref"] = json!("#/$defs/workspaceParentAdmission");
-    source["properties"]["child_admission"]["allOf"][0]["$ref"] = json!("#/$defs/workspaceChildAdmission");
-    JSONSchema::options().with_draft(Draft::Draft202012).compile(&source).unwrap()
+    source["properties"]["parent_admission"]["allOf"][0]["$ref"] =
+        json!("#/$defs/workspaceParentAdmission");
+    source["properties"]["child_admission"]["allOf"][0]["$ref"] =
+        json!("#/$defs/workspaceChildAdmission");
+    JSONSchema::options()
+        .with_draft(Draft::Draft202012)
+        .compile(&source)
+        .unwrap()
 }
 
 fn workspace_child_test_decision(explicit: bool) -> Value {
@@ -3286,8 +3342,12 @@ fn workspace_child_test_failure(route: &str, kind: &str, state: &str) -> Value {
             "failure": { "kind": kind, "error_variant": variant, "message": "canonical child error" }
         }
     });
-    if route == "workspace.run" { sample["task"] = json!("ci"); }
-    if unresolved { sample["child_admission"]["selected_child"]["requested_selector"] = json!("missing"); }
+    if route == "workspace.run" {
+        sample["task"] = json!("ci");
+    }
+    if unresolved {
+        sample["child_admission"]["selected_child"]["requested_selector"] = json!("missing");
+    }
     let identity = format!("sha256:{}", "a".repeat(64));
     if state == "acquired_present" {
         sample["child_admission"]["policy"] = json!({
@@ -3295,7 +3355,8 @@ fn workspace_child_test_failure(route: &str, kind: &str, state: &str) -> Value {
         });
     }
     if kind == "typed_policy_denied" {
-        sample["child_admission"]["failure"]["policy_decision"] = workspace_child_test_decision(false);
+        sample["child_admission"]["failure"]["policy_decision"] =
+            workspace_child_test_decision(false);
     }
     if kind == "unsupported_route" {
         sample["child_admission"]["failure"]["toolchain_fulfillment_route_refusal"] = json!({
@@ -3311,23 +3372,53 @@ fn workspace_child_test_failure(route: &str, kind: &str, state: &str) -> Value {
 #[test]
 fn workspace_child_projection_discriminates_kind_acquisition_and_negative_envelope() {
     let kinds = [
-        ("contract_invalid", &["unavailable"][..]), ("selection_invalid", &["unavailable"][..]),
-        ("policy_load_failed", &["error"][..]), ("policy_identity_failed", &["error"][..]),
+        ("contract_invalid", &["unavailable"][..]),
+        ("selection_invalid", &["unavailable"][..]),
+        ("policy_load_failed", &["error"][..]),
+        ("policy_identity_failed", &["error"][..]),
         ("protected_unavailable", &["unavailable"][..]),
-        ("typed_policy_denied", &["acquired_present", "acquired_absent"][..]),
-        ("typed_realization_unavailable", &["acquired_present", "acquired_absent"][..]),
+        (
+            "typed_policy_denied",
+            &["acquired_present", "acquired_absent"][..],
+        ),
+        (
+            "typed_realization_unavailable",
+            &["acquired_present", "acquired_absent"][..],
+        ),
         ("unsupported_route", &["acquired_present"][..]),
-        ("admission_error", &["unavailable", "acquired_present", "acquired_absent"][..]),
+        (
+            "admission_error",
+            &["unavailable", "acquired_present", "acquired_absent"][..],
+        ),
     ];
-    for (filename, route) in [("workspace-up", "workspace.up"), ("workspace-run", "workspace.run")] {
+    for (filename, route) in [
+        ("workspace-up", "workspace.up"),
+        ("workspace-run", "workspace.run"),
+    ] {
         let schema = workspace_child_failure_schema_projection(filename);
         for (kind, allowed) in kinds {
-            for state in ["acquired_present", "acquired_absent", "error", "unavailable"] {
+            for state in [
+                "acquired_present",
+                "acquired_absent",
+                "error",
+                "unavailable",
+            ] {
                 let sample = workspace_child_test_failure(route, kind, state);
-                let valid = allowed.contains(&state) && !(route == "workspace.run" && kind == "unsupported_route");
+                let valid = allowed.contains(&state)
+                    && !(route == "workspace.run" && kind == "unsupported_route");
                 assert_eq!(schema.is_valid(&sample), valid, "{route}/{kind}/{state}");
-                if !valid { continue; }
-                for key in ["parent_admission", "receipt", "repos", "summary", "artifact_routing", "attempted", "refusal_archive_path"] {
+                if !valid {
+                    continue;
+                }
+                for key in [
+                    "parent_admission",
+                    "receipt",
+                    "repos",
+                    "summary",
+                    "artifact_routing",
+                    "attempted",
+                    "refusal_archive_path",
+                ] {
                     let mut invalid = sample.clone();
                     invalid[key] = Value::Null;
                     assert!(!schema.is_valid(&invalid), "accepted mixed root {key}");
@@ -3344,21 +3435,37 @@ fn workspace_child_projection_discriminates_kind_acquisition_and_negative_envelo
                 invalid["code"] = json!("workspace_parent_policy_load_failed");
                 assert!(!schema.is_valid(&invalid));
                 invalid = sample.clone();
-                let wrong_subject = if route == "workspace.up" { "selected_task" } else { "selected_workflow" };
+                let wrong_subject = if route == "workspace.up" {
+                    "selected_task"
+                } else {
+                    "selected_workflow"
+                };
                 invalid["child_admission"]["selected_child"][wrong_subject] = json!("invented");
                 assert!(!schema.is_valid(&invalid));
-                if matches!(kind, "contract_invalid" | "selection_invalid" | "policy_load_failed"
-                    | "policy_identity_failed" | "protected_unavailable" | "unsupported_route")
-                    || (kind == "admission_error" && state == "unavailable") {
+                if matches!(
+                    kind,
+                    "contract_invalid"
+                        | "selection_invalid"
+                        | "policy_load_failed"
+                        | "policy_identity_failed"
+                        | "protected_unavailable"
+                        | "unsupported_route"
+                ) || (kind == "admission_error" && state == "unavailable")
+                {
                     invalid = sample.clone();
-                    invalid["child_admission"]["failure"]["policy_decision"] = workspace_child_test_decision(false);
+                    invalid["child_admission"]["failure"]["policy_decision"] =
+                        workspace_child_test_decision(false);
                     assert!(!schema.is_valid(&invalid));
                 }
                 if state == "acquired_present" {
                     invalid = sample.clone();
-                    invalid["child_admission"].as_object_mut().unwrap().remove("policy");
+                    invalid["child_admission"]
+                        .as_object_mut()
+                        .unwrap()
+                        .remove("policy");
                     assert!(!schema.is_valid(&invalid));
-                    for (field, value) in [("identity", "unknown"), ("source", "repository_policy")] {
+                    for (field, value) in [("identity", "unknown"), ("source", "repository_policy")]
+                    {
                         invalid = sample.clone();
                         invalid["child_admission"]["policy"][field] = json!(value);
                         assert!(!schema.is_valid(&invalid));
@@ -3372,8 +3479,12 @@ fn workspace_child_projection_discriminates_kind_acquisition_and_negative_envelo
                 }
             }
         }
-        let mut unresolved = workspace_child_test_failure(route, "selection_invalid", "unavailable");
-        unresolved["child_admission"]["selected_child"].as_object_mut().unwrap().remove("requested_selector");
+        let mut unresolved =
+            workspace_child_test_failure(route, "selection_invalid", "unavailable");
+        unresolved["child_admission"]["selected_child"]
+            .as_object_mut()
+            .unwrap()
+            .remove("requested_selector");
         assert!(!schema.is_valid(&unresolved));
     }
 }
@@ -3382,12 +3493,16 @@ fn workspace_child_projection_discriminates_kind_acquisition_and_negative_envelo
 fn workspace_child_projection_keeps_typed_realization_denial_and_up_carriers_distinct() {
     let run = workspace_child_failure_schema_projection("workspace-run");
     let up = workspace_child_failure_schema_projection("workspace-up");
-    let mut denial = workspace_child_test_failure("workspace.run", "typed_policy_denied", "acquired_present");
+    let mut denial =
+        workspace_child_test_failure("workspace.run", "typed_policy_denied", "acquired_present");
     let explicit = workspace_child_test_decision(true);
     let carrier = json!({ "schema_version": 1, "reason_family": "effect_policy_denied",
         "execution_started": false, "policy_decision": explicit });
     denial["child_admission"]["failure"]["typed_effect_policy_refusal"] = carrier.clone();
-    assert!(!run.is_valid(&denial), "coarse denial cannot wear typed evidence");
+    assert!(
+        !run.is_valid(&denial),
+        "coarse denial cannot wear typed evidence"
+    );
     denial["child_admission"]["failure"]["policy_decision"] = explicit;
     assert!(run.is_valid(&denial));
     for key in ["policy_snapshot_archive", "refusal_archive_path"] {
@@ -3395,41 +3510,72 @@ fn workspace_child_projection_keeps_typed_realization_denial_and_up_carriers_dis
         invalid["child_admission"]["failure"]["typed_effect_policy_refusal"][key] = Value::Null;
         assert!(!run.is_valid(&invalid));
     }
-    let rust = workspace_child_test_failure("workspace.up", "unsupported_route", "acquired_present");
-    let rust_carrier = rust["child_admission"]["failure"]["toolchain_fulfillment_route_refusal"].clone();
+    let rust =
+        workspace_child_test_failure("workspace.up", "unsupported_route", "acquired_present");
+    let rust_carrier =
+        rust["child_admission"]["failure"]["toolchain_fulfillment_route_refusal"].clone();
     denial["child_admission"]["failure"]["toolchain_fulfillment_route_refusal"] = rust_carrier;
     assert!(!run.is_valid(&denial));
-    let mut realization = workspace_child_test_failure("workspace.run", "typed_realization_unavailable", "acquired_absent");
+    let mut realization = workspace_child_test_failure(
+        "workspace.run",
+        "typed_realization_unavailable",
+        "acquired_absent",
+    );
     realization["child_admission"]["failure"]["typed_effect_policy_refusal"] = carrier;
     assert!(!run.is_valid(&realization));
-    realization["child_admission"]["failure"].as_object_mut().unwrap().remove("typed_effect_policy_refusal");
-    realization["child_admission"]["failure"]["policy_decision"] = workspace_child_test_decision(false);
-    assert!(run.is_valid(&realization), "actual realization error is not reclassified by aggregate denial");
+    realization["child_admission"]["failure"]
+        .as_object_mut()
+        .unwrap()
+        .remove("typed_effect_policy_refusal");
+    realization["child_admission"]["failure"]["policy_decision"] =
+        workspace_child_test_decision(false);
+    assert!(
+        run.is_valid(&realization),
+        "actual realization error is not reclassified by aggregate denial"
+    );
     realization["child_admission"]["failure"]["code"] = json!("effect_policy_denied");
     assert!(!run.is_valid(&realization));
     assert!(up.is_valid(&rust));
     let mut invalid = rust.clone();
-    invalid["child_admission"]["failure"]["toolchain_fulfillment_route_refusal"]["route"] = json!("workspace.up");
+    invalid["child_admission"]["failure"]["toolchain_fulfillment_route_refusal"]["route"] =
+        json!("workspace.up");
     assert!(!up.is_valid(&invalid));
     invalid = rust.clone();
-    invalid["child_admission"]["failure"].as_object_mut().unwrap().remove("toolchain_fulfillment_route_refusal");
+    invalid["child_admission"]["failure"]
+        .as_object_mut()
+        .unwrap()
+        .remove("toolchain_fulfillment_route_refusal");
     assert!(!up.is_valid(&invalid));
     // Validly shaped forged attribution is NOT rejected by this schema projection. Rust
     // constructor regressions must prove root, resolved workflow:instance and pack equality.
     let forged_identity = format!("sha256:{}", "b".repeat(64));
-    for (field, value) in [("root", "/workspace"), ("selected_workflow", "other:instance"),
-        ("policy_identity", forged_identity.as_str()), ("policy_source", "workspace_policy"),
-        ("policy_path", "/workspace/borrowed.yaml")] {
+    for (field, value) in [
+        ("root", "/workspace"),
+        ("selected_workflow", "other:instance"),
+        ("policy_identity", forged_identity.as_str()),
+        ("policy_source", "workspace_policy"),
+        ("policy_path", "/workspace/borrowed.yaml"),
+    ] {
         let mut forged = rust.clone();
-        forged["child_admission"]["failure"]["toolchain_fulfillment_route_refusal"][field] = json!(value);
-        assert!(up.is_valid(&forged), "shape checking cannot establish ownership for {field}");
+        forged["child_admission"]["failure"]["toolchain_fulfillment_route_refusal"][field] =
+            json!(value);
+        assert!(
+            up.is_valid(&forged),
+            "shape checking cannot establish ownership for {field}"
+        );
     }
-    let mut forged_mapping = workspace_child_test_failure("workspace.run", "typed_policy_denied", "acquired_present");
+    let mut forged_mapping =
+        workspace_child_test_failure("workspace.run", "typed_policy_denied", "acquired_present");
     forged_mapping["child_admission"]["selected_child"]["selected_task"] = json!("unrelated-task");
-    assert!(run.is_valid(&forged_mapping), "mapped-task ownership belongs to the constructor");
+    assert!(
+        run.is_valid(&forged_mapping),
+        "mapped-task ownership belongs to the constructor"
+    );
     let published = load_schema("docs/spec/json-schemas/workspace-up.json");
-    assert_eq!(published["$defs"]["workspaceChildFailure"]["properties"]["policy_decision"]["$ref"],
-        json!("./run-preview.json#/$defs/effectPolicyDecision"));
+    assert_eq!(
+        published["$defs"]["workspaceChildFailure"]["properties"]["policy_decision"]["$ref"],
+        json!("./run-preview.json#/$defs/effectPolicyDecision")
+    );
 }
 
 #[test]

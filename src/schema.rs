@@ -10902,20 +10902,31 @@ tasks:
             assert!(!source.locked);
             assert_eq!(source.command_args(), ["fetch"]);
             assert_eq!(source.command_preview(), "cargo fetch");
-            assert_eq!(serde_json::to_value(source).unwrap(), serde_json::json!({"cwd": "."}));
+            assert_eq!(
+                serde_json::to_value(source).unwrap(),
+                serde_json::json!({"cwd": "."})
+            );
         }
-        let source: super::TaskCargoHydrationSourceSpec = serde_json::from_value(
-            serde_json::json!({"cwd": "member", "locked": true}),
-        ).unwrap();
+        let source: super::TaskCargoHydrationSourceSpec =
+            serde_json::from_value(serde_json::json!({"cwd": "member", "locked": true})).unwrap();
         assert!(source.locked);
         assert_eq!(source.command_args(), ["fetch", "--locked"]);
         assert_eq!(source.command_preview(), "cargo fetch --locked");
-        assert_eq!(serde_json::to_value(source).unwrap(),
-            serde_json::json!({"cwd": "member", "locked": true}));
-        for invalid in [serde_json::json!("true"), serde_json::json!(1), serde_json::Value::Null] {
-            assert!(serde_json::from_value::<super::TaskCargoHydrationSourceSpec>(
-                serde_json::json!({"cwd": ".", "locked": invalid}),
-            ).is_err());
+        assert_eq!(
+            serde_json::to_value(source).unwrap(),
+            serde_json::json!({"cwd": "member", "locked": true})
+        );
+        for invalid in [
+            serde_json::json!("true"),
+            serde_json::json!(1),
+            serde_json::Value::Null,
+        ] {
+            assert!(
+                serde_json::from_value::<super::TaskCargoHydrationSourceSpec>(
+                    serde_json::json!({"cwd": ".", "locked": invalid}),
+                )
+                .is_err()
+            );
         }
     }
 

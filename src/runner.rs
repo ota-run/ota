@@ -1232,13 +1232,17 @@ pub enum RunError {
         toolchain: String,
         details: String,
     },
-    #[error("task `{task}` toolchain `{toolchain}` fulfillment denied by policy; no fulfillment attempted")]
+    #[error(
+        "task `{task}` toolchain `{toolchain}` fulfillment denied by policy; no fulfillment attempted"
+    )]
     ToolchainFulfillmentPolicyDenied {
         task: String,
         toolchain: String,
         evidence: Box<ToolchainFulfillmentPolicyDenial>,
     },
-    #[error("toolchain_fulfillment_policy_route_unsupported: `{route}` cannot execute with captured Rust fulfillment denial from policy `{policy_identity}` ({policy_source:?}, {policy_path}); no route execution attempted")]
+    #[error(
+        "toolchain_fulfillment_policy_route_unsupported: `{route}` cannot execute with captured Rust fulfillment denial from policy `{policy_identity}` ({policy_source:?}, {policy_path}); no route execution attempted"
+    )]
     ToolchainFulfillmentPolicyRouteUnsupported {
         route: String,
         policy_identity: String,
@@ -1271,24 +1275,55 @@ mod run_error_identity_tests {
     #[test]
     fn variant_identity_is_structural_and_preserves_outer_wrapper() {
         for (error, expected) in [
-            (RunError::UnknownTask { task: String::from("check") }, "UnknownTask"),
-            (RunError::InvalidTaskExecution { task: String::from("check") }, "InvalidTaskExecution"),
-            (RunError::FileActionFailed { task: String::new(), message: String::from("EffectPolicyDenied") }, "FileActionFailed"),
-            (RunError::EffectPolicyDenied { task: String::new(), message: String::from("FileActionFailed") }, "EffectPolicyDenied"),
-            (RunError::ToolchainFulfillmentPolicyRouteUnsupported {
-                route: String::from("up"), policy_identity: String::from("policy"),
-                policy_source: crate::policy_pack::PolicyPackSource::RepoPolicy,
-                policy_path: String::from("policy.yaml"),
-            }, "ToolchainFulfillmentPolicyRouteUnsupported"),
+            (
+                RunError::UnknownTask {
+                    task: String::from("check"),
+                },
+                "UnknownTask",
+            ),
+            (
+                RunError::InvalidTaskExecution {
+                    task: String::from("check"),
+                },
+                "InvalidTaskExecution",
+            ),
+            (
+                RunError::FileActionFailed {
+                    task: String::new(),
+                    message: String::from("EffectPolicyDenied"),
+                },
+                "FileActionFailed",
+            ),
+            (
+                RunError::EffectPolicyDenied {
+                    task: String::new(),
+                    message: String::from("FileActionFailed"),
+                },
+                "EffectPolicyDenied",
+            ),
+            (
+                RunError::ToolchainFulfillmentPolicyRouteUnsupported {
+                    route: String::from("up"),
+                    policy_identity: String::from("policy"),
+                    policy_source: crate::policy_pack::PolicyPackSource::RepoPolicy,
+                    policy_path: String::from("policy.yaml"),
+                },
+                "ToolchainFulfillmentPolicyRouteUnsupported",
+            ),
         ] {
             assert_eq!(error.variant_name(), expected);
         }
         let wrapper = RunError::CargoHydrationContext {
-            cause: Box::new(RunError::UnknownTask { task: String::from("check") }),
+            cause: Box::new(RunError::UnknownTask {
+                task: String::from("check"),
+            }),
             observations: Vec::new(),
         };
         assert_eq!(wrapper.variant_name(), "CargoHydrationContext");
-        assert_eq!(wrapper.to_string(), "task `check` is not defined in ota.yaml");
+        assert_eq!(
+            wrapper.to_string(),
+            "task `check` is not defined in ota.yaml"
+        );
     }
 }
 
@@ -1303,10 +1338,16 @@ impl RunError {
             Self::UnsupportedTaskPlatform { .. } => "UnsupportedTaskPlatform",
             Self::MissingRequiredArtifact { .. } => "MissingRequiredArtifact",
             Self::ReplayBaselineUnavailable { .. } => "ReplayBaselineUnavailable",
-            Self::ReplayBaselineReadOnlyBoundaryUnavailable { .. } => "ReplayBaselineReadOnlyBoundaryUnavailable",
-            Self::LinkedWorktreeGitMetadataUnavailable { .. } => "LinkedWorktreeGitMetadataUnavailable",
+            Self::ReplayBaselineReadOnlyBoundaryUnavailable { .. } => {
+                "ReplayBaselineReadOnlyBoundaryUnavailable"
+            }
+            Self::LinkedWorktreeGitMetadataUnavailable { .. } => {
+                "LinkedWorktreeGitMetadataUnavailable"
+            }
             Self::SandboxPolicyApplicationFailed { .. } => "SandboxPolicyApplicationFailed",
-            Self::ReplayBaselineArtifactMutationDetected { .. } => "ReplayBaselineArtifactMutationDetected",
+            Self::ReplayBaselineArtifactMutationDetected { .. } => {
+                "ReplayBaselineArtifactMutationDetected"
+            }
             Self::UnsupportedTaskModeOverride { .. } => "UnsupportedTaskModeOverride",
             Self::UnsupportedTaskLifecycleOverride { .. } => "UnsupportedTaskLifecycleOverride",
             Self::MissingRequiredEnv { .. } => "MissingRequiredEnv",
@@ -1318,19 +1359,37 @@ impl RunError {
             Self::EffectPolicyDenied { .. } => "EffectPolicyDenied",
             Self::MissingContainerImage { .. } => "MissingContainerImage",
             Self::MissingContainerLifecycle { .. } => "MissingContainerLifecycle",
-            Self::LifecycleIsolatedBoundaryUnavailable { .. } => "LifecycleIsolatedBoundaryUnavailable",
+            Self::LifecycleIsolatedBoundaryUnavailable { .. } => {
+                "LifecycleIsolatedBoundaryUnavailable"
+            }
             Self::MissingContainerBackendCli { .. } => "MissingContainerBackendCli",
             Self::HostPublicationConflict { .. } => "HostPublicationConflict",
             Self::NativeListenerBindConflict { .. } => "NativeListenerBindConflict",
-            Self::PersistentContainerListenerBindConflict { .. } => "PersistentContainerListenerBindConflict",
-            Self::HostPortOverrideNoProjectedListener { .. } => "HostPortOverrideNoProjectedListener",
-            Self::HostPortOverrideRequiresFixedProjectedPort { .. } => "HostPortOverrideRequiresFixedProjectedPort",
-            Self::HostPortOverrideRequiresFixedBindPort { .. } => "HostPortOverrideRequiresFixedBindPort",
-            Self::HostPortOverrideAmbiguousProjectedListener { .. } => "HostPortOverrideAmbiguousProjectedListener",
+            Self::PersistentContainerListenerBindConflict { .. } => {
+                "PersistentContainerListenerBindConflict"
+            }
+            Self::HostPortOverrideNoProjectedListener { .. } => {
+                "HostPortOverrideNoProjectedListener"
+            }
+            Self::HostPortOverrideRequiresFixedProjectedPort { .. } => {
+                "HostPortOverrideRequiresFixedProjectedPort"
+            }
+            Self::HostPortOverrideRequiresFixedBindPort { .. } => {
+                "HostPortOverrideRequiresFixedBindPort"
+            }
+            Self::HostPortOverrideAmbiguousProjectedListener { .. } => {
+                "HostPortOverrideAmbiguousProjectedListener"
+            }
             Self::HostPortOverrideUnsupportedBackend { .. } => "HostPortOverrideUnsupportedBackend",
-            Self::HostPortOverrideUnsupportedComposeEngine { .. } => "HostPortOverrideUnsupportedComposeEngine",
-            Self::HostPortOverrideNativeComposeServiceMissing { .. } => "HostPortOverrideNativeComposeServiceMissing",
-            Self::HostPortOverrideNativeComposeFileMissing { .. } => "HostPortOverrideNativeComposeFileMissing",
+            Self::HostPortOverrideUnsupportedComposeEngine { .. } => {
+                "HostPortOverrideUnsupportedComposeEngine"
+            }
+            Self::HostPortOverrideNativeComposeServiceMissing { .. } => {
+                "HostPortOverrideNativeComposeServiceMissing"
+            }
+            Self::HostPortOverrideNativeComposeFileMissing { .. } => {
+                "HostPortOverrideNativeComposeFileMissing"
+            }
             Self::MemoryOverrideUnsupportedBackend { .. } => "MemoryOverrideUnsupportedBackend",
             Self::MemoryOverrideBelowMinimum { .. } => "MemoryOverrideBelowMinimum",
             Self::InvalidContainerMemoryValue { .. } => "InvalidContainerMemoryValue",
@@ -1340,7 +1399,9 @@ impl RunError {
             Self::HostServiceCleanupFailure { .. } => "HostServiceCleanupFailure",
             Self::LaunchContainerNameConflict { .. } => "LaunchContainerNameConflict",
             Self::EphemeralContainerCleanupFailure { .. } => "EphemeralContainerCleanupFailure",
-            Self::DependencyIsolationOwnershipFailure { .. } => "DependencyIsolationOwnershipFailure",
+            Self::DependencyIsolationOwnershipFailure { .. } => {
+                "DependencyIsolationOwnershipFailure"
+            }
             Self::RepoExecutionConflict { .. } => "RepoExecutionConflict",
             Self::WorkflowInstanceCleanupConflict { .. } => "WorkflowInstanceCleanupConflict",
             Self::RepoExecutionLockFailed { .. } => "RepoExecutionLockFailed",
@@ -1352,7 +1413,9 @@ impl RunError {
             Self::UnsupportedRemoteProvider { .. } => "UnsupportedRemoteProvider",
             Self::MissingBackendProvider { .. } => "MissingBackendProvider",
             Self::UnsupportedBackendProviderVersion { .. } => "UnsupportedBackendProviderVersion",
-            Self::BackendProviderRequestSerialization { .. } => "BackendProviderRequestSerialization",
+            Self::BackendProviderRequestSerialization { .. } => {
+                "BackendProviderRequestSerialization"
+            }
             Self::BackendProviderResponseParse { .. } => "BackendProviderResponseParse",
             Self::BackendProviderFailed { .. } => "BackendProviderFailed",
             Self::BackendProviderMissingResult { .. } => "BackendProviderMissingResult",
@@ -1360,7 +1423,9 @@ impl RunError {
             Self::RuntimeListenerResolutionFailed { .. } => "RuntimeListenerResolutionFailed",
             Self::SecretEnvNotSupportedForRemote { .. } => "SecretEnvNotSupportedForRemote",
             Self::NativePrerequisiteActivationFailed { .. } => "NativePrerequisiteActivationFailed",
-            Self::ConflictingNativePrerequisiteActivations { .. } => "ConflictingNativePrerequisiteActivations",
+            Self::ConflictingNativePrerequisiteActivations { .. } => {
+                "ConflictingNativePrerequisiteActivations"
+            }
             Self::SecretEnvCannotHaveDefault { .. } => "SecretEnvCannotHaveDefault",
             Self::MissingRequiredEnvSource { .. } => "MissingRequiredEnvSource",
             Self::InvalidEnvSource { .. } => "InvalidEnvSource",
@@ -1377,7 +1442,9 @@ impl RunError {
             Self::BackendFulfillmentFailed { .. } => "BackendFulfillmentFailed",
             Self::ToolchainFulfillmentFailed { .. } => "ToolchainFulfillmentFailed",
             Self::ToolchainFulfillmentPolicyDenied { .. } => "ToolchainFulfillmentPolicyDenied",
-            Self::ToolchainFulfillmentPolicyRouteUnsupported { .. } => "ToolchainFulfillmentPolicyRouteUnsupported",
+            Self::ToolchainFulfillmentPolicyRouteUnsupported { .. } => {
+                "ToolchainFulfillmentPolicyRouteUnsupported"
+            }
             Self::ToolActivationFailed { .. } => "ToolActivationFailed",
             Self::OrchestratorPreparationFailed { .. } => "OrchestratorPreparationFailed",
             Self::InteractionRequired { .. } => "InteractionRequired",
@@ -1391,12 +1458,21 @@ impl RunError {
         selected_workflow: Option<&str>,
     ) -> Option<ToolchainFulfillmentPolicyRouteRefusal> {
         let Self::ToolchainFulfillmentPolicyRouteUnsupported {
-            route, policy_identity, policy_source, policy_path,
-        } = self else { return None; };
+            route,
+            policy_identity,
+            policy_source,
+            policy_path,
+        } = self
+        else {
+            return None;
+        };
         Some(ToolchainFulfillmentPolicyRouteRefusal {
             reason: String::from("toolchain_fulfillment_policy_route_unsupported"),
             route: route.clone(),
-            root: contract_path.parent().unwrap_or_else(|| Path::new(".")).to_path_buf(),
+            root: contract_path
+                .parent()
+                .unwrap_or_else(|| Path::new("."))
+                .to_path_buf(),
             selected_task: selected_task.map(str::to_string),
             selected_workflow: selected_workflow.map(str::to_string),
             policy_identity: policy_identity.clone(),
@@ -1424,9 +1500,15 @@ impl RunError {
 
     pub(crate) fn into_cargo_context(
         self,
-    ) -> (Self, Vec<crate::hydration_provenance::CargoHydrationEvidence>) {
+    ) -> (
+        Self,
+        Vec<crate::hydration_provenance::CargoHydrationEvidence>,
+    ) {
         match self {
-            Self::CargoHydrationContext { cause, observations } => (*cause, observations),
+            Self::CargoHydrationContext {
+                cause,
+                observations,
+            } => (*cause, observations),
             cause => (cause, Vec::new()),
         }
     }
@@ -1440,7 +1522,10 @@ impl RunError {
         if preceding.is_empty() {
             cause
         } else {
-            Self::CargoHydrationContext { cause: Box::new(cause), observations: preceding }
+            Self::CargoHydrationContext {
+                cause: Box::new(cause),
+                observations: preceding,
+            }
         }
     }
 }
@@ -4003,20 +4088,27 @@ pub fn plan_task_execution_with_overrides(
     let plan = plan_task_execution_structure_with_overrides(contract, task_name, overrides)?;
 
     for step in &plan.steps {
-        if let Some(prepare) = contract.tasks.get(&step.task)
+        if let Some(prepare) = contract
+            .tasks
+            .get(&step.task)
             .and_then(|task| task.resolved_execution_for_backend(step.backend, &step.target_os))
             .and_then(|execution| execution.prepare())
         {
             for (prepare_path, source) in locked_cargo_sources(prepare) {
-                if step.backend != Backend::Native || source.compose.is_some()
+                if step.backend != Backend::Native
+                    || source.compose.is_some()
                     || !cfg!(any(target_os = "linux", target_os = "macos"))
-                    || contract.tasks[&step.task].orchestrator_for_backend(step.backend).is_some()
+                    || contract.tasks[&step.task]
+                        .orchestrator_for_backend(step.backend)
+                        .is_some()
                 {
                     return Err(RunError::LockedCargoHydrationRefused {
                         task: step.task.clone(),
                         cwd: source.cwd.clone(),
                         prepare_path,
-                        reason: String::from("unsupported_backend: locked Cargo observations require direct native Linux/macOS execution without Compose or an orchestrator"),
+                        reason: String::from(
+                            "unsupported_backend: locked Cargo observations require direct native Linux/macOS execution without Compose or an orchestrator",
+                        ),
                     });
                 }
             }
@@ -4055,9 +4147,12 @@ pub(crate) fn locked_cargo_sources(
     ) {
         match step {
             crate::schema::TaskPrepareSequenceStepSpec::DependencyHydration(spec) => {
-                if let crate::schema::TaskDependencyHydrationSourceSpec::Cargo(source) = &spec.source
+                if let crate::schema::TaskDependencyHydrationSourceSpec::Cargo(source) =
+                    &spec.source
                     && source.locked
-                { sources.push((path.clone(), source)); }
+                {
+                    sources.push((path.clone(), source));
+                }
             }
             crate::schema::TaskPrepareSequenceStepSpec::Sequence(spec) => {
                 for (index, nested) in spec.steps.iter().enumerate() {
@@ -4074,7 +4169,9 @@ pub(crate) fn locked_cargo_sources(
         crate::schema::TaskPrepareSpec::DependencyHydration(spec) => {
             if let crate::schema::TaskDependencyHydrationSourceSpec::Cargo(source) = &spec.source
                 && source.locked
-            { sources.push((Vec::new(), source)); }
+            {
+                sources.push((Vec::new(), source));
+            }
         }
         crate::schema::TaskPrepareSpec::Sequence(spec) => {
             for (index, step) in spec.steps.iter().enumerate() {
@@ -6648,9 +6745,8 @@ fn resolve_task_env_details_for_selected_execution_with_policy(
         .ok_or_else(|| RunError::UnknownTask {
             task: task_name.to_string(),
         })?;
-    let selected_env_names = selected_execution_env_names(
-        contract, task, task_env, backend, context_name, target_os,
-    );
+    let selected_env_names =
+        selected_execution_env_names(contract, task, task_env, backend, context_name, target_os);
     resolve_task_env_details_with_policy_and_required_env_names(
         contract,
         contract_path,
@@ -7886,8 +7982,16 @@ pub(crate) fn run_task_with_args_with_overrides_and_stream_capture_with_retained
     retained_policy: RetainedRunPolicyContext,
 ) -> Result<RunOutcome, RunError> {
     run_task_with_progress_and_args_and_overrides_with_policy_context(
-        contract, contract_path, task_name, true, args, overrides,
-        capture_stream_output, live_log, allow_terminal_passthrough, None,
+        contract,
+        contract_path,
+        task_name,
+        true,
+        args,
+        overrides,
+        capture_stream_output,
+        live_log,
+        allow_terminal_passthrough,
+        None,
         retained_policy,
     )
 }
@@ -7969,8 +8073,16 @@ pub(crate) fn run_task_with_progress_and_args_and_overrides_with_policy(
     policy_env: Option<&BTreeMap<String, String>>,
 ) -> Result<RunOutcome, RunError> {
     run_task_with_progress_and_args_and_overrides_with_policy_context(
-        contract, contract_path, task_name, emit_progress, args, overrides,
-        capture_stream_output, live_log, allow_terminal_passthrough, policy_env,
+        contract,
+        contract_path,
+        task_name,
+        emit_progress,
+        args,
+        overrides,
+        capture_stream_output,
+        live_log,
+        allow_terminal_passthrough,
+        policy_env,
         RetainedRunPolicyContext::Unavailable,
     )
 }
@@ -8152,7 +8264,13 @@ pub(crate) fn run_task_captured_with_args_with_overrides_with_retained_policy(
     retained_policy: RetainedRunPolicyContext,
 ) -> Result<CapturedRunOutcome, RunError> {
     run_task_captured_with_args_with_overrides_with_policy_context(
-        contract, contract_path, task_name, args, overrides, None, retained_policy,
+        contract,
+        contract_path,
+        task_name,
+        args,
+        overrides,
+        None,
+        retained_policy,
     )
 }
 
@@ -8166,8 +8284,15 @@ pub(crate) fn run_task_captured_with_args_with_overrides_with_policy_context(
     retained_policy: RetainedRunPolicyContext,
 ) -> Result<CapturedRunOutcome, RunError> {
     run_task_internal_with_started_services_and_policy_context(
-        contract, contract_path, task_name, args, overrides, policy_env,
-        TaskExecutionMode::Capture, BTreeSet::new(), retained_policy,
+        contract,
+        contract_path,
+        task_name,
+        args,
+        overrides,
+        policy_env,
+        TaskExecutionMode::Capture,
+        BTreeSet::new(),
+        retained_policy,
     )
 }
 
@@ -11384,8 +11509,15 @@ fn run_task_internal_with_started_services(
     started_services: BTreeSet<String>,
 ) -> Result<CapturedRunOutcome, RunError> {
     run_task_internal_with_started_services_and_policy_context(
-        contract, contract_path, task_name, input_args, overrides, policy_env,
-        mode, started_services, RetainedRunPolicyContext::Unavailable,
+        contract,
+        contract_path,
+        task_name,
+        input_args,
+        overrides,
+        policy_env,
+        mode,
+        started_services,
+        RetainedRunPolicyContext::Unavailable,
     )
 }
 
@@ -11401,7 +11533,9 @@ fn run_task_internal_with_started_services_and_policy_context(
     retained_policy: RetainedRunPolicyContext,
 ) -> Result<CapturedRunOutcome, RunError> {
     if let RetainedRunPolicyContext::LoadError(details) = &retained_policy {
-        return Err(RunError::InvalidPolicyPack { details: details.clone() });
+        return Err(RunError::InvalidPolicyPack {
+            details: details.clone(),
+        });
     }
     install_run_interrupt_handler();
     RUN_INTERRUPT_REQUESTED.store(false, Ordering::Relaxed);
@@ -11580,13 +11714,23 @@ fn run_task_internal_with_started_services_and_policy_context(
             if let RunError::ToolchainFulfillmentPolicyDenied { evidence, .. } = &mut error {
                 evidence.cleanup_note = state.execution_note.clone();
             }
-            return Err(error.with_cargo_context(state.task_steps.iter()
-                .flat_map(|step| step.cargo_hydration.iter().cloned()).collect()));
+            return Err(error.with_cargo_context(
+                state
+                    .task_steps
+                    .iter()
+                    .flat_map(|step| step.cargo_hydration.iter().cloned())
+                    .collect(),
+            ));
         }
     };
     ensure_current_oci_local_application_completed(task_name).map_err(|error| {
-        error.with_cargo_context(state.task_steps.iter()
-            .flat_map(|step| step.cargo_hydration.iter().cloned()).collect())
+        error.with_cargo_context(
+            state
+                .task_steps
+                .iter()
+                .flat_map(|step| step.cargo_hydration.iter().cloned())
+                .collect(),
+        )
     })?;
     // Preserve the child exit code on its task step, but make the top-level result stable for an
     // observed user interrupt. Consumers can then distinguish interruption from task failure.
@@ -13617,8 +13761,15 @@ fn execute_task_with_hooks(
     let mut backend_fulfillment = backend_fulfillment_preparation.evidence.clone();
 
     let readiness_env = native_rust_readiness_preparation_env(
-        contract, contract_path, task, &backend, working_dir, target_os,
-        &prep_env, policy_env, &state.retained_policy,
+        contract,
+        contract_path,
+        task,
+        &backend,
+        working_dir,
+        target_os,
+        &prep_env,
+        policy_env,
+        &state.retained_policy,
     );
     state.toolchain_invocation = Some((relation.clone(), generation));
     maybe_fulfill_toolchains_on_run_path(
@@ -14080,14 +14231,20 @@ fn execute_task_with_hooks(
         .unwrap_or_default();
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     if let Some(mut witness) = state.native_rust_readiness.remove(task_name) {
-        let valid = witness.matches_final_selection(working_dir, &combined_env, &prepared_execution)
+        let valid = witness
+            .matches_final_selection(working_dir, &combined_env, &prepared_execution)
             .map_err(|details| RunError::ToolchainFulfillmentFailed {
-                task: task_name.to_string(), toolchain: String::from("rust"), details,
+                task: task_name.to_string(),
+                toolchain: String::from("rust"),
+                details,
             })?;
         if !valid {
             return Err(RunError::ToolchainFulfillmentFailed {
-                task: task_name.to_string(), toolchain: String::from("rust"),
-                details: String::from("provision-skipping Rust readiness invalidated before task dispatch; no provisioning was attempted"),
+                task: task_name.to_string(),
+                toolchain: String::from("rust"),
+                details: String::from(
+                    "provision-skipping Rust readiness invalidated before task dispatch; no provisioning was attempted",
+                ),
             });
         }
     }
@@ -14113,9 +14270,12 @@ fn execute_task_with_hooks(
         mode.clone(),
         Some(&mut state.ephemeral_closure_sessions),
         &replay_baseline_mounts,
-    ).map_err(|error| {
+    )
+    .map_err(|error| {
         let (cause, mut observations) = error.into_cargo_context();
-        for observation in &mut observations { observation.generation = generation; }
+        for observation in &mut observations {
+            observation.generation = generation;
+        }
         cause.with_cargo_context(observations)
     })?;
     let mut boundary_materialized = false;
@@ -14210,7 +14370,9 @@ fn execute_task_with_hooks(
         state.execution_note = Some(note);
     }
     let mut cargo_hydration = command_output.cargo_hydration.clone();
-    for evidence in &mut cargo_hydration { evidence.generation = generation; }
+    for evidence in &mut cargo_hydration {
+        evidence.generation = generation;
+    }
     state.task_steps.push(ExecutedTaskStep {
         cargo_hydration,
         name: task_name.to_string(),
@@ -15763,7 +15925,9 @@ fn execute_prepare_task(
                 evidence.prepare_path.insert(0, index);
             }
             cargo_hydration.extend(step_output.cargo_hydration);
-            if cargo_refused { break; }
+            if cargo_refused {
+                break;
+            }
         }
         return Ok(TaskCommandOutput {
             cargo_hydration,
@@ -15788,7 +15952,8 @@ fn execute_prepare_task(
             evidence.outcome = CargoLockOutcome::UnsupportedBackend;
             return Ok(cargo_hydration_refusal(evidence));
         }
-        let base = task.map(|task| effective_task_execution_working_dir(task, Backend::Native, working_dir))
+        let base = task
+            .map(|task| effective_task_execution_working_dir(task, Backend::Native, working_dir))
             .unwrap_or_else(|| working_dir.to_path_buf());
         let selected_cwd = apply_prepared_execution_cwd(base, Some(&source.cwd));
         let selected_cwd = match selected_cwd.strip_prefix(working_dir) {
@@ -15808,7 +15973,11 @@ fn execute_prepare_task(
                 return Ok(cargo_hydration_refusal(evidence));
             }
         };
-        let admitted = match crate::hydration_provenance::observe_cargo_lock(working_dir, &selected_cwd, &metadata) {
+        let admitted = match crate::hydration_provenance::observe_cargo_lock(
+            working_dir,
+            &selected_cwd,
+            &metadata,
+        ) {
             Ok(observation) => observation,
             Err(error) => {
                 evidence.outcome = error.outcome;
@@ -15817,8 +15986,10 @@ fn execute_prepare_task(
             }
         };
         evidence.before = Some(admitted.clone());
-        let rechecked = cargo_root_metadata(working_dir, &selected_cwd, env_overrides)
-            .and_then(|output| crate::hydration_provenance::observe_cargo_lock(working_dir, &selected_cwd, &output));
+        let rechecked =
+            cargo_root_metadata(working_dir, &selected_cwd, env_overrides).and_then(|output| {
+                crate::hydration_provenance::observe_cargo_lock(working_dir, &selected_cwd, &output)
+            });
         match rechecked {
             Ok(observation) if observation == admitted => {}
             Ok(_) => {
@@ -15833,26 +16004,44 @@ fn execute_prepare_task(
         }
         let command = dependency_hydration_command_specs(&spec.source).remove(0);
         let output = execute_task_command(
-            contract, task, task_name, runtime,
+            contract,
+            task,
+            task_name,
+            runtime,
             &prepared_structured_command_spec_for_backend(backend, &command),
-            working_dir, env_overrides, path_export, secret_env_names, backend,
-            deferred_backend_fulfillment, host_port_override, mode, ephemeral_sessions,
+            working_dir,
+            env_overrides,
+            path_export,
+            secret_env_names,
+            backend,
+            deferred_backend_fulfillment,
+            host_port_override,
+            mode,
+            ephemeral_sessions,
         );
-        let after = cargo_root_metadata(working_dir, &selected_cwd, env_overrides)
-            .and_then(|output| crate::hydration_provenance::observe_cargo_lock(working_dir, &selected_cwd, &output));
+        let after =
+            cargo_root_metadata(working_dir, &selected_cwd, env_overrides).and_then(|output| {
+                crate::hydration_provenance::observe_cargo_lock(working_dir, &selected_cwd, &output)
+            });
         let mut output = match output {
             Ok(output) => output,
             Err(error) => {
                 evidence.after = after.ok();
                 evidence.outcome = CargoLockOutcome::ObservationUnavailable;
-                evidence.observation_error = Some(format!("Cargo execution did not yield a command status: {error}"));
+                evidence.observation_error = Some(format!(
+                    "Cargo execution did not yield a command status: {error}"
+                ));
                 return Err(error.with_cargo_context(vec![evidence]));
             }
         };
         output.exit_code = evidence.observe_command_completion(output.exit_code, after);
-        output.execution_note = merge_execution_note(output.execution_note, Some(format!(
-            "locked Cargo {:?}; acquisition=not_proved, concurrent_mutation=not_proved", evidence.outcome,
-        )));
+        output.execution_note = merge_execution_note(
+            output.execution_note,
+            Some(format!(
+                "locked Cargo {:?}; acquisition=not_proved, concurrent_mutation=not_proved",
+                evidence.outcome,
+            )),
+        );
         output.cargo_hydration.push(evidence);
         return Ok(output);
     }
@@ -16028,7 +16217,9 @@ fn cargo_hydration_refusal(
         target: None,
         runtime: None,
         service_termination: None,
-        execution_note: Some(String::from("Cargo acquisition and concurrent mutation remain not_proved")),
+        execution_note: Some(String::from(
+            "Cargo acquisition and concurrent mutation remain not_proved",
+        )),
         interrupted: false,
         cargo_hydration: vec![evidence],
     }
@@ -16058,10 +16249,13 @@ fn cargo_root_metadata_for_manifest(
     let mut stdout = tempfile::tempfile().map_err(|error| error.to_string())?;
     let stderr = tempfile::tempfile().map_err(|error| error.to_string())?;
     let mut command = Command::new(resolve_native_launch_executable("cargo"));
-    command.args(["locate-project", "--workspace", "--manifest-path"])
-        .arg(manifest).args(["--message-format", "json"])
+    command
+        .args(["locate-project", "--workspace", "--manifest-path"])
+        .arg(manifest)
+        .args(["--message-format", "json"])
         .current_dir(manifest.parent().ok_or("Cargo manifest has no directory")?)
-        .envs(env_overrides).stdin(Stdio::null())
+        .envs(env_overrides)
+        .stdin(Stdio::null())
         .stdout(stdout.try_clone().map_err(|error| error.to_string())?)
         .stderr(stderr.try_clone().map_err(|error| error.to_string())?);
     remove_runner_private_env(&mut command);
@@ -16069,7 +16263,10 @@ fn cargo_root_metadata_for_manifest(
     // Each regular-file sink is bounded without a pipe-reader thread.
     unsafe {
         command.pre_exec(|| {
-            let limit = libc::rlimit { rlim_cur: 32 * 1024, rlim_max: 32 * 1024 };
+            let limit = libc::rlimit {
+                rlim_cur: 32 * 1024,
+                rlim_max: 32 * 1024,
+            };
             if libc::setrlimit(libc::RLIMIT_FSIZE, &limit) != 0 {
                 return Err(io::Error::last_os_error());
             }
@@ -16081,7 +16278,9 @@ fn cargo_root_metadata_for_manifest(
     loop {
         if Instant::now() >= deadline || RUN_INTERRUPT_REQUESTED.load(Ordering::Relaxed) {
             // The child has not been reaped, so its group identifier cannot be reused here.
-            unsafe { libc::kill(-(child.id() as libc::pid_t), libc::SIGKILL); }
+            unsafe {
+                libc::kill(-(child.id() as libc::pid_t), libc::SIGKILL);
+            }
             let _ = child.kill();
             let _ = child.wait();
             return Err(String::from("Cargo root metadata deadline or interruption"));
@@ -16090,19 +16289,29 @@ fn cargo_root_metadata_for_manifest(
         // would allow the group identifier to be reused before descendant cleanup.
         let mut observed: libc::siginfo_t = unsafe { std::mem::zeroed() };
         let waited = unsafe {
-            libc::waitid(libc::P_PID, child.id() as libc::id_t, &mut observed,
-                libc::WEXITED | libc::WNOHANG | libc::WNOWAIT)
+            libc::waitid(
+                libc::P_PID,
+                child.id() as libc::id_t,
+                &mut observed,
+                libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+            )
         };
         if waited != 0 {
             let error = io::Error::last_os_error();
-            if error.kind() == io::ErrorKind::Interrupted { continue; }
+            if error.kind() == io::ErrorKind::Interrupted {
+                continue;
+            }
             // ECHILD means the identity anchor is no longer retained; do not signal a reused PID.
             if error.raw_os_error() != Some(libc::ECHILD) {
-                unsafe { libc::kill(-(child.id() as libc::pid_t), libc::SIGKILL); }
+                unsafe {
+                    libc::kill(-(child.id() as libc::pid_t), libc::SIGKILL);
+                }
                 let _ = child.kill();
                 let _ = child.wait();
             }
-            return Err(format!("Cargo metadata child observation unavailable: {error}"));
+            return Err(format!(
+                "Cargo metadata child observation unavailable: {error}"
+            ));
         }
         if unsafe { observed.si_pid() } == child.id() as libc::pid_t {
             let killed = unsafe { libc::kill(-(child.id() as libc::pid_t), libc::SIGKILL) };
@@ -16111,28 +16320,42 @@ fn cargo_root_metadata_for_manifest(
             if let Some(error) = kill_error
                 && error.raw_os_error() != Some(libc::ESRCH)
             {
-                return Err(format!("Cargo metadata group termination unavailable: {error}"));
+                return Err(format!(
+                    "Cargo metadata group termination unavailable: {error}"
+                ));
             }
-                if !status.success() {
-                    return Err(format!("Cargo root metadata failed with {:?}", status.code()));
-                }
-                break;
+            if !status.success() {
+                return Err(format!(
+                    "Cargo root metadata failed with {:?}",
+                    status.code()
+                ));
+            }
+            break;
         }
         thread::sleep(Duration::from_millis(10));
     }
     let total = stdout.metadata().map_err(|error| error.to_string())?.len()
         + stderr.metadata().map_err(|error| error.to_string())?.len();
-    if total > 64 * 1024 { return Err(String::from("Cargo metadata output exceeds its bound")); }
+    if total > 64 * 1024 {
+        return Err(String::from("Cargo metadata output exceeds its bound"));
+    }
     stdout.rewind().map_err(|error| error.to_string())?;
     let mut bytes = Vec::new();
-    stdout.take(32 * 1024 + 1).read_to_end(&mut bytes).map_err(|error| error.to_string())?;
-    if bytes.len() > 32 * 1024 { return Err(String::from("Cargo metadata output grew after exit")); }
+    stdout
+        .take(32 * 1024 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| error.to_string())?;
+    if bytes.len() > 32 * 1024 {
+        return Err(String::from("Cargo metadata output grew after exit"));
+    }
     String::from_utf8(bytes).map_err(|error| error.to_string())
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
 fn cargo_root_metadata(
-    _repository: &Path, _cwd: &str, _env: &BTreeMap<String, String>,
+    _repository: &Path,
+    _cwd: &str,
+    _env: &BTreeMap<String, String>,
 ) -> Result<String, crate::hydration_provenance::CargoObservationError> {
     Err(crate::hydration_provenance::CargoObservationError {
         outcome: crate::hydration_provenance::CargoLockOutcome::UnsupportedBackend,
@@ -19483,24 +19706,44 @@ fn native_rust_readiness_context_matches(
     target_os: &str,
 ) -> bool {
     let backend_kind = resolved_execution_backend_kind(backend);
-    let Some(command) = task.resolved_execution_for_backend(backend_kind, target_os)
-        .and_then(|execution| execution.command()) else { return false; };
+    let Some(command) = task
+        .resolved_execution_for_backend(backend_kind, target_os)
+        .and_then(|execution| execution.command())
+    else {
+        return false;
+    };
     let context = task.context_for_backend(contract.execution.as_ref(), backend_kind);
     // Only preparation contexts that cannot be changed by later resolution may acquit a skip.
-    matches!(backend, ResolvedExecutionBackend::Native { shared_local_backend: None })
-        && working_dir == contract_working_dir(contract_path)
+    matches!(
+        backend,
+        ResolvedExecutionBackend::Native {
+            shared_local_backend: None
+        }
+    ) && working_dir == contract_working_dir(contract_path)
         && effective_task_execution_working_dir(task, backend_kind, working_dir) == working_dir
-        && command.cwd.as_deref().is_none_or(|cwd| cwd.trim().is_empty())
+        && command
+            .cwd
+            .as_deref()
+            .is_none_or(|cwd| cwd.trim().is_empty())
         && command.runtime_projection.is_none()
         && matches!(command.exe.as_str(), "cargo" | "rustc" | "rustfmt")
         && !command.args.iter().any(|arg| arg.starts_with('+'))
         && contract.env.sources.is_empty()
-        && task.env_files_for_backend_for_os(backend_kind, target_os).is_empty()
-        && task.env_bindings_for_backend_with_context_name_for_os(
-            contract.execution.as_ref(), backend_kind, context, target_os).is_empty()
+        && task
+            .env_files_for_backend_for_os(backend_kind, target_os)
+            .is_empty()
+        && task
+            .env_bindings_for_backend_with_context_name_for_os(
+                contract.execution.as_ref(),
+                backend_kind,
+                context,
+                target_os,
+            )
+            .is_empty()
         && task.inputs.is_empty()
         && task.targets.is_empty()
-        && collect_native_task_activation_requests(contract, task, backend_kind, context, target_os).is_empty()
+        && collect_native_task_activation_requests(contract, task, backend_kind, context, target_os)
+            .is_empty()
 }
 
 fn native_rust_readiness_preparation_env(
@@ -19515,33 +19758,70 @@ fn native_rust_readiness_preparation_env(
     retained_policy: &RetainedRunPolicyContext,
 ) -> Option<BTreeMap<String, String>> {
     if !native_rust_readiness_context_matches(
-        contract, contract_path, task, backend, working_dir, target_os,
-    ) { return None; }
+        contract,
+        contract_path,
+        task,
+        backend,
+        working_dir,
+        target_os,
+    ) {
+        return None;
+    }
     let repo_values = match retained_policy {
         RetainedRunPolicyContext::AcquiredPresent(policy) => Some(&policy.env_values),
         RetainedRunPolicyContext::AcquiredAbsent => None,
-        RetainedRunPolicyContext::Unavailable | RetainedRunPolicyContext::LoadError(_) => return None,
+        RetainedRunPolicyContext::Unavailable | RetainedRunPolicyContext::LoadError(_) => {
+            return None;
+        }
     };
     let mut values = prep_env.clone();
     let mut requirements = contract.env.iter();
-    let Some((name, requirement)) = requirements.next() else { return Some(values); };
-    if name != "PATH" || requirements.next().is_some()
-        || requirement.secret || requirement.default.is_some() || !requirement.allowed.is_empty()
-        || requirement.prepend.iter().chain(&requirement.append).any(|entry| {
-            !Path::new(entry).is_absolute() || entry.contains('$')
-                || entry.contains('{') || entry.contains('}')
-        }) { return None; }
+    let Some((name, requirement)) = requirements.next() else {
+        return Some(values);
+    };
+    if name != "PATH"
+        || requirements.next().is_some()
+        || requirement.secret
+        || requirement.default.is_some()
+        || !requirement.allowed.is_empty()
+        || requirement
+            .prepend
+            .iter()
+            .chain(&requirement.append)
+            .any(|entry| {
+                !Path::new(entry).is_absolute()
+                    || entry.contains('$')
+                    || entry.contains('{')
+                    || entry.contains('}')
+            })
+    {
+        return None;
+    }
     let backend_kind = resolved_execution_backend_kind(backend);
     let context = task.context_for_backend(contract.execution.as_ref(), backend_kind);
     if !selected_execution_env_names(
-        contract, task, Some(prep_env), backend_kind, context, target_os,
-    ).contains("PATH") { return Some(values); }
-    let base = values.get("PATH").cloned()
+        contract,
+        task,
+        Some(prep_env),
+        backend_kind,
+        context,
+        target_os,
+    )
+    .contains("PATH")
+    {
+        return Some(values);
+    }
+    let base = values
+        .get("PATH")
+        .cloned()
         .or_else(|| policy_env.and_then(|values| values.get("PATH")).cloned())
         .or_else(|| repo_values.and_then(|values| values.get("PATH")).cloned())
         .or_else(|| env::var("PATH").ok())?;
     // Same precedence and composer as final resolution, without acquiring sources early.
-    values.insert(String::from("PATH"), compose_path_value("PATH", &base, requirement).ok()?);
+    values.insert(
+        String::from("PATH"),
+        compose_path_value("PATH", &base, requirement).ok()?,
+    );
     Some(values)
 }
 
@@ -19567,35 +19847,59 @@ struct NativeRustReadinessWitness {
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 impl NativeRustReadinessWitness {
     fn matches_final_selection(
-        &mut self, cwd: &Path, env: &BTreeMap<String, String>, execution: &PreparedTaskExecution,
+        &mut self,
+        cwd: &Path,
+        env: &BTreeMap<String, String>,
+        execution: &PreparedTaskExecution,
     ) -> Result<bool, String> {
-        let PreparedTaskExecution::NativeCommand { exe, args, cwd: command_cwd, .. } = execution
-            else { return Ok(false); };
+        let PreparedTaskExecution::NativeCommand {
+            exe,
+            args,
+            cwd: command_cwd,
+            ..
+        } = execution
+        else {
+            return Ok(false);
+        };
         let bindings_match = |this: &Self| {
             this.budget.environment == native_rust_effective_probe_env(env)
-            && this.launch_bindings.iter().all(|binding| {
-                native_rust_executable_binding(&binding.name, cwd, env).as_ref() == Some(binding)
-            })
-            && this.installed_bindings.iter().all(|binding| {
-                native_rust_binding_for_path(&binding.name, binding.path.clone()).as_ref() == Some(binding)
-            })
+                && this.launch_bindings.iter().all(|binding| {
+                    native_rust_executable_binding(&binding.name, cwd, env).as_ref()
+                        == Some(binding)
+                })
+                && this.installed_bindings.iter().all(|binding| {
+                    native_rust_binding_for_path(&binding.name, binding.path.clone()).as_ref()
+                        == Some(binding)
+                })
         };
-        if !(command_cwd.as_deref().is_none_or(|cwd| cwd.trim().is_empty())
+        if !(command_cwd
+            .as_deref()
+            .is_none_or(|cwd| cwd.trim().is_empty())
             && self.command_exe.as_deref() == Some(exe.as_str())
             && !args.iter().any(|arg| arg.starts_with('+'))
             && self.cwd == cwd
-            && bindings_match(self)) { return Ok(false); }
+            && bindings_match(self))
+        {
+            return Ok(false);
+        }
         // A stable proxy inode does not prove cwd/config-selected Rustup state stayed stable.
         for installed in &self.installed_bindings {
             let active = match native_rust_readiness_probe(
-                &self.launch_bindings[0], &["which", &installed.name], cwd, env, &mut self.budget,
+                &self.launch_bindings[0],
+                &["which", &installed.name],
+                cwd,
+                env,
+                &mut self.budget,
             ) {
                 Ok(active) => active,
                 Err(NativeRustProbeError::Unknown) => return Ok(false),
                 Err(NativeRustProbeError::Terminal(details)) => return Err(details),
             };
             if native_rust_binding_for_path(&installed.name, PathBuf::from(active.trim())).as_ref()
-                != Some(installed) { return Ok(false); }
+                != Some(installed)
+            {
+                return Ok(false);
+            }
         }
         Ok(bindings_match(self))
     }
@@ -19611,14 +19915,22 @@ fn native_rust_executable_binding(
     if !path.is_absolute() {
         return None;
     }
-    let effective_path = env_overrides.get("PATH").map(std::ffi::OsString::from)
+    let effective_path = env_overrides
+        .get("PATH")
+        .map(std::ffi::OsString::from)
         .or_else(|| env::var_os("PATH"))?;
     let managed = cwd.join(".ota/state/source-managed/bin").join(name);
-    let effective = resolve_probeable_command_path_in_working_dir(cwd, managed.to_str()?)
-        .or_else(|| env::split_paths(&effective_path).find_map(|entry| {
-            let entry = if entry.is_absolute() { entry } else { cwd.join(entry) };
-            resolve_probeable_command_path_in_working_dir(cwd, entry.join(name).to_str()?)
-        }))?;
+    let effective =
+        resolve_probeable_command_path_in_working_dir(cwd, managed.to_str()?).or_else(|| {
+            env::split_paths(&effective_path).find_map(|entry| {
+                let entry = if entry.is_absolute() {
+                    entry
+                } else {
+                    cwd.join(entry)
+                };
+                resolve_probeable_command_path_in_working_dir(cwd, entry.join(name).to_str()?)
+            })
+        })?;
     let canonical = fs::canonicalize(&path).ok()?;
     if fs::canonicalize(effective).ok()? != canonical {
         return None;
@@ -19628,15 +19940,25 @@ fn native_rust_executable_binding(
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn native_rust_binding_for_path(name: &str, path: PathBuf) -> Option<NativeRustExecutableBinding> {
-    if !path.is_absolute() { return None; }
+    if !path.is_absolute() {
+        return None;
+    }
     let canonical = fs::canonicalize(&path).ok()?;
     let metadata = fs::metadata(&canonical).ok()?;
     if !metadata.is_file() || metadata.mode() & 0o111 == 0 {
         return None;
     }
     Some(NativeRustExecutableBinding {
-        name: name.to_string(), path, canonical,
-        object: (metadata.dev(), metadata.ino(), metadata.len(), metadata.mtime(), metadata.mtime_nsec()),
+        name: name.to_string(),
+        path,
+        canonical,
+        object: (
+            metadata.dev(),
+            metadata.ino(),
+            metadata.len(),
+            metadata.mtime(),
+            metadata.mtime_nsec(),
+        ),
     })
 }
 
@@ -19661,9 +19983,17 @@ fn native_rust_effective_probe_env(
     overrides: &BTreeMap<String, String>,
 ) -> BTreeMap<std::ffi::OsString, std::ffi::OsString> {
     let mut result: BTreeMap<_, _> = env::vars_os().collect();
-    result.extend(overrides.iter().map(|(name, value)| (name.into(), value.into())));
-    for name in [EXECUTION_BOUNDARY_TRACE_PATH_ENV, EXECUTION_BOUNDARY_TRACE_TOKEN_ENV,
-        "OTA_LAUNCHER_PRINCIPAL_MAPPING_IDENTITY", "OTA_SYSTEMD_LAUNCHER_STARTUP_GATE"] {
+    result.extend(
+        overrides
+            .iter()
+            .map(|(name, value)| (name.into(), value.into())),
+    );
+    for name in [
+        EXECUTION_BOUNDARY_TRACE_PATH_ENV,
+        EXECUTION_BOUNDARY_TRACE_TOKEN_ENV,
+        "OTA_LAUNCHER_PRINCIPAL_MAPPING_IDENTITY",
+        "OTA_SYSTEMD_LAUNCHER_STARTUP_GATE",
+    ] {
         result.remove(OsStr::new(name));
     }
     result
@@ -19681,20 +20011,28 @@ fn native_rust_readiness_probe(
     const SINK_LIMIT: u64 = 8 * 1024;
     let unknown = |_| NativeRustProbeError::Unknown;
     if RUN_INTERRUPT_REQUESTED.load(Ordering::Relaxed) {
-        return Err(NativeRustProbeError::Terminal(String::from("Rust readiness interrupted")));
+        return Err(NativeRustProbeError::Terminal(String::from(
+            "Rust readiness interrupted",
+        )));
     }
     let work_deadline = budget.deadline - Duration::from_secs(2);
     if Instant::now() >= work_deadline || budget.remaining_output == 0 {
         return Err(NativeRustProbeError::Unknown);
     }
     if native_rust_effective_probe_env(env_overrides) != budget.environment
-        || native_rust_executable_binding(&executable.name, cwd, env_overrides).as_ref() != Some(executable) {
+        || native_rust_executable_binding(&executable.name, cwd, env_overrides).as_ref()
+            != Some(executable)
+    {
         return Err(NativeRustProbeError::Unknown);
     }
     let mut stdout = tempfile::tempfile().map_err(unknown)?;
     let mut stderr = tempfile::tempfile().map_err(unknown)?;
     let mut command = Command::new(&executable.path);
-    command.args(args).current_dir(cwd).env_clear().envs(&budget.environment)
+    command
+        .args(args)
+        .current_dir(cwd)
+        .env_clear()
+        .envs(&budget.environment)
         .env("RUSTUP_AUTO_INSTALL", "0")
         .stdin(Stdio::null())
         .stdout(stdout.try_clone().map_err(unknown)?)
@@ -19703,7 +20041,10 @@ fn native_rust_readiness_probe(
     configure_owned_native_process_group(&mut command);
     unsafe {
         command.pre_exec(|| {
-            let limit = libc::rlimit { rlim_cur: 8 * 1024 + 1, rlim_max: 8 * 1024 + 1 };
+            let limit = libc::rlimit {
+                rlim_cur: 8 * 1024 + 1,
+                rlim_max: 8 * 1024 + 1,
+            };
             if libc::setrlimit(libc::RLIMIT_FSIZE, &limit) != 0 {
                 return Err(io::Error::last_os_error());
             }
@@ -19716,22 +20057,33 @@ fn native_rust_readiness_probe(
     loop {
         let mut observed: libc::siginfo_t = unsafe { std::mem::zeroed() };
         let result = unsafe {
-            libc::waitid(libc::P_PID, child.id() as libc::id_t, &mut observed,
-                libc::WEXITED | libc::WNOHANG | libc::WNOWAIT)
+            libc::waitid(
+                libc::P_PID,
+                child.id() as libc::id_t,
+                &mut observed,
+                libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+            )
         };
         if result != 0 {
             let error = io::Error::last_os_error();
             if error.raw_os_error() == Some(libc::ECHILD) {
-                return Err(NativeRustProbeError::Terminal(String::from("Rust readiness child ownership lost")));
+                return Err(NativeRustProbeError::Terminal(String::from(
+                    "Rust readiness child ownership lost",
+                )));
             }
             observation_failed = error.kind() != io::ErrorKind::Interrupted;
         }
         let interrupted = RUN_INTERRUPT_REQUESTED.load(Ordering::Relaxed);
         let expired = Instant::now() >= deadline;
-        if observation_failed || interrupted || expired || unsafe { observed.si_pid() } == child.id() as libc::pid_t {
+        if observation_failed
+            || interrupted
+            || expired
+            || unsafe { observed.si_pid() } == child.id() as libc::pid_t
+        {
             // Retain the unreaped leader until signalling; never kill a possibly reused group ID.
             let killed = unsafe { libc::kill(-(child.id() as libc::pid_t), libc::SIGKILL) };
-            let cleanup_failed = killed != 0 && io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH);
+            let cleanup_failed =
+                killed != 0 && io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH);
             if cleanup_failed {
                 let _ = child.kill();
             }
@@ -19739,15 +20091,25 @@ fn native_rust_readiness_probe(
             let status = loop {
                 match child.try_wait() {
                     Ok(Some(status)) => break status,
-                    Ok(None) if Instant::now() < cleanup_deadline => thread::sleep(Duration::from_millis(10)),
-                    _ => return Err(NativeRustProbeError::Terminal(String::from("Rust readiness child retirement unavailable"))),
+                    Ok(None) if Instant::now() < cleanup_deadline => {
+                        thread::sleep(Duration::from_millis(10))
+                    }
+                    _ => {
+                        return Err(NativeRustProbeError::Terminal(String::from(
+                            "Rust readiness child retirement unavailable",
+                        )));
+                    }
                 }
             };
             if cleanup_failed {
-                return Err(NativeRustProbeError::Terminal(String::from("Rust readiness group cleanup failed")));
+                return Err(NativeRustProbeError::Terminal(String::from(
+                    "Rust readiness group cleanup failed",
+                )));
             }
             if interrupted || RUN_INTERRUPT_REQUESTED.load(Ordering::Relaxed) {
-                return Err(NativeRustProbeError::Terminal(String::from("Rust readiness interrupted")));
+                return Err(NativeRustProbeError::Terminal(String::from(
+                    "Rust readiness interrupted",
+                )));
             }
             let out_len = stdout.metadata().map_err(unknown)?.len();
             let err_len = stderr.metadata().map_err(unknown)?.len();
@@ -19763,13 +20125,23 @@ fn native_rust_readiness_probe(
             stdout.rewind().map_err(unknown)?;
             stderr.rewind().map_err(unknown)?;
             let mut bytes = Vec::new();
-            stdout.take(SINK_LIMIT + 1).read_to_end(&mut bytes).map_err(unknown)?;
-            if bytes.len() as u64 != out_len { return Err(NativeRustProbeError::Unknown); }
+            stdout
+                .take(SINK_LIMIT + 1)
+                .read_to_end(&mut bytes)
+                .map_err(unknown)?;
+            if bytes.len() as u64 != out_len {
+                return Err(NativeRustProbeError::Unknown);
+            }
             let output = String::from_utf8(bytes).map_err(|_| NativeRustProbeError::Unknown)?;
             // Diagnostics do not become version or installed-entry evidence.
             let mut diagnostics = Vec::new();
-            stderr.take(SINK_LIMIT + 1).read_to_end(&mut diagnostics).map_err(unknown)?;
-            if diagnostics.len() as u64 != err_len { return Err(NativeRustProbeError::Unknown); }
+            stderr
+                .take(SINK_LIMIT + 1)
+                .read_to_end(&mut diagnostics)
+                .map_err(unknown)?;
+            if diagnostics.len() as u64 != err_len {
+                return Err(NativeRustProbeError::Unknown);
+            }
             return Ok(output);
         }
         thread::sleep(Duration::from_millis(10));
@@ -19786,7 +20158,13 @@ fn native_rust_satisfaction(
     target_os: &str,
 ) -> Result<NativeRustSatisfaction, String> {
     native_rust_satisfaction_with_witness(
-        toolchain_name, toolchain, backend, cwd, env_overrides, target_os, &mut None,
+        toolchain_name,
+        toolchain,
+        backend,
+        cwd,
+        env_overrides,
+        target_os,
+        &mut None,
     )
 }
 
@@ -19804,7 +20182,12 @@ fn native_rust_satisfaction_with_witness(
     let version = toolchain.version_for_os(target_os);
     let components = toolchain.components_for_os(target_os);
     let eligible = toolchain_name == "rust"
-        && matches!(backend, ResolvedExecutionBackend::Native { shared_local_backend: None })
+        && matches!(
+            backend,
+            ResolvedExecutionBackend::Native {
+                shared_local_backend: None
+            }
+        )
         && target_os == current_os()
         && toolchain.fulfillment_source().or_else(|| {
             crate::toolchains::declared_toolchain_contract(toolchain_name, toolchain)
@@ -19815,97 +20198,179 @@ fn native_rust_satisfaction_with_witness(
             parsed.to_string() == version && parsed.pre.is_empty() && parsed.build.is_empty()
         })
         && components.iter().all(|component| component == "rustfmt")
-        && ["RUSTC", "RUSTC_WRAPPER", "RUSTC_WORKSPACE_WRAPPER"].iter().all(|name| {
-            env_overrides.get(*name).map(|value| value.is_empty())
-                .unwrap_or_else(|| env::var_os(*name).is_none_or(|value| value.is_empty()))
-        });
-    if !eligible { return Ok(NativeRustSatisfaction::Unknown); }
+        && ["RUSTC", "RUSTC_WRAPPER", "RUSTC_WORKSPACE_WRAPPER"]
+            .iter()
+            .all(|name| {
+                env_overrides
+                    .get(*name)
+                    .map(|value| value.is_empty())
+                    .unwrap_or_else(|| env::var_os(*name).is_none_or(|value| value.is_empty()))
+            });
+    if !eligible {
+        return Ok(NativeRustSatisfaction::Unknown);
+    }
     if RUN_INTERRUPT_REQUESTED.load(Ordering::Relaxed) {
         return Err(String::from("Rust readiness interrupted"));
     }
     let mut names = vec!["rustup", "rustc", "cargo"];
-    if !components.is_empty() { names.push("rustfmt"); }
-    let Some(bindings) = names.iter().map(|name| native_rust_executable_binding(name, cwd, env_overrides))
-        .collect::<Option<Vec<_>>>() else { return Ok(NativeRustSatisfaction::Unknown); };
+    if !components.is_empty() {
+        names.push("rustfmt");
+    }
+    let Some(bindings) = names
+        .iter()
+        .map(|name| native_rust_executable_binding(name, cwd, env_overrides))
+        .collect::<Option<Vec<_>>>()
+    else {
+        return Ok(NativeRustSatisfaction::Unknown);
+    };
     let rustup = &bindings[0];
     let mut budget = NativeRustProbeBudget {
         deadline: Instant::now() + Duration::from_secs(20),
-        per_probe: Duration::from_secs(5), remaining_output: 64 * 1024,
+        per_probe: Duration::from_secs(5),
+        remaining_output: 64 * 1024,
         environment: native_rust_effective_probe_env(env_overrides),
     };
     let mut installed_bindings = Vec::new();
     let inspected = (|| -> Result<NativeRustSatisfaction, NativeRustProbeError> {
         for executable in bindings.iter().skip(1) {
-            let selected = native_rust_readiness_probe(rustup,
-                &["which", "--toolchain", version, &executable.name], cwd, env_overrides, &mut budget)?;
-            let active = native_rust_readiness_probe(rustup,
-                &["which", &executable.name], cwd, env_overrides, &mut budget)?;
-            let selected = native_rust_binding_for_path(&executable.name, PathBuf::from(selected.trim()))
-                .ok_or(NativeRustProbeError::Unknown)?;
-            let active = native_rust_binding_for_path(&executable.name, PathBuf::from(active.trim()))
-                .ok_or(NativeRustProbeError::Unknown)?;
+            let selected = native_rust_readiness_probe(
+                rustup,
+                &["which", "--toolchain", version, &executable.name],
+                cwd,
+                env_overrides,
+                &mut budget,
+            )?;
+            let active = native_rust_readiness_probe(
+                rustup,
+                &["which", &executable.name],
+                cwd,
+                env_overrides,
+                &mut budget,
+            )?;
+            let selected =
+                native_rust_binding_for_path(&executable.name, PathBuf::from(selected.trim()))
+                    .ok_or(NativeRustProbeError::Unknown)?;
+            let active =
+                native_rust_binding_for_path(&executable.name, PathBuf::from(active.trim()))
+                    .ok_or(NativeRustProbeError::Unknown)?;
             if selected.canonical != active.canonical
-                || (executable.canonical != selected.canonical && executable.canonical != rustup.canonical) {
+                || (executable.canonical != selected.canonical
+                    && executable.canonical != rustup.canonical)
+            {
                 return Ok(NativeRustSatisfaction::Unsatisfied);
             }
             installed_bindings.push(selected);
         }
-        let rustc = native_rust_readiness_probe(&bindings[1], &["--version", "--verbose"], cwd, env_overrides, &mut budget)?;
+        let rustc = native_rust_readiness_probe(
+            &bindings[1],
+            &["--version", "--verbose"],
+            cwd,
+            env_overrides,
+            &mut budget,
+        )?;
         let mut rustc_lines = rustc.lines();
-        let mut header = rustc_lines.next().ok_or(NativeRustProbeError::Unknown)?.split_whitespace();
-        if header.next() != Some("rustc") { return Err(NativeRustProbeError::Unknown); }
+        let mut header = rustc_lines
+            .next()
+            .ok_or(NativeRustProbeError::Unknown)?
+            .split_whitespace();
+        if header.next() != Some("rustc") {
+            return Err(NativeRustProbeError::Unknown);
+        }
         let observed_version = header.next().ok_or(NativeRustProbeError::Unknown)?;
         let mut release = None;
         let mut host = None;
         for line in rustc_lines {
             if let Some(value) = line.strip_prefix("release: ") {
-                if release.replace(value).is_some() { return Err(NativeRustProbeError::Unknown); }
+                if release.replace(value).is_some() {
+                    return Err(NativeRustProbeError::Unknown);
+                }
             }
             if let Some(value) = line.strip_prefix("host: ") {
-                if host.replace(value).is_some() { return Err(NativeRustProbeError::Unknown); }
+                if host.replace(value).is_some() {
+                    return Err(NativeRustProbeError::Unknown);
+                }
             }
         }
-        let host = host.filter(|value| !value.is_empty() && !value.chars().any(char::is_whitespace))
+        let host = host
+            .filter(|value| !value.is_empty() && !value.chars().any(char::is_whitespace))
             .ok_or(NativeRustProbeError::Unknown)?;
         let release = release.ok_or(NativeRustProbeError::Unknown)?;
         if observed_version != version || release != version {
             return Ok(NativeRustSatisfaction::Unsatisfied);
         }
         let native_host = host.starts_with(&format!("{}-", env::consts::ARCH))
-            && if cfg!(target_os = "macos") { host.ends_with("-apple-darwin") }
-                else { host.contains("-linux-") };
-        if !native_host { return Ok(NativeRustSatisfaction::Unsatisfied); }
-        let cargo = native_rust_readiness_probe(&bindings[2], &["--version"], cwd, env_overrides, &mut budget)?;
+            && if cfg!(target_os = "macos") {
+                host.ends_with("-apple-darwin")
+            } else {
+                host.contains("-linux-")
+            };
+        if !native_host {
+            return Ok(NativeRustSatisfaction::Unsatisfied);
+        }
+        let cargo = native_rust_readiness_probe(
+            &bindings[2],
+            &["--version"],
+            cwd,
+            env_overrides,
+            &mut budget,
+        )?;
         let mut cargo_header = cargo.split_whitespace();
-        if cargo_header.next() != Some("cargo") { return Err(NativeRustProbeError::Unknown); }
+        if cargo_header.next() != Some("cargo") {
+            return Err(NativeRustProbeError::Unknown);
+        }
         if cargo_header.next().ok_or(NativeRustProbeError::Unknown)? != version {
             return Ok(NativeRustSatisfaction::Unsatisfied);
         }
-        for (kind, entries) in [("component", components), ("target", toolchain.targets_for_os(target_os))] {
-            if entries.is_empty() { continue; }
-            let output = native_rust_readiness_probe(rustup,
-                &[kind, "list", "--installed", "--toolchain", version], cwd, env_overrides, &mut budget)?;
+        for (kind, entries) in [
+            ("component", components),
+            ("target", toolchain.targets_for_os(target_os)),
+        ] {
+            if entries.is_empty() {
+                continue;
+            }
+            let output = native_rust_readiness_probe(
+                rustup,
+                &[kind, "list", "--installed", "--toolchain", version],
+                cwd,
+                env_overrides,
+                &mut budget,
+            )?;
             let mut installed = BTreeSet::new();
             for line in output.lines().filter(|line| !line.trim().is_empty()) {
                 let mut fields = line.split_whitespace();
                 let entry = fields.next().ok_or(NativeRustProbeError::Unknown)?;
-                if fields.next().is_some() { return Err(NativeRustProbeError::Unknown); }
+                if fields.next().is_some() {
+                    return Err(NativeRustProbeError::Unknown);
+                }
                 installed.insert(entry);
             }
             for entry in entries {
-                let expected = if kind == "component" { format!("{entry}-{host}") } else { entry };
+                let expected = if kind == "component" {
+                    format!("{entry}-{host}")
+                } else {
+                    entry
+                };
                 if !installed.contains(expected.as_str()) {
                     return Ok(NativeRustSatisfaction::Unsatisfied);
                 }
             }
         }
         if native_rust_effective_probe_env(env_overrides) != budget.environment
-            || bindings.iter().any(|binding| native_rust_executable_binding(&binding.name, cwd, env_overrides).as_ref() != Some(binding))
-            || installed_bindings.iter().any(|binding| native_rust_binding_for_path(&binding.name, binding.path.clone()).as_ref() != Some(binding)) {
+            || bindings.iter().any(|binding| {
+                native_rust_executable_binding(&binding.name, cwd, env_overrides).as_ref()
+                    != Some(binding)
+            })
+            || installed_bindings.iter().any(|binding| {
+                native_rust_binding_for_path(&binding.name, binding.path.clone()).as_ref()
+                    != Some(binding)
+            })
+        {
             return Ok(NativeRustSatisfaction::Unknown);
         }
         if RUN_INTERRUPT_REQUESTED.load(Ordering::Relaxed) {
-            return Err(NativeRustProbeError::Terminal(String::from("Rust readiness interrupted")));
+            return Err(NativeRustProbeError::Terminal(String::from(
+                "Rust readiness interrupted",
+            )));
         }
         Ok(NativeRustSatisfaction::Satisfied)
     })();
@@ -19915,8 +20380,11 @@ fn native_rust_satisfaction_with_witness(
     match inspected {
         Ok(NativeRustSatisfaction::Satisfied) => {
             *witness = Some(NativeRustReadinessWitness {
-                cwd: cwd.to_path_buf(), command_exe: None, budget,
-                launch_bindings: bindings, installed_bindings,
+                cwd: cwd.to_path_buf(),
+                command_exe: None,
+                budget,
+                launch_bindings: bindings,
+                installed_bindings,
             });
             Ok(NativeRustSatisfaction::Satisfied)
         }
@@ -19928,8 +20396,12 @@ fn native_rust_satisfaction_with_witness(
 
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
 fn native_rust_satisfaction(
-    _name: &str, _toolchain: &ToolchainSpec, _backend: &ResolvedExecutionBackend,
-    _cwd: &Path, _env: &BTreeMap<String, String>, _os: &str,
+    _name: &str,
+    _toolchain: &ToolchainSpec,
+    _backend: &ResolvedExecutionBackend,
+    _cwd: &Path,
+    _env: &BTreeMap<String, String>,
+    _os: &str,
 ) -> Result<NativeRustSatisfaction, String> {
     Ok(NativeRustSatisfaction::Unknown)
 }
@@ -19963,45 +20435,81 @@ fn maybe_fulfill_toolchains_on_run_path(
 
         if toolchain_name == "rust"
             && cfg!(any(target_os = "linux", target_os = "macos"))
-            && matches!(backend, ResolvedExecutionBackend::Native { shared_local_backend: None })
+            && matches!(
+                backend,
+                ResolvedExecutionBackend::Native {
+                    shared_local_backend: None
+                }
+            )
             && RUN_INTERRUPT_REQUESTED.load(Ordering::Relaxed)
         {
             return Err(RunError::ToolchainFulfillmentFailed {
-                task: task_name.to_string(), toolchain: toolchain_name,
+                task: task_name.to_string(),
+                toolchain: toolchain_name,
                 details: String::from("Rust readiness interrupted"),
             });
         }
         #[cfg(any(target_os = "linux", target_os = "macos"))]
         let mut witness = None;
         #[cfg(any(target_os = "linux", target_os = "macos"))]
-        let satisfaction = if readiness_context_matches { native_rust_satisfaction_with_witness(
-            &toolchain_name, toolchain, backend, contract_working_dir(contract_path),
-            env_overrides, target_os, &mut witness,
-        ).map_err(|details| RunError::ToolchainFulfillmentFailed {
-            task: task_name.to_string(), toolchain: toolchain_name.clone(), details,
-        })? } else { NativeRustSatisfaction::Unknown };
+        let satisfaction = if readiness_context_matches {
+            native_rust_satisfaction_with_witness(
+                &toolchain_name,
+                toolchain,
+                backend,
+                contract_working_dir(contract_path),
+                env_overrides,
+                target_os,
+                &mut witness,
+            )
+            .map_err(|details| RunError::ToolchainFulfillmentFailed {
+                task: task_name.to_string(),
+                toolchain: toolchain_name.clone(),
+                details,
+            })?
+        } else {
+            NativeRustSatisfaction::Unknown
+        };
         #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-        let satisfaction = if readiness_context_matches { native_rust_satisfaction(
-            &toolchain_name, toolchain, backend, contract_working_dir(contract_path),
-            env_overrides, target_os,
-        ).map_err(|details| RunError::ToolchainFulfillmentFailed {
-            task: task_name.to_string(), toolchain: toolchain_name.clone(), details,
-        })? } else { NativeRustSatisfaction::Unknown };
+        let satisfaction = if readiness_context_matches {
+            native_rust_satisfaction(
+                &toolchain_name,
+                toolchain,
+                backend,
+                contract_working_dir(contract_path),
+                env_overrides,
+                target_os,
+            )
+            .map_err(|details| RunError::ToolchainFulfillmentFailed {
+                task: task_name.to_string(),
+                toolchain: toolchain_name.clone(),
+                details,
+            })?
+        } else {
+            NativeRustSatisfaction::Unknown
+        };
         if satisfaction == NativeRustSatisfaction::Satisfied {
             #[cfg(any(target_os = "linux", target_os = "macos"))]
             if let Some(mut witness) = witness {
-                witness.command_exe = task.resolved_execution_for_backend(
-                    resolved_execution_backend_kind(backend), target_os,
-                ).and_then(|execution| execution.command()).map(|command| command.exe.clone());
-                state.native_rust_readiness.insert(task_name.to_string(), witness);
+                witness.command_exe = task
+                    .resolved_execution_for_backend(
+                        resolved_execution_backend_kind(backend),
+                        target_os,
+                    )
+                    .and_then(|execution| execution.command())
+                    .map(|command| command.exe.clone());
+                state
+                    .native_rust_readiness
+                    .insert(task_name.to_string(), witness);
             }
             continue;
         }
         if toolchain_name == "rust"
             && let RetainedRunPolicyContext::AcquiredPresent(policy) = &state.retained_policy
-            && policy.toolchain_fulfillment.get(
-                &crate::policy_pack::PolicyToolchainFulfillmentSelector::Rust,
-            ) == Some(&crate::policy_pack::PolicyToolchainFulfillmentRestriction::Deny)
+            && policy
+                .toolchain_fulfillment
+                .get(&crate::policy_pack::PolicyToolchainFulfillmentSelector::Rust)
+                == Some(&crate::policy_pack::PolicyToolchainFulfillmentRestriction::Deny)
         {
             let source = toolchain.fulfillment_source().or_else(|| {
                 declared_toolchain_contract(&toolchain_name, toolchain)
@@ -20011,13 +20519,21 @@ fn maybe_fulfill_toolchains_on_run_path(
                 reason: String::from("toolchain_fulfillment_policy_denied"),
                 root_task: state.requested_task.clone(),
                 task: task_name.to_string(),
-                relation: state.toolchain_invocation.as_ref().map(|(relation, _)| relation.clone()),
-                generation: state.toolchain_invocation.as_ref().map_or(0, |(_, generation)| *generation),
+                relation: state
+                    .toolchain_invocation
+                    .as_ref()
+                    .map(|(relation, _)| relation.clone()),
+                generation: state
+                    .toolchain_invocation
+                    .as_ref()
+                    .map_or(0, |(_, generation)| *generation),
                 toolchain: toolchain_name.clone(),
                 backend: format_backend(resolved_execution_backend_kind(backend)).to_string(),
                 target_os: target_os.to_string(),
-                provider: source.map(crate::toolchains::toolchain_fulfillment_source_label)
-                    .unwrap_or("unavailable").to_string(),
+                provider: source
+                    .map(crate::toolchains::toolchain_fulfillment_source_label)
+                    .unwrap_or("unavailable")
+                    .to_string(),
                 version: toolchain.version_for_os(target_os).to_string(),
                 components: toolchain.components_for_os(target_os),
                 targets: toolchain.targets_for_os(target_os),
@@ -20038,7 +20554,9 @@ fn maybe_fulfill_toolchains_on_run_path(
                 cleanup_note: None,
             };
             return Err(RunError::ToolchainFulfillmentPolicyDenied {
-                task: task_name.to_string(), toolchain: toolchain_name, evidence: Box::new(evidence),
+                task: task_name.to_string(),
+                toolchain: toolchain_name,
+                evidence: Box::new(evidence),
             });
         }
         let cache_key = toolchain_fulfillment_cache_key(toolchain_name.as_str(), backend);
@@ -41818,7 +42336,9 @@ tasks:
 
     #[test]
     fn locked_cargo_admission_refuses_selected_unsupported_graph_without_root_probe() {
-        let contract = parse_contract_str(Path::new("missing/ota.yaml"), r#"
+        let contract = parse_contract_str(
+            Path::new("missing/ota.yaml"),
+            r#"
 version: 1
 project:
   name: locked-cargo-plan
@@ -41838,22 +42358,45 @@ tasks:
   verify:
     aggregate:
       tasks: [setup]
-"#).unwrap();
-        for backend in [crate::schema::Backend::Container, crate::schema::Backend::Remote] {
-            let error = super::plan_task_execution_with_overrides(&contract, "verify",
-                ExecutionOverrides { backend: Some(backend), ..Default::default() }).unwrap_err();
+"#,
+        )
+        .unwrap();
+        for backend in [
+            crate::schema::Backend::Container,
+            crate::schema::Backend::Remote,
+        ] {
+            let error = super::plan_task_execution_with_overrides(
+                &contract,
+                "verify",
+                ExecutionOverrides {
+                    backend: Some(backend),
+                    ..Default::default()
+                },
+            )
+            .unwrap_err();
             assert!(matches!(error, RunError::LockedCargoHydrationRefused {
                 task, cwd, prepare_path, ..
             } if task == "setup" && cwd == "member" && prepare_path == vec![0, 0]));
         }
         #[cfg(any(target_os = "linux", target_os = "macos"))]
-        assert!(super::plan_task_execution_with_overrides(&contract, "verify",
-            ExecutionOverrides { backend: Some(crate::schema::Backend::Native), ..Default::default() }).is_ok());
+        assert!(
+            super::plan_task_execution_with_overrides(
+                &contract,
+                "verify",
+                ExecutionOverrides {
+                    backend: Some(crate::schema::Backend::Native),
+                    ..Default::default()
+                }
+            )
+            .is_ok()
+        );
     }
 
     #[test]
     fn locked_cargo_admission_uses_only_selected_execution_body() {
-        let contract = parse_contract_str(Path::new("missing/ota.yaml"), r#"
+        let contract = parse_contract_str(
+            Path::new("missing/ota.yaml"),
+            r#"
 version: 1
 project:
   name: locked-cargo-modes
@@ -41876,13 +42419,21 @@ tasks:
       modes:
         container:
           run: echo container
-"#).unwrap();
-        let overrides = ExecutionOverrides { backend: Some(Backend::Container), ..Default::default() };
-        let error = super::plan_task_execution_with_overrides(&contract, "selected", overrides).unwrap_err();
+"#,
+        )
+        .unwrap();
+        let overrides = ExecutionOverrides {
+            backend: Some(Backend::Container),
+            ..Default::default()
+        };
+        let error = super::plan_task_execution_with_overrides(&contract, "selected", overrides)
+            .unwrap_err();
         assert!(matches!(error, RunError::LockedCargoHydrationRefused {
             task, cwd, prepare_path, ..
         } if task == "selected" && cwd == "selected-member" && prepare_path.is_empty()));
-        assert!(super::plan_task_execution_with_overrides(&contract, "unselected", overrides).is_ok());
+        assert!(
+            super::plan_task_execution_with_overrides(&contract, "unselected", overrides).is_ok()
+        );
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -41895,9 +42446,20 @@ tasks:
         let bin = root.join("bin");
         fs::create_dir(&bin).unwrap();
         fs::create_dir(root.join("member")).unwrap();
-        fs::write(root.join("Cargo.toml"), "[workspace]\nmembers = [\"member\"]\n").unwrap();
-        fs::write(root.join("member/Cargo.toml"), "[package]\nname = \"member\"\nversion = \"0.1.0\"\n").unwrap();
-        write_fake_bin(&bin, "cargo", r#"#!/bin/sh
+        fs::write(
+            root.join("Cargo.toml"),
+            "[workspace]\nmembers = [\"member\"]\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("member/Cargo.toml"),
+            "[package]\nname = \"member\"\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
+        write_fake_bin(
+            &bin,
+            "cargo",
+            r#"#!/bin/sh
 if [ "$1" = locate-project ]; then
   n=0; [ ! -f "$CARGO_FIXTURE_COUNT" ] || n=$(cat "$CARGO_FIXTURE_COUNT")
   n=$((n + 1)); printf '%s' "$n" > "$CARGO_FIXTURE_COUNT"
@@ -41916,46 +42478,123 @@ case "$CARGO_FIXTURE_ACTION" in
   unreadable_post) rm -- "$CARGO_FIXTURE_ROOT/Cargo.lock"; exit 17;;
 esac
 exit 0
-"#);
+"#,
+        );
         let cargo_script = fs::read_to_string(bin.join("cargo")).unwrap();
         let _path_guard = PathEnvGuard(env::var_os("PATH"));
-        unsafe { env::set_var("PATH", env::join_paths([bin.as_path(), Path::new("/usr/bin"), Path::new("/bin")]).unwrap()); }
+        unsafe {
+            env::set_var(
+                "PATH",
+                env::join_paths([bin.as_path(), Path::new("/usr/bin"), Path::new("/bin")]).unwrap(),
+            );
+        }
         let prepare = crate::schema::TaskPrepareSpec::DependencyHydration(
             crate::schema::TaskDependencyHydrationPrepareSpec {
                 medium: crate::schema::TaskDependencyHydrationMedium::PackageDependencies,
                 source: crate::schema::TaskDependencyHydrationSourceSpec::Cargo(
                     crate::schema::TaskCargoHydrationSourceSpec {
-                        cwd: String::from("member"), locked: true, compose: None,
-                    }),
+                        cwd: String::from("member"),
+                        locked: true,
+                        compose: None,
+                    },
+                ),
                 targets: Vec::new(),
-            });
+            },
+        );
         for (action, expected_exit, expected_command, expected_outcome, fetch_ran) in [
-            ("unchanged", 0, Some(0), CargoLockOutcome::UnchangedAtSamples, true),
-            ("drift", 1, Some(0), CargoLockOutcome::DriftAfterExecution, true),
-            ("nonzero", 17, Some(17), CargoLockOutcome::UnchangedAtSamples, true),
-            ("unreadable_post", 17, Some(17), CargoLockOutcome::ObservationUnavailable, true),
+            (
+                "unchanged",
+                0,
+                Some(0),
+                CargoLockOutcome::UnchangedAtSamples,
+                true,
+            ),
+            (
+                "drift",
+                1,
+                Some(0),
+                CargoLockOutcome::DriftAfterExecution,
+                true,
+            ),
+            (
+                "nonzero",
+                17,
+                Some(17),
+                CargoLockOutcome::UnchangedAtSamples,
+                true,
+            ),
+            (
+                "unreadable_post",
+                17,
+                Some(17),
+                CargoLockOutcome::ObservationUnavailable,
+                true,
+            ),
             ("missing", 1, None, CargoLockOutcome::MissingLockfile, false),
-            ("malformed", 1, None, CargoLockOutcome::UnsupportedRoot, false),
-            ("pre_drift", 1, None, CargoLockOutcome::IdentityChangedBeforeExecution, false),
-            ("spawn_failure", 1, None, CargoLockOutcome::ObservationUnavailable, false),
+            (
+                "malformed",
+                1,
+                None,
+                CargoLockOutcome::UnsupportedRoot,
+                false,
+            ),
+            (
+                "pre_drift",
+                1,
+                None,
+                CargoLockOutcome::IdentityChangedBeforeExecution,
+                false,
+            ),
+            (
+                "spawn_failure",
+                1,
+                None,
+                CargoLockOutcome::ObservationUnavailable,
+                false,
+            ),
         ] {
             write_fake_bin(&bin, "cargo", &cargo_script);
             let lock = root.join("Cargo.lock");
             fs::write(&lock, "version = 4\n").unwrap();
-            if action == "missing" { fs::remove_file(&lock).unwrap(); }
+            if action == "missing" {
+                fs::remove_file(&lock).unwrap();
+            }
             let count = root.join(format!("count-{action}"));
             let log = root.join(format!("fetch-{action}"));
             let environment = BTreeMap::from([
-                (String::from("CARGO_FIXTURE_ROOT"), root.display().to_string()),
-                (String::from("CARGO_FIXTURE_METADATA"), serde_json::json!({"root": root.join("Cargo.toml")}).to_string()),
-                (String::from("CARGO_FIXTURE_COUNT"), count.display().to_string()),
+                (
+                    String::from("CARGO_FIXTURE_ROOT"),
+                    root.display().to_string(),
+                ),
+                (
+                    String::from("CARGO_FIXTURE_METADATA"),
+                    serde_json::json!({"root": root.join("Cargo.toml")}).to_string(),
+                ),
+                (
+                    String::from("CARGO_FIXTURE_COUNT"),
+                    count.display().to_string(),
+                ),
                 (String::from("CARGO_FIXTURE_LOG"), log.display().to_string()),
                 (String::from("CARGO_FIXTURE_ACTION"), action.to_string()),
             ]);
-            let result = super::execute_prepare_task(None, None, "setup", None, &prepare, &root,
-                &environment, None, &BTreeSet::new(),
-                &ResolvedExecutionBackend::Native { shared_local_backend: None }, None, None,
-                TaskExecutionMode::Capture, None);
+            let result = super::execute_prepare_task(
+                None,
+                None,
+                "setup",
+                None,
+                &prepare,
+                &root,
+                &environment,
+                None,
+                &BTreeSet::new(),
+                &ResolvedExecutionBackend::Native {
+                    shared_local_backend: None,
+                },
+                None,
+                None,
+                TaskExecutionMode::Capture,
+                None,
+            );
             if action == "spawn_failure" {
                 let error = result.unwrap_err();
                 let display = error.to_string();
@@ -41977,19 +42616,40 @@ exit 0
             assert_eq!(evidence.acquisition, "not_proved");
             assert_eq!(evidence.concurrent_mutation, "not_proved");
             assert_eq!(log.exists(), fetch_ran, "{action}");
-            if fetch_ran { assert_eq!(fs::read_to_string(&log).unwrap().trim(), root.join("member").display().to_string()); }
+            if fetch_ran {
+                assert_eq!(
+                    fs::read_to_string(&log).unwrap().trim(),
+                    root.join("member").display().to_string()
+                );
+            }
         }
         write_fake_bin(&bin, "cargo", &cargo_script);
         fs::write(root.join("Cargo.lock"), "version = 4\n").unwrap();
         fs::write(root.join("blocked"), "not a directory").unwrap();
         let environment = BTreeMap::from([
-            (String::from("CARGO_FIXTURE_ROOT"), root.display().to_string()),
-            (String::from("CARGO_FIXTURE_METADATA"), serde_json::json!({"root": root.join("Cargo.toml")}).to_string()),
-            (String::from("CARGO_FIXTURE_COUNT"), root.join("nested-count").display().to_string()),
-            (String::from("CARGO_FIXTURE_LOG"), root.join("nested-fetch").display().to_string()),
-            (String::from("CARGO_FIXTURE_ACTION"), String::from("unchanged")),
+            (
+                String::from("CARGO_FIXTURE_ROOT"),
+                root.display().to_string(),
+            ),
+            (
+                String::from("CARGO_FIXTURE_METADATA"),
+                serde_json::json!({"root": root.join("Cargo.toml")}).to_string(),
+            ),
+            (
+                String::from("CARGO_FIXTURE_COUNT"),
+                root.join("nested-count").display().to_string(),
+            ),
+            (
+                String::from("CARGO_FIXTURE_LOG"),
+                root.join("nested-fetch").display().to_string(),
+            ),
+            (
+                String::from("CARGO_FIXTURE_ACTION"),
+                String::from("unchanged"),
+            ),
         ]);
-        let nested: crate::schema::TaskPrepareSpec = serde_yaml::from_str(r#"
+        let nested: crate::schema::TaskPrepareSpec = serde_yaml::from_str(
+            r#"
 kind: sequence
 steps:
   - kind: sequence
@@ -42001,11 +42661,28 @@ steps:
         path: blocked/child
   - kind: ensure_directory
     path: must-not-run
-"#).unwrap();
-        let error = super::execute_prepare_task(None, None, "setup", None, &nested, &root,
-            &environment, None, &BTreeSet::new(),
-            &ResolvedExecutionBackend::Native { shared_local_backend: None }, None, None,
-            TaskExecutionMode::Capture, None).unwrap_err();
+"#,
+        )
+        .unwrap();
+        let error = super::execute_prepare_task(
+            None,
+            None,
+            "setup",
+            None,
+            &nested,
+            &root,
+            &environment,
+            None,
+            &BTreeSet::new(),
+            &ResolvedExecutionBackend::Native {
+                shared_local_backend: None,
+            },
+            None,
+            None,
+            TaskExecutionMode::Capture,
+            None,
+        )
+        .unwrap_err();
         let (cause, records) = error.into_cargo_context();
         assert!(matches!(cause, RunError::FileActionFailed { .. }));
         assert_eq!(records.len(), 1);
@@ -42013,7 +42690,9 @@ steps:
         assert_eq!(records[0].command_exit_code, Some(0));
         assert_eq!(records[0].outcome, CargoLockOutcome::UnchangedAtSamples);
         assert!(!root.join("must-not-run").exists());
-        let mut contract = parse_contract_str(&root.join("ota.yaml"), r#"
+        let mut contract = parse_contract_str(
+            &root.join("ota.yaml"),
+            r#"
 version: 1
 project: { name: partial-cargo }
 tasks:
@@ -42036,7 +42715,9 @@ tasks:
       kind: ensure_file
       path: must-not-hook
       value: forbidden
-"#).unwrap();
+"#,
+        )
+        .unwrap();
         contract.tasks.get_mut("setup").unwrap().env = environment;
         let error = run_task_captured(&contract, &root.join("ota.yaml"), "setup").unwrap_err();
         let (cause, records) = error.into_cargo_context();
@@ -79055,10 +79736,18 @@ tasks:
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     impl RustReadinessFixture {
         fn new() -> Self {
-            let compiler_env = ["RUSTC", "RUSTC_WRAPPER", "RUSTC_WORKSPACE_WRAPPER",
-                "OTA_POLICY", "OTA_INTERNAL_POLICY_SNAPSHOT_ABSENT"]
-                .into_iter().map(EnvVarGuard::remove).collect();
-            let fixture = ContractFixture::new(r#"
+            let compiler_env = [
+                "RUSTC",
+                "RUSTC_WRAPPER",
+                "RUSTC_WORKSPACE_WRAPPER",
+                "OTA_POLICY",
+                "OTA_INTERNAL_POLICY_SNAPSHOT_ABSENT",
+            ]
+            .into_iter()
+            .map(EnvVarGuard::remove)
+            .collect();
+            let fixture = ContractFixture::new(
+                r#"
 version: 1
 project:
   name: rust-readiness
@@ -79077,13 +79766,20 @@ tasks:
       exe: cargo
       args: [fetch]
     safe_for_agent: true
-"#);
+"#,
+            );
             let bin = fixture.dir.path().join("bin");
             fs::create_dir_all(&bin).unwrap();
             let host = if cfg!(target_os = "macos") {
                 format!("{}-apple-darwin", env::consts::ARCH)
-            } else { format!("{}-unknown-linux-gnu", env::consts::ARCH) };
-            write_fake_bin(&bin, "rustup", &format!(r#"#!/bin/sh
+            } else {
+                format!("{}-unknown-linux-gnu", env::consts::ARCH)
+            };
+            write_fake_bin(
+                &bin,
+                "rustup",
+                &format!(
+                    r#"#!/bin/sh
 case "$1" in
   which)
     if [ "$2" = --toolchain ]; then tool="$4"; else tool="$2"; fi
@@ -79098,43 +79794,89 @@ case "$1" in
   *) exit 1 ;;
 esac
 exit 0
-"#, bin.display(), bin.display(), host));
-            write_fake_bin(&bin, "rustc", &format!(r#"#!/bin/sh
+"#,
+                    bin.display(),
+                    bin.display(),
+                    host
+                ),
+            );
+            write_fake_bin(
+                &bin,
+                "rustc",
+                &format!(
+                    r#"#!/bin/sh
 if [ -f nonzero ]; then printf '%s\n' 'rustc 1.95.0'; exit 1; fi
 if [ -f malformed ]; then printf '%s\n' 'not a compiler'; exit 0; fi
 if [ -f wrong-version ]; then version=1.94.0; else version=1.95.0; fi
 printf 'rustc %s (fixture)\nrelease: %s\nhost: {}\n' "$version" "$version"
-"#, host));
-            write_fake_bin(&bin, "cargo", "#!/bin/sh\nprintf '%s\\n' 'cargo 1.95.0 (fixture)'\n");
+"#,
+                    host
+                ),
+            );
+            write_fake_bin(
+                &bin,
+                "cargo",
+                "#!/bin/sh\nprintf '%s\\n' 'cargo 1.95.0 (fixture)'\n",
+            );
             write_fake_bin(&bin, "rustfmt", "#!/bin/sh\nexit 0\n");
             write_fake_bin(&bin, "other-rustc", "#!/bin/sh\nexit 0\n");
             let original_cwd = env::current_dir().unwrap();
             let path = PathEnvGuard(env::var_os("PATH"));
-            unsafe { env::set_var("PATH", &bin); }
+            unsafe {
+                env::set_var("PATH", &bin);
+            }
             env::set_current_dir(fixture.dir.path()).unwrap();
-            Self { original_cwd, _path: path, _compiler_env: compiler_env, fixture }
+            Self {
+                original_cwd,
+                _path: path,
+                _compiler_env: compiler_env,
+                fixture,
+            }
         }
 
         fn satisfaction(&self) -> Result<super::NativeRustSatisfaction, String> {
-            super::native_rust_satisfaction("rust", &self.fixture.contract.toolchains["rust"],
-                &ResolvedExecutionBackend::Native { shared_local_backend: None },
-                self.fixture.dir.path(), &BTreeMap::new(), current_os())
+            super::native_rust_satisfaction(
+                "rust",
+                &self.fixture.contract.toolchains["rust"],
+                &ResolvedExecutionBackend::Native {
+                    shared_local_backend: None,
+                },
+                self.fixture.dir.path(),
+                &BTreeMap::new(),
+                current_os(),
+            )
         }
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     impl Drop for RustReadinessFixture {
-        fn drop(&mut self) { env::set_current_dir(&self.original_cwd).unwrap(); }
+        fn drop(&mut self) {
+            env::set_current_dir(&self.original_cwd).unwrap();
+        }
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn core_path_readiness_contract(fixture: &RustReadinessFixture) -> Contract {
         let mut contract = fixture.fixture.contract.clone();
-        contract.env.vars.insert(String::from("PATH"), crate::schema::EnvRequirement {
-            required: false, secret: false, default: None, allowed: Vec::new(),
-            prepend: vec![fixture.fixture.dir.path().join("empty-prepend").display().to_string()],
-            append: Vec::new(),
-        });
+        contract.env.vars.insert(
+            String::from("PATH"),
+            crate::schema::EnvRequirement {
+                required: false,
+                secret: false,
+                default: None,
+                allowed: Vec::new(),
+                prepend: vec![
+                    fixture
+                        .fixture
+                        .dir
+                        .path()
+                        .join("empty-prepend")
+                        .display()
+                        .to_string(),
+                ],
+                append: Vec::new(),
+            },
+        );
         let mut check = contract.tasks["setup"].clone();
         check.depends_on = vec![String::from("setup")];
         check.command.as_mut().unwrap().args = vec![String::from("check")];
@@ -79149,24 +79891,43 @@ printf 'rustc %s (fixture)\nrelease: %s\nhost: {}\n' "$version" "$version"
         let _cwd_guard = cwd_mutex_lock();
         let fixture = RustReadinessFixture::new();
         let mut contract = core_path_readiness_contract(&fixture);
-        write_fake_bin(&fixture.fixture.dir.path().join("bin"), "cargo", r#"#!/bin/sh
+        write_fake_bin(
+            &fixture.fixture.dir.path().join("bin"),
+            "cargo",
+            r#"#!/bin/sh
 if [ "$1" = --version ]; then printf '%s\n' 'cargo 1.95.0 (fixture)';
 else printf '%s\n' "$*" >> task-bodies; fi
-"#);
-        let acquired = crate::policy_pack::load_org_policy_pack_auto_details(fixture.fixture.file_path()).unwrap();
+"#,
+        );
+        let acquired =
+            crate::policy_pack::load_org_policy_pack_auto_details(fixture.fixture.file_path())
+                .unwrap();
         assert!(acquired.is_none());
         for selected in [false, true] {
             contract.env.vars.get_mut("PATH").unwrap().required = selected;
             fs::write(fixture.fixture.dir.path().join("task-bodies"), "").unwrap();
             let outcome = super::run_task_internal_with_started_services_and_policy_context(
-                &contract, fixture.fixture.file_path(), "check", &[], ExecutionOverrides::default(),
-                None, TaskExecutionMode::Capture, BTreeSet::new(),
+                &contract,
+                fixture.fixture.file_path(),
+                "check",
+                &[],
+                ExecutionOverrides::default(),
+                None,
+                TaskExecutionMode::Capture,
+                BTreeSet::new(),
                 super::RetainedRunPolicyContext::from_acquired(acquired.as_ref(), None),
-            ).unwrap();
+            )
+            .unwrap();
             assert_eq!(outcome.exit_code, 0, "selected PATH: {selected}");
-            assert_eq!(outcome.executed_tasks, vec![String::from("setup"), String::from("check")]);
+            assert_eq!(
+                outcome.executed_tasks,
+                vec![String::from("setup"), String::from("check")]
+            );
             assert!(outcome.fulfilled_toolchains.is_empty());
-            assert_eq!(fs::read_to_string(fixture.fixture.dir.path().join("task-bodies")).unwrap(), "fetch\ncheck\n");
+            assert_eq!(
+                fs::read_to_string(fixture.fixture.dir.path().join("task-bodies")).unwrap(),
+                "fetch\ncheck\n"
+            );
             assert!(!fixture.fixture.dir.path().join("installs").exists());
         }
     }
@@ -79179,31 +79940,75 @@ else printf '%s\n' "$*" >> task-bodies; fi
         let fixture = RustReadinessFixture::new();
         let mut contract = core_path_readiness_contract(&fixture);
         let pack_path = fixture.fixture.dir.path().join("policy.yaml");
-        fs::write(&pack_path, format!("policies:\n  env:\n    values:\n      PATH: '{}'\n", fixture.fixture.dir.path().join("policy-bin").display())).unwrap();
+        fs::write(
+            &pack_path,
+            format!(
+                "policies:\n  env:\n    values:\n      PATH: '{}'\n",
+                fixture.fixture.dir.path().join("policy-bin").display()
+            ),
+        )
+        .unwrap();
         let _policy_env = EnvVarGuard::set("OTA_POLICY", pack_path.to_str().unwrap());
-        let acquired = crate::policy_pack::load_org_policy_pack_auto_details(fixture.fixture.file_path()).unwrap();
+        let acquired =
+            crate::policy_pack::load_org_policy_pack_auto_details(fixture.fixture.file_path())
+                .unwrap();
         assert!(acquired.is_some());
         // Deletion distinguishes retained acquisition from an extra readiness-time load.
         fs::remove_file(&pack_path).unwrap();
         let retained = super::RetainedRunPolicyContext::from_acquired(acquired.as_ref(), None);
-        let backend = ResolvedExecutionBackend::Native { shared_local_backend: None };
-        let prep = super::effective_task_env_for_backend(&contract, &contract.tasks["setup"], &backend, fixture.fixture.dir.path());
+        let backend = ResolvedExecutionBackend::Native {
+            shared_local_backend: None,
+        };
+        let prep = super::effective_task_env_for_backend(
+            &contract,
+            &contract.tasks["setup"],
+            &backend,
+            fixture.fixture.dir.path(),
+        );
         let readiness = super::native_rust_readiness_preparation_env(
-            &contract, fixture.fixture.file_path(), &contract.tasks["setup"], &backend,
-            fixture.fixture.dir.path(), current_os(), &prep, None, &retained,
-        ).unwrap();
-        assert!(!readiness.contains_key("PATH"), "optional unselected PATH stays inherited");
+            &contract,
+            fixture.fixture.file_path(),
+            &contract.tasks["setup"],
+            &backend,
+            fixture.fixture.dir.path(),
+            current_os(),
+            &prep,
+            None,
+            &retained,
+        )
+        .unwrap();
+        assert!(
+            !readiness.contains_key("PATH"),
+            "optional unselected PATH stays inherited"
+        );
         contract.env.vars.get_mut("PATH").unwrap().required = true;
         let readiness = super::native_rust_readiness_preparation_env(
-            &contract, fixture.fixture.file_path(), &contract.tasks["setup"], &backend,
-            fixture.fixture.dir.path(), current_os(), &prep, None, &retained,
-        ).unwrap();
+            &contract,
+            fixture.fixture.file_path(),
+            &contract.tasks["setup"],
+            &backend,
+            fixture.fixture.dir.path(),
+            current_os(),
+            &prep,
+            None,
+            &retained,
+        )
+        .unwrap();
         assert!(readiness["PATH"].ends_with("policy-bin"));
-        let workspace_policy = BTreeMap::from([(String::from("PATH"), String::from("/workspace-policy"))]);
+        let workspace_policy =
+            BTreeMap::from([(String::from("PATH"), String::from("/workspace-policy"))]);
         let readiness = super::native_rust_readiness_preparation_env(
-            &contract, fixture.fixture.file_path(), &contract.tasks["setup"], &backend,
-            fixture.fixture.dir.path(), current_os(), &prep, Some(&workspace_policy), &retained,
-        ).unwrap();
+            &contract,
+            fixture.fixture.file_path(),
+            &contract.tasks["setup"],
+            &backend,
+            fixture.fixture.dir.path(),
+            current_os(),
+            &prep,
+            Some(&workspace_policy),
+            &retained,
+        )
+        .unwrap();
         assert!(readiness["PATH"].ends_with("/workspace-policy"));
         assert!(!fixture.fixture.dir.path().join("installs").exists());
     }
@@ -79218,7 +80023,8 @@ else printf '%s\n' "$*" >> task-bodies; fi
             source: crate::policy_pack::PolicyPackSource::EnvOverride,
             source_identity: Some(String::from("stale-caller-identity")),
         };
-        let expected_identity = crate::semantic_identity::semantic_contract_identity(&loaded.pack).unwrap();
+        let expected_identity =
+            crate::semantic_identity::semantic_contract_identity(&loaded.pack).unwrap();
         let retained = super::RetainedRunPolicyContext::from_acquired(Some(&loaded), None);
         loaded.pack.policies.toolchain_fulfillment.clear();
         loaded.pack.policies.env.values.clear();
@@ -79227,20 +80033,30 @@ else printf '%s\n' "$*" >> task-bodies; fi
             panic!("expected acquired policy");
         };
         assert_eq!(retained.env_values["PATH"], "/retained/path");
-        assert_eq!(retained.toolchain_fulfillment.get(
-            &crate::policy_pack::PolicyToolchainFulfillmentSelector::Rust,
-        ), Some(&crate::policy_pack::PolicyToolchainFulfillmentRestriction::Deny));
+        assert_eq!(
+            retained
+                .toolchain_fulfillment
+                .get(&crate::policy_pack::PolicyToolchainFulfillmentSelector::Rust,),
+            Some(&crate::policy_pack::PolicyToolchainFulfillmentRestriction::Deny)
+        );
         assert_eq!(retained.identity, expected_identity);
-        assert_eq!(retained.source, crate::policy_pack::PolicyPackSource::EnvOverride);
+        assert_eq!(
+            retained.source,
+            crate::policy_pack::PolicyPackSource::EnvOverride
+        );
         assert_eq!(retained.path, PathBuf::from("/operator/policy.yaml"));
     }
 
     #[test]
     fn retained_run_policy_preserves_absence_unavailability_and_error() {
-        assert!(matches!(super::RetainedRunPolicyContext::default(),
-            super::RetainedRunPolicyContext::Unavailable));
-        assert!(matches!(super::RetainedRunPolicyContext::from_acquired(None, None),
-            super::RetainedRunPolicyContext::AcquiredAbsent));
+        assert!(matches!(
+            super::RetainedRunPolicyContext::default(),
+            super::RetainedRunPolicyContext::Unavailable
+        ));
+        assert!(matches!(
+            super::RetainedRunPolicyContext::from_acquired(None, None),
+            super::RetainedRunPolicyContext::AcquiredAbsent
+        ));
         let loaded = crate::policy_pack::LoadedOrgPolicyPack {
             pack: serde_yaml::from_str("policies: {toolchain_fulfillment: {rust: deny}}").unwrap(),
             path: PathBuf::from("/operator/policy.yaml"),
@@ -79248,8 +80064,10 @@ else printf '%s\n' "$*" >> task-bodies; fi
             source_identity: None,
         };
         for policy in [None, Some(&loaded)] {
-            assert!(matches!(super::RetainedRunPolicyContext::from_acquired(policy, Some("unreadable")),
-                super::RetainedRunPolicyContext::LoadError(error) if error == "unreadable"));
+            assert!(
+                matches!(super::RetainedRunPolicyContext::from_acquired(policy, Some("unreadable")),
+                super::RetainedRunPolicyContext::LoadError(error) if error == "unreadable")
+            );
         }
     }
 
@@ -79260,19 +80078,40 @@ else printf '%s\n' "$*" >> task-bodies; fi
         let _cwd_guard = cwd_mutex_lock();
         let fixture = RustReadinessFixture::new();
         let contract = core_path_readiness_contract(&fixture);
-        let backend = ResolvedExecutionBackend::Native { shared_local_backend: None };
-        for retained in [super::RetainedRunPolicyContext::Unavailable,
-            super::RetainedRunPolicyContext::from_acquired(None, Some("policy unreadable"))] {
-            assert!(super::native_rust_readiness_preparation_env(
-                &contract, fixture.fixture.file_path(), &contract.tasks["setup"], &backend,
-                fixture.fixture.dir.path(), current_os(), &BTreeMap::new(), None, &retained,
-            ).is_none());
+        let backend = ResolvedExecutionBackend::Native {
+            shared_local_backend: None,
+        };
+        for retained in [
+            super::RetainedRunPolicyContext::Unavailable,
+            super::RetainedRunPolicyContext::from_acquired(None, Some("policy unreadable")),
+        ] {
+            assert!(
+                super::native_rust_readiness_preparation_env(
+                    &contract,
+                    fixture.fixture.file_path(),
+                    &contract.tasks["setup"],
+                    &backend,
+                    fixture.fixture.dir.path(),
+                    current_os(),
+                    &BTreeMap::new(),
+                    None,
+                    &retained,
+                )
+                .is_none()
+            );
         }
         let error = super::run_task_internal_with_started_services_and_policy_context(
-            &contract, fixture.fixture.file_path(), "check", &[], ExecutionOverrides::default(),
-            None, TaskExecutionMode::Capture, BTreeSet::new(),
+            &contract,
+            fixture.fixture.file_path(),
+            "check",
+            &[],
+            ExecutionOverrides::default(),
+            None,
+            TaskExecutionMode::Capture,
+            BTreeSet::new(),
             super::RetainedRunPolicyContext::from_acquired(None, Some("policy unreadable")),
-        ).unwrap_err();
+        )
+        .unwrap_err();
         assert!(matches!(error, RunError::InvalidPolicyPack { .. }));
         assert!(!fixture.fixture.dir.path().join("installs").exists());
     }
@@ -79290,17 +80129,34 @@ else printf '%s\n' "$*" >> task-bodies; fi
             "[ -f target-missing ] || printf '%s\\n' x86_64-unknown-linux-gnu; : > bad-active",
         );
         fs::write(&rustup_path, script).unwrap();
-        write_fake_bin(&fixture.fixture.dir.path().join("bin"), "cargo", r#"#!/bin/sh
+        write_fake_bin(
+            &fixture.fixture.dir.path().join("bin"),
+            "cargo",
+            r#"#!/bin/sh
 if [ "$1" = --version ]; then printf '%s\n' 'cargo 1.95.0 (fixture)';
 else : > task-body; fi
-"#);
-        let acquired = crate::policy_pack::load_org_policy_pack_auto_details(fixture.fixture.file_path()).unwrap();
+"#,
+        );
+        let acquired =
+            crate::policy_pack::load_org_policy_pack_auto_details(fixture.fixture.file_path())
+                .unwrap();
         let error = super::run_task_internal_with_started_services_and_policy_context(
-            &contract, fixture.fixture.file_path(), "check", &[], ExecutionOverrides::default(),
-            None, TaskExecutionMode::Capture, BTreeSet::new(),
+            &contract,
+            fixture.fixture.file_path(),
+            "check",
+            &[],
+            ExecutionOverrides::default(),
+            None,
+            TaskExecutionMode::Capture,
+            BTreeSet::new(),
             super::RetainedRunPolicyContext::from_acquired(acquired.as_ref(), None),
-        ).unwrap_err();
-        assert!(error.to_string().contains("invalidated before task dispatch"));
+        )
+        .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("invalidated before task dispatch")
+        );
         assert!(fixture.fixture.dir.path().join("bad-active").exists());
         assert!(!fixture.fixture.dir.path().join("task-body").exists());
         assert!(!fixture.fixture.dir.path().join("installs").exists());
@@ -79318,18 +80174,44 @@ else : > task-body; fi
         fs::create_dir_all(&shadow).unwrap();
         write_fake_bin(&shadow, "cargo", "#!/bin/sh\nexit 0\n");
         contract.env.vars.get_mut("PATH").unwrap().prepend = vec![shadow.display().to_string()];
-        let backend = ResolvedExecutionBackend::Native { shared_local_backend: None };
+        let backend = ResolvedExecutionBackend::Native {
+            shared_local_backend: None,
+        };
         let readiness = super::native_rust_readiness_preparation_env(
-            &contract, fixture.fixture.file_path(), &contract.tasks["setup"], &backend,
-            fixture.fixture.dir.path(), current_os(), &BTreeMap::new(), None,
+            &contract,
+            fixture.fixture.file_path(),
+            &contract.tasks["setup"],
+            &backend,
+            fixture.fixture.dir.path(),
+            current_os(),
+            &BTreeMap::new(),
+            None,
             &super::RetainedRunPolicyContext::AcquiredAbsent,
-        ).unwrap();
-        assert_eq!(super::native_rust_satisfaction("rust", &contract.toolchains["rust"],
-            &backend, fixture.fixture.dir.path(), &readiness, current_os()).unwrap(), super::NativeRustSatisfaction::Unknown);
-        let managed = fixture.fixture.dir.path().join(".ota/state/source-managed/bin");
+        )
+        .unwrap();
+        assert_eq!(
+            super::native_rust_satisfaction(
+                "rust",
+                &contract.toolchains["rust"],
+                &backend,
+                fixture.fixture.dir.path(),
+                &readiness,
+                current_os()
+            )
+            .unwrap(),
+            super::NativeRustSatisfaction::Unknown
+        );
+        let managed = fixture
+            .fixture
+            .dir
+            .path()
+            .join(".ota/state/source-managed/bin");
         fs::create_dir_all(&managed).unwrap();
         write_fake_bin(&managed, "cargo", "#!/bin/sh\nexit 0\n");
-        assert_eq!(fixture.satisfaction().unwrap(), super::NativeRustSatisfaction::Unknown);
+        assert_eq!(
+            fixture.satisfaction().unwrap(),
+            super::NativeRustSatisfaction::Unknown
+        );
         assert!(!fixture.fixture.dir.path().join("installs").exists());
     }
 
@@ -79348,19 +80230,43 @@ else : > task-body; fi
             "[ -f target-missing ] || printf '%s\\n' x86_64-unknown-linux-gnu; printf 'policies:\\n  env:\\n    values:\\n      PATH: /changed-policy-path\\n' > .ota/org-policy.yaml",
         );
         fs::write(&rustup_path, script).unwrap();
-        write_fake_bin(&fixture.fixture.dir.path().join("bin"), "cargo", r#"#!/bin/sh
+        write_fake_bin(
+            &fixture.fixture.dir.path().join("bin"),
+            "cargo",
+            r#"#!/bin/sh
 if [ "$1" = --version ]; then printf '%s\n' 'cargo 1.95.0 (fixture)';
 else : > task-body; fi
-"#);
-        let acquired = crate::policy_pack::load_org_policy_pack_auto_details(fixture.fixture.file_path()).unwrap();
+"#,
+        );
+        let acquired =
+            crate::policy_pack::load_org_policy_pack_auto_details(fixture.fixture.file_path())
+                .unwrap();
         assert!(acquired.is_none());
         let error = super::run_task_internal_with_started_services_and_policy_context(
-            &contract, fixture.fixture.file_path(), "check", &[], ExecutionOverrides::default(),
-            None, TaskExecutionMode::Capture, BTreeSet::new(),
+            &contract,
+            fixture.fixture.file_path(),
+            "check",
+            &[],
+            ExecutionOverrides::default(),
+            None,
+            TaskExecutionMode::Capture,
+            BTreeSet::new(),
             super::RetainedRunPolicyContext::from_acquired(acquired.as_ref(), None),
-        ).unwrap_err();
-        assert!(error.to_string().contains("invalidated before task dispatch"));
-        assert!(fixture.fixture.dir.path().join(".ota/org-policy.yaml").exists());
+        )
+        .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("invalidated before task dispatch")
+        );
+        assert!(
+            fixture
+                .fixture
+                .dir
+                .path()
+                .join(".ota/org-policy.yaml")
+                .exists()
+        );
         assert!(!fixture.fixture.dir.path().join("task-body").exists());
         assert!(!fixture.fixture.dir.path().join("installs").exists());
     }
@@ -79371,14 +80277,39 @@ else : > task-body; fi
         let _env_guard = env_mutex_lock();
         let _cwd_guard = cwd_mutex_lock();
         let mut fixture = RustReadinessFixture::new();
-        assert!(fixture.fixture.contract.toolchains["rust"].fulfillment_source().is_none());
-        assert_eq!(fixture.satisfaction().unwrap(), super::NativeRustSatisfaction::Satisfied);
-        fixture.fixture.contract.toolchains.get_mut("rust").unwrap().fulfillment.source =
-            Some(crate::schema::ToolchainFulfillmentSource::Rustup);
-        assert_eq!(fixture.satisfaction().unwrap(), super::NativeRustSatisfaction::Satisfied);
-        fixture.fixture.contract.toolchains.get_mut("rust").unwrap().fulfillment.source =
-            Some(crate::schema::ToolchainFulfillmentSource::Mise);
-        assert_eq!(fixture.satisfaction().unwrap(), super::NativeRustSatisfaction::Unknown);
+        assert!(
+            fixture.fixture.contract.toolchains["rust"]
+                .fulfillment_source()
+                .is_none()
+        );
+        assert_eq!(
+            fixture.satisfaction().unwrap(),
+            super::NativeRustSatisfaction::Satisfied
+        );
+        fixture
+            .fixture
+            .contract
+            .toolchains
+            .get_mut("rust")
+            .unwrap()
+            .fulfillment
+            .source = Some(crate::schema::ToolchainFulfillmentSource::Rustup);
+        assert_eq!(
+            fixture.satisfaction().unwrap(),
+            super::NativeRustSatisfaction::Satisfied
+        );
+        fixture
+            .fixture
+            .contract
+            .toolchains
+            .get_mut("rust")
+            .unwrap()
+            .fulfillment
+            .source = Some(crate::schema::ToolchainFulfillmentSource::Mise);
+        assert_eq!(
+            fixture.satisfaction().unwrap(),
+            super::NativeRustSatisfaction::Unknown
+        );
         assert!(!fixture.fixture.dir.path().join("installs").exists());
     }
 
@@ -79388,29 +80319,81 @@ else : > task-body; fi
         let _env_guard = env_mutex_lock();
         let _cwd_guard = cwd_mutex_lock();
         let fixture = RustReadinessFixture::new();
-        let backend = ResolvedExecutionBackend::Native { shared_local_backend: None };
+        let backend = ResolvedExecutionBackend::Native {
+            shared_local_backend: None,
+        };
         let cwd = fixture.fixture.dir.path();
-        let eligible = |contract: &Contract| super::native_rust_readiness_preparation_env(
-            contract, fixture.fixture.file_path(), &contract.tasks["setup"], &backend, cwd, current_os(),
-            &BTreeMap::new(), None, &super::RetainedRunPolicyContext::AcquiredAbsent).is_some();
+        let eligible = |contract: &Contract| {
+            super::native_rust_readiness_preparation_env(
+                contract,
+                fixture.fixture.file_path(),
+                &contract.tasks["setup"],
+                &backend,
+                cwd,
+                current_os(),
+                &BTreeMap::new(),
+                None,
+                &super::RetainedRunPolicyContext::AcquiredAbsent,
+            )
+            .is_some()
+        };
         assert!(eligible(&fixture.fixture.contract));
         let mut nested = fixture.fixture.contract.clone();
-        nested.tasks.get_mut("setup").unwrap().command.as_mut().unwrap().cwd = Some(String::from("nested"));
-        fixture.fixture.write("nested/rust-toolchain.toml", "[toolchain]\nchannel = '1.94.0'\n");
+        nested
+            .tasks
+            .get_mut("setup")
+            .unwrap()
+            .command
+            .as_mut()
+            .unwrap()
+            .cwd = Some(String::from("nested"));
+        fixture.fixture.write(
+            "nested/rust-toolchain.toml",
+            "[toolchain]\nchannel = '1.94.0'\n",
+        );
         assert!(!eligible(&nested));
-        for name in ["RUSTUP_TOOLCHAIN", "RUSTC", "RUSTC_WRAPPER", "RUSTC_WORKSPACE_WRAPPER", "PATH"] {
+        for name in [
+            "RUSTUP_TOOLCHAIN",
+            "RUSTC",
+            "RUSTC_WRAPPER",
+            "RUSTC_WORKSPACE_WRAPPER",
+            "PATH",
+        ] {
             let mut late_env = fixture.fixture.contract.clone();
-            late_env.env.vars.insert(name.to_string(), crate::schema::EnvRequirement {
-                required: true, secret: false, default: Some(String::from("different")),
-                allowed: Vec::new(), prepend: Vec::new(), append: Vec::new(),
-            });
+            late_env.env.vars.insert(
+                name.to_string(),
+                crate::schema::EnvRequirement {
+                    required: true,
+                    secret: false,
+                    default: Some(String::from("different")),
+                    allowed: Vec::new(),
+                    prepend: Vec::new(),
+                    append: Vec::new(),
+                },
+            );
             assert!(!eligible(&late_env));
         }
         let mut state = TaskRunState::default();
-        super::maybe_fulfill_toolchains_on_run_path(&nested, fixture.fixture.file_path(),
-            "setup", &nested.tasks["setup"], &backend, &BTreeMap::new(),
-            TaskExecutionMode::Capture, current_os(), &mut state, eligible(&nested)).unwrap();
-        assert_eq!(fs::read_to_string(cwd.join("installs")).unwrap().lines().count(), 1);
+        super::maybe_fulfill_toolchains_on_run_path(
+            &nested,
+            fixture.fixture.file_path(),
+            "setup",
+            &nested.tasks["setup"],
+            &backend,
+            &BTreeMap::new(),
+            TaskExecutionMode::Capture,
+            current_os(),
+            &mut state,
+            eligible(&nested),
+        )
+        .unwrap();
+        assert_eq!(
+            fs::read_to_string(cwd.join("installs"))
+                .unwrap()
+                .lines()
+                .count(),
+            1
+        );
         assert_eq!(state.fulfilled_toolchains["rust"].len(), 1);
     }
 
@@ -79426,39 +80409,75 @@ else : > task-body; fi
             source: crate::policy_pack::PolicyPackSource::EnvOverride,
             source_identity: None,
         };
-        let backend = ResolvedExecutionBackend::Native { shared_local_backend: None };
-        for source in [None, Some(crate::schema::ToolchainFulfillmentSource::Rustup),
-            Some(crate::schema::ToolchainFulfillmentSource::Mise)] {
-            fixture.fixture.contract.toolchains.get_mut("rust").unwrap().fulfillment.source = source;
+        let backend = ResolvedExecutionBackend::Native {
+            shared_local_backend: None,
+        };
+        for source in [
+            None,
+            Some(crate::schema::ToolchainFulfillmentSource::Rustup),
+            Some(crate::schema::ToolchainFulfillmentSource::Mise),
+        ] {
+            fixture
+                .fixture
+                .contract
+                .toolchains
+                .get_mut("rust")
+                .unwrap()
+                .fulfillment
+                .source = source;
             for cached in [false, true] {
                 let mut state = TaskRunState::default();
-                state.retained_policy = super::RetainedRunPolicyContext::from_acquired(Some(&loaded), None);
+                state.retained_policy =
+                    super::RetainedRunPolicyContext::from_acquired(Some(&loaded), None);
                 state.requested_task = Some(String::from("check"));
-                state.toolchain_invocation = Some((TaskExecutionRelation::DependsOn {
-                    parent: String::from("check"),
-                }, 0));
+                state.toolchain_invocation = Some((
+                    TaskExecutionRelation::DependsOn {
+                        parent: String::from("check"),
+                    },
+                    0,
+                ));
                 state.task_steps.push(ExecutedTaskStep {
-                    name: String::from("prepare"), exit_code: 0,
-                    relation: TaskExecutionRelation::DependsOn { parent: String::from("check") },
-                    generation: 0, execution_note: None, cargo_hydration: Vec::new(),
+                    name: String::from("prepare"),
+                    exit_code: 0,
+                    relation: TaskExecutionRelation::DependsOn {
+                        parent: String::from("check"),
+                    },
+                    generation: 0,
+                    execution_note: None,
+                    cargo_hydration: Vec::new(),
                 });
                 if cached {
-                    state.fulfilled_toolchain_keys.insert(super::toolchain_fulfillment_cache_key("rust", &backend));
+                    state
+                        .fulfilled_toolchain_keys
+                        .insert(super::toolchain_fulfillment_cache_key("rust", &backend));
                 }
                 let keys_before = state.fulfilled_toolchain_keys.clone();
                 let error = super::maybe_fulfill_toolchains_on_run_path(
-                    &fixture.fixture.contract, fixture.fixture.file_path(), "setup",
-                    &fixture.fixture.contract.tasks["setup"], &backend, &BTreeMap::new(),
-                    TaskExecutionMode::Capture, current_os(), &mut state, false,
-                ).unwrap_err();
+                    &fixture.fixture.contract,
+                    fixture.fixture.file_path(),
+                    "setup",
+                    &fixture.fixture.contract.tasks["setup"],
+                    &backend,
+                    &BTreeMap::new(),
+                    TaskExecutionMode::Capture,
+                    current_os(),
+                    &mut state,
+                    false,
+                )
+                .unwrap_err();
                 let RunError::ToolchainFulfillmentPolicyDenied { evidence, .. } = error else {
                     panic!("expected typed fulfillment denial");
                 };
                 assert_eq!(evidence.root_task.as_deref(), Some("check"));
                 assert_eq!(evidence.task, "setup");
-                assert_eq!(evidence.provider, if source == Some(crate::schema::ToolchainFulfillmentSource::Mise) {
-                    "mise"
-                } else { "rustup" });
+                assert_eq!(
+                    evidence.provider,
+                    if source == Some(crate::schema::ToolchainFulfillmentSource::Mise) {
+                        "mise"
+                    } else {
+                        "rustup"
+                    }
+                );
                 assert_eq!(evidence.preceding_steps, state.task_steps);
                 assert_eq!(evidence.readiness, "unknown");
                 assert_eq!(evidence.fulfillment, "not_run");
@@ -79482,19 +80501,33 @@ else : > task-body; fi
             source: crate::policy_pack::PolicyPackSource::EnvOverride,
             source_identity: None,
         };
-        let backend = ResolvedExecutionBackend::Native { shared_local_backend: None };
+        let backend = ResolvedExecutionBackend::Native {
+            shared_local_backend: None,
+        };
         let mut state = TaskRunState::default();
         state.retained_policy = super::RetainedRunPolicyContext::from_acquired(Some(&loaded), None);
-        let prepare = |state: &mut TaskRunState| super::maybe_fulfill_toolchains_on_run_path(
-            &fixture.fixture.contract, fixture.fixture.file_path(), "setup",
-            &fixture.fixture.contract.tasks["setup"], &backend, &BTreeMap::new(),
-            TaskExecutionMode::Capture, current_os(), state, true,
-        );
+        let prepare = |state: &mut TaskRunState| {
+            super::maybe_fulfill_toolchains_on_run_path(
+                &fixture.fixture.contract,
+                fixture.fixture.file_path(),
+                "setup",
+                &fixture.fixture.contract.tasks["setup"],
+                &backend,
+                &BTreeMap::new(),
+                TaskExecutionMode::Capture,
+                current_os(),
+                state,
+                true,
+            )
+        };
         prepare(&mut state).unwrap();
         assert!(state.fulfilled_toolchain_keys.is_empty());
         assert!(state.fulfilled_toolchains.is_empty());
         fs::remove_file(fixture.fixture.dir.path().join("bin/rustfmt")).unwrap();
-        assert!(matches!(prepare(&mut state), Err(RunError::ToolchainFulfillmentPolicyDenied { .. })));
+        assert!(matches!(
+            prepare(&mut state),
+            Err(RunError::ToolchainFulfillmentPolicyDenied { .. })
+        ));
         assert!(state.fulfilled_toolchain_keys.is_empty());
         assert!(state.fulfilled_toolchains.is_empty());
         assert!(!fixture.fixture.dir.path().join("installs").exists());
@@ -79506,12 +80539,24 @@ else : > task-body; fi
         let _env_guard = env_mutex_lock();
         let _cwd_guard = cwd_mutex_lock();
         let fixture = RustReadinessFixture::new();
-        let backend = ResolvedExecutionBackend::Native { shared_local_backend: None };
+        let backend = ResolvedExecutionBackend::Native {
+            shared_local_backend: None,
+        };
         let mut state = TaskRunState::default();
-        let prepare = |state: &mut TaskRunState| super::maybe_fulfill_toolchains_on_run_path(
-            &fixture.fixture.contract, fixture.fixture.file_path(), "setup",
-            &fixture.fixture.contract.tasks["setup"], &backend, &BTreeMap::new(),
-            TaskExecutionMode::Capture, current_os(), state, true);
+        let prepare = |state: &mut TaskRunState| {
+            super::maybe_fulfill_toolchains_on_run_path(
+                &fixture.fixture.contract,
+                fixture.fixture.file_path(),
+                "setup",
+                &fixture.fixture.contract.tasks["setup"],
+                &backend,
+                &BTreeMap::new(),
+                TaskExecutionMode::Capture,
+                current_os(),
+                state,
+                true,
+            )
+        };
         prepare(&mut state).unwrap();
         assert!(state.fulfilled_toolchain_keys.is_empty());
         assert!(state.fulfilled_toolchains.is_empty());
@@ -79519,7 +80564,13 @@ else : > task-body; fi
         fs::remove_file(fixture.fixture.dir.path().join("bin/rustfmt")).unwrap();
         prepare(&mut state).unwrap();
         prepare(&mut state).unwrap();
-        assert_eq!(fs::read_to_string(fixture.fixture.dir.path().join("installs")).unwrap().lines().count(), 1);
+        assert_eq!(
+            fs::read_to_string(fixture.fixture.dir.path().join("installs"))
+                .unwrap()
+                .lines()
+                .count(),
+            1
+        );
         assert_eq!(state.fulfilled_toolchains["rust"].len(), 1);
     }
 
@@ -79529,10 +80580,16 @@ else : > task-body; fi
         let _env_guard = env_mutex_lock();
         let _cwd_guard = cwd_mutex_lock();
         let fixture = RustReadinessFixture::new();
-        assert_eq!(fixture.satisfaction().unwrap(), super::NativeRustSatisfaction::Satisfied);
+        assert_eq!(
+            fixture.satisfaction().unwrap(),
+            super::NativeRustSatisfaction::Satisfied
+        );
         for (marker, expected) in [
             ("wrong-version", super::NativeRustSatisfaction::Unsatisfied),
-            ("component-missing", super::NativeRustSatisfaction::Unsatisfied),
+            (
+                "component-missing",
+                super::NativeRustSatisfaction::Unsatisfied,
+            ),
             ("target-missing", super::NativeRustSatisfaction::Unsatisfied),
             ("bad-active", super::NativeRustSatisfaction::Unsatisfied),
             ("nonzero", super::NativeRustSatisfaction::Unknown),
@@ -79545,10 +80602,24 @@ else : > task-body; fi
         let alternate = fixture.fixture.dir.path().join("alternate");
         fs::create_dir_all(&alternate).unwrap();
         write_fake_bin(&alternate, "rustc", "#!/bin/sh\nexit 0\n");
-        let env = BTreeMap::from([(String::from("PATH"), alternate.to_string_lossy().into_owned())]);
-        assert_eq!(super::native_rust_satisfaction("rust", &fixture.fixture.contract.toolchains["rust"],
-            &ResolvedExecutionBackend::Native { shared_local_backend: None },
-            fixture.fixture.dir.path(), &env, current_os()).unwrap(), super::NativeRustSatisfaction::Unknown);
+        let env = BTreeMap::from([(
+            String::from("PATH"),
+            alternate.to_string_lossy().into_owned(),
+        )]);
+        assert_eq!(
+            super::native_rust_satisfaction(
+                "rust",
+                &fixture.fixture.contract.toolchains["rust"],
+                &ResolvedExecutionBackend::Native {
+                    shared_local_backend: None
+                },
+                fixture.fixture.dir.path(),
+                &env,
+                current_os()
+            )
+            .unwrap(),
+            super::NativeRustSatisfaction::Unknown
+        );
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -79558,22 +80629,60 @@ else : > task-body; fi
         let _cwd_guard = cwd_mutex_lock();
         let mut fixture = RustReadinessFixture::new();
         for version in ["stable", "1.95.0"] {
-            fixture.fixture.contract.toolchains.get_mut("rust").unwrap().version = version.to_string();
+            fixture
+                .fixture
+                .contract
+                .toolchains
+                .get_mut("rust")
+                .unwrap()
+                .version = version.to_string();
             fixture.fixture.write("malformed", "fixture");
             let mut state = TaskRunState::default();
-            super::maybe_fulfill_toolchains_on_run_path(&fixture.fixture.contract,
-                fixture.fixture.file_path(), "setup", &fixture.fixture.contract.tasks["setup"],
-                &ResolvedExecutionBackend::Native { shared_local_backend: None }, &BTreeMap::new(),
-                TaskExecutionMode::Capture, current_os(), &mut state, true).unwrap();
+            super::maybe_fulfill_toolchains_on_run_path(
+                &fixture.fixture.contract,
+                fixture.fixture.file_path(),
+                "setup",
+                &fixture.fixture.contract.tasks["setup"],
+                &ResolvedExecutionBackend::Native {
+                    shared_local_backend: None,
+                },
+                &BTreeMap::new(),
+                TaskExecutionMode::Capture,
+                current_os(),
+                &mut state,
+                true,
+            )
+            .unwrap();
             assert_eq!(state.fulfilled_toolchains["rust"].len(), 1);
         }
-        fixture.fixture.contract.toolchains.get_mut("rust").unwrap().fulfillment.mode = crate::schema::ToolchainFulfillmentMode::None;
+        fixture
+            .fixture
+            .contract
+            .toolchains
+            .get_mut("rust")
+            .unwrap()
+            .fulfillment
+            .mode = crate::schema::ToolchainFulfillmentMode::None;
         let before = fs::read_to_string(fixture.fixture.dir.path().join("installs")).unwrap();
-        super::maybe_fulfill_toolchains_on_run_path(&fixture.fixture.contract,
-            fixture.fixture.file_path(), "setup", &fixture.fixture.contract.tasks["setup"],
-            &ResolvedExecutionBackend::Native { shared_local_backend: None }, &BTreeMap::new(),
-            TaskExecutionMode::Capture, current_os(), &mut TaskRunState::default(), true).unwrap();
-        assert_eq!(fs::read_to_string(fixture.fixture.dir.path().join("installs")).unwrap(), before);
+        super::maybe_fulfill_toolchains_on_run_path(
+            &fixture.fixture.contract,
+            fixture.fixture.file_path(),
+            "setup",
+            &fixture.fixture.contract.tasks["setup"],
+            &ResolvedExecutionBackend::Native {
+                shared_local_backend: None,
+            },
+            &BTreeMap::new(),
+            TaskExecutionMode::Capture,
+            current_os(),
+            &mut TaskRunState::default(),
+            true,
+        )
+        .unwrap();
+        assert_eq!(
+            fs::read_to_string(fixture.fixture.dir.path().join("installs")).unwrap(),
+            before
+        );
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -79591,21 +80700,42 @@ else : > task-body; fi
             "#!/missing-ota-readiness-interpreter\n",
         ] {
             write_fake_bin(&bin, "probe", body);
-            let binding = super::native_rust_executable_binding("probe", cwd, &BTreeMap::new()).unwrap();
+            let binding =
+                super::native_rust_executable_binding("probe", cwd, &BTreeMap::new()).unwrap();
             let mut budget = super::NativeRustProbeBudget {
                 deadline: std::time::Instant::now() + std::time::Duration::from_secs(3),
-                per_probe: std::time::Duration::from_millis(30), remaining_output: 64 * 1024,
+                per_probe: std::time::Duration::from_millis(30),
+                remaining_output: 64 * 1024,
                 environment: super::native_rust_effective_probe_env(&BTreeMap::new()),
             };
-            assert!(matches!(super::native_rust_readiness_probe(&binding, &[], cwd, &BTreeMap::new(), &mut budget),
-                Err(super::NativeRustProbeError::Unknown)));
+            assert!(matches!(
+                super::native_rust_readiness_probe(
+                    &binding,
+                    &[],
+                    cwd,
+                    &BTreeMap::new(),
+                    &mut budget
+                ),
+                Err(super::NativeRustProbeError::Unknown)
+            ));
         }
-        let previous = super::RUN_INTERRUPT_REQUESTED.swap(true, std::sync::atomic::Ordering::Relaxed);
+        let previous =
+            super::RUN_INTERRUPT_REQUESTED.swap(true, std::sync::atomic::Ordering::Relaxed);
         let mut state = TaskRunState::default();
-        let result = super::maybe_fulfill_toolchains_on_run_path(&fixture.fixture.contract,
-            fixture.fixture.file_path(), "setup", &fixture.fixture.contract.tasks["setup"],
-            &ResolvedExecutionBackend::Native { shared_local_backend: None }, &BTreeMap::new(),
-            TaskExecutionMode::Capture, current_os(), &mut state, true);
+        let result = super::maybe_fulfill_toolchains_on_run_path(
+            &fixture.fixture.contract,
+            fixture.fixture.file_path(),
+            "setup",
+            &fixture.fixture.contract.tasks["setup"],
+            &ResolvedExecutionBackend::Native {
+                shared_local_backend: None,
+            },
+            &BTreeMap::new(),
+            TaskExecutionMode::Capture,
+            current_os(),
+            &mut state,
+            true,
+        );
         super::RUN_INTERRUPT_REQUESTED.store(previous, std::sync::atomic::Ordering::Relaxed);
         assert!(result.unwrap_err().to_string().contains("interrupted"));
         assert!(state.fulfilled_toolchain_keys.is_empty());
@@ -79620,25 +80750,43 @@ else : > task-body; fi
         let _cwd_guard = cwd_mutex_lock();
         let fixture = RustReadinessFixture::new();
         let cwd = fixture.fixture.dir.path();
-        write_fake_bin(&cwd.join("bin"), "probe", "#!/bin/sh\nprintf abcd\nprintf efgh >&2\n");
-        let binding = super::native_rust_executable_binding("probe", cwd, &BTreeMap::new()).unwrap();
+        write_fake_bin(
+            &cwd.join("bin"),
+            "probe",
+            "#!/bin/sh\nprintf abcd\nprintf efgh >&2\n",
+        );
+        let binding =
+            super::native_rust_executable_binding("probe", cwd, &BTreeMap::new()).unwrap();
         let mut budget = super::NativeRustProbeBudget {
             deadline: Instant::now() + Duration::from_secs(4),
-            per_probe: Duration::from_secs(1), remaining_output: 12,
+            per_probe: Duration::from_secs(1),
+            remaining_output: 12,
             environment: super::native_rust_effective_probe_env(&BTreeMap::new()),
         };
-        assert_eq!(super::native_rust_readiness_probe(&binding, &[], cwd,
-            &BTreeMap::new(), &mut budget).unwrap(), "abcd");
+        assert_eq!(
+            super::native_rust_readiness_probe(&binding, &[], cwd, &BTreeMap::new(), &mut budget)
+                .unwrap(),
+            "abcd"
+        );
         assert_eq!(budget.remaining_output, 4);
-        assert!(matches!(super::native_rust_readiness_probe(&binding, &[], cwd,
-            &BTreeMap::new(), &mut budget), Err(super::NativeRustProbeError::Unknown)));
+        assert!(matches!(
+            super::native_rust_readiness_probe(&binding, &[], cwd, &BTreeMap::new(), &mut budget),
+            Err(super::NativeRustProbeError::Unknown)
+        ));
         assert_eq!(budget.remaining_output, 0);
-        write_fake_bin(&cwd.join("bin"), "probe", "#!/bin/sh\nprintf invoked > should-not-run\n");
-        let binding = super::native_rust_executable_binding("probe", cwd, &BTreeMap::new()).unwrap();
+        write_fake_bin(
+            &cwd.join("bin"),
+            "probe",
+            "#!/bin/sh\nprintf invoked > should-not-run\n",
+        );
+        let binding =
+            super::native_rust_executable_binding("probe", cwd, &BTreeMap::new()).unwrap();
         budget.remaining_output = 64 * 1024;
         budget.deadline = Instant::now() + Duration::from_secs(1);
-        assert!(matches!(super::native_rust_readiness_probe(&binding, &[], cwd,
-            &BTreeMap::new(), &mut budget), Err(super::NativeRustProbeError::Unknown)));
+        assert!(matches!(
+            super::native_rust_readiness_probe(&binding, &[], cwd, &BTreeMap::new(), &mut budget),
+            Err(super::NativeRustProbeError::Unknown)
+        ));
         assert!(!cwd.join("should-not-run").exists());
     }
 
@@ -79649,15 +80797,25 @@ else : > task-body; fi
         let _cwd_guard = cwd_mutex_lock();
         let fixture = RustReadinessFixture::new();
         let cwd = fixture.fixture.dir.path();
-        write_fake_bin(&cwd.join("bin"), "probe", "#!/bin/sh\n/bin/sleep 30 >&2 &\nprintf '%s\\n' observed\n");
-        let binding = super::native_rust_executable_binding("probe", cwd, &BTreeMap::new()).unwrap();
+        write_fake_bin(
+            &cwd.join("bin"),
+            "probe",
+            "#!/bin/sh\n/bin/sleep 30 >&2 &\nprintf '%s\\n' observed\n",
+        );
+        let binding =
+            super::native_rust_executable_binding("probe", cwd, &BTreeMap::new()).unwrap();
         let start = std::time::Instant::now();
         let mut budget = super::NativeRustProbeBudget {
             deadline: start + std::time::Duration::from_secs(3),
-            per_probe: std::time::Duration::from_secs(1), remaining_output: 64 * 1024,
+            per_probe: std::time::Duration::from_secs(1),
+            remaining_output: 64 * 1024,
             environment: super::native_rust_effective_probe_env(&BTreeMap::new()),
         };
-        assert_eq!(super::native_rust_readiness_probe(&binding, &[], cwd, &BTreeMap::new(), &mut budget).unwrap(), "observed\n");
+        assert_eq!(
+            super::native_rust_readiness_probe(&binding, &[], cwd, &BTreeMap::new(), &mut budget)
+                .unwrap(),
+            "observed\n"
+        );
         assert!(start.elapsed() < std::time::Duration::from_secs(3));
         assert_eq!(budget.remaining_output, 64 * 1024 - 9);
     }
@@ -79674,30 +80832,58 @@ else : > task-body; fi
             assert_ne!(previous, libc::SIG_ERR);
             let mut state = TaskRunState::default();
             let result = super::maybe_fulfill_toolchains_on_run_path(
-                &fixture.fixture.contract, fixture.fixture.file_path(), "setup",
+                &fixture.fixture.contract,
+                fixture.fixture.file_path(),
+                "setup",
                 &fixture.fixture.contract.tasks["setup"],
-                &ResolvedExecutionBackend::Native { shared_local_backend: None },
-                &BTreeMap::new(), TaskExecutionMode::Capture, current_os(), &mut state, true);
-            unsafe { libc::signal(libc::SIGCHLD, previous); }
+                &ResolvedExecutionBackend::Native {
+                    shared_local_backend: None,
+                },
+                &BTreeMap::new(),
+                TaskExecutionMode::Capture,
+                current_os(),
+                &mut state,
+                true,
+            );
+            unsafe {
+                libc::signal(libc::SIGCHLD, previous);
+            }
             assert!(result.unwrap_err().to_string().contains("ownership lost"));
             assert!(!fixture.fixture.dir.path().join("installs").exists());
             assert!(state.fulfilled_toolchain_keys.is_empty());
             assert!(state.fulfilled_toolchains.is_empty());
-            fs::write(env::var_os(MARKER).unwrap(), "readiness cleanup refusal asserted\n").unwrap();
+            fs::write(
+                env::var_os(MARKER).unwrap(),
+                "readiness cleanup refusal asserted\n",
+            )
+            .unwrap();
             return;
         }
         let output = TempDir::new().unwrap();
         let marker = output.path().join("child-completed");
         let mut child = Command::new(env::current_exe().unwrap())
-            .args(["--exact", "runner::tests::native_rust_cleanup_failure_does_not_dispatch_provisioning", "--test-threads=1"])
-            .env_clear().env("PATH", "/usr/bin:/bin").env(CHILD, "1").env(MARKER, &marker)
-            .stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null()).spawn().unwrap();
+            .args([
+                "--exact",
+                "runner::tests::native_rust_cleanup_failure_does_not_dispatch_provisioning",
+                "--test-threads=1",
+            ])
+            .env_clear()
+            .env("PATH", "/usr/bin:/bin")
+            .env(CHILD, "1")
+            .env(MARKER, &marker)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
             if let Some(status) = child.try_wait().unwrap() {
                 assert!(status.success());
-                assert_eq!(fs::read_to_string(&marker).unwrap(), "readiness cleanup refusal asserted\n");
+                assert_eq!(
+                    fs::read_to_string(&marker).unwrap(),
+                    "readiness cleanup refusal asserted\n"
+                );
                 break;
             }
             if Instant::now() >= deadline {
@@ -79716,24 +80902,70 @@ else : > task-body; fi
         let mut fixture = RustReadinessFixture::new();
         let cwd = fixture.fixture.dir.path();
         let bin = cwd.join("bin");
-        let binding = super::native_rust_executable_binding("rustc", cwd, &BTreeMap::new()).unwrap();
+        let binding =
+            super::native_rust_executable_binding("rustc", cwd, &BTreeMap::new()).unwrap();
         let mut budget = super::NativeRustProbeBudget {
             deadline: Instant::now() + Duration::from_secs(3),
-            per_probe: Duration::from_secs(1), remaining_output: 64 * 1024,
+            per_probe: Duration::from_secs(1),
+            remaining_output: 64 * 1024,
             environment: super::native_rust_effective_probe_env(&BTreeMap::new()),
         };
         write_fake_bin(&bin, "rustc", "#!/bin/sh\nprintf '%s\\n' changed\n");
-        assert!(matches!(super::native_rust_readiness_probe(&binding, &["--version"], cwd,
-            &BTreeMap::new(), &mut budget), Err(super::NativeRustProbeError::Unknown)));
-        let binding = super::native_rust_executable_binding("rustc", cwd, &BTreeMap::new()).unwrap();
-        budget.environment.insert("OTA_TEST_READINESS_DIFFERENT_ENV".into(), "different".into());
-        assert!(matches!(super::native_rust_readiness_probe(&binding, &["--version"], cwd,
-            &BTreeMap::new(), &mut budget), Err(super::NativeRustProbeError::Unknown)));
-        fixture.fixture.contract.toolchains.get_mut("rust").unwrap().profile = Some(String::from("minimal"));
-        assert_eq!(fixture.satisfaction().unwrap(), super::NativeRustSatisfaction::Unknown);
-        fixture.fixture.contract.toolchains.get_mut("rust").unwrap().profile = None;
-        fixture.fixture.contract.toolchains.get_mut("rust").unwrap().components = vec![String::from("clippy")];
-        assert_eq!(fixture.satisfaction().unwrap(), super::NativeRustSatisfaction::Unknown);
+        assert!(matches!(
+            super::native_rust_readiness_probe(
+                &binding,
+                &["--version"],
+                cwd,
+                &BTreeMap::new(),
+                &mut budget
+            ),
+            Err(super::NativeRustProbeError::Unknown)
+        ));
+        let binding =
+            super::native_rust_executable_binding("rustc", cwd, &BTreeMap::new()).unwrap();
+        budget.environment.insert(
+            "OTA_TEST_READINESS_DIFFERENT_ENV".into(),
+            "different".into(),
+        );
+        assert!(matches!(
+            super::native_rust_readiness_probe(
+                &binding,
+                &["--version"],
+                cwd,
+                &BTreeMap::new(),
+                &mut budget
+            ),
+            Err(super::NativeRustProbeError::Unknown)
+        ));
+        fixture
+            .fixture
+            .contract
+            .toolchains
+            .get_mut("rust")
+            .unwrap()
+            .profile = Some(String::from("minimal"));
+        assert_eq!(
+            fixture.satisfaction().unwrap(),
+            super::NativeRustSatisfaction::Unknown
+        );
+        fixture
+            .fixture
+            .contract
+            .toolchains
+            .get_mut("rust")
+            .unwrap()
+            .profile = None;
+        fixture
+            .fixture
+            .contract
+            .toolchains
+            .get_mut("rust")
+            .unwrap()
+            .components = vec![String::from("clippy")];
+        assert_eq!(
+            fixture.satisfaction().unwrap(),
+            super::NativeRustSatisfaction::Unknown
+        );
         assert!(!fixture.fixture.dir.path().join("installs").exists());
     }
 
@@ -79745,25 +80977,70 @@ else : > task-body; fi
         let fixture = RustReadinessFixture::new();
         let rust = &fixture.fixture.contract.toolchains["rust"];
         let cwd = fixture.fixture.dir.path();
-        let native = ResolvedExecutionBackend::Native { shared_local_backend: None };
-        assert_eq!(fixture.satisfaction().unwrap(), super::NativeRustSatisfaction::Satisfied);
-        let remote = ResolvedExecutionBackend::Remote {
-            shared_local_backend: None, provider: String::from("ssh"),
-            target: String::from("fixture.invalid"), cwd: None, ssh: None,
+        let native = ResolvedExecutionBackend::Native {
+            shared_local_backend: None,
         };
-        assert_eq!(super::native_rust_satisfaction("rust", rust, &remote, cwd,
-            &BTreeMap::new(), current_os()).unwrap(), super::NativeRustSatisfaction::Unknown);
-        assert_eq!(super::native_rust_satisfaction("rust", rust, &native, cwd,
-            &BTreeMap::new(), "windows").unwrap(), super::NativeRustSatisfaction::Unknown);
+        assert_eq!(
+            fixture.satisfaction().unwrap(),
+            super::NativeRustSatisfaction::Satisfied
+        );
+        let remote = ResolvedExecutionBackend::Remote {
+            shared_local_backend: None,
+            provider: String::from("ssh"),
+            target: String::from("fixture.invalid"),
+            cwd: None,
+            ssh: None,
+        };
+        assert_eq!(
+            super::native_rust_satisfaction(
+                "rust",
+                rust,
+                &remote,
+                cwd,
+                &BTreeMap::new(),
+                current_os()
+            )
+            .unwrap(),
+            super::NativeRustSatisfaction::Unknown
+        );
+        assert_eq!(
+            super::native_rust_satisfaction(
+                "rust",
+                rust,
+                &native,
+                cwd,
+                &BTreeMap::new(),
+                "windows"
+            )
+            .unwrap(),
+            super::NativeRustSatisfaction::Unknown
+        );
         for name in ["RUSTC", "RUSTC_WRAPPER", "RUSTC_WORKSPACE_WRAPPER"] {
             let overrides = BTreeMap::from([(name.to_string(), String::from("other-rustc"))]);
-            assert_eq!(super::native_rust_satisfaction("rust", rust, &native, cwd,
-                &overrides, current_os()).unwrap(), super::NativeRustSatisfaction::Unknown);
+            assert_eq!(
+                super::native_rust_satisfaction(
+                    "rust",
+                    rust,
+                    &native,
+                    cwd,
+                    &overrides,
+                    current_os()
+                )
+                .unwrap(),
+                super::NativeRustSatisfaction::Unknown
+            );
         }
         let managed = cwd.join(".ota/state/source-managed/bin");
         fs::create_dir_all(&managed).unwrap();
-        write_fake_bin(&managed, "rustc", "#!/bin/sh\nprintf '%s\\n' 'rustc 1.94.0'\n");
-        assert_ne!(fixture.satisfaction().unwrap(), super::NativeRustSatisfaction::Satisfied);
+        write_fake_bin(
+            &managed,
+            "rustc",
+            "#!/bin/sh\nprintf '%s\\n' 'rustc 1.94.0'\n",
+        );
+        assert_ne!(
+            fixture.satisfaction().unwrap(),
+            super::NativeRustSatisfaction::Satisfied
+        );
         assert!(!cwd.join("installs").exists());
     }
 

@@ -315,8 +315,14 @@ pub(crate) fn admit_command_typed_effect_closure(
     effect_overrides: Option<&EffectGovernanceOverrides>,
 ) -> OrchestrationResult<CommandTypedEffectAdmission> {
     admit_command_closure_with_policy_acquisition(
-        contract, contract_path, workflow_name, roots, execution_overrides,
-        effect_overrides, false, None,
+        contract,
+        contract_path,
+        workflow_name,
+        roots,
+        execution_overrides,
+        effect_overrides,
+        false,
+        None,
     )
 }
 
@@ -329,8 +335,14 @@ pub(crate) fn admit_command_execution_closure(
     effect_overrides: Option<&EffectGovernanceOverrides>,
 ) -> OrchestrationResult<CommandTypedEffectAdmission> {
     admit_command_closure_with_policy_acquisition(
-        contract, contract_path, workflow_name, roots, execution_overrides,
-        effect_overrides, true, None,
+        contract,
+        contract_path,
+        workflow_name,
+        roots,
+        execution_overrides,
+        effect_overrides,
+        true,
+        None,
     )
 }
 
@@ -348,10 +360,19 @@ pub(crate) fn admit_independent_child_execution_closure(
         policy: None,
     };
     admit_command_closure_with_policy_acquisition(
-        contract, contract_path, workflow_name, roots, execution_overrides,
-        effect_overrides, true, Some(&mut acquisition),
-    ).map_err(|error| IndependentCommandAdmissionFailure {
-        error, stage: acquisition.stage, policy_acquired: acquisition.policy_acquired,
+        contract,
+        contract_path,
+        workflow_name,
+        roots,
+        execution_overrides,
+        effect_overrides,
+        true,
+        Some(&mut acquisition),
+    )
+    .map_err(|error| IndependentCommandAdmissionFailure {
+        error,
+        stage: acquisition.stage,
+        policy_acquired: acquisition.policy_acquired,
         policy: acquisition.policy,
     })
 }
@@ -360,21 +381,26 @@ pub(crate) fn refuse_unsupported_toolchain_fulfillment_policy_route(
     loaded_policy: Option<&LoadedOrgPolicyPack>,
     route: &str,
 ) -> OrchestrationResult<()> {
-    let Some(policy) = loaded_policy.filter(|policy| {
-        policy.pack.denies_toolchain_fulfillment("rust")
-    }) else {
+    let Some(policy) =
+        loaded_policy.filter(|policy| policy.pack.denies_toolchain_fulfillment("rust"))
+    else {
         return Ok(());
     };
     let policy_identity = crate::semantic_identity::semantic_contract_identity(&policy.pack)
-        .map_err(|error| Box::new(RunError::FileActionFailed {
-            task: String::new(),
-            message: format!("invocation policy identity is unavailable: {error}"),
-        }))?;
-    Err(Box::new(RunError::ToolchainFulfillmentPolicyRouteUnsupported {
-        route: route.to_string(), policy_identity,
-        policy_source: policy.source,
-        policy_path: policy.path.display().to_string(),
-    }))
+        .map_err(|error| {
+            Box::new(RunError::FileActionFailed {
+                task: String::new(),
+                message: format!("invocation policy identity is unavailable: {error}"),
+            })
+        })?;
+    Err(Box::new(
+        RunError::ToolchainFulfillmentPolicyRouteUnsupported {
+            route: route.to_string(),
+            policy_identity,
+            policy_source: policy.source,
+            policy_path: policy.path.display().to_string(),
+        },
+    ))
 }
 
 fn admit_command_closure_with_policy_acquisition(
@@ -487,7 +513,9 @@ fn admit_command_closure_with_policy_acquisition(
     if acquire_untyped_policy {
         for root in roots {
             plan_task_execution_structure_with_overrides(
-                contract, root.task.as_str(), execution_overrides,
+                contract,
+                root.task.as_str(),
+                execution_overrides,
             )?;
         }
     }
@@ -499,29 +527,37 @@ fn admit_command_closure_with_policy_acquisition(
     } else {
         crate::policy_pack::load_org_policy_pack_auto_details(contract_path)
     }
-        .map_err(|error| {
-            Box::new(RunError::FileActionFailed {
-                task: roots
-                    .first()
-                    .map(|root| root.task.clone())
-                    .unwrap_or_default(),
-                message: format!(
-                    "typed effect policy could not be loaded before admission: {error}"
-                ),
-            })
-        })?;
+    .map_err(|error| {
+        Box::new(RunError::FileActionFailed {
+            task: roots
+                .first()
+                .map(|root| root.task.clone())
+                .unwrap_or_default(),
+            message: format!("typed effect policy could not be loaded before admission: {error}"),
+        })
+    })?;
     if let Some(acquisition) = independent.as_deref_mut() {
         acquisition.stage = IndependentCommandAdmissionStage::PolicyIdentity;
-        acquisition.policy = loaded_policy.as_ref().map(|policy| {
-            crate::semantic_identity::semantic_contract_identity(&policy.pack)
-                .map(|identity| AcquiredCommandPolicyIdentity {
-                    identity, source: policy.source, path: policy.path.display().to_string(),
-                })
-                .map_err(|error| Box::new(RunError::FileActionFailed {
-                    task: roots.first().map(|root| root.task.clone()).unwrap_or_default(),
-                    message: format!("invocation policy identity is unavailable: {error}"),
-                }))
-        }).transpose()?;
+        acquisition.policy = loaded_policy
+            .as_ref()
+            .map(|policy| {
+                crate::semantic_identity::semantic_contract_identity(&policy.pack)
+                    .map(|identity| AcquiredCommandPolicyIdentity {
+                        identity,
+                        source: policy.source,
+                        path: policy.path.display().to_string(),
+                    })
+                    .map_err(|error| {
+                        Box::new(RunError::FileActionFailed {
+                            task: roots
+                                .first()
+                                .map(|root| root.task.clone())
+                                .unwrap_or_default(),
+                            message: format!("invocation policy identity is unavailable: {error}"),
+                        })
+                    })
+            })
+            .transpose()?;
         acquisition.policy_acquired = true;
         acquisition.stage = IndependentCommandAdmissionStage::Evaluation;
     }
@@ -952,8 +988,14 @@ mod tests {
 
     impl PolicyEnvironmentGuard {
         fn new(policy_path: &std::ffi::OsStr) -> Self {
-            let names = ["OTA_POLICY", crate::policy_pack::OTA_POLICY_COMMAND_SNAPSHOT_ABSENT_ENV];
-            let previous = names.into_iter().map(|name| (name, std::env::var_os(name))).collect();
+            let names = [
+                "OTA_POLICY",
+                crate::policy_pack::OTA_POLICY_COMMAND_SNAPSHOT_ABSENT_ENV,
+            ];
+            let previous = names
+                .into_iter()
+                .map(|name| (name, std::env::var_os(name)))
+                .collect();
             unsafe {
                 std::env::set_var("OTA_POLICY", policy_path);
                 std::env::remove_var(crate::policy_pack::OTA_POLICY_COMMAND_SNAPSHOT_ABSENT_ENV);
@@ -984,22 +1026,58 @@ mod tests {
         let contract: Contract = serde_yaml::from_str(
             "version: 1\nproject: {name: admission}\ntasks:\n  check:\n    command: {exe: cargo, args: [check]}\n",
         ).unwrap();
-        let roots = [EffectPolicyInvocation { task: String::from("check"), origin: String::from("run") }];
-        std::fs::write(&policy_path, "policies: {toolchain_fulfillment: {rust: deny}}").unwrap();
+        let roots = [EffectPolicyInvocation {
+            task: String::from("check"),
+            origin: String::from("run"),
+        }];
+        std::fs::write(
+            &policy_path,
+            "policies: {toolchain_fulfillment: {rust: deny}}",
+        )
+        .unwrap();
         let admission = admit_command_execution_closure(
-            &contract, &directory.path().join("ota.yaml"), None, &roots,
-            ExecutionOverrides::default(), None,
-        ).unwrap();
+            &contract,
+            &directory.path().join("ota.yaml"),
+            None,
+            &roots,
+            ExecutionOverrides::default(),
+            None,
+        )
+        .unwrap();
         assert!(!admission.is_typed());
         assert!(admission.policy_acquired);
-        assert!(admission.loaded_policy.as_ref().unwrap().pack.denies_toolchain_fulfillment("rust"));
-        std::fs::write(&policy_path, "policies: {toolchain_fulfillment: {rust: allow}}").unwrap();
-        assert!(admit_command_execution_closure(
-            &contract, &directory.path().join("ota.yaml"), None, &roots,
-            ExecutionOverrides::default(), None,
-        ).is_err());
+        assert!(
+            admission
+                .loaded_policy
+                .as_ref()
+                .unwrap()
+                .pack
+                .denies_toolchain_fulfillment("rust")
+        );
+        std::fs::write(
+            &policy_path,
+            "policies: {toolchain_fulfillment: {rust: allow}}",
+        )
+        .unwrap();
+        assert!(
+            admit_command_execution_closure(
+                &contract,
+                &directory.path().join("ota.yaml"),
+                None,
+                &roots,
+                ExecutionOverrides::default(),
+                None,
+            )
+            .is_err()
+        );
         // The retained invocation remains narrowing after the source changes.
-        assert!(admission.loaded_policy.unwrap().pack.denies_toolchain_fulfillment("rust"));
+        assert!(
+            admission
+                .loaded_policy
+                .unwrap()
+                .pack
+                .denies_toolchain_fulfillment("rust")
+        );
     }
 
     #[test]
@@ -1008,30 +1086,72 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let policy_path = directory.path().join("policy.yaml");
         let _environment = PolicyEnvironmentGuard::new(policy_path.as_os_str());
-        unsafe { std::env::set_var(crate::policy_pack::OTA_POLICY_COMMAND_SNAPSHOT_ABSENT_ENV, "1"); }
+        unsafe {
+            std::env::set_var(
+                crate::policy_pack::OTA_POLICY_COMMAND_SNAPSHOT_ABSENT_ENV,
+                "1",
+            );
+        }
         let contract: Contract = serde_yaml::from_str(
             "version: 1\nproject: {name: independent}\ntasks:\n  check:\n    command: {exe: echo, args: [ready]}\n",
         ).unwrap();
-        let roots = [EffectPolicyInvocation { task: String::from("check"), origin: String::from("task") }];
-        std::fs::write(&policy_path, "policies: {toolchain_fulfillment: {rust: deny}}").unwrap();
-        assert!(crate::policy_pack::load_org_policy_pack_auto_details(&directory.path().join("ota.yaml")).unwrap().is_none());
+        let roots = [EffectPolicyInvocation {
+            task: String::from("check"),
+            origin: String::from("task"),
+        }];
+        std::fs::write(
+            &policy_path,
+            "policies: {toolchain_fulfillment: {rust: deny}}",
+        )
+        .unwrap();
+        assert!(
+            crate::policy_pack::load_org_policy_pack_auto_details(
+                &directory.path().join("ota.yaml")
+            )
+            .unwrap()
+            .is_none()
+        );
         let admission = admit_independent_child_execution_closure(
-            &contract, &directory.path().join("ota.yaml"), None, &roots,
-            ExecutionOverrides::default(), None,
-        ).unwrap();
+            &contract,
+            &directory.path().join("ota.yaml"),
+            None,
+            &roots,
+            ExecutionOverrides::default(),
+            None,
+        )
+        .unwrap();
         assert!(admission.policy_acquired);
-        assert!(admission.loaded_policy.unwrap().pack.denies_toolchain_fulfillment("rust"));
+        assert!(
+            admission
+                .loaded_policy
+                .unwrap()
+                .pack
+                .denies_toolchain_fulfillment("rust")
+        );
         std::fs::write(&policy_path, "policies: [").unwrap();
         let failure = admit_independent_child_execution_closure(
-            &contract, &directory.path().join("ota.yaml"), None, &roots,
-            ExecutionOverrides::default(), None,
-        ).unwrap_err();
+            &contract,
+            &directory.path().join("ota.yaml"),
+            None,
+            &roots,
+            ExecutionOverrides::default(),
+            None,
+        )
+        .unwrap_err();
         assert_eq!(failure.stage, IndependentCommandAdmissionStage::PolicyLoad);
         assert!(!failure.policy_acquired);
         assert!(failure.policy.is_none());
         assert_eq!(failure.error.variant_name(), "FileActionFailed");
-        assert!(failure.error.to_string().contains("failed to parse policy pack"));
-        assert_eq!(std::env::var(crate::policy_pack::OTA_POLICY_COMMAND_SNAPSHOT_ABSENT_ENV).unwrap(), "1");
+        assert!(
+            failure
+                .error
+                .to_string()
+                .contains("failed to parse policy pack")
+        );
+        assert_eq!(
+            std::env::var(crate::policy_pack::OTA_POLICY_COMMAND_SNAPSHOT_ABSENT_ENV).unwrap(),
+            "1"
+        );
     }
 
     #[test]
@@ -1043,17 +1163,33 @@ mod tests {
             source_identity: Some(String::from("untrusted-caller-identity")),
         };
         let expected = crate::semantic_identity::semantic_contract_identity(&loaded.pack).unwrap();
-        let error = refuse_unsupported_toolchain_fulfillment_policy_route(Some(&loaded), "proof runtime").unwrap_err();
+        let error =
+            refuse_unsupported_toolchain_fulfillment_policy_route(Some(&loaded), "proof runtime")
+                .unwrap_err();
         let RunError::ToolchainFulfillmentPolicyRouteUnsupported {
-            route, policy_identity, policy_source, policy_path,
-        } = *error else { panic!("expected typed unsupported route refusal"); };
+            route,
+            policy_identity,
+            policy_source,
+            policy_path,
+        } = *error
+        else {
+            panic!("expected typed unsupported route refusal");
+        };
         assert_eq!(route, "proof runtime");
         assert_eq!(policy_identity, expected);
-        assert_eq!(policy_source, crate::policy_pack::PolicyPackSource::EnvOverride);
+        assert_eq!(
+            policy_source,
+            crate::policy_pack::PolicyPackSource::EnvOverride
+        );
         assert_eq!(policy_path, "operator-policy.yaml");
         loaded.pack.policies.toolchain_fulfillment.clear();
-        assert!(refuse_unsupported_toolchain_fulfillment_policy_route(Some(&loaded), "proof runtime").is_ok());
-        assert!(refuse_unsupported_toolchain_fulfillment_policy_route(None, "proof runtime").is_ok());
+        assert!(
+            refuse_unsupported_toolchain_fulfillment_policy_route(Some(&loaded), "proof runtime")
+                .is_ok()
+        );
+        assert!(
+            refuse_unsupported_toolchain_fulfillment_policy_route(None, "proof runtime").is_ok()
+        );
     }
 
     #[test]
@@ -1061,8 +1197,13 @@ mod tests {
         let _lock = crate::test_support::env_mutex_lock();
         let directory = tempfile::tempdir().unwrap();
         let policy_path = directory.path().join("operator-policy.yaml");
-        std::fs::write(&policy_path, "policies: {toolchain_fulfillment: {rust: allow}}").unwrap();
-        let contract: Contract = serde_yaml::from_str(r#"
+        std::fs::write(
+            &policy_path,
+            "policies: {toolchain_fulfillment: {rust: allow}}",
+        )
+        .unwrap();
+        let contract: Contract = serde_yaml::from_str(
+            r#"
 version: 1
 metadata:
   ota:
@@ -1094,14 +1235,27 @@ secret_requirements:
       target_platform: linux
       runtime_boundary: process
       capability: segmented_process_environment
-"#).unwrap();
-        let roots = [EffectPolicyInvocation { task: String::from("publish"), origin: String::from("run") }];
-        for source in [policy_path.as_os_str(), std::ffi::OsStr::new("http://127.0.0.1:1/policy-must-not-be-fetched")] {
+"#,
+        )
+        .unwrap();
+        let roots = [EffectPolicyInvocation {
+            task: String::from("publish"),
+            origin: String::from("run"),
+        }];
+        for source in [
+            policy_path.as_os_str(),
+            std::ffi::OsStr::new("http://127.0.0.1:1/policy-must-not-be-fetched"),
+        ] {
             let _env = PolicyEnvironmentGuard::new(source);
             let admission = admit_command_execution_closure(
-                &contract, &directory.path().join("ota.yaml"), None, &roots,
-                ExecutionOverrides::default(), None,
-            ).unwrap();
+                &contract,
+                &directory.path().join("ota.yaml"),
+                None,
+                &roots,
+                ExecutionOverrides::default(),
+                None,
+            )
+            .unwrap();
             assert!(admission.secret_delivery.refuses_execution());
             assert!(!admission.policy_acquired);
             assert!(admission.loaded_policy.is_none());

@@ -123,10 +123,20 @@ fn effect_refusal_canary_command(
     let selected_task = task_names.first().map(String::as_str).unwrap_or_default();
     let decision = match match retained_policy {
         Some(policy) => typed_effect_policy_decision_from_loaded_policy(
-            contract, workflow_name, selected_task, &closure, policy, None,
+            contract,
+            workflow_name,
+            selected_task,
+            &closure,
+            policy,
+            None,
         ),
         None => typed_effect_policy_decision(
-            contract, contract_path, workflow_name, selected_task, &closure, None,
+            contract,
+            contract_path,
+            workflow_name,
+            selected_task,
+            &closure,
+            None,
         ),
     } {
         Ok(decision) => decision,

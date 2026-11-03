@@ -30391,14 +30391,24 @@ tasks:
         .unwrap();
 
         validate_contract(&contract).expect("cargo hydration should validate");
-        let crate::schema::TaskPrepareSpec::DependencyHydration(prepare) =
-            contract.tasks.get_mut("setup").unwrap().prepare.as_mut().unwrap()
-        else { panic!("typed Cargo prepare"); };
+        let crate::schema::TaskPrepareSpec::DependencyHydration(prepare) = contract
+            .tasks
+            .get_mut("setup")
+            .unwrap()
+            .prepare
+            .as_mut()
+            .unwrap()
+        else {
+            panic!("typed Cargo prepare");
+        };
         let crate::schema::TaskDependencyHydrationSourceSpec::Cargo(source) = &mut prepare.source
-        else { panic!("typed Cargo source"); };
+        else {
+            panic!("typed Cargo source");
+        };
         source.locked = true;
         // Validation does not execute Cargo or require an on-disk lockfile.
-        validate_contract(&contract).expect("authored locked Cargo should validate without root discovery");
+        validate_contract(&contract)
+            .expect("authored locked Cargo should validate without root discovery");
     }
 
     #[test]

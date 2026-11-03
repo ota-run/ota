@@ -49,17 +49,27 @@ pub(super) fn render_workspace_child_admission_failure(
     }
     match format {
         OutputFormat::Json => CommandOutput::failure(to_json(&Failure {
-            ok: false, path: failure.path.display().to_string(), task: failure.task.as_deref(),
-            code: "workspace_child_admission_refused", error: &failure.failure.message,
+            ok: false,
+            path: failure.path.display().to_string(),
+            task: failure.task.as_deref(),
+            code: "workspace_child_admission_refused",
+            error: &failure.failure.message,
             child_admission: ChildAdmission {
-                route: failure.route, execution_started: false, attempted: false,
+                route: failure.route,
+                execution_started: false,
+                attempted: false,
                 selected_child: &failure.selected_child,
-                policy_acquisition: failure.policy_acquisition, policy: failure.policy.as_ref(),
+                policy_acquisition: failure.policy_acquisition,
+                policy: failure.policy.as_ref(),
                 failure: &failure.failure,
             },
         })),
         OutputFormat::Text => {
-            let header = if failure.task.is_some() { "WORKSPACE RUN" } else { "WORKSPACE UP" };
+            let header = if failure.task.is_some() {
+                "WORKSPACE RUN"
+            } else {
+                "WORKSPACE UP"
+            };
             let status = match failure.policy_acquisition {
                 WorkspaceChildPolicyAcquisition::AcquiredPresent => "acquired_present",
                 WorkspaceChildPolicyAcquisition::AcquiredAbsent => "acquired_absent",
@@ -67,20 +77,35 @@ pub(super) fn render_workspace_child_admission_failure(
                 WorkspaceChildPolicyAcquisition::Unavailable => "unavailable",
             };
             let child = &failure.selected_child;
-            let mut text = format!("{}\n\nChild admission refused: {}\n{} {}\nChild root: {}\nContract: {}\nTask: {}\nWorkflow: {}\nFailure kind: {}\nPolicy acquisition: {status}\n{}\nNo workspace acquisition or task execution attempted. Policy acquisition may already have occurred.",
-                format_command_header(header, &failure.path.display().to_string()), child.name,
-                paint_key("Where:"), paint_code(&child.contract_path),
-                child.path, child.contract_path, child.selected_task.as_deref().unwrap_or("none"),
-                child.selected_workflow.as_deref().unwrap_or("none"), failure.failure.kind,
-                failure.failure.message);
+            let mut text = format!(
+                "{}\n\nChild admission refused: {}\n{} {}\nChild root: {}\nContract: {}\nTask: {}\nWorkflow: {}\nFailure kind: {}\nPolicy acquisition: {status}\n{}\nNo workspace acquisition or task execution attempted. Policy acquisition may already have occurred.",
+                format_command_header(header, &failure.path.display().to_string()),
+                child.name,
+                paint_key("Where:"),
+                paint_code(&child.contract_path),
+                child.path,
+                child.contract_path,
+                child.selected_task.as_deref().unwrap_or("none"),
+                child.selected_workflow.as_deref().unwrap_or("none"),
+                failure.failure.kind,
+                failure.failure.message
+            );
             if let Some(selector) = &child.requested_selector {
                 text.push_str(&format!("\nUnresolved requested selector: {selector}"));
             }
             if let Some(policy) = &failure.policy {
-                text.push_str(&format!("\nPolicy: {} ({}, {})", policy.identity, policy.source.as_str(), policy.path));
+                text.push_str(&format!(
+                    "\nPolicy: {} ({}, {})",
+                    policy.identity,
+                    policy.source.as_str(),
+                    policy.path
+                ));
             }
             if let Some(decision) = &failure.failure.policy_decision {
-                text.push_str(&format!("\nPolicy decision: {} ({:?})", decision.identity, decision.aggregate_decision));
+                text.push_str(&format!(
+                    "\nPolicy decision: {} ({:?})",
+                    decision.identity, decision.aggregate_decision
+                ));
             }
             if let Some(refusal) = &failure.failure.toolchain_fulfillment_route_refusal {
                 text.push_str(&render_toolchain_route_refusal_text(refusal));
@@ -91,8 +116,10 @@ pub(super) fn render_workspace_child_admission_failure(
                 } else {
                     "rerun your original workspace Up command with the same options"
                 };
-                let validate =
-                    command_for_repo_contract_target("ota validate", Path::new(&child.contract_path));
+                let validate = command_for_repo_contract_target(
+                    "ota validate",
+                    Path::new(&child.contract_path),
+                );
                 text.push_str(&format!(
                     "\n\nNext:\n  fix the failing child contract and run {}; then {rerun}.",
                     paint_code(&format!("`{validate}`"))
@@ -114,7 +141,8 @@ pub(super) fn render_workspace_parent_admission_failure(
         execution_started: bool,
         attempted: bool,
         #[serde(skip_serializing_if = "Option::is_none")]
-        toolchain_fulfillment_route_refusal: Option<&'a crate::runner::ToolchainFulfillmentPolicyRouteRefusal>,
+        toolchain_fulfillment_route_refusal:
+            Option<&'a crate::runner::ToolchainFulfillmentPolicyRouteRefusal>,
     }
     #[derive(Serialize)]
     struct Failure<'a> {
@@ -128,23 +156,35 @@ pub(super) fn render_workspace_parent_admission_failure(
     }
     match format {
         OutputFormat::Json => CommandOutput::failure(to_json(&Failure {
-            ok: false, path: failure.path.display().to_string(), task: failure.task.as_deref(),
-            code: failure.code, error: &failure.message,
+            ok: false,
+            path: failure.path.display().to_string(),
+            task: failure.task.as_deref(),
+            code: failure.code,
+            error: &failure.message,
             parent_admission: ParentAdmission {
-                route: failure.route, policy_acquisition: failure.policy_acquisition,
-                execution_started: false, attempted: false,
+                route: failure.route,
+                policy_acquisition: failure.policy_acquisition,
+                execution_started: false,
+                attempted: false,
                 toolchain_fulfillment_route_refusal: failure.route_refusal.as_ref(),
             },
         })),
         OutputFormat::Text => {
-            let header = if failure.task.is_some() { "WORKSPACE RUN" } else { "WORKSPACE UP" };
+            let header = if failure.task.is_some() {
+                "WORKSPACE RUN"
+            } else {
+                "WORKSPACE UP"
+            };
             let status = match failure.policy_acquisition {
                 WorkspaceParentPolicyAcquisition::AcquiredPresent => "acquired_present",
                 WorkspaceParentPolicyAcquisition::Error => "error",
                 WorkspaceParentPolicyAcquisition::Unavailable => "unavailable",
             };
-            let mut text = format!("{}\n\nParent admission refused\nPolicy acquisition: {status}\n{}\nNo workspace acquisition or execution attempted.",
-                format_command_header(header, &failure.path.display().to_string()), failure.message);
+            let mut text = format!(
+                "{}\n\nParent admission refused\nPolicy acquisition: {status}\n{}\nNo workspace acquisition or execution attempted.",
+                format_command_header(header, &failure.path.display().to_string()),
+                failure.message
+            );
             if let Some(refusal) = &failure.route_refusal {
                 text.push_str(&render_toolchain_route_refusal_text(refusal));
             }
@@ -163,10 +203,19 @@ fn workspace_follow_up_artifact_routing(path: &str) -> Vec<crate::output::Artifa
     )]
 }
 
-fn workspace_up_artifact_routing(path: &str, report: &WorkspaceUpReport) -> Vec<crate::output::ArtifactRoute> {
+fn workspace_up_artifact_routing(
+    path: &str,
+    report: &WorkspaceUpReport,
+) -> Vec<crate::output::ArtifactRoute> {
     let mut routes = workspace_follow_up_artifact_routing(path);
     if report.repos.iter().any(|repo| repo.receipt.is_some()) {
-        routes.push(artifact_route("inspect", "workspace_inline_child_receipt", "receipt", None, None));
+        routes.push(artifact_route(
+            "inspect",
+            "workspace_inline_child_receipt",
+            "receipt",
+            None,
+            None,
+        ));
     }
     routes
 }
