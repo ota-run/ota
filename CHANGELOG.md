@@ -26,6 +26,15 @@
 
 ## Unreleased
 
+- Restore child-contract validation guidance for workspace Up/Run refusals.
+  The diagnostic identifies the refused child and tells operators to repeat
+  their original invocation without printing task inputs.
+- Align the published contract schema with the existing Cargo hydration
+  `locked` field and resolve the canonical closed workspace-Up typed refusal.
+- Replace the unmaintained YAML dependency with `yaml_serde` and `libyaml-rs`.
+  This changes concrete public Rust YAML error and value types; see the
+  [Rust API migration note](docs/spec/rust-api-migration.md).
+
 - Update locked TLS dependencies to `rustls` 0.23.46, `rustls-webpki` 0.103.16
   and `webpki-roots` 1.0.10 for RustSec advisories
   [RUSTSEC-2026-0346](https://rustsec.org/advisories/RUSTSEC-2026-0346.html),

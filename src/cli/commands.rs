@@ -78108,10 +78108,24 @@ policies:
 
     #[test]
     fn env_outputs_redact_secret_values_loaded_from_declared_sources() {
+        for (kind, path, contents) in [
+            (
+                "properties",
+                "app.properties",
+                "app.token=super-secret-token\n",
+            ),
+            ("yaml", "app.yaml", "app:\n  token: super-secret-token\n"),
+        ] {
+            assert_env_source_secret_is_redacted(kind, path, contents);
+        }
+    }
+
+    fn assert_env_source_secret_is_redacted(kind: &str, path: &str, contents: &str) {
         let _guard = env_mutex_lock();
         let fixture = TempDir::new().unwrap();
         let contract_path = fixture.path().join("ota.yaml");
-        let contract_contents = r#"
+        let contract_contents = format!(
+            r#"
 version: 1
 project:
   name: ota
@@ -78121,24 +78135,21 @@ env:
       required: true
       secret: true
   sources:
-    - kind: properties
-      path: app.properties
+    - kind: {kind}
+      path: {path}
 tasks:
   test:
     run: echo test
-"#;
-        fs::write(&contract_path, contract_contents).unwrap();
-        fs::write(
-            fixture.path().join("app.properties"),
-            "app.token=super-secret-token\n",
-        )
-        .unwrap();
+"#
+        );
+        fs::write(&contract_path, &contract_contents).unwrap();
+        fs::write(fixture.path().join(path), contents).unwrap();
         let original = std::env::var_os("APP_TOKEN");
         unsafe {
             std::env::remove_var("APP_TOKEN");
         }
 
-        let contract = parse_contract_str(&contract_path, contract_contents).unwrap();
+        let contract = parse_contract_str(&contract_path, &contract_contents).unwrap();
         let report = build_env_report(&contract, &contract_path, None, None).unwrap();
         let rendered = strip_ansi_codes(&render_env_text(".", None, &report));
         assert!(rendered.contains("Value: <redacted>"), "{rendered}");
@@ -78155,7 +78166,7 @@ tasks:
         );
         let body: serde_json::Value = serde_json::from_str(&output.stdout).unwrap();
         assert_eq!(body["env"][0]["value"], "<redacted>");
-        assert_eq!(body["env"][0]["source_kind"], "properties");
+        assert_eq!(body["env"][0]["source_kind"], kind);
         assert!(
             !output.stdout.contains("super-secret-token"),
             "{}",
