@@ -67911,6 +67911,7 @@ workflows:
         // Capture uses jobs > 1; streaming intentionally retains its jobs=1 contract.
     }
 
+    #[cfg(unix)]
     #[test]
     fn up_restriction_and_load_error_precede_parent_adoption_and_all_special_routes() {
         use std::io::Read;

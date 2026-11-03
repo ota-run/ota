@@ -44605,7 +44605,7 @@ tasks:
 
     #[test]
     fn declared_yaml_sources_preserve_aliases_mixed_keys_unsigned_limits_and_tags() {
-        let resolved = parse_yaml_declared_env_source(
+        let resolved = super::parse_yaml_declared_env_source(
             r#"
 primary: &values
   7: 18446744073709551615
@@ -44624,7 +44624,7 @@ secondary: *values
                 ("SECONDARY_TRUE".into(), "ready".into()),
             ])
         );
-        assert!(parse_yaml_declared_env_source("port: 80\nport: 81\n").is_err());
+        assert!(super::parse_yaml_declared_env_source("port: 80\nport: 81\n").is_err());
     }
 
     #[test]
