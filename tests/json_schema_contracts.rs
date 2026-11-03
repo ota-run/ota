@@ -3185,8 +3185,8 @@ fn workspace_parent_failure_schema_projection_is_negative_only_and_links_acquisi
     }
 }
 
-// Source-authored, NOT_RUN. Localizing canonical definitions isolates the negative branches;
-// it is not published whole-schema resolution or produced-output conformance.
+// Localizing canonical definitions isolates the negative branches; this is not
+// published whole-schema resolution or produced-output conformance.
 fn workspace_child_failure_schema_projection(filename: &str) -> JSONSchema {
     let up = load_schema("docs/spec/json-schemas/workspace-up.json");
     let receipt = load_schema("docs/spec/json-schemas/receipt.json");
@@ -3209,9 +3209,19 @@ fn workspace_child_failure_schema_projection(filename: &str) -> JSONSchema {
         json!("#/$defs/toolchainFulfillmentPolicyRouteRefusal");
     source["$defs"]["workspaceChildAdmission"]["properties"]["policy"]["properties"]["identity"]["$ref"] =
         json!("#/$defs/sha256Identity");
-    let typed = receipt["oneOf"][0]["properties"]["receipt"]["properties"]
-        ["witnessed_observations"]["properties"]["typed_effect_policy_refusal"].clone();
-    assert!(typed.is_object(), "canonical typed-refusal pointer must resolve");
+    let typed_ref = up["$defs"]["workspaceChildFailure"]["properties"]
+        ["typed_effect_policy_refusal"]["allOf"][0]["$ref"]
+        .as_str()
+        .expect("published typed-refusal reference must be a string");
+    let typed_pointer = typed_ref
+        .strip_prefix("./receipt.json#")
+        .expect("published typed-refusal reference must target the local receipt schema");
+    let typed = receipt
+        .pointer(typed_pointer)
+        .expect("published typed-refusal pointer must resolve")
+        .clone();
+    assert!(typed.is_object(), "canonical typed refusal must be an object");
+    assert_eq!(typed["additionalProperties"], false);
     source["$defs"]["workspaceTypedEffectPolicyRefusal"] = typed;
     source["$defs"]["workspaceTypedEffectPolicyRefusal"]["properties"]["policy_decision"]["allOf"][0]["$ref"] =
         json!("#/$defs/effectPolicyDecision");

@@ -109,7 +109,7 @@
         "policy_decision": { "$ref": "./run-preview.json#/$defs/effectPolicyDecision" },
         "typed_effect_policy_refusal": {
           "allOf": [
-            { "$ref": "./receipt.json#/oneOf/0/properties/receipt/properties/witnessed_observations/properties/typed_effect_policy_refusal" },
+            { "$ref": "./receipt.json#/oneOf/0/properties/receipt/properties/typed_effect_policy_refusal" },
             { "not": { "anyOf": [{ "required": ["policy_snapshot_archive"] }, { "required": ["refusal_archive_path"] }] } }
           ]
         },
