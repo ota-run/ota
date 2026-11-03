@@ -67,8 +67,9 @@ pub(super) fn render_workspace_child_admission_failure(
                 WorkspaceChildPolicyAcquisition::Unavailable => "unavailable",
             };
             let child = &failure.selected_child;
-            let mut text = format!("{}\n\nChild admission refused: {}\nChild root: {}\nContract: {}\nTask: {}\nWorkflow: {}\nFailure kind: {}\nPolicy acquisition: {status}\n{}\nNo workspace acquisition or task execution attempted. Policy acquisition may already have occurred.",
+            let mut text = format!("{}\n\nChild admission refused: {}\n{} {}\nChild root: {}\nContract: {}\nTask: {}\nWorkflow: {}\nFailure kind: {}\nPolicy acquisition: {status}\n{}\nNo workspace acquisition or task execution attempted. Policy acquisition may already have occurred.",
                 format_command_header(header, &failure.path.display().to_string()), child.name,
+                paint_key("Where:"), paint_code(&child.contract_path),
                 child.path, child.contract_path, child.selected_task.as_deref().unwrap_or("none"),
                 child.selected_workflow.as_deref().unwrap_or("none"), failure.failure.kind,
                 failure.failure.message);
@@ -83,6 +84,19 @@ pub(super) fn render_workspace_child_admission_failure(
             }
             if let Some(refusal) = &failure.failure.toolchain_fulfillment_route_refusal {
                 text.push_str(&render_toolchain_route_refusal_text(refusal));
+            }
+            if failure.failure.kind == "contract_invalid" {
+                let rerun = if failure.task.is_some() {
+                    "rerun your original workspace Run command with the same options and task inputs"
+                } else {
+                    "rerun your original workspace Up command with the same options"
+                };
+                let validate =
+                    command_for_repo_contract_target("ota validate", Path::new(&child.contract_path));
+                text.push_str(&format!(
+                    "\n\nNext:\n  fix the failing child contract and run {}; then {rerun}.",
+                    paint_code(&format!("`{validate}`"))
+                ));
             }
             CommandOutput::failure(text)
         }

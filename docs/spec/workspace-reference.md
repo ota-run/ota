@@ -124,6 +124,11 @@ results excluded from dispatch; existing parent protected refusal is never downg
 Up's unsupported Rust route carries route `up` and the actual child root/workflow selector,
 not the workspace verb/root. Typed denial, coarse denial and typed realization failure retain
 their distinct actual evidence; no receipt or archive is synthesized by preflight.
+For a refused invalid child contract, text output points to that child's `ota validate`
+path, then asks the operator to repeat the original workspace Up/Run invocation with
+the same options and any task inputs. It does not print input values or imply a task ran.
+The diagnostic's `Where:` field identifies the refused child contract, preserving its
+selection, failure kind and policy-acquisition fields without a generic error wrapper.
 
 This is not blanket Rust denial for Run: non-Rust and already-satisfied conditional readiness
 must retain their canonical behavior. All-child conditional readiness before workers remains

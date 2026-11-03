@@ -36504,11 +36504,19 @@ tasks:
             "{script}"
         );
         assert!(
-            script.contains("if mv -f \"${staged}\" \"${bin_dir}/ota.exe\" 2>/dev/null; then"),
+            script.contains("replace_windows_binary()"),
             "{script}"
         );
         assert!(
-            script.contains("elif [ -f \"${bin_dir}/ota.exe\" ] && schedule_windows_replacement_after_exit \"${staged}\" \"${bin_dir}/ota.exe\"; then"),
+            script.contains("replacement_status=0\n    replace_windows_binary \"${staged}\" \"${bin_dir}/ota.exe\" || replacement_status=$?"),
+            "{script}"
+        );
+        assert!(
+            script.contains("elif [ \"${replacement_status}\" -eq 32 ] && [ -f \"${staged}\" ] &&\n      [ -f \"${bin_dir}/ota.exe\" ] && schedule_windows_replacement_after_exit \"${staged}\" \"${bin_dir}/ota.exe\"; then"),
+            "{script}"
+        );
+        assert!(
+            script.contains("if (\\$code -eq 32 -or \\$code -eq 33) { exit 32 }"),
             "{script}"
         );
         assert!(
@@ -36562,13 +36570,13 @@ tasks:
 
         assert!(
             shell_script.contains(
-                "error: prebuilt release install failed; refusing cargo fallback in explicit release mode"
+                "error: prebuilt release install failed; source/git installation requires an explicit request"
             ),
             "{shell_script}"
         );
         assert!(
             powershell_script.contains(
-                "error: prebuilt release install failed; refusing cargo fallback in explicit release mode"
+                "error: prebuilt release install failed; source/git installation requires an explicit request"
             ),
             "{powershell_script}"
         );
@@ -46383,7 +46391,10 @@ repos: [
 
     #[test]
     fn workspace_run_invalid_repo_contract_recommends_validate() {
+        let _guard = env_mutex_lock();
+        let _cwd_guard = cwd_mutex_lock();
         let fixture = WorkspaceFixture::new();
+        let _current_dir = CurrentDirGuard::enter(fixture.dir.path());
         fs::write(
             fixture.dir.path().join("ota.workspace.yaml"),
             r#"
@@ -46406,14 +46417,34 @@ project:
         )
         .unwrap();
 
-        let output = run_with(["ota", "workspace", "run", "setup", fixture.path()]);
+        let input_value = "https://private-input.example.invalid";
+        let output = run_with([
+            "ota",
+            "workspace",
+            "run",
+            "setup",
+            "ota.workspace.yaml",
+            "--receipt",
+            "--base-url",
+            input_value,
+        ]);
 
         assert_eq!(output.exit_code, 1);
-        let stdout = strip_ansi(&output.stdout);
-        assert!(stdout.contains("Unreadable repo contract: web"));
-        assert!(stdout.contains("run `ota validate "));
-        assert!(stdout.contains("rerun `ota workspace run setup "));
-        assert!(!stdout.contains("Operation failed"));
+        assert!(output.stdout.is_empty(), "{output:?}");
+        let stderr = strip_ansi(output.stderr.as_deref().expect("refusal should use stderr"));
+        assert!(stderr.contains("Child admission refused: web"), "{stderr}");
+        assert!(stderr.contains("Where: ./apps/web/ota.yaml"), "{stderr}");
+        assert!(stderr.contains("Failure kind: contract_invalid"), "{stderr}");
+        assert!(stderr.contains("Policy acquisition: unavailable"), "{stderr}");
+        assert!(stderr.contains("run `ota validate ./apps/web`"), "{stderr}");
+        assert!(
+            stderr.contains("rerun your original workspace Run command with the same options and task inputs"),
+            "{stderr}"
+        );
+        assert!(!stderr.contains(input_value), "{stderr}");
+        assert!(!stderr.contains("rerun `ota workspace run"), "{stderr}");
+        assert!(!stderr.contains("Receipt:"), "{stderr}");
+        assert!(!stderr.contains("Operation failed"), "{stderr}");
     }
 
     #[test]
@@ -46847,9 +46878,56 @@ tasks:
         assert_eq!(tasks.exit_code, 1);
         assert_json_top_level_keys(&tasks, &["error", "errors", "ok", "path", "summary"]);
 
+        let assert_child_contract_refusal =
+            |output: &super::CommandOutput, route: &str, task: Option<&str>| {
+                let expected: &[&str] = if task.is_some() {
+                    &["ok", "path", "task", "code", "error", "child_admission"]
+                } else {
+                    &["ok", "path", "code", "error", "child_admission"]
+                };
+                let mut expected = expected.iter().map(ToString::to_string).collect::<Vec<_>>();
+                expected.sort();
+                let mut actual = json_top_level_keys(output);
+                actual.sort();
+                assert_eq!(actual, expected);
+                assert!(output.stdout.is_empty(), "{output:?}");
+                assert!(output.stderr.is_some(), "refusal should use stderr");
+                let value = parse_json_from_output(output);
+                assert_eq!(value["ok"], false);
+                assert_eq!(value["code"], "workspace_child_admission_refused");
+                let child = &value["child_admission"];
+                assert_eq!(child["route"], route);
+                assert_eq!(child["attempted"], false);
+                assert_eq!(child["execution_started"], false);
+                assert_eq!(child["policy_acquisition"], "unavailable");
+                assert_eq!(child["failure"]["kind"], "contract_invalid");
+                assert_eq!(child["failure"]["error_variant"], "ValidationErrors");
+                let selection = child["selected_child"].as_object().unwrap();
+                assert_eq!(selection["name"], "web");
+                assert_eq!(
+                    selection["path"],
+                    fixture.dir.path().join("apps/web").display().to_string()
+                );
+                assert_eq!(
+                    selection["contract_path"],
+                    fixture.dir.path().join("apps/web/ota.yaml").display().to_string()
+                );
+                assert_eq!(
+                    selection.get("requested_selector").and_then(serde_json::Value::as_str),
+                    task
+                );
+                assert_eq!(selection.get("selected_task"), Some(&serde_json::Value::Null));
+                assert_eq!(selection.get("selected_workflow"), Some(&serde_json::Value::Null));
+                assert_eq!(value["error"], child["failure"]["message"]);
+                assert_eq!(value.get("task").and_then(serde_json::Value::as_str), task);
+                assert!(child.get("policy").is_none());
+                for key in ["receipt", "repos", "summary", "artifact_routing", "parent_admission"] {
+                    assert!(value.get(key).is_none(), "pre-dispatch refusal must omit {key}");
+                }
+            };
         let run = run_with(["ota", "workspace", "run", "setup", "--json", fixture.path()]);
         assert_eq!(run.exit_code, 1);
-        assert_json_top_level_keys(&run, &["ok", "path", "receipt", "repos", "summary", "task"]);
+        assert_child_contract_refusal(&run, "workspace.run", Some("setup"));
 
         let check = run_with(["ota", "workspace", "check", "--json", fixture.path()]);
         assert_eq!(check.exit_code, 1);
@@ -46867,7 +46945,7 @@ tasks:
 
         let up = run_with(["ota", "workspace", "up", "--json", fixture.path()]);
         assert_eq!(up.exit_code, 1);
-        assert_json_top_level_keys(&up, &["ok", "path", "receipt", "repos", "summary"]);
+        assert_child_contract_refusal(&up, "workspace.up", None);
     }
 
     #[cfg(unix)]
@@ -50096,9 +50174,12 @@ tasks:
 
     #[test]
     fn workspace_up_invalid_repo_contract_recommends_validate() {
+        let _guard = env_mutex_lock();
+        let _cwd_guard = cwd_mutex_lock();
         let fixture = WorkspaceFixture::new();
+        let _current_dir = CurrentDirGuard::enter(fixture.dir.path());
         fs::write(
-            fixture.dir.path().join("ota.workspace.yaml"),
+            fixture.dir.path().join("custom.workspace.yaml"),
             r#"
 version: 1
 workspace:
@@ -50119,14 +50200,23 @@ project:
         )
         .unwrap();
 
-        let output = run_with(["ota", "workspace", "up", fixture.path()]);
+        let output = run_with(["ota", "workspace", "up", "custom.workspace.yaml"]);
 
         assert_eq!(output.exit_code, 1);
-        let stdout = strip_ansi(&output.stdout);
-        assert!(stdout.contains("Repo contract failed validation: web"));
-        assert!(stdout.contains("run `ota validate "));
-        assert!(stdout.contains("rerun `ota workspace up "));
-        assert!(!stdout.contains("Operation failed"));
+        assert!(output.stdout.is_empty(), "{output:?}");
+        let stderr = strip_ansi(output.stderr.as_deref().expect("refusal should use stderr"));
+        assert!(stderr.contains("Child admission refused: web"), "{stderr}");
+        assert!(stderr.contains("Where: ./apps/web/ota.yaml"), "{stderr}");
+        assert!(stderr.contains("Failure kind: contract_invalid"), "{stderr}");
+        assert!(stderr.contains("Policy acquisition: unavailable"), "{stderr}");
+        assert!(stderr.contains("run `ota validate ./apps/web`"), "{stderr}");
+        assert!(stderr.contains("custom.workspace.yaml"), "{stderr}");
+        assert!(
+            stderr.contains("rerun your original workspace Up command with the same options"),
+            "{stderr}"
+        );
+        assert!(!stderr.contains("rerun `ota workspace up"), "{stderr}");
+        assert!(!stderr.contains("Operation failed"), "{stderr}");
     }
 
     #[test]
