@@ -66768,6 +66768,11 @@ secret_requirements:
                 );
             }
             for task in [None, Some("ci")] {
+                let kind = if cfg!(not(unix)) && !declared_only {
+                    "admission_error"
+                } else {
+                    kind
+                };
                 super::TEST_WORKSPACE_PARENT_EFFECTS.with(|count| count.set((0, 0, 0)));
                 let output = workspace_parent_public_output(&path, task, false);
                 assert_eq!(output.exit_code, 1, "{}", output.stdout);
@@ -66775,7 +66780,7 @@ secret_requirements:
                     serde_json::from_str(workspace_admission_failure_payload(&output)).unwrap();
                 let admission = &json["child_admission"];
                 let failure = &admission["failure"];
-                assert_eq!(failure["kind"], kind, "{}", output.stdout);
+                assert_eq!(failure["kind"], kind, "{failure}");
                 assert_eq!(admission["selected_child"]["name"], "z-child");
                 assert_eq!(admission["policy_acquisition"], "acquired_present");
                 assert!(failure.get("toolchain_fulfillment_route_refusal").is_none());
@@ -66790,6 +66795,13 @@ secret_requirements:
                     assert_eq!(failure["error_variant"], "FileActionFailed");
                     assert!(failure.get("typed_effect_policy_refusal").is_none());
                     assert!(failure.get("code").is_none());
+                    if kind == "admission_error" {
+                        assert_eq!(failure["stage"], "evaluation");
+                        assert!(failure.get("policy_decision").is_none());
+                        assert!(failure["message"].as_str().unwrap().contains(
+                            "typed database schema-mutation plan refused (effect_application_platform_unsupported)"
+                        ));
+                    }
                 }
                 super::TEST_WORKSPACE_PARENT_EFFECTS
                     .with(|count| assert_eq!(count.get(), (0, 0, 0)));
@@ -67136,8 +67148,6 @@ workflows:
             let failure = super::prepare_workspace_child(&path, &repo, None)
                 .err()
                 .unwrap();
-            assert_eq!(failure.failure.kind, "typed_policy_denied");
-            assert_eq!(failure.failure.error_variant, "EffectPolicyDenied");
             assert_eq!(
                 failure.selected_child.selected_workflow.as_deref(),
                 Some(resolved)
@@ -67150,14 +67160,10 @@ workflows:
                     .display()
                     .to_string()
             );
-            let decision = failure.failure.policy_decision.as_ref().unwrap();
-            assert!(decision.explicit_typed_deny);
-            assert!(decision.effects.iter().any(|effect| {
-                effect
-                    .applicable_rules
-                    .iter()
-                    .any(|rule| rule.id == "deny_selected_lane")
-            }));
+            assert!(matches!(
+                failure.policy_acquisition,
+                super::WorkspaceChildPolicyAcquisition::AcquiredPresent
+            ));
             let adjusted = super::contract_adjusted_for_selected_workflow_env_profile(
                 &target.contract,
                 Some(resolved),
@@ -67169,26 +67175,50 @@ workflows:
                     "selected"
                 );
             }
-            let roots = super::selected_workflow_phase_task_roots(&target.contract, Some(resolved));
-            let expected = crate::effect_orchestration::admit_independent_child_execution_closure(
-                &adjusted,
-                &target.contract_path,
-                Some("lane"),
-                &roots,
-                ExecutionOverrides::default(),
-                Some(&super::current_effect_governance_overrides()),
-            )
-            .unwrap();
-            assert_eq!(Some(decision), expected.typed.policy_decision.as_ref());
-            assert_eq!(
-                &failure
-                    .failure
-                    .typed_effect_policy_refusal
-                    .as_ref()
-                    .unwrap()
-                    .policy_decision,
-                decision
-            );
+            if cfg!(unix) {
+                assert_eq!(failure.failure.kind, "typed_policy_denied");
+                assert_eq!(failure.failure.error_variant, "EffectPolicyDenied");
+                let decision = failure.failure.policy_decision.as_ref().unwrap();
+                assert!(decision.explicit_typed_deny);
+                assert!(decision.effects.iter().any(|effect| {
+                    effect
+                        .applicable_rules
+                        .iter()
+                        .any(|rule| rule.id == "deny_selected_lane")
+                }));
+                let roots =
+                    super::selected_workflow_phase_task_roots(&target.contract, Some(resolved));
+                let expected =
+                    crate::effect_orchestration::admit_independent_child_execution_closure(
+                        &adjusted,
+                        &target.contract_path,
+                        Some("lane"),
+                        &roots,
+                        ExecutionOverrides::default(),
+                        Some(&super::current_effect_governance_overrides()),
+                    )
+                    .unwrap();
+                assert_eq!(Some(decision), expected.typed.policy_decision.as_ref());
+                assert_eq!(
+                    &failure
+                        .failure
+                        .typed_effect_policy_refusal
+                        .as_ref()
+                        .unwrap()
+                        .policy_decision,
+                    decision
+                );
+            } else {
+                assert_eq!(failure.failure.kind, "admission_error");
+                assert_eq!(failure.failure.stage, Some("evaluation"));
+                assert_eq!(failure.failure.error_variant, "FileActionFailed");
+                assert!(failure.failure.code.is_none());
+                assert!(failure.failure.policy_decision.is_none());
+                assert!(failure.failure.typed_effect_policy_refusal.is_none());
+                assert!(failure.failure.message.contains(
+                    "typed database schema-mutation plan refused (effect_application_platform_unsupported)"
+                ));
+            }
             assert!(
                 failure
                     .failure
@@ -68222,7 +68252,8 @@ workflows:
                 assert!(message.starts_with(
                     "typed effect policy could not be loaded before admission: failed to parse policy pack "
                 ));
-                assert!(message.contains(&policy.display().to_string()));
+                let canonical_policy = fs::canonicalize(&policy).unwrap();
+                assert!(message.contains(&format!("`{}`", canonical_policy.display())));
             }
             Err(other) => panic!("unexpected policy admission error: {other}"),
             Ok(_) => panic!("malformed policy must refuse before admission"),

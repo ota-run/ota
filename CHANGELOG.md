@@ -26,6 +26,10 @@
 
 ## Unreleased
 
+- Fix macOS native Rust readiness and locked Cargo metadata probes incorrectly
+  refusing when the process group contains only their observed, unreaped leader.
+  Unavailable or ambiguous group observations still fail closed.
+
 - Restore the documented policy-unavailable refusal for lifecycle and runtime
   proofs when the active policy cannot be loaded, before any execution.
 

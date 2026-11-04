@@ -16314,16 +16314,11 @@ fn cargo_root_metadata_for_manifest(
             ));
         }
         if unsafe { observed.si_pid() } == child.id() as libc::pid_t {
-            let killed = unsafe { libc::kill(-(child.id() as libc::pid_t), libc::SIGKILL) };
-            let kill_error = (killed != 0).then(io::Error::last_os_error);
+            let termination = signal_owned_native_probe_group(&child, true);
             let status = child.wait().map_err(|error| error.to_string())?;
-            if let Some(error) = kill_error
-                && error.raw_os_error() != Some(libc::ESRCH)
-            {
-                return Err(format!(
-                    "Cargo metadata group termination unavailable: {error}"
-                ));
-            }
+            termination.map_err(|error| {
+                format!("Cargo metadata group termination unavailable: {error}")
+            })?;
             if !status.success() {
                 return Err(format!(
                     "Cargo root metadata failed with {:?}",
@@ -20073,18 +20068,13 @@ fn native_rust_readiness_probe(
             }
             observation_failed = error.kind() != io::ErrorKind::Interrupted;
         }
+        let leader_exit_observed =
+            result == 0 && unsafe { observed.si_pid() } == child.id() as libc::pid_t;
         let interrupted = RUN_INTERRUPT_REQUESTED.load(Ordering::Relaxed);
         let expired = Instant::now() >= deadline;
-        if observation_failed
-            || interrupted
-            || expired
-            || unsafe { observed.si_pid() } == child.id() as libc::pid_t
-        {
-            // Retain the unreaped leader until signalling; never kill a possibly reused group ID.
-            let killed = unsafe { libc::kill(-(child.id() as libc::pid_t), libc::SIGKILL) };
-            let cleanup_failed =
-                killed != 0 && io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH);
-            if cleanup_failed {
+        if observation_failed || interrupted || expired || leader_exit_observed {
+            let termination = signal_owned_native_probe_group(&child, leader_exit_observed);
+            if termination.is_err() {
                 let _ = child.kill();
             }
             let cleanup_deadline = (Instant::now() + Duration::from_secs(2)).min(budget.deadline);
@@ -20101,9 +20091,9 @@ fn native_rust_readiness_probe(
                     }
                 }
             };
-            if cleanup_failed {
-                return Err(NativeRustProbeError::Terminal(String::from(
-                    "Rust readiness group cleanup failed",
+            if let Err(error) = termination {
+                return Err(NativeRustProbeError::Terminal(format!(
+                    "Rust readiness group cleanup failed: {error}"
                 )));
             }
             if interrupted || RUN_INTERRUPT_REQUESTED.load(Ordering::Relaxed) {
@@ -40332,6 +40322,61 @@ fn configure_owned_native_process_group(command: &mut Command) {
 #[cfg(not(unix))]
 fn configure_owned_native_process_group(_command: &mut Command) {}
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn signal_owned_native_probe_group(child: &Child, leader_exit_observed: bool) -> io::Result<()> {
+    // The caller must retain the unreaped leader until signalling.
+    let leader = child.id() as libc::pid_t;
+    if leader <= 1 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "invalid native probe process group",
+        ));
+    }
+    if unsafe { libc::kill(-leader, libc::SIGKILL) } == 0 {
+        return Ok(());
+    }
+    let error = io::Error::last_os_error();
+    if error.raw_os_error() == Some(libc::ESRCH) {
+        return Ok(());
+    }
+    #[cfg(target_os = "macos")]
+    if leader_exit_observed
+        && error.raw_os_error() == Some(libc::EPERM)
+        && macos_probe_group_has_only_leader(leader)
+    {
+        return Ok(());
+    }
+    #[cfg(target_os = "linux")]
+    let _ = leader_exit_observed;
+    Err(error)
+}
+
+#[cfg(target_os = "macos")]
+fn macos_probe_group_has_only_leader(leader: libc::pid_t) -> bool {
+    // XNU can return EPERM for a group containing only the unreaped zombie.
+    // Two slots distinguish an exact singleton from a possibly truncated list.
+    const PROC_PGRP_ONLY: u32 = 2;
+    let mut members = [0 as libc::pid_t; 2];
+    let bytes = unsafe {
+        libc::proc_listpids(
+            PROC_PGRP_ONLY,
+            leader as u32,
+            members.as_mut_ptr().cast(),
+            size_of_val(&members) as libc::c_int,
+        )
+    };
+    macos_probe_group_listing_is_leader_only(leader, bytes, members)
+}
+
+#[cfg(target_os = "macos")]
+fn macos_probe_group_listing_is_leader_only(
+    leader: libc::pid_t,
+    bytes: libc::c_int,
+    members: [libc::pid_t; 2],
+) -> bool {
+    bytes == size_of::<libc::pid_t>() as libc::c_int && members == [leader, 0]
+}
+
 #[cfg(unix)]
 fn interrupt_owned_native_process_group(child: &mut Child) {
     let process_group = child.id() as libc::pid_t;
@@ -42390,6 +42435,97 @@ tasks:
             )
             .is_ok()
         );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_native_probe_group_distinguishes_retained_leader_from_live_peer() {
+        use std::os::unix::process::{CommandExt, ExitStatusExt};
+        use std::process::{Child, Stdio};
+
+        struct OwnedChild(Child);
+        impl Drop for OwnedChild {
+            fn drop(&mut self) {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+
+        fn spawn(group: libc::pid_t) -> OwnedChild {
+            OwnedChild(
+                Command::new("/bin/cat")
+                    .process_group(group)
+                    .stdin(Stdio::piped())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .spawn()
+                    .unwrap(),
+            )
+        }
+
+        fn observe_exit(child: &Child) {
+            let deadline = Instant::now() + Duration::from_secs(3);
+            loop {
+                let mut observed: libc::siginfo_t = unsafe { std::mem::zeroed() };
+                let result = unsafe {
+                    libc::waitid(
+                        libc::P_PID,
+                        child.id() as libc::id_t,
+                        &mut observed,
+                        libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+                    )
+                };
+                if result == 0 && unsafe { observed.si_pid() } == child.id() as libc::pid_t {
+                    return;
+                }
+                if result != 0 {
+                    assert_eq!(
+                        std::io::Error::last_os_error().kind(),
+                        std::io::ErrorKind::Interrupted
+                    );
+                }
+                assert!(Instant::now() < deadline, "owned child did not exit");
+                thread::sleep(Duration::from_millis(10));
+            }
+        }
+
+        for with_peer in [false, true] {
+            let mut leader = spawn(0);
+            let group = leader.0.id() as libc::pid_t;
+            let mut peer = with_peer.then(|| spawn(group));
+            drop(leader.0.stdin.take());
+            observe_exit(&leader.0);
+            assert_eq!(super::macos_probe_group_has_only_leader(group), !with_peer);
+            super::signal_owned_native_probe_group(&leader.0, true).unwrap();
+            if let Some(peer) = &mut peer {
+                observe_exit(&peer.0);
+                assert_eq!(peer.0.wait().unwrap().signal(), Some(libc::SIGKILL));
+            }
+            assert!(leader.0.wait().unwrap().success());
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_native_probe_group_rejects_inconclusive_listing() {
+        let entry_bytes = size_of::<libc::pid_t>() as libc::c_int;
+        for (bytes, members) in [
+            (-1, [0, 0]),
+            (0, [0, 0]),
+            (entry_bytes - 1, [42, 0]),
+            (entry_bytes, [43, 0]),
+            (entry_bytes, [42, 43]),
+            (2 * entry_bytes, [42, 43]),
+        ] {
+            assert!(!super::macos_probe_group_listing_is_leader_only(
+                42, bytes, members
+            ));
+        }
+        assert!(super::macos_probe_group_listing_is_leader_only(
+            42,
+            entry_bytes,
+            [42, 0]
+        ));
     }
 
     #[test]
@@ -80225,18 +80361,21 @@ else : > task-body; fi
             .unwrap(),
             super::NativeRustSatisfaction::Unknown
         );
-        let managed = fixture
-            .fixture
-            .dir
-            .path()
-            .join(".ota/state/source-managed/bin");
+        let root = fixture.fixture.dir.path();
+        let managed = root.join(".ota/state/source-managed/bin");
         fs::create_dir_all(&managed).unwrap();
-        write_fake_bin(&managed, "cargo", "#!/bin/sh\nexit 0\n");
+        write_fake_bin(
+            &managed,
+            "cargo",
+            "#!/bin/sh\n: > managed-cargo-ran\nprintf '%s\\n' 'cargo 1.95.0 (fixture)'\n",
+        );
+        // Both launch lookups select the wrapper, but rustup identifies a different cargo.
         assert_eq!(
             fixture.satisfaction().unwrap(),
-            super::NativeRustSatisfaction::Unknown
+            super::NativeRustSatisfaction::Unsatisfied
         );
-        assert!(!fixture.fixture.dir.path().join("installs").exists());
+        assert!(!root.join("managed-cargo-ran").exists());
+        assert!(!root.join("installs").exists());
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
