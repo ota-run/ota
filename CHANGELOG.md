@@ -28,6 +28,8 @@
 
 - Restore the blocked replay-input policy receipt for Run and Up when the
   active policy cannot be loaded, without probing execution prerequisites.
+  Document the existing blocked Up `admission` phase and accept it in the
+  published Up JSON schema.
 
 - Fix macOS native Rust readiness and locked Cargo metadata probes incorrectly
   refusing when the process group contains only their observed, unreaped leader.

@@ -2667,8 +2667,9 @@ Current behavior:
 - reruns readiness diagnosis
 - still runs service start commands, service healthchecks, and diagnosis on the host today
 - returns `READY` or `NOT READY`
-- reports the phase where execution stopped: `preconditions`, `provisioning`, `activation`,
-  `services`, `setup`, `run`, or `post-up diagnosis`
+- reports where Up stopped: `admission` for an early command refusal, or
+  `preconditions`, `provisioning`, `activation`, `services`, `setup`, `run`,
+  or `post-up diagnosis`
 - reports `provisioning` when early setup ran but the repo is still not ready
 - includes setup exit code details when the `setup` task fails
 - includes service start exit code details when a required service start command fails

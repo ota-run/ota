@@ -532,7 +532,7 @@
         "status": { "type": "string" },
         "cause": { "type": "string" },
         "phase": {
-          "enum": ["preview", "preconditions", "provisioning", "activation", "services", "setup", "run", "post-up diagnosis"]
+          "enum": ["preview", "admission", "preconditions", "provisioning", "activation", "services", "setup", "run", "post-up diagnosis"]
         },
         "findings": {
           "type": "array",
@@ -805,6 +805,19 @@
               "items": { "type": "string" }
             },
             "failure_origin": { "type": "string" },
+            "witnessed_observations": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["toolchain_fulfillment_route_refusal"],
+              "properties": {
+                "toolchain_fulfillment_route_refusal": {
+                  "allOf": [
+                    { "$ref": "./receipt.json#/$defs/toolchainFulfillmentPolicyRouteRefusal" },
+                    { "properties": { "route": { "const": "up" } } }
+                  ]
+                }
+              }
+            },
             "summary": {
               "type": "object",
               "additionalProperties": false,
@@ -978,6 +991,40 @@
                 "allOf": [
                   { "$ref": "#/$defs/typedEffectPreview" }
                 ]
+              }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "phase": { "const": "admission" } } },
+          "then": {
+            "properties": {
+              "ok": { "const": false },
+              "status": { "const": "BLOCKED" },
+              "governance": {
+                "properties": {
+                  "post_execution": {
+                    "properties": { "execution_attempted": { "const": false } }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "receipt": { "required": ["witnessed_observations"] }
+            }
+          },
+          "then": {
+            "properties": {
+              "phase": { "const": "admission" },
+              "receipt": {
+                "required": ["failure_origin"],
+                "properties": {
+                  "failure_origin": { "const": "toolchain_fulfillment_policy_route_unsupported" }
+                }
               }
             }
           }

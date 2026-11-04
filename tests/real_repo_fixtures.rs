@@ -2223,10 +2223,12 @@ workflows:
     let up = run_ota_in_dir(&["up", "--agent", "--json"], fixture.path());
     assert!(!up.status.success());
     let up_json = stdout_json_any(&up);
+    assert_eq!(up_json["phase"], "admission");
     assert_eq!(
         up_json["receipt"]["failure_origin"],
         "replay_input_policy_unavailable"
     );
+    assert_eq!(up_json["receipt"]["steps"][0]["label"], "admission");
     let evaluated_inputs = &up_json["receipt"]["evaluated_inputs"];
     assert!(evaluated_inputs.is_null() || evaluated_inputs == &serde_json::json!([]));
     assert!(!fixture.path().join(".ota/state").exists());

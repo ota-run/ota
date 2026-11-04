@@ -57468,12 +57468,12 @@ fn governance_evaluation_for_up_result(
                 .find_map(|entry| entry.strip_prefix("agent_execution_refused:"))
                 .map(str::to_string)
         });
-    let execution_attempted = !matches!(phase, "preconditions" | "preview");
+    let execution_attempted = !matches!(phase, "admission" | "preconditions" | "preview");
     let preflight_state = if refusal_reason_family.is_some() {
         "refused"
     } else if matches!(
         phase,
-        "preconditions" | "preview" | "provisioning" | "activation"
+        "admission" | "preconditions" | "preview" | "provisioning" | "activation"
     ) && !ok
     {
         "blocked"
@@ -66521,14 +66521,16 @@ secret_requirements:
             "version: 1\nproject: {name: restricted-run}\ntasks:\n  check:\n    safe_for_agent: true\n    command: {exe: sh, args: ['-c', 'touch task-must-not-run']}\n",
         ).unwrap();
         for agent in [false, true] {
-            for (contents, reason) in [
+            for (contents, reason, policy_unavailable) in [
                 (
                     "policies: {toolchain_fulfillment: {rust: deny}}",
                     "toolchain_fulfillment_policy_route_unsupported",
+                    false,
                 ),
                 (
                     "policies: {toolchain_fulfillment: {rust: allow}}",
-                    "could not be loaded before admission",
+                    "Replay-input policy could not be loaded",
+                    true,
                 ),
             ] {
                 fs::write(&policy, contents).unwrap();
@@ -66546,7 +66548,7 @@ secret_requirements:
                     None,
                     None,
                     None,
-                    false,
+                    policy_unavailable,
                     false,
                     false,
                     false,
@@ -66559,6 +66561,13 @@ secret_requirements:
                     failure.message
                 );
                 assert_eq!(failure.exit_code, 1);
+                if policy_unavailable {
+                    let receipt = failure.receipt.as_deref().expect("blocked policy receipt");
+                    assert!(
+                        strip_ansi_codes(receipt)
+                            .contains("Failure Origin: replay_input_policy_unavailable")
+                    );
+                }
                 assert_eq!(
                     env::var(super::PROOF_PARENT_AUTHORITY_FD_ENV).unwrap(),
                     "-1"
@@ -68071,6 +68080,8 @@ workflows:
                         assert_eq!(evidence["execution_started"], false);
                         assert_eq!(evidence["outcome"], "not_run");
                     } else {
+                        assert_eq!(receipt["failure_origin"], "replay_input_policy_unavailable");
+                        assert_eq!(receipt["steps"][0]["label"], "admission");
                         assert!(
                             receipt["witnessed_observations"]
                                 .get("toolchain_fulfillment_route_refusal")
@@ -68166,6 +68177,10 @@ workflows:
                         directory.path().join("later").display().to_string()
                     );
                     assert_eq!(evidence["policy_source"], "repo_policy");
+                } else {
+                    let receipt = &json["receipt"];
+                    assert_eq!(receipt["failure_origin"], "replay_input_policy_unavailable");
+                    assert_eq!(receipt["steps"][0]["label"], "admission");
                 }
                 assert_eq!(env::var_os("PATH"), initial_path);
                 for root in [
@@ -126830,6 +126845,7 @@ fn up_replay_input_policy_unavailable_result(
     resolved_path: &Path,
     workflow_name: Option<&str>,
     overrides: ExecutionOverrides,
+    phase: &'static str,
     error: String,
 ) -> RepoUpResult {
     let finding = replay_input_policy_unavailable_finding(&error);
@@ -126841,7 +126857,7 @@ fn up_replay_input_policy_unavailable_result(
         contract,
         PhaseExecutionContext::default(),
         "BLOCKED",
-        "preconditions",
+        phase,
         workflow_name,
         None,
         task_name.as_deref(),
@@ -126858,7 +126874,7 @@ fn up_replay_input_policy_unavailable_result(
     RepoUpResult {
         ok: false,
         status: "BLOCKED",
-        phase: "preconditions",
+        phase,
         report: DoctorReport {
             ok: false,
             provisioning: None,
@@ -146359,6 +146375,7 @@ fn up_command_admission_refusal_result(
                 resolved_path,
                 workflow_name,
                 overrides,
+                "admission",
                 command_policy_load_failure_detail(&source).to_string(),
             );
         }
@@ -146937,6 +146954,7 @@ fn execute_repo_up_with_behavior_with_agent_and_authority_activation(
             resolved_path,
             workflow_name,
             overrides,
+            "preconditions",
             error.clone(),
         ));
     }

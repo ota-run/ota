@@ -5260,9 +5260,17 @@ Root monorepo summary output can also include grouped member findings under `mem
 
 `ota up --json` has two failure classes:
 
-- execution reached the `up` pipeline: returns `UpStatus` (`status`, `phase`, additive
+- contract accepted by the `up` frontend: returns `UpStatus` (`status`, `phase`, additive
   `governance`, `findings`, `receipt`, optional `service`/`task`/`exit_code`)
 - contract load/validation failed before the `up` pipeline: returns `ValidateFailure` shape (`ok`, `path`, and either `errors` or `error`)
+
+An early command refusal returns `ok: false`, `status: "BLOCKED"`, and
+`phase: "admission"`, including when it stops a requested preview. It reports
+`governance.post_execution.execution_attempted: false`. If the
+active policy could not be loaded, `receipt.failure_origin` is
+`replay_input_policy_unavailable` and the receipt contains no evaluated replay inputs.
+An unsupported toolchain policy route instead retains its existing
+`receipt.witnessed_observations.toolchain_fulfillment_route_refusal` record.
 
 When an audited crossing actually occurs, `governance.crossing` and `receipt.crossing` carry the
 same ota-authored record. That record now includes additive `evidence_classes` so downstream

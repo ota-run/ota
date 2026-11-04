@@ -5888,6 +5888,105 @@ tasks:
 }
 
 #[test]
+fn up_early_policy_refusals_match_published_admission_schema() {
+    let fixture = tempfile::tempdir().expect("tempdir");
+    let policy = fixture.path().join("policy.yaml");
+    fs::write(
+        fixture.path().join("ota.yaml"),
+        r#"
+version: 1
+project: {name: early-up-refusal}
+tasks:
+  verify:
+    command: {exe: sh, args: ['-c', 'touch task-ran']}
+    safe_for_agent: true
+workflows:
+  default: verify
+  verify:
+    run: {task: verify}
+"#,
+    )
+    .expect("contract");
+
+    for (contents, origin) in [
+        (
+            "policies: {replay_inputs: [invalid]}",
+            "replay_input_policy_unavailable",
+        ),
+        (
+            "policies: {toolchain_fulfillment: {rust: deny}}",
+            "toolchain_fulfillment_policy_route_unsupported",
+        ),
+    ] {
+        fs::write(&policy, contents).expect("policy");
+        for dry_run in [false, true] {
+            let mut command = Command::new(env!("CARGO_BIN_EXE_ota"));
+            command
+                .args(["up", "--agent", "--json"])
+                .current_dir(fixture.path())
+                .env("OTA_POLICY", &policy)
+                .env_remove("OTA_INTERNAL_POLICY_SNAPSHOT_ABSENT");
+            if dry_run {
+                command.arg("--dry-run");
+            }
+            let output = command.output().expect("ota up should run");
+            assert_eq!(output.status.code(), Some(1), "{output:?}");
+            let mut refusal: Value = serde_json::from_slice(&output.stdout)
+                .unwrap_or_else(|error| panic!("expected Up status: {error}; {output:?}"));
+            assert_eq!(refusal["phase"], "admission");
+            assert_eq!(refusal["ok"], false);
+            assert_eq!(refusal["status"], "BLOCKED");
+            assert_eq!(refusal["governance"]["preflight"]["state"], "blocked");
+            assert_eq!(refusal["governance"]["post_execution"]["state"], "not_run");
+            assert_eq!(
+                refusal["governance"]["post_execution"]["execution_attempted"],
+                false
+            );
+            assert_eq!(refusal["receipt"]["steps"][0]["label"], "admission");
+            assert_eq!(refusal["receipt"]["failure_origin"], origin);
+            let observations = &refusal["receipt"]["witnessed_observations"];
+            let route = &observations["toolchain_fulfillment_route_refusal"];
+            if origin == "toolchain_fulfillment_policy_route_unsupported" {
+                assert_eq!(route["route"], "up");
+                assert_eq!(route["execution_started"], false);
+            } else {
+                assert!(route.is_null());
+            }
+            assert_matches_schema("up.json", &refusal);
+
+            if dry_run {
+                continue;
+            }
+            if origin == "toolchain_fulfillment_policy_route_unsupported" {
+                let mut wrong_route = refusal.clone();
+                wrong_route["receipt"]["witnessed_observations"]["toolchain_fulfillment_route_refusal"]
+                    ["route"] = json!("workspace.up");
+                assert_rejected_by_schema("up.json", &wrong_route);
+                let mut wrong_origin = refusal.clone();
+                wrong_origin["receipt"]["failure_origin"] =
+                    json!("replay_input_policy_unavailable");
+                assert_rejected_by_schema("up.json", &wrong_origin);
+                let mut relabeled_success = refusal.clone();
+                relabeled_success["phase"] = json!("run");
+                relabeled_success["ok"] = json!(true);
+                relabeled_success["status"] = json!("READY");
+                assert_rejected_by_schema("up.json", &relabeled_success);
+            }
+            let mut attempted = refusal.clone();
+            attempted["governance"]["post_execution"]["execution_attempted"] = json!(true);
+            assert_rejected_by_schema("up.json", &attempted);
+            refusal["ok"] = json!(true);
+            assert_rejected_by_schema("up.json", &refusal);
+            refusal["ok"] = json!(false);
+            refusal["status"] = json!("READY");
+            assert_rejected_by_schema("up.json", &refusal);
+        }
+        assert!(!fixture.path().join("task-ran").exists());
+        assert!(!fixture.path().join(".ota").exists());
+    }
+}
+
+#[test]
 fn crossing_grant_up_refusal_receipt_carries_typed_authority_evidence() {
     let fixture = tempfile::tempdir().expect("tempdir");
     fs::write(
