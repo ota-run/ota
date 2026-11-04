@@ -22542,20 +22542,13 @@ fn proof_command_admission_failure_output(
 ) -> CommandOutput {
     match error {
         CommandAdmissionError::PolicyLoad { source, .. } => {
-            use crate::policy_pack::LoadPolicyPackError;
-
-            // Policy loader details may include private paths, URLs, or input values.
-            let detail = match *source {
-                LoadPolicyPackError::Read { .. } => "the policy source could not be read",
-                LoadPolicyPackError::Parse { .. } => "the policy source could not be parsed",
-                LoadPolicyPackError::Validate { .. } => "the policy source failed validation",
-                LoadPolicyPackError::Fetch { .. } => "the policy source could not be fetched",
-            };
             proof_replay_input_admission_failure_output(
                 format,
                 command,
                 contract_path,
-                ReplayInputAdmissionFailure::PolicyUnavailable(detail.to_string()),
+                ReplayInputAdmissionFailure::PolicyUnavailable(
+                    command_policy_load_failure_detail(&source).to_string(),
+                ),
             )
         }
         CommandAdmissionError::Other(error) => proof_typed_effect_admission_failure_output(
@@ -22565,6 +22558,20 @@ fn proof_command_admission_failure_output(
             selected_workflow,
             *error,
         ),
+    }
+}
+
+fn command_policy_load_failure_detail(
+    error: &crate::policy_pack::LoadPolicyPackError,
+) -> &'static str {
+    use crate::policy_pack::LoadPolicyPackError;
+
+    // Policy loader details may include private paths, URLs, or input values.
+    match error {
+        LoadPolicyPackError::Read { .. } => "the policy source could not be read",
+        LoadPolicyPackError::Parse { .. } => "the policy source could not be parsed",
+        LoadPolicyPackError::Validate { .. } => "the policy source failed validation",
+        LoadPolicyPackError::Fetch { .. } => "the policy source could not be fetched",
     }
 }
 
@@ -68247,15 +68254,15 @@ workflows:
             ExecutionOverrides::default(),
             Some("ci"),
         ) {
-            Err(crate::runner::RunError::FileActionFailed { task, message }) => {
+            Err(super::CommandAdmissionError::PolicyLoad { task, source }) => {
                 assert_eq!(task, "check");
-                assert!(message.starts_with(
-                    "typed effect policy could not be loaded before admission: failed to parse policy pack "
-                ));
+                let crate::policy_pack::LoadPolicyPackError::Parse { path, .. } = *source else {
+                    panic!("expected a policy parse error");
+                };
                 let canonical_policy = fs::canonicalize(&policy).unwrap();
-                assert!(message.contains(&format!("`{}`", canonical_policy.display())));
+                assert_eq!(path, canonical_policy.display().to_string());
             }
-            Err(other) => panic!("unexpected policy admission error: {other}"),
+            Err(other) => panic!("unexpected policy admission error: {other:?}"),
             Ok(_) => panic!("malformed policy must refuse before admission"),
         }
         assert_eq!(fs::read_to_string(&policy).unwrap(), "policies: [");
@@ -117582,7 +117589,26 @@ fn run_single_contract_target(
         &target.contract_path,
         selected_task_name.as_str(),
         overrides,
-    )?;
+    )
+    .map_err(|error| match error {
+        CommandAdmissionError::PolicyLoad { source, .. } => {
+            replay_input_policy_unavailable_run_failure(
+                &target.contract,
+                &target.contract_path,
+                selected_task_name.as_str(),
+                member,
+                overrides,
+                show_receipt,
+                command_policy_load_failure_detail(&source).to_string(),
+            )
+        }
+        CommandAdmissionError::Other(error) => RunCommandFailure {
+            message: stylize_text_failure("ota run", &render_run_error(*error)),
+            summary: None,
+            exit_code: 1,
+            receipt: None,
+        },
+    })?;
     if typed_effect_admission.secret_delivery.refuses_execution() {
         // Only protected store discovery/validation is allowed here. The full grant evaluator
         // can adopt a proof-parent FD and write a challenge, so it must stay below policy.
@@ -117980,34 +118006,23 @@ fn enforce_typed_effect_pre_execution_boundary(
     contract_path: &Path,
     task_name: &str,
     overrides: ExecutionOverrides,
-) -> Result<CommandTypedEffectAdmission, RunCommandFailure> {
+) -> Result<CommandTypedEffectAdmission, CommandAdmissionError> {
     let roots = [EffectPolicyInvocation {
         task: task_name.to_string(),
         origin: String::from("run"),
     }];
-    let admission = admit_command_execution_closure(
+    let admission = admit_command_execution_closure_with_cause(
         contract,
         contract_path,
         None,
         &roots,
         overrides,
         Some(&current_effect_governance_overrides()),
-    )
-    .map_err(|error| RunCommandFailure {
-        message: stylize_text_failure("ota run", &render_run_error(*error)),
-        summary: None,
-        exit_code: 1,
-        receipt: None,
-    })?;
+    )?;
     if !admission.secret_delivery.refuses_execution()
         && let Some(error) = typed_effect_admission_refusal(&admission.typed)
     {
-        return Err(RunCommandFailure {
-            message: stylize_text_failure("ota run", &render_run_error(error)),
-            summary: None,
-            exit_code: 1,
-            receipt: None,
-        });
+        return Err(error.into());
     }
     Ok(admission)
 }
@@ -126211,16 +126226,10 @@ fn replay_input_policy_unavailable_run_failure(
     error: String,
 ) -> RunCommandFailure {
     let finding = replay_input_policy_unavailable_finding(&error);
-    let mut receipt = repo_execution_receipt_with_overrides(
+    let mut receipt = repo_execution_receipt_with_observation_mode(
         contract_path,
         contract,
-        task_phase_execution_context(
-            contract,
-            contract_path,
-            task_name,
-            overrides,
-            member.map(str::to_string),
-        ),
+        PhaseExecutionContext::default(),
         "BLOCKED",
         "preconditions",
         None,
@@ -126230,6 +126239,8 @@ fn replay_input_policy_unavailable_run_failure(
         None,
         Some(finding.next.clone()),
         Some(overrides),
+        None,
+        false,
     );
     receipt.failure_origin = Some(String::from("replay_input_policy_unavailable"));
     receipt.blocked = vec![String::from("replay_input_policy_unavailable")];
@@ -126825,16 +126836,10 @@ fn up_replay_input_policy_unavailable_result(
     let task_name = contract
         .selected_run_task_name_for(workflow_name)
         .map(str::to_string);
-    let context = task_name
-        .as_deref()
-        .map(|task_name| {
-            task_phase_execution_context(contract, resolved_path, task_name, overrides, None)
-        })
-        .unwrap_or_else(native_phase_execution_context);
-    let mut receipt = repo_execution_receipt_with_overrides(
+    let mut receipt = repo_execution_receipt_with_observation_mode(
         resolved_path,
         contract,
-        context,
+        PhaseExecutionContext::default(),
         "BLOCKED",
         "preconditions",
         workflow_name,
@@ -126844,6 +126849,8 @@ fn up_replay_input_policy_unavailable_result(
         None,
         Some(finding.next.clone()),
         Some(overrides),
+        None,
+        false,
     );
     receipt.failure_origin = Some(String::from("replay_input_policy_unavailable"));
     receipt.blocked = vec![String::from("replay_input_policy_unavailable")];
@@ -146129,22 +146136,21 @@ fn acquire_up_command_admission(
     resolved_path: &Path,
     overrides: ExecutionOverrides,
     workflow_name: Option<&str>,
-) -> Result<CommandTypedEffectAdmission, RunError> {
+) -> Result<CommandTypedEffectAdmission, CommandAdmissionError> {
     let effective_workflow_name = contract
         .selected_workflow(workflow_name)
         .map(|(name, _)| name);
     let roots = selected_workflow_phase_task_roots(contract, effective_workflow_name);
     let adjusted_contract =
         contract_adjusted_for_selected_workflow_env_profile(contract, effective_workflow_name);
-    let admission = admit_command_execution_closure(
+    let admission = admit_command_execution_closure_with_cause(
         adjusted_contract.as_ref().unwrap_or(contract),
         resolved_path,
         effective_workflow_name,
         &roots,
         overrides,
         Some(&current_effect_governance_overrides()),
-    )
-    .map_err(|error| *error)?;
+    )?;
     // Preserve the pure protected-delivery refusal; it is not an acquired absence.
     if command_secret_delivery_refusal(&admission).is_some() {
         return Ok(admission);
@@ -146156,10 +146162,10 @@ fn acquire_up_command_admission(
                 .map(|root| root.task.clone())
                 .unwrap_or_default(),
             message: String::from("Up command policy was not acquired"),
-        });
+        }
+        .into());
     }
-    refuse_unsupported_toolchain_fulfillment_policy_route(admission.loaded_policy.as_ref(), "up")
-        .map_err(|error| *error)?;
+    refuse_unsupported_toolchain_fulfillment_policy_route(admission.loaded_policy.as_ref(), "up")?;
     Ok(admission)
 }
 
@@ -146186,7 +146192,8 @@ fn prepare_up_command_admission(
                     contract,
                     resolved_path,
                     workflow_name,
-                    &error,
+                    overrides,
+                    error,
                 ))));
             }
         };
@@ -146260,7 +146267,8 @@ fn prepare_up_frontend_admission(
                 &target.contract,
                 &target.contract_path,
                 workflow_name,
-                &error,
+                overrides,
+                error,
             )))),
         }
     } else {
@@ -146341,8 +146349,21 @@ fn up_command_admission_refusal_result(
     contract: &Contract,
     resolved_path: &Path,
     workflow_name: Option<&str>,
-    error: &RunError,
+    overrides: ExecutionOverrides,
+    error: CommandAdmissionError,
 ) -> RepoUpResult {
+    let error = match error {
+        CommandAdmissionError::PolicyLoad { source, .. } => {
+            return up_replay_input_policy_unavailable_result(
+                contract,
+                resolved_path,
+                workflow_name,
+                overrides,
+                command_policy_load_failure_detail(&source).to_string(),
+            );
+        }
+        CommandAdmissionError::Other(error) => error,
+    };
     let route_refusal = error.toolchain_policy_route_refusal(resolved_path, None, workflow_name);
     let code = if route_refusal.is_some() {
         "toolchain_fulfillment_policy_route_unsupported"

@@ -2157,6 +2157,8 @@ policies:
 #[test]
 fn replay_input_policy_load_failure_refuses_every_task_surface() {
     let fixture = TempDir::new().expect("temp dir should be created");
+    fs::write(fixture.path().join("replay-input.txt"), "fixture input\n")
+        .expect("replay input fixture should be written");
     fs::create_dir_all(fixture.path().join(".ota")).expect("policy directory should be created");
     fs::write(
         fixture.path().join(".ota/org-policy.yaml"),
@@ -2171,6 +2173,10 @@ project:
   name: replay-policy-load-failure
 tasks:
   verify:
+    replay_inputs:
+      - id: fixture-input
+        kind: static_file
+        path: replay-input.txt
     command:
       exe: sh
       args: ["-c", "touch task-ran"]
@@ -2200,6 +2206,7 @@ workflows:
         run_stderr.contains("Failure Origin: replay_input_policy_unavailable"),
         "{run_stderr}"
     );
+    assert!(!run_stderr.contains("fixture-input"), "{run_stderr}");
 
     let agent_run = run_ota_in_dir(&["run", "--agent", "verify"], fixture.path());
     assert!(!agent_run.status.success());
@@ -2220,6 +2227,9 @@ workflows:
         up_json["receipt"]["failure_origin"],
         "replay_input_policy_unavailable"
     );
+    let evaluated_inputs = &up_json["receipt"]["evaluated_inputs"];
+    assert!(evaluated_inputs.is_null() || evaluated_inputs == &serde_json::json!([]));
+    assert!(!fixture.path().join(".ota/state").exists());
     assert!(!fixture.path().join("task-ran").exists());
 }
 
