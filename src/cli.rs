@@ -46430,7 +46430,12 @@ project:
         assert!(output.stdout.is_empty(), "{output:?}");
         let stderr = strip_ansi(output.stderr.as_deref().expect("refusal should use stderr"));
         assert!(stderr.contains("Child admission refused: web"), "{stderr}");
-        assert!(stderr.contains("Where: ./apps/web/ota.yaml"), "{stderr}");
+        assert!(
+            normalize_text_paths(&stderr)
+                .lines()
+                .any(|line| line == "Where: ./apps/web/ota.yaml"),
+            "{stderr}"
+        );
         assert!(
             stderr.contains("Failure kind: contract_invalid"),
             "{stderr}"
@@ -50233,7 +50238,12 @@ project:
         assert!(output.stdout.is_empty(), "{output:?}");
         let stderr = strip_ansi(output.stderr.as_deref().expect("refusal should use stderr"));
         assert!(stderr.contains("Child admission refused: web"), "{stderr}");
-        assert!(stderr.contains("Where: ./apps/web/ota.yaml"), "{stderr}");
+        assert!(
+            normalize_text_paths(&stderr)
+                .lines()
+                .any(|line| line == "Where: ./apps/web/ota.yaml"),
+            "{stderr}"
+        );
         assert!(
             stderr.contains("Failure kind: contract_invalid"),
             "{stderr}"

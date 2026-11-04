@@ -67109,7 +67109,10 @@ workflows:
             assert_eq!(failure.selected_child.path, child.display().to_string());
             assert_eq!(
                 failure.policy.as_ref().unwrap().path,
-                policy_path.display().to_string()
+                fs::canonicalize(&policy_path)
+                    .unwrap()
+                    .display()
+                    .to_string()
             );
             let decision = failure.failure.policy_decision.as_ref().unwrap();
             assert!(decision.explicit_typed_deny);
@@ -67255,7 +67258,10 @@ workflows:
                 super::WorkspaceChildAdmission::Prepared(target) => {
                     let policy = target.admission.loaded_policy.as_ref().unwrap();
                     assert_eq!(target.target.contract_path, child.contract_path);
-                    assert_eq!(policy.path, child.path.join(".ota/org-policy.yaml"));
+                    assert_eq!(
+                        policy.path,
+                        fs::canonicalize(child.path.join(".ota/org-policy.yaml")).unwrap()
+                    );
                     assert_eq!(
                         policy.pack.env_values()["CHILD_VALUE"],
                         if child.name == "a-valid" {
@@ -67883,8 +67889,9 @@ workflows:
         for task in [None, Some("ci")] {
             super::TEST_WORKSPACE_PARENT_EFFECTS.with(|count| count.set((0, 0, 0)));
             let output = workspace_parent_public_output(&path, task, false);
-            assert_eq!(output.exit_code, 1);
-            let json: serde_json::Value = serde_json::from_str(&output.stdout).unwrap();
+            let json: serde_json::Value =
+                serde_json::from_str(workspace_admission_failure_payload(&output)).unwrap();
+            assert_eq!(json["ok"], false);
             assert!(json.get("parent_admission").is_none());
             assert!(
                 json["errors"]
@@ -67907,7 +67914,12 @@ workflows:
             false,
         );
         assert_eq!(output.exit_code, 2);
-        assert!(output.stdout.contains("--jobs 1"));
+        assert!(output.stdout.is_empty());
+        assert_eq!(
+            output.stderr.as_deref(),
+            Some("`--stream` currently requires `--jobs 1`")
+        );
+        super::TEST_WORKSPACE_PARENT_EFFECTS.with(|count| assert_eq!(count.get(), (0, 0, 0)));
         // Capture uses jobs > 1; streaming intentionally retains its jobs=1 contract.
     }
 
@@ -68208,7 +68220,7 @@ env:
 tasks:
   check:
     safe_for_agent: true
-    deps: [dependency]
+    depends_on: [dependency]
     run: printf '%s\n' "$OTA_UP_RETAINED_TEST" >> observed
     after_success: [hook]
   dependency:
@@ -69448,7 +69460,7 @@ workflows:
                     );
                     for expected in [
                         identity.as_str(),
-                        "Policy Source: env_override",
+                        "Policy Source: OTA_POLICY",
                         "Selected Task: publish",
                         "Execution Started: false",
                         "Attempted: false",
