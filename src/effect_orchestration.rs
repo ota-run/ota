@@ -41,6 +41,41 @@ use crate::schema::{Contract, TaskActionSpec};
 
 type OrchestrationResult<T> = Result<T, Box<RunError>>;
 
+#[derive(Debug)]
+pub(crate) enum CommandAdmissionError {
+    PolicyLoad {
+        task: String,
+        source: Box<crate::policy_pack::LoadPolicyPackError>,
+    },
+    Other(Box<RunError>),
+}
+
+impl From<Box<RunError>> for CommandAdmissionError {
+    fn from(error: Box<RunError>) -> Self {
+        Self::Other(error)
+    }
+}
+
+impl From<RunError> for CommandAdmissionError {
+    fn from(error: RunError) -> Self {
+        Self::Other(Box::new(error))
+    }
+}
+
+impl CommandAdmissionError {
+    fn into_run_error(self) -> Box<RunError> {
+        match self {
+            Self::PolicyLoad { task, source } => Box::new(RunError::FileActionFailed {
+                task,
+                message: format!(
+                    "typed effect policy could not be loaded before admission: {source}"
+                ),
+            }),
+            Self::Other(error) => error,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct TypedEffectClosureAdmission {
     pub(crate) invocations: Vec<EffectPolicyInvocation>,
@@ -324,6 +359,7 @@ pub(crate) fn admit_command_typed_effect_closure(
         false,
         None,
     )
+    .map_err(CommandAdmissionError::into_run_error)
 }
 
 pub(crate) fn admit_command_execution_closure(
@@ -334,6 +370,25 @@ pub(crate) fn admit_command_execution_closure(
     execution_overrides: ExecutionOverrides,
     effect_overrides: Option<&EffectGovernanceOverrides>,
 ) -> OrchestrationResult<CommandTypedEffectAdmission> {
+    admit_command_execution_closure_with_cause(
+        contract,
+        contract_path,
+        workflow_name,
+        roots,
+        execution_overrides,
+        effect_overrides,
+    )
+    .map_err(CommandAdmissionError::into_run_error)
+}
+
+pub(crate) fn admit_command_execution_closure_with_cause(
+    contract: &Contract,
+    contract_path: &Path,
+    workflow_name: Option<&str>,
+    roots: &[EffectPolicyInvocation],
+    execution_overrides: ExecutionOverrides,
+    effect_overrides: Option<&EffectGovernanceOverrides>,
+) -> Result<CommandTypedEffectAdmission, CommandAdmissionError> {
     admit_command_closure_with_policy_acquisition(
         contract,
         contract_path,
@@ -370,7 +425,7 @@ pub(crate) fn admit_independent_child_execution_closure(
         Some(&mut acquisition),
     )
     .map_err(|error| IndependentCommandAdmissionFailure {
-        error,
+        error: error.into_run_error(),
         stage: acquisition.stage,
         policy_acquired: acquisition.policy_acquired,
         policy: acquisition.policy,
@@ -412,7 +467,7 @@ fn admit_command_closure_with_policy_acquisition(
     effect_overrides: Option<&EffectGovernanceOverrides>,
     acquire_untyped_policy: bool,
     mut independent: Option<&mut IndependentCommandAcquisition>,
-) -> OrchestrationResult<CommandTypedEffectAdmission> {
+) -> Result<CommandTypedEffectAdmission, CommandAdmissionError> {
     let secret_delivery_applicable =
         crate::secret_delivery_admission::secret_delivery_applies_to_selected_subject(
             contract,
@@ -527,14 +582,12 @@ fn admit_command_closure_with_policy_acquisition(
     } else {
         crate::policy_pack::load_org_policy_pack_auto_details(contract_path)
     }
-    .map_err(|error| {
-        Box::new(RunError::FileActionFailed {
-            task: roots
-                .first()
-                .map(|root| root.task.clone())
-                .unwrap_or_default(),
-            message: format!("typed effect policy could not be loaded before admission: {error}"),
-        })
+    .map_err(|source| CommandAdmissionError::PolicyLoad {
+        task: roots
+            .first()
+            .map(|root| root.task.clone())
+            .unwrap_or_default(),
+        source: Box::new(source),
     })?;
     if let Some(acquisition) = independent.as_deref_mut() {
         acquisition.stage = IndependentCommandAdmissionStage::PolicyIdentity;

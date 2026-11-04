@@ -99,7 +99,8 @@ use crate::doctor::{
     finding_targets_remote_backend, provisioning_installability_finding, resolve_command_path,
 };
 use crate::effect_orchestration::{
-    CommandTypedEffectAdmission, TypedEffectAdmission, admit_command_execution_closure,
+    CommandAdmissionError, CommandTypedEffectAdmission, TypedEffectAdmission,
+    admit_command_execution_closure, admit_command_execution_closure_with_cause,
     admit_command_typed_effect_closure, admit_typed_effect_closure_from_loaded_policy,
     build_typed_effect_closure_admission, command_secret_delivery_refusal,
     refuse_unsupported_toolchain_fulfillment_policy_route, selected_execution_closure_invocations,
@@ -3584,7 +3585,7 @@ pub fn proof_lifecycle_with_grant(
             origin: String::from("lifecycle_assertion"),
         });
     }
-    let typed_effect_admission = match admit_command_execution_closure(
+    let typed_effect_admission = match admit_command_execution_closure_with_cause(
         &contract,
         &target.contract_path,
         Some(workflow_key),
@@ -3594,12 +3595,12 @@ pub fn proof_lifecycle_with_grant(
     ) {
         Ok(admission) => admission,
         Err(error) => {
-            return proof_typed_effect_admission_failure_output(
+            return proof_command_admission_failure_output(
                 format,
                 "ota proof lifecycle",
                 &target.contract_path,
                 Some(workflow_key),
-                *error,
+                error,
             );
         }
     };
@@ -4332,7 +4333,7 @@ pub fn proof_runtime_with_grant(
                         origin: String::from("negative_control"),
                     });
                 }
-                let command_admission = match admit_command_execution_closure(
+                let command_admission = match admit_command_execution_closure_with_cause(
                     contract,
                     &target.contract_path,
                     effective_workflow_selector.as_deref(),
@@ -4342,12 +4343,12 @@ pub fn proof_runtime_with_grant(
                 ) {
                     Ok(admission) => admission,
                     Err(error) => {
-                        return proof_typed_effect_admission_failure_output(
+                        return proof_command_admission_failure_output(
                             format,
                             "ota proof runtime",
                             &target.contract_path,
                             effective_workflow_selector.as_deref(),
-                            *error,
+                            error,
                         );
                     }
                 };
@@ -22530,6 +22531,41 @@ struct ProofSecretDeliveryAdmissionFailure<'a> {
     error: String,
     execution_started: bool,
     secret_delivery_admission: &'a crate::secret_delivery_admission::SecretDeliveryPublicProjection,
+}
+
+fn proof_command_admission_failure_output(
+    format: OutputFormat,
+    command: &str,
+    contract_path: &Path,
+    selected_workflow: Option<&str>,
+    error: CommandAdmissionError,
+) -> CommandOutput {
+    match error {
+        CommandAdmissionError::PolicyLoad { source, .. } => {
+            use crate::policy_pack::LoadPolicyPackError;
+
+            // Policy loader details may include private paths, URLs, or input values.
+            let detail = match *source {
+                LoadPolicyPackError::Read { .. } => "the policy source could not be read",
+                LoadPolicyPackError::Parse { .. } => "the policy source could not be parsed",
+                LoadPolicyPackError::Validate { .. } => "the policy source failed validation",
+                LoadPolicyPackError::Fetch { .. } => "the policy source could not be fetched",
+            };
+            proof_replay_input_admission_failure_output(
+                format,
+                command,
+                contract_path,
+                ReplayInputAdmissionFailure::PolicyUnavailable(detail.to_string()),
+            )
+        }
+        CommandAdmissionError::Other(error) => proof_typed_effect_admission_failure_output(
+            format,
+            command,
+            contract_path,
+            selected_workflow,
+            *error,
+        ),
+    }
 }
 
 fn proof_typed_effect_admission_failure_output(
@@ -113252,6 +113288,66 @@ workflows:
         assert_eq!(json["code"], "replay_input_policy_unavailable");
         assert_eq!(json["execution_started"], false);
         assert!(!task_marker.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn proof_runtime_refuses_invalid_policy_before_execution_or_artifacts() {
+        let _guard = env_mutex_lock();
+        let fixture = TempDir::new().unwrap();
+        let policy = fixture.path().join("policy.yaml");
+        fs::write(&policy, "policies: [private-policy-value\n").unwrap();
+        let _environment = RestrictionAdmissionEnvironment::new(policy.as_os_str(), None);
+        fs::write(
+            fixture.path().join("ota.yaml"),
+            r#"
+version: 1
+project: {name: proof-runtime-policy-load}
+execution:
+  default_context: host
+  contexts:
+    host: {backend: native}
+tasks:
+  dev:
+    context: host
+    launch:
+      kind: command
+      exe: sh
+      args: ["-c", "touch must-not-run"]
+workflows:
+  default: app
+  app:
+    run: {task: dev}
+"#,
+        )
+        .unwrap();
+
+        let output = super::proof_runtime(
+            Some(fixture.path()),
+            None,
+            None,
+            Some("app"),
+            None,
+            true,
+            None,
+            ExecutionOverrides::default(),
+            OutputFormat::Json,
+            false,
+        );
+
+        assert_eq!(output.exit_code, 1);
+        assert!(output.stdout.is_empty());
+        let payload = output
+            .stderr
+            .as_deref()
+            .expect("proof failure must use stderr");
+        let json: serde_json::Value = serde_json::from_str(payload).unwrap();
+        assert_eq!(json["code"], "replay_input_policy_unavailable");
+        assert_eq!(json["execution_started"], false);
+        assert!(!payload.contains("private-policy-value"));
+        assert!(!payload.contains(policy.to_str().unwrap()));
+        assert!(!fixture.path().join("must-not-run").exists());
+        assert!(!fixture.path().join(".ota").exists());
     }
 
     #[cfg(unix)]

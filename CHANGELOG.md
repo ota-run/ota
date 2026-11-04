@@ -26,6 +26,9 @@
 
 ## Unreleased
 
+- Restore the documented policy-unavailable refusal for lifecycle and runtime
+  proofs when the active policy cannot be loaded, before any execution.
+
 - Restore child-contract validation guidance for workspace Up/Run refusals.
   The diagnostic identifies the refused child and tells operators to repeat
   their original invocation without printing task inputs.
